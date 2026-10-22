@@ -1,0 +1,21 @@
+{
+  "name": "metacogs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test --pass-with-no-tests",
+    "generate:check": "echo 'generate:check: placeholder, implemented in unit 3' && exit 0",
+    "matrix:check": "echo 'matrix:check: placeholder, implemented in unit 8' && exit 0",
+    "scan:secrets": "echo 'scan:secrets: placeholder, implemented in units 2/5' && exit 0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.3",
+    "typescript": "^7.0.2"
+  }
+}

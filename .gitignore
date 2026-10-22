@@ -1,3 +1,5 @@
 node_modules/
 .DS_Store
 .context/
+evals/runs/
+.agents/skills/
