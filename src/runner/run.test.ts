@@ -7,7 +7,7 @@ import { buildHelper } from '../generate/bundle-helpers'
 import { validRecord } from '../record/test-support'
 import { recordFilename } from '../record/canonical'
 import { listRecordFiles } from './checks'
-import { readManifest, type RunManifest } from './manifest'
+import { type JudgeEvidence, readManifest, type RunManifest } from './manifest'
 import { opencodeAvailability, type SpawnResult } from './opencode'
 import { enforcePrereg, type PreregVerification } from './prereg'
 import {
@@ -22,6 +22,7 @@ import {
 } from './run'
 import { PLACEHOLDER_API_KEY, bashCallStep, skillCallStep } from './scripted-provider'
 import { buildHappyChain, scaffoldMethod, TestRepo } from './test-support'
+import { sha256 } from './workspace'
 
 // ── shared repo ────────────────────────────────────────────────────────────
 
@@ -187,6 +188,14 @@ describe('planRuns', () => {
     expect(count('negative', 'baseline')).toBe(0)
     expect(count('dev', 'skill')).toBe(0)
     expect(planRuns({ mode: 'green', fixtures, runsPerCondition: 1, includeDev: true }).filter((p) => p.fixture.kind === 'dev')).toHaveLength(2)
+  })
+
+  test('DEV: skill condition on dev and negatives only; held-out is never planned', () => {
+    const plan = planRuns({ mode: 'dev', fixtures, runsPerCondition: 2, includeDev: true })
+    expect(plan).toHaveLength(2 * 3)
+    expect(new Set(plan.map((p) => p.condition))).toEqual(new Set(['skill']))
+    expect(new Set(plan.map((p) => p.fixture.kind))).toEqual(new Set(['dev', 'negative']))
+    expect(plan.some((p) => p.fixture.id.startsWith('h'))).toBe(false)
   })
 
   test('conditions interleave: neither systematically runs first for a fixture', () => {
@@ -365,6 +374,81 @@ describe('run outcomes (fake host)', () => {
     const before = calls.length
     await run('pass', planOne('negative', 'skill', 'n'))
     expect(calls.length).toBe(before)
+  })
+
+  test('the judge verdict is persisted as judge.json and referenced by hash from the manifest; nothing else leaks into it', async () => {
+    const evidence: JudgeEvidence = {
+      model: { pinned: 'opencode-go/judge-x', returned: ['judge-x'] },
+      system_prompt_sha256: 'a'.repeat(64),
+      input_sha256: 'b'.repeat(64),
+      redacted_input_sha256: 'c'.repeat(64),
+      attempts: 1,
+      temperature: 0,
+      error_code: null,
+      criteria: [
+        { id: 'CF1', verdict: 'pass', quote: 'names the claim ... and the source', quote_verified: true },
+        { id: 'CF2', verdict: 'fail', quote: 'absent', quote_verified: true },
+      ],
+      overclaim_flag: false,
+      tool_calls: 0,
+      wall_ms: 5,
+    }
+    const c = campaign([planOne('dev', 'baseline', 'd')], fakeHost({}), { judge: async () => ({ verdict: 'fail', evidence }) })
+    const res = await runCampaign(c)
+    const runId = res.results[0]!.runId
+    const m = manifestOf(c.campaignDir, runId)
+    const text = readFileSync(join(c.campaignDir, runId, 'judge.json'), 'utf8')
+    expect(m.artifacts['judge.json']).toEqual({ file: 'judge.json', sha256: sha256(text), bytes: Buffer.byteLength(text) })
+    expect(JSON.parse(text)).toEqual({
+      redacted_input_sha256: 'c'.repeat(64),
+      model_pinned: 'opencode-go/judge-x',
+      model_returned: ['judge-x'],
+      criteria: [
+        { id: 'CF1', verdict: 'pass', quotes: ['names the claim', 'and the source'] },
+        { id: 'CF2', verdict: 'fail', quotes: ['absent'] },
+      ],
+      attempts: 1,
+    })
+  })
+
+  test('a judge_error is persisted with its error code; a run without a judge writes no judge.json', async () => {
+    const failing: JudgeEvidence = {
+      model: { pinned: 'opencode-go/judge-x', returned: [] },
+      system_prompt_sha256: 'a'.repeat(64),
+      input_sha256: '',
+      redacted_input_sha256: null,
+      attempts: 2,
+      temperature: null,
+      error_code: 'invalid_malformed_json',
+      criteria: [],
+      overclaim_flag: false,
+      tool_calls: 0,
+      wall_ms: 1,
+    }
+    const c = campaign([planOne('dev', 'baseline', 'd')], fakeHost({}), { judge: async () => ({ verdict: 'judge_error', detail: 'x', evidence: failing }) })
+    const res = await runCampaign(c)
+    const dir = join(c.campaignDir, res.results[0]!.runId)
+    expect(JSON.parse(readFileSync(join(dir, 'judge.json'), 'utf8'))).toMatchObject({ redacted_input_sha256: null, attempts: 2, error: 'invalid_malformed_json', criteria: [] })
+    const noJudge = campaign([planOne('dev', 'baseline', 'd')], fakeHost({}))
+    const res2 = await runCampaign(noJudge)
+    expect(existsSync(join(noJudge.campaignDir, res2.results[0]!.runId, 'judge.json'))).toBe(false)
+  })
+
+  test('record contents are retained next to the judge verdict so a review shows what the judge saw', async () => {
+    const c = campaign([planOne('heldout', 'skill', 'h1')], fakeHost({
+      stdout: [skillLoadEvent, helperEvent, textEvents].join('\n'),
+      during: (req) => {
+        const dir = req.env.METACOGS_RECORDS_DIR!
+        mkdirSync(dir, { recursive: true })
+        writeFileSync(join(dir, recordFilename(SAMPLE_RECORD)), JSON.stringify(SAMPLE_RECORD))
+      },
+    }))
+    const res = await runCampaign(c)
+    const m = manifestOf(c.campaignDir, res.results[0]!.runId)
+    const kept = JSON.parse(readFileSync(join(c.campaignDir, res.results[0]!.runId, 'records.json'), 'utf8')) as { name: string; content: string }[]
+    expect(kept.map((r) => r.name)).toEqual([recordFilename(SAMPLE_RECORD)])
+    expect(JSON.parse(kept[0]!.content)).toMatchObject({ method: 'demo' })
+    expect(m.artifacts['records.json']?.sha256).toMatch(/^[0-9a-f]{64}$/)
   })
 })
 

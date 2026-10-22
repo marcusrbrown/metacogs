@@ -43,6 +43,8 @@ export interface JudgeEvidence {
   system_prompt_sha256: string
   /** Hash of the final attempt's request body (the stdin message). */
   input_sha256: string
+  /** Hash of the redacted task, answer, and record, independent of the per-request nonce; `null` when redaction failed. */
+  redacted_input_sha256?: string | null
   attempts: number
   /** Temperature observed in the request the provider received; `null` if no request was seen. */
   temperature: number | null

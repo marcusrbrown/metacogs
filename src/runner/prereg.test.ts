@@ -309,6 +309,17 @@ describe('prereg ordering (temp git repo)', () => {
       expect(() => enforcePrereg({ git: repo.git, repoRoot: repo.dir, method: 'demo', mode: 'red', heldoutDir: join(heldout, 'absent') })).not.toThrow()
     })
 
+    test('DEV iterates on an uncommitted skill and never reads held-out content', () => {
+      const { repo, heldout } = setup()
+      const scaffold = scaffoldMethod(repo, 'demo', { heldoutDir: heldout })
+      buildHappyChain(repo, scaffold)
+      repo.write('skills/demo/SKILL.md', 'uncommitted edit\n')
+      const absent = join(heldout, 'does-not-exist')
+      const verified = enforcePrereg({ git: repo.git, repoRoot: repo.dir, method: 'demo', mode: 'dev', heldoutDir: absent })
+      expect(verified.content.fixtures.heldout).toEqual([])
+      expect(() => enforcePrereg({ git: repo.git, repoRoot: repo.dir, method: 'demo', mode: 'green', heldoutDir: absent })).toThrow(PreregRefusal)
+    })
+
     test('an extra fixture file is refused like a changed one', () => {
       const { repo, heldout } = setup()
       const scaffold = scaffoldMethod(repo, 'demo', { heldoutDir: heldout })

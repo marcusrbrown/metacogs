@@ -502,3 +502,290 @@ export function writeReport(repoRoot: string, report: RedReport): string {
   writeFileSync(path, `${JSON.stringify(report, null, 2)}\n`)
   return path
 }
+
+// ── dev (authoring-iteration) report ───────────────────────────────────────
+//
+// `evals/reports/<method>/green-dev.json`: the skill condition on dev and negative
+// fixtures only. It is not a GREEN read: it never touches held-out content, and the
+// dev bar below is an authoring margin, not a prereg bar.
+
+/** Dev fixtures: pass at least this fraction of attempted runs (4/5 at N=5). Negatives: no false fire. */
+export const DEV_BAR = { min_pass_fraction: 0.8, max_negative_false_fires: 0 } as const
+
+export interface DevFixtureReport {
+  id: string
+  kind: 'dev' | 'negative'
+  fixture_hash: string
+  attempted: number
+  pass: number
+  /** Dev: failed runs. Negative: false fires and every other failure of a silent run. */
+  fail: number
+  pass_over_total: string
+  pass_rate_wilson95: [number, number]
+  outcomes: OutcomeCounts
+  taxonomy: Taxonomy
+  criteria: Record<string, CriterionTally>
+  /** Deterministic-check failure codes (a closed vocabulary) → run count. */
+  check_codes: Record<string, number>
+  meets_dev_bar: boolean
+}
+
+export interface DevReport {
+  schema_version: typeof REPORT_SCHEMA_VERSION
+  kind: 'green-dev'
+  method: string
+  held_out: 'untouched'
+  prereg: {
+    tag: string
+    tag_object_sha: string
+    commit_sha: string
+    blob_sha: string
+    epoch: number
+    rubric_hash: string
+    runs_per_condition: number
+    per_run_timeout_ms: number
+  }
+  repo: { head_sha: string }
+  skill: { sha256: string }
+  opencode: { package: string; version: string }
+  models: { agent_pinned: string; agent_returned: string[]; judge_pinned: string; judge_returned: string[] }
+  judge: { system_prompt_sha256: string[]; judged_runs: number; judge_error_runs: number; temperature_observed: number[] }
+  campaign: { id: string; started_at: string; finished_at: string; planned_runs: number; executed_manifests: number; incomplete_manifests: number }
+  totals: { attempted: number; taxonomy: Taxonomy; wall_clock_ms: number; tokens: { input: number; output: number; reasoning: number } }
+  dev_bar: { min_pass_fraction: number; max_negative_false_fires: number }
+  fixtures: DevFixtureReport[]
+  dev: {
+    dev_fixtures: number
+    dev_fixtures_meeting_bar: number
+    negative_fixtures: number
+    negative_false_fires: number
+    passes_dev_bar: boolean
+  }
+}
+
+export interface DevReportInput {
+  prereg: Prereg
+  shas: PreregShas
+  headSha: string
+  runs: readonly LoadedRun[]
+  plannedRuns: number
+  /** Hash of `skills/<method>/` as checked out now; every manifest must have run exactly this skill. */
+  skillSha256: string
+}
+
+export function buildDevReport(input: DevReportInput): DevReport {
+  const { prereg, shas, runs } = input
+  if (runs.length === 0) throw new Error('no run manifests to report')
+
+  const byFixture = new Map<string, { id: string; kind: 'dev' | 'negative'; hash: string; runs: LoadedRun[] }>()
+  for (const run of runs) {
+    const { fixture, condition, skill } = run.manifest
+    if (condition !== 'skill') throw new Error(`a dev report covers skill-condition runs only; ${run.manifest.run_id} is ${condition}`)
+    if (fixture.kind !== 'dev' && fixture.kind !== 'negative') throw new Error(`unexpected fixture kind ${fixture.kind} in ${run.manifest.run_id}`)
+    if (skill?.sha256 !== input.skillSha256) {
+      throw new Error(`${run.manifest.run_id} ran a different skill than the one checked out now; rerun the campaign on the committed skill`)
+    }
+    const key = `${fixture.kind}/${fixture.id}`
+    const entry = byFixture.get(key) ?? { id: fixture.id, kind: fixture.kind, hash: fixture.hash, runs: [] }
+    entry.runs.push(run)
+    byFixture.set(key, entry)
+  }
+
+  const totalsTaxonomy = emptyTaxonomy()
+  let wall = 0
+  const tokens = { input: 0, output: 0, reasoning: 0 }
+  let incomplete = 0
+  let judged = 0
+  let judgeErrors = 0
+
+  const fixtures: DevFixtureReport[] = [...byFixture.values()]
+    .sort((a, b) => (a.kind === b.kind ? (a.id < b.id ? -1 : 1) : a.kind === 'dev' ? -1 : 1))
+    .map((entry) => {
+      const outcomes = emptyOutcomes()
+      const taxonomy = emptyTaxonomy()
+      const criteria: Record<string, CriterionTally> = {}
+      const checkCodes: Record<string, number> = {}
+      for (const { manifest } of entry.runs) {
+        const bucket = bucketOf(manifest)
+        if (bucket === 'incomplete') {
+          incomplete += 1
+          continue
+        }
+        outcomes[bucket] += 1
+        addToTaxonomy(taxonomy, bucket)
+        addToTaxonomy(totalsTaxonomy, bucket)
+        wall += manifest.wall_clock_ms ?? 0
+        tokens.input += manifest.usage?.input ?? 0
+        tokens.output += manifest.usage?.output ?? 0
+        tokens.reasoning += manifest.usage?.reasoning ?? 0
+        for (const f of manifest.check_failures) checkCodes[f.code] = (checkCodes[f.code] ?? 0) + 1
+        if (manifest.judge) {
+          judged += 1
+          if (manifest.judge.error_code !== null) judgeErrors += 1
+          for (const c of manifest.judge.criteria) {
+            const t = (criteria[c.id] ??= { pass: 0, fail_quoted: 0, fail_absent: 0 })
+            if (c.verdict === 'pass') t.pass += 1
+            else if (c.quote.trim().toLowerCase() === 'absent') t.fail_absent += 1
+            else t.fail_quoted += 1
+          }
+        }
+      }
+      const fail = outcomes.fail_judge_verdict + outcomes.fail_check + outcomes.fail_timeout + outcomes.fail_budget + outcomes.fail_host_crash + outcomes.fail_judge_error
+      const attempted = outcomes.pass + fail
+      const meets =
+        entry.kind === 'dev'
+          ? attempted > 0 && outcomes.pass >= attempted * DEV_BAR.min_pass_fraction
+          : attempted > 0 && fail <= DEV_BAR.max_negative_false_fires
+      return {
+        id: entry.id,
+        kind: entry.kind,
+        fixture_hash: entry.hash,
+        attempted,
+        pass: outcomes.pass,
+        fail,
+        pass_over_total: `${outcomes.pass}/${attempted}`,
+        pass_rate_wilson95: wilson95(outcomes.pass, attempted),
+        outcomes,
+        taxonomy,
+        criteria,
+        check_codes: Object.fromEntries(Object.entries(checkCodes).sort(([a], [b]) => (a < b ? -1 : 1))),
+        meets_dev_bar: meets,
+      }
+    })
+
+  const dev = fixtures.filter((f) => f.kind === 'dev')
+  const negatives = fixtures.filter((f) => f.kind === 'negative')
+  const devMeeting = dev.filter((f) => f.meets_dev_bar).length
+  const falseFires = negatives.reduce((n, f) => n + f.fail, 0)
+  const manifests = runs.map((r) => r.manifest)
+
+  return {
+    schema_version: REPORT_SCHEMA_VERSION,
+    kind: 'green-dev',
+    method: prereg.method,
+    held_out: 'untouched',
+    prereg: {
+      tag: shas.tag,
+      tag_object_sha: shas.tagObjectSha,
+      commit_sha: shas.commitSha,
+      blob_sha: shas.blobSha,
+      epoch: prereg.epoch,
+      rubric_hash: prereg.rubric_hash,
+      runs_per_condition: prereg.runs_per_condition,
+      per_run_timeout_ms: prereg.per_run_timeout_ms,
+    },
+    repo: { head_sha: input.headSha },
+    skill: { sha256: input.skillSha256 },
+    opencode: { package: manifests[0]!.opencode.package, version: manifests[0]!.opencode.version },
+    models: {
+      agent_pinned: prereg.agent_model_id,
+      agent_returned: sorted(manifests.flatMap((m) => m.model.returned)),
+      judge_pinned: prereg.judge_model_id,
+      judge_returned: sorted(manifests.flatMap((m) => m.judge?.model.returned ?? [])),
+    },
+    judge: {
+      system_prompt_sha256: sorted(manifests.flatMap((m) => (m.judge ? [m.judge.system_prompt_sha256] : []))),
+      judged_runs: judged,
+      judge_error_runs: judgeErrors,
+      temperature_observed: sorted(manifests.flatMap((m) => (m.judge?.temperature == null ? [] : [m.judge.temperature]))),
+    },
+    campaign: {
+      id: manifests[0]!.campaign_id,
+      started_at: sorted(manifests.map((m) => m.started_at))[0]!,
+      finished_at: sorted(manifests.map((m) => m.finished_at ?? m.started_at)).at(-1)!,
+      planned_runs: input.plannedRuns,
+      executed_manifests: manifests.length,
+      incomplete_manifests: incomplete,
+    },
+    totals: {
+      attempted: totalsTaxonomy.pass + totalsTaxonomy.fail + totalsTaxonomy['timeout->fail'] + totalsTaxonomy['budget->fail'] + totalsTaxonomy['judge_error->fail'],
+      taxonomy: totalsTaxonomy,
+      wall_clock_ms: wall,
+      tokens,
+    },
+    dev_bar: { ...DEV_BAR },
+    fixtures,
+    dev: {
+      dev_fixtures: dev.length,
+      dev_fixtures_meeting_bar: devMeeting,
+      negative_fixtures: negatives.length,
+      negative_false_fires: falseFires,
+      passes_dev_bar: dev.length > 0 && negatives.length > 0 && devMeeting === dev.length && negatives.every((f) => f.meets_dev_bar),
+    },
+  }
+}
+
+export const DEV_REPORT_SCHEMA: Schema = obj({
+  schema_version: { t: 'lit', v: REPORT_SCHEMA_VERSION },
+  kind: { t: 'lit', v: 'green-dev' },
+  method: str(/^[a-z][a-z0-9-]{0,63}$/),
+  held_out: { t: 'lit', v: 'untouched' },
+  prereg: obj({
+    tag: str(/^prereg\/[a-z][a-z0-9-]{0,63}\/\d+$/),
+    tag_object_sha: str(HEX40),
+    commit_sha: str(HEX40),
+    blob_sha: str(HEX40),
+    epoch: INT,
+    rubric_hash: str(HEX64),
+    runs_per_condition: INT,
+    per_run_timeout_ms: INT,
+  }),
+  repo: obj({ head_sha: str(HEX40) }),
+  skill: obj({ sha256: str(HEX64) }),
+  opencode: obj({ package: str(/^[a-z][a-z0-9-]*$/), version: str(/^\d+\.\d+\.\d+$/) }),
+  models: obj({
+    agent_pinned: str(PINNED_MODEL),
+    agent_returned: arr(str(RETURNED_MODEL)),
+    judge_pinned: str(PINNED_MODEL),
+    judge_returned: arr(str(RETURNED_MODEL)),
+  }),
+  judge: obj({ system_prompt_sha256: arr(str(HEX64)), judged_runs: INT, judge_error_runs: INT, temperature_observed: arr(NUM) }),
+  campaign: obj({
+    id: str(/^[a-z][a-z0-9-]*-dev-[0-9TZ-]+$/),
+    started_at: str(ISO),
+    finished_at: str(ISO),
+    planned_runs: INT,
+    executed_manifests: INT,
+    incomplete_manifests: INT,
+  }),
+  totals: obj({ attempted: INT, taxonomy: taxonomyShape(), wall_clock_ms: INT, tokens: obj({ input: INT, output: INT, reasoning: INT }) }),
+  dev_bar: obj({ min_pass_fraction: NUM, max_negative_false_fires: INT }),
+  fixtures: arr(
+    obj({
+      id: str(ID),
+      kind: str(/^(dev|negative)$/),
+      fixture_hash: str(HEX64),
+      attempted: INT,
+      pass: INT,
+      fail: INT,
+      pass_over_total: str(/^\d+\/\d+$/),
+      pass_rate_wilson95: { t: 'tuple2num' },
+      outcomes: outcomesShape(),
+      taxonomy: taxonomyShape(),
+      criteria: { t: 'rec', keys: /^[A-Z]{2}\d+$/, of: obj({ pass: INT, fail_quoted: INT, fail_absent: INT }) },
+      check_codes: { t: 'rec', keys: /^[a-z][a-z_]*$/, of: INT },
+      meets_dev_bar: BOOL,
+    }),
+  ),
+  dev: obj({ dev_fixtures: INT, dev_fixtures_meeting_bar: INT, negative_fixtures: INT, negative_false_fires: INT, passes_dev_bar: BOOL }),
+})
+
+/** Empty when `report` has exactly the allowlisted keys with allowlisted value shapes. */
+export function validateDevReport(report: unknown): string[] {
+  const errors: string[] = []
+  check(report, DEV_REPORT_SCHEMA, '', errors)
+  return errors
+}
+
+export function devReportPath(repoRoot: string, method: string): string {
+  return join(repoRoot, 'evals', 'reports', method, 'green-dev.json')
+}
+
+export function writeDevReport(repoRoot: string, report: DevReport): string {
+  const errors = validateDevReport(report)
+  if (errors.length) throw new Error(`report is not an allowlist projection:\n  ${errors.join('\n  ')}`)
+  const path = devReportPath(repoRoot, report.method)
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, `${JSON.stringify(report, null, 2)}\n`)
+  return path
+}

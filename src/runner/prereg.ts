@@ -439,7 +439,8 @@ export interface EnforceInput {
   git: Git
   repoRoot: string
   method: string
-  mode: 'red' | 'green'
+  /** `dev` is authoring-time iteration: RED's ordering rules (an uncommitted skill is fine) and no held-out read. */
+  mode: 'red' | 'green' | 'dev'
   heldoutDir: string
 }
 
@@ -465,7 +466,7 @@ export function enforcePrereg(input: EnforceInput): PreregVerification {
     throw new PreregRefusal([{ code: 'prereg_invalid', message: `prereg.method is ${prereg.method}, expected ${method}` }], 'prereg method mismatch')
   }
 
-  const ordering = checkPreregOrdering(git, prereg, mode)
+  const ordering = checkPreregOrdering(git, prereg, mode === 'green' ? 'green' : 'red')
   if (ordering.violations.length) throw new PreregRefusal(ordering.violations, `prereg ordering for ${method} epoch ${prereg.epoch}`)
 
   const content = verifyPreregContent(prereg, { evalDir: join(repoRoot, 'evals', method), heldoutDir: input.heldoutDir }, { includeHeldout: mode === 'green' })

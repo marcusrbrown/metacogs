@@ -454,6 +454,7 @@ export function createJudge(options: CreateJudgeOptions): Judge {
       model: { pinned: model, returned: [] },
       system_prompt_sha256: systemPromptSha256,
       input_sha256: '',
+      redacted_input_sha256: null,
       attempts: 0,
       temperature: null,
       error_code: null,
@@ -480,6 +481,7 @@ export function createJudge(options: CreateJudgeOptions): Judge {
       if (e instanceof RedactionFailed) return error('redaction_failed')
       throw e
     }
+    evidence.redacted_input_sha256 = sha256(JSON.stringify({ task, answer, record: record ?? null }))
     evidence.overclaim_flag = spec.overclaimPatterns.some((p) => p.test(answer))
     const haystack = record === undefined ? answer : `${answer}\n${record}`
 

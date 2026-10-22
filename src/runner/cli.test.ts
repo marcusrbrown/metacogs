@@ -41,11 +41,50 @@ function chainRepo() {
 
 describe('usage', () => {
   test('missing mode, unknown mode, missing method, bad flags → usage exit', async () => {
-    for (const argv of [[], ['blue', '--method', 'demo'], ['red'], ['red', '--method', 'demo', '--runs', '0'], ['red', '--method', 'demo', '--provider', 'bogus'], ['red', '--nope']]) {
+    for (const argv of [
+      [],
+      ['blue', '--method', 'demo'],
+      ['red'],
+      ['red', '--method', 'demo', '--runs', '0'],
+      ['red', '--method', 'demo', '--provider', 'bogus'],
+      ['red', '--nope'],
+      ['red', '--method', 'demo', '--dev-only'],
+    ]) {
       const t = io()
       expect(await main(argv, t.io)).toBe(EXIT.USAGE)
       expect(t.lines.err.join('\n')).toContain('usage')
     }
+  })
+})
+
+describe('review and rejudge', () => {
+  test('both need --campaign; an unknown campaign is an error that names it', async () => {
+    for (const mode of ['review', 'rejudge']) {
+      const noArg = io()
+      expect(await main([mode], noArg.io)).toBe(EXIT.USAGE)
+      const { repo } = chainRepo()
+      repo.write('README.md', 'x')
+      repo.commit('init', ['README.md'])
+      const missing = io()
+      expect(await main([mode, '--campaign', 'no-such-campaign', '--repo', repo.dir], missing.io)).toBe(EXIT.ERROR)
+      expect(missing.lines.err.join('\n')).toContain('no-such-campaign')
+    }
+  })
+
+  test('review writes review.md into a campaign addressed by id', async () => {
+    const { repo } = chainRepo()
+    repo.write('README.md', 'x')
+    repo.commit('init', ['README.md'])
+    repo.write('evals/demo/rubric.md', '## What is being measured\n\nx\n\n## Criteria\n\n### CF1: t\n\n- `id`: CF1\n- `check`: judge\n- **Pass anchor**: p\n- **Fail anchor**: f\n\n## Judge instructions\n\n1. s\n')
+    const { writeManifest } = await import('./manifest')
+    const runDir = join(repo.dir, 'evals', 'runs', 'demo-red-1', '001-dev-d1-baseline-r1')
+    require('node:fs').mkdirSync(runDir, { recursive: true })
+    writeManifest(runDir, { schema_version: 1, run_id: '001-dev-d1-baseline-r1', campaign_id: 'demo-red-1', status: 'completed', outcome: 'fail', reasons: [], method: 'demo', condition: 'baseline', fixture: { id: 'd1', kind: 'dev', hash: 'h' } } as never)
+    const t = io()
+    expect(await main(['review', '--campaign', 'demo-red-1', '--repo', repo.dir], t.io)).toBe(EXIT.OK)
+    const sheet = require('node:fs').readFileSync(join(repo.dir, 'evals', 'runs', 'demo-red-1', 'review.md'), 'utf8') as string
+    expect(sheet).toContain('## 001-dev-d1-baseline-r1')
+    expect(sheet).toContain('human: [ ] agree [ ] disagree')
   })
 })
 
@@ -180,6 +219,24 @@ describe.skipIf(!opencodeAvailability().available)('scripted end-to-end', () => 
       for (const run of runs) expect(existsSync(join(out, campaign!, run, 'manifest.json'))).toBe(true)
       expect(t.lines.out.join('\n')).toContain('dev/d1/baseline: pass 1/1')
       expect(t.lines.err.join('\n')).toContain('deviate from the prereg plan')
+    },
+    180_000,
+  )
+
+  test(
+    'green --dev-only runs the skill on dev + negatives without any held-out content',
+    async () => {
+      const { repo, scaffold } = chainRepo()
+      buildHappyChain(repo, scaffold)
+      const out = tmp('metacogs-cliout-')
+      const t = io()
+      t.io.env.METACOGS_HELDOUT_DIR = join(tmp('metacogs-clitest-nohold-'), 'absent')
+      const code = await main(['green', '--dev-only', '--provider', 'scripted', '--runs', '1', '--fixture', 'n1', '--method', 'demo', '--repo', repo.dir, '--out', out], t.io)
+      expect(code).toBe(EXIT.OK)
+      const [campaign] = readdirSync(out)
+      expect(campaign).toStartWith('demo-dev-')
+      expect(readdirSync(join(out, campaign!)).filter((d) => d !== 'summary.json')).toEqual(['001-negative-n1-skill-r1'])
+      expect(t.lines.err.join('\n')).not.toContain('REFUSED')
     },
     180_000,
   )

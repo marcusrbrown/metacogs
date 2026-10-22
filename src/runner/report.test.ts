@@ -4,7 +4,21 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { type JudgeEvidence, MANIFEST_SCHEMA_VERSION, type RunManifest, writeManifest } from './manifest'
-import { bucketOf, buildRedReport, loadCampaignManifests, type RedReport, reportPath, validateReport, wilson95, writeReport } from './report'
+import {
+  bucketOf,
+  buildDevReport,
+  buildRedReport,
+  type DevReport,
+  devReportPath,
+  loadCampaignManifests,
+  type RedReport,
+  reportPath,
+  validateDevReport,
+  validateReport,
+  wilson95,
+  writeDevReport,
+  writeReport,
+} from './report'
 import { parsePrereg, type Prereg, type PreregShas, RUN_OUTCOME_TAXONOMY } from './prereg'
 import { sha256 } from './workspace'
 
@@ -284,6 +298,104 @@ describe('committed reports', () => {
       expect(report.prereg.tag).toBe(`prereg/${method}/2`)
       const prereg = parsePrereg(readFileSync(join(REPO_ROOT, 'evals', method, 'prereg.json'), 'utf8'))
       expect(prereg.ok && prereg.prereg.judge_model_id).toBe(`${report.models.judge_pinned}`)
+    })
+  }
+})
+
+describe('buildDevReport (skill condition, dev + negative fixtures)', () => {
+  const SKILL = sha256('skill-tree')
+  const asSkillRun = (m: RunManifest, kind: 'dev' | 'negative'): { manifest: RunManifest; manifestSha256: string } => ({
+    manifest: {
+      ...m,
+      condition: 'skill',
+      campaign_id: 'demo-dev-2026-10-22T16-00-00-000Z',
+      run_id: m.run_id.replace('-baseline-', '-skill-'),
+      skill: { sha256: SKILL, tree_sha: null },
+      fixture: { ...m.fixture, kind },
+    },
+    manifestSha256: sha256(m.run_id),
+  })
+  const runsFor = (plan: [kind: 'dev' | 'negative', fixture: string, outcomes: Outcome[]][]) => {
+    let seq = 0
+    return plan.flatMap(([kind, fixture, outcomes]) => outcomes.map((o, i) => asSkillRun(manifestFor((seq += 1), kind, fixture, i + 1, o), kind)))
+  }
+  const build = (plan: [kind: 'dev' | 'negative', fixture: string, outcomes: Outcome[]][], skillSha256 = SKILL) =>
+    buildDevReport({ prereg: prereg(), shas: SHAS, headSha: HEAD, runs: runsFor(plan), plannedRuns: 99, skillSha256 })
+
+  test('the dev bar is 4/5 per dev fixture and no negative false fire; the report is allowlist-valid and names held-out as untouched', () => {
+    const report = build([
+      ['dev', 'd1-x', ['pass', 'pass', 'pass', 'pass', 'judge_fail']],
+      ['dev', 'd2-y', ['pass', 'pass', 'pass', 'pass', 'pass']],
+      ['negative', 'n1-z', ['pass', 'pass', 'pass', 'pass', 'pass']],
+    ])
+    expect(validateDevReport(report)).toEqual([])
+    expect(report.held_out).toBe('untouched')
+    expect(report.fixtures.map((f) => [f.id, f.pass_over_total, f.meets_dev_bar])).toEqual([
+      ['d1-x', '4/5', true],
+      ['d2-y', '5/5', true],
+      ['n1-z', '5/5', true],
+    ])
+    expect(report.dev).toEqual({ dev_fixtures: 2, dev_fixtures_meeting_bar: 2, negative_fixtures: 1, negative_false_fires: 0, passes_dev_bar: true })
+  })
+
+  test('3/5 on a dev fixture, or one false fire on a negative, fails the dev bar', () => {
+    const slow = build([
+      ['dev', 'd1-x', ['pass', 'pass', 'pass', 'judge_fail', 'judge_fail']],
+      ['negative', 'n1-z', ['pass', 'pass', 'pass', 'pass', 'pass']],
+    ])
+    expect(slow.fixtures[0]!.meets_dev_bar).toBe(false)
+    expect(slow.dev.passes_dev_bar).toBe(false)
+    const fires = build([
+      ['dev', 'd1-x', ['pass', 'pass', 'pass', 'pass', 'pass']],
+      ['negative', 'n1-z', ['pass', 'pass', 'check', 'pass', 'pass']],
+    ])
+    expect(fires.dev.negative_false_fires).toBe(1)
+    expect(fires.dev.passes_dev_bar).toBe(false)
+  })
+
+  test('timeouts and judge_error are failures; infra_error is outside the denominator', () => {
+    const report = build([
+      ['dev', 'd1-x', ['pass', 'timeout', 'judge_error', 'infra', 'pass', 'pass']],
+      ['negative', 'n1-z', ['pass']],
+    ])
+    const d1 = report.fixtures[0]!
+    expect([d1.pass_over_total, d1.outcomes.fail_timeout, d1.outcomes.fail_judge_error, d1.outcomes.infra_error]).toEqual(['3/5', 1, 1, 1])
+  })
+
+  test('a campaign that ran a different skill than the one checked out is refused', () => {
+    expect(() => build([['dev', 'd1-x', ['pass']]], sha256('edited-since'))).toThrow('different skill')
+  })
+
+  test('baseline manifests are refused', () => {
+    const baseline = { manifest: manifestFor(1, 'dev', 'd1-x', 1, 'pass'), manifestSha256: sha256('x') }
+    expect(() => buildDevReport({ prereg: prereg(), shas: SHAS, headSha: HEAD, runs: [baseline], plannedRuns: 1, skillSha256: SKILL })).toThrow('skill-condition')
+  })
+
+  test('check codes are counted per fixture; extra keys are rejected by the allowlist', () => {
+    const runs = runsFor([['dev', 'd1-x', ['pass', 'check']]])
+    runs[1]!.manifest.check_failures = [{ code: 'helper_not_invoked', message: '/secret/path leaked here' }]
+    const report = buildDevReport({ prereg: prereg(), shas: SHAS, headSha: HEAD, runs, plannedRuns: 2, skillSha256: SKILL })
+    expect(report.fixtures[0]!.check_codes).toEqual({ helper_not_invoked: 1 })
+    expect(JSON.stringify(report)).not.toContain('secret')
+    const root = mkdtempSync(join(tmpdir(), 'metacogs-devreport-'))
+    scratch.push(root)
+    const path = writeDevReport(root, report)
+    expect(path).toBe(devReportPath(root, 'demo'))
+    expect(() => writeDevReport(root, { ...report, leak: 'x' } as never)).toThrow('allowlist')
+  })
+})
+
+describe('committed dev reports', () => {
+  const REPO_ROOT = join(import.meta.dir, '..', '..')
+  for (const method of ['counterfactual', 'synthesis']) {
+    const path = devReportPath(REPO_ROOT, method)
+    test.skipIf(!existsSync(path))(`evals/reports/${method}/green-dev.json is allowlist-only, names the epoch-2 tag, and leaves held-out untouched`, () => {
+      const report = JSON.parse(readFileSync(path, 'utf8')) as DevReport
+      expect(validateDevReport(report)).toEqual([])
+      expect(report.method).toBe(method)
+      expect(report.prereg.tag).toBe(`prereg/${method}/2`)
+      expect(report.held_out).toBe('untouched')
+      expect(report.fixtures.every((f) => f.kind === 'dev' || f.kind === 'negative')).toBe(true)
     })
   }
 })

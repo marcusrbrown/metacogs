@@ -14,6 +14,7 @@ import { checkBudget, classifyHostOutcome, type CheckFailure, listRecordFiles, r
 import { destroyFixture } from './env'
 import { analyzeEvents, type EventSummary } from './events'
 import { checkDebugConfig, checkIsolation, type IsolationEvidence } from './isolation'
+import { writeJudgeRecord } from './judge-record'
 import {
   type ArtifactRef,
   type FinalStatus,
@@ -55,7 +56,7 @@ export interface PlannedRun {
 }
 
 export interface PlanInput {
-  mode: 'red' | 'green'
+  mode: 'red' | 'green' | 'dev'
   fixtures: { dev: readonly LoadedFixture[]; negative: readonly LoadedFixture[]; heldout: readonly LoadedFixture[] }
   runsPerCondition: number
   /** Restrict to fixtures with this id (single-run debugging). */
@@ -67,6 +68,7 @@ export interface PlanInput {
 /**
  * RED: baseline on dev and negative fixtures. GREEN: baseline and skill on
  * held-out, skill on negatives (false-fire gate), optionally skill on dev.
+ * DEV (authoring iteration): skill on dev and negatives only; held-out is never planned.
  * Rounds interleave conditions and flip which goes first per fixture, so
  * neither condition systematically runs earlier (provider drift hits both).
  */
@@ -78,6 +80,9 @@ export function planRuns(input: PlanInput): PlannedRun[] {
   if (input.mode === 'red') {
     add(input.fixtures.dev, 'dev', ['baseline'])
     add(input.fixtures.negative, 'negative', ['baseline'])
+  } else if (input.mode === 'dev') {
+    add(input.fixtures.dev, 'dev', ['skill'])
+    add(input.fixtures.negative, 'negative', ['skill'])
   } else {
     add(input.fixtures.heldout, 'heldout', ['baseline', 'skill'])
     add(input.fixtures.negative, 'negative', ['skill'])
@@ -150,7 +155,7 @@ export type JudgeHook = (input: JudgeInput) => Promise<JudgeVerdict>
 export interface CampaignInput {
   repoRoot: string
   method: string
-  mode: 'red' | 'green'
+  mode: 'red' | 'green' | 'dev'
   providerMode: ProviderMode
   verification: PreregVerification
   campaignId: string
@@ -485,6 +490,10 @@ async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, at
       'stderr.txt': spawn.stderr,
       'requests.json': JSON.stringify(server.requests.map((r) => r.body), null, 1),
     }
+    // Record contents are retained so a human (or a rejudge) sees exactly what the judge saw; the workspace is deleted.
+    if (records.length) {
+      Object.assign(artifacts, { 'records.json': JSON.stringify(records.map((r) => ({ name: r.name, content: r.content })), null, 1) })
+    }
     const artifactRefs: Record<string, ArtifactRef> = {}
     for (const [file, text] of Object.entries(artifacts)) {
       writeFileSync(join(runDir, file), text, { mode: 0o600 })
@@ -532,7 +541,10 @@ async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, at
             })
             .catch((e: unknown) => ({ verdict: 'judge_error' as const, detail: `judge_threw: ${(e as Error).message}` }))
           manifest.verdict_basis = 'judge'
-          if (verdict.evidence) manifest.judge = verdict.evidence
+          if (verdict.evidence) {
+            manifest.judge = verdict.evidence
+            manifest.artifacts['judge.json'] = writeJudgeRecord(runDir, verdict.evidence)
+          }
           final =
             verdict.verdict === 'pass'
               ? settle('completed', 'pass', [])
