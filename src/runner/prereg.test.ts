@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import {
   canonicalizeText,
@@ -11,8 +11,10 @@ import {
   PreregRefusal,
   saltedHash,
   type ViolationCode,
+  verifyPreregContent,
 } from './prereg'
 import { buildHappyChain, scaffoldMethod, TestRepo, writePrereg } from './test-support'
+import { heldoutDir } from './workspace'
 
 const repos: TestRepo[] = []
 const scratch: string[] = []
@@ -323,4 +325,59 @@ describe('prereg ordering (temp git repo)', () => {
       expect(codes(checkPreregOrdering(repo.git, scaffold.prereg, 'green').violations)).toEqual(['skill_dirty'])
     })
   })
+})
+
+// The real preregs committed under evals/. Held-out hashes are checked only where the
+// custody directory exists on this machine; CI and fresh clones never have it.
+describe('committed preregs', () => {
+  const repoRoot = resolve(import.meta.dir, '..', '..')
+
+  for (const method of ['counterfactual', 'synthesis']) {
+    describe(method, () => {
+      const evalDir = join(repoRoot, 'evals', method)
+      const parsed = parsePrereg(readFileSync(join(evalDir, 'prereg.json'), 'utf8'))
+
+      test('parses with the runner parser and matches the v0.1 profile', () => {
+        if (!parsed.ok) throw new Error(parsed.errors.join('; '))
+        const { prereg } = parsed
+        expect(prereg.method).toBe(method)
+        expect(prereg.epoch).toBe(1)
+        expect(prereg.prev_epoch_closing_commit).toBeNull()
+        expect(prereg.runs_per_condition).toBe(5)
+        expect(prereg.red_bar).toEqual({ min_baseline_fails_per_fixture: 4, min_fixtures: 2 })
+        expect(prereg.green_bar).toEqual({ skill_pooled_pass_min: 17, skill_per_fixture_pass_min: 3, baseline_pooled_pass_max: 10 })
+        expect(prereg.false_fire_max).toBe(0)
+        expect(prereg.agent_model_id).toBe('opencode/big-pickle')
+        expect(Object.keys(prereg.fixture_hashes.dev)).toHaveLength(6)
+        expect(Object.keys(prereg.fixture_hashes.negative)).toHaveLength(3)
+        expect(Object.keys(prereg.fixture_hashes.heldout)).toHaveLength(4)
+      })
+
+      test('dev, negative, rubric hashes match the working tree', () => {
+        if (!parsed.ok) throw new Error(parsed.errors.join('; '))
+        const { problems } = verifyPreregContent(parsed.prereg, { evalDir, heldoutDir: '/nonexistent' }, { includeHeldout: false })
+        expect(problems).toEqual([])
+      })
+
+      test('redact.json is a non-empty array of non-empty strings', () => {
+        const tokens: unknown = JSON.parse(readFileSync(join(evalDir, 'redact.json'), 'utf8'))
+        expect(Array.isArray(tokens)).toBe(true)
+        expect((tokens as unknown[]).length).toBeGreaterThan(0)
+        expect((tokens as unknown[]).every((t) => typeof t === 'string' && t.trim().length > 0)).toBe(true)
+        expect(new Set(tokens as string[]).size).toBe((tokens as string[]).length)
+      })
+
+      test('held-out hashes match the custody directory when it exists', () => {
+        if (!parsed.ok) throw new Error(parsed.errors.join('; '))
+        const dir = heldoutDir(method)
+        if (!existsSync(dir)) {
+          console.log(`held-out hashes for ${method} not verified: ${dir} does not exist on this machine`)
+          return
+        }
+        const { problems, fixtures } = verifyPreregContent(parsed.prereg, { evalDir, heldoutDir: dir }, { includeHeldout: true })
+        expect(problems).toEqual([])
+        expect(fixtures.heldout).toHaveLength(4)
+      })
+    })
+  }
 })
