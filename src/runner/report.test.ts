@@ -335,7 +335,34 @@ describe('buildDevReport (skill condition, dev + negative fixtures)', () => {
       ['d2-y', '5/5', true],
       ['n1-z', '5/5', true],
     ])
-    expect(report.dev).toEqual({ dev_fixtures: 2, dev_fixtures_meeting_bar: 2, negative_fixtures: 1, negative_false_fires: 0, passes_dev_bar: true })
+    expect(report.dev).toEqual({
+      dev_fixtures: 2,
+      dev_fixtures_meeting_bar: 2,
+      negative_fixtures: 1,
+      negative_false_fires: 0,
+      fire_basis: { skill_tool: 0, direct_read: 0, none: 10 },
+      passes_dev_bar: true,
+    })
+  })
+
+  test('fire_basis is tallied per fixture and summed over dev fixtures; infra_error attempts are not counted', () => {
+    const runs = runsFor([
+      ['dev', 'd1-x', ['pass', 'pass', 'pass', 'infra', 'judge_fail']],
+      ['dev', 'd2-y', ['pass', 'pass']],
+      ['negative', 'n1-z', ['pass']],
+    ])
+    const bases = ['skill_tool', 'direct_read', 'direct_read', 'skill_tool', null, 'skill_tool', null, null] as const
+    runs.forEach((r, i) => {
+      r.manifest.fire_basis = bases[i]
+    })
+    const report = buildDevReport({ prereg: prereg(), shas: SHAS, headSha: HEAD, runs, plannedRuns: 8, skillSha256: SKILL })
+    expect(validateDevReport(report)).toEqual([])
+    expect(report.fixtures.map((f) => f.fire_basis)).toEqual([
+      { skill_tool: 1, direct_read: 2, none: 1 },
+      { skill_tool: 1, direct_read: 0, none: 1 },
+      { skill_tool: 0, direct_read: 0, none: 1 },
+    ])
+    expect(report.dev.fire_basis).toEqual({ skill_tool: 2, direct_read: 2, none: 2 })
   })
 
   test('3/5 on a dev fixture, or one false fire on a negative, fails the dev bar', () => {

@@ -11,7 +11,7 @@ import { join } from 'node:path'
 
 import type { HostError, Usage } from './events'
 import type { IsolationEvidence } from './isolation'
-import type { CheckFailure } from './checks'
+import type { CheckFailure, FireBasis } from './checks'
 import type { Condition, FixtureKind } from './workspace'
 
 export const MANIFEST_SCHEMA_VERSION = 1 as const
@@ -94,6 +94,11 @@ export interface RunManifest {
   host_errors: HostError[]
   records: { name: string; sha256: string }[]
   check_failures: CheckFailure[]
+  /**
+   * Skill condition only: how the skill text reached the model. `skill_tool` = a completed skill call; `direct_read` =
+   * a complete read of the installed SKILL.md; `null` = neither. Absent in manifests written before this field existed.
+   */
+  fire_basis?: FireBasis | null
   /** Present when the judge ran (verdict_basis `judge`). */
   judge?: JudgeEvidence
   artifacts: Record<string, ArtifactRef>

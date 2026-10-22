@@ -10,7 +10,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { needlesOf, type PassthroughAuth, passthroughNames } from './auth'
-import { checkBudget, classifyHostOutcome, type CheckFailure, listRecordFiles, runChecks } from './checks'
+import { checkBudget, classifyHostOutcome, type CheckFailure, fireEvidence, listRecordFiles, runChecks } from './checks'
 import { destroyFixture } from './env'
 import { analyzeEvents, type EventSummary } from './events'
 import { checkDebugConfig, checkIsolation, type IsolationEvidence } from './isolation'
@@ -473,7 +473,9 @@ async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, at
     if (spawn.aborted) return interrupted()
 
     const events: EventSummary = analyzeEvents(spawn.stdout)
-    const hostOutcome = classifyHostOutcome(spawn, events, c.method)
+    // The installed skill text lets the checks tell a complete direct read of SKILL.md from a probe or a truncated read.
+    const skillText = run.condition === 'skill' ? readFileSync(join(c.repoRoot, 'skills', c.method, 'SKILL.md'), 'utf8') : undefined
+    const hostOutcome = classifyHostOutcome(spawn, events, c.method, skillText)
     const records = listRecordFiles(workspace.fixture.recordsDir)
     const evidence = evidenceFor(server.requests, spawn.stdout, spawn.stderr, debugJson)
 
@@ -483,6 +485,7 @@ async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, at
     manifest.tool_call_count = events.toolUses.length
     manifest.host_errors = events.hostErrors
     manifest.records = records.map((r) => ({ name: r.name, sha256: sha256(r.content) }))
+    if (run.condition === 'skill') manifest.fire_basis = fireEvidence(c.method, events, records, skillText).fireBasis
     manifest.model.returned = [...new Set(server.requests.filter((r) => r.hasTools).map((r) => r.returnedModel).filter((m): m is string => Boolean(m)))]
 
     const artifacts = {
@@ -523,6 +526,7 @@ async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, at
           events,
           records,
           expectedExecutionModes: prereg.expected_execution_modes,
+          skillText,
         })
         manifest.check_failures = checks.failures
         const reasons = checks.failures.map((f: CheckFailure) => f.code)

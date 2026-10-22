@@ -159,6 +159,79 @@ describe('skill condition on a positive fixture', () => {
   })
 })
 
+describe('direct SKILL.md reads', () => {
+  const SKILL_TEXT = '---\nname: counterfactual\ndescription: d\n---\n\n# Counterfactual\n\n1. Gate.\n2. Objective: state the decision.\n'
+  const numbered = (text: string) => text.split('\n').map((l, i) => `${i + 1}: ${l}`).join('\n')
+  const readOf = (filePath: string, output: string | undefined, status = 'completed') =>
+    toolUse('read', { status, input: { filePath }, ...(output === undefined ? {} : { output }) })
+  const FULL = `<path>/ws/.agents/skills/counterfactual/SKILL.md</path>\n<type>file</type>\n<content>\n${numbered(SKILL_TEXT)}\n\n(End of file - total 9 lines)\n</content>`
+  const fullRead = (path = '/ws/.agents/skills/counterfactual/SKILL.md') => readOf(path, FULL)
+  const positive = (events: ReturnType<typeof stream>, records: RecordFile[], skillText: string | undefined = SKILL_TEXT) =>
+    runChecks({ ...base, condition: 'skill', kind: 'dev', events, records, skillText })
+
+  test('a complete read of the installed SKILL.md plus helper and a valid record is a fire with basis direct_read', () => {
+    const r = positive(stream(fullRead(), helperCall()), [recordFile()])
+    expect(r.failures).toEqual([])
+    expect(r.fire.fireBasis).toBe('direct_read')
+    expect(r.fire.skillLoaded).toBe(false)
+  })
+
+  test('the skill tool wins the basis when both happened', () => {
+    expect(positive(stream(fullRead(), skillLoad(), helperCall()), [recordFile()]).fire.fireBasis).toBe('skill_tool')
+    expect(positive(stream(skillLoad(), helperCall()), [recordFile()]).fire.fireBasis).toBe('skill_tool')
+  })
+
+  test('a direct read without a record is not a fire that passes: record_missing and helper_not_invoked', () => {
+    const r = positive(stream(fullRead()), [])
+    expect(r.ok).toBe(false)
+    expect(r.failures.map((f) => f.code)).toEqual(['helper_not_invoked', 'record_missing'])
+    expect(r.failures.map((f) => f.code)).not.toContain('skill_not_loaded')
+  })
+
+  test('a record with no skill text ever loaded is flagged record_without_load: the model guessed the contract', () => {
+    const r = positive(stream(helperCall()), [recordFile()])
+    expect(r.ok).toBe(false)
+    expect(r.fire.fireBasis).toBeNull()
+    expect(r.failures.map((f) => f.code)).toEqual(['skill_not_loaded', 'record_without_load'])
+    // A skill-less run that wrote no record is only skill_not_loaded plus the missing record.
+    expect(positive(stream(), []).failures.map((f) => f.code)).toEqual(['skill_not_loaded', 'helper_not_invoked', 'record_missing'])
+  })
+
+  test('a read that does not carry the body (wrong file, truncated, errored, or no skill text to compare) does not credit', () => {
+    const other = readOf('/ws/.agents/skills/synthesis/SKILL.md', FULL)
+    const truncated = readOf('/ws/.agents/skills/counterfactual/SKILL.md', `<content>\n${numbered(SKILL_TEXT).split('\n').slice(0, 5).join('\n')}\n</content>`)
+    const errored = readOf('/ws/.agents/skills/counterfactual/SKILL.md', undefined, 'error')
+    for (const call of [other, truncated, errored]) {
+      expect(positive(stream(call, helperCall()), [recordFile()]).fire.fireBasis).toBeNull()
+    }
+    const noText = runChecks({ ...base, condition: 'skill', kind: 'dev', events: stream(fullRead(), helperCall()), records: [recordFile()] })
+    expect(noText.fire.fireBasis).toBeNull()
+  })
+
+  test('path matching: relative and dot-segment paths resolve; look-alike names and other files do not', () => {
+    for (const ok of ['skills/counterfactual/SKILL.md', '.agents/skills/counterfactual/SKILL.md', '/ws/.agents/skills/x/../counterfactual/SKILL.md']) {
+      expect(positive(stream(fullRead(ok), helperCall()), [recordFile()]).fire.fireBasis).toBe('direct_read')
+    }
+    for (const no of ['/ws/.agents/skills/counterfactual/notes.md', '/ws/myskills/counterfactual/SKILL.md', '/ws/.agents/skills/counterfactual-2/SKILL.md', '/ws/fixture.md']) {
+      expect(positive(stream(fullRead(no), helperCall()), [recordFile()]).fire.fireBasis).toBeNull()
+    }
+  })
+
+  test('negatives stay strict: any read of SKILL.md is a false fire, whatever it returned', () => {
+    const negative = (events: ReturnType<typeof stream>) => runChecks({ ...base, condition: 'skill', kind: 'negative', events, records: [], skillText: SKILL_TEXT })
+    expect(negative(stream(fullRead())).failures.map((f) => f.code)).toEqual(['false_fire_direct_read'])
+    expect(negative(stream(readOf('/ws/.agents/skills/counterfactual/SKILL.md', undefined, 'error'))).failures.map((f) => f.code)).toEqual(['false_fire_direct_read'])
+    expect(negative(stream(readOf('/ws/fixture.md', 'x'))).ok).toBe(true)
+  })
+
+  test('a host exit after a complete direct read is host_crash, not infra_error', () => {
+    const events = stream(fullRead())
+    const exit = { exitCode: 1, timedOut: false, aborted: false }
+    expect(classifyHostOutcome(exit, events, 'counterfactual', SKILL_TEXT)).toBe('host_crash')
+    expect(classifyHostOutcome(exit, events, 'counterfactual')).toBe('infra_error')
+  })
+})
+
 describe('fireEvidence', () => {
   test('skill call naming another skill is not a fire for this method', () => {
     expect(fireEvidence('counterfactual', stream(skillLoad('synthesis')), []).skillCalled).toBe(false)

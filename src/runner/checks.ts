@@ -4,7 +4,7 @@
  * expectations; model-judged criteria are Unit 6.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, posix } from 'node:path'
 
 import { EXECUTION_MODES } from '../record/contract'
 import { recordFilename } from '../record/canonical'
@@ -52,28 +52,79 @@ export function isHelperInvocation(call: ToolUse): boolean {
   return typeof command === 'string' && HELPER_PATH.test(command)
 }
 
+// ── direct SKILL.md reads ──────────────────────────────────────────────────
+
+/**
+ * A `read` of the skill file (any workspace path ending in `skills/<method>/SKILL.md`, which covers
+ * `.agents/skills/<method>/SKILL.md`). Relative and `..` paths are normalized first.
+ */
+export function isSkillFileRead(call: ToolUse, method: string): boolean {
+  if (call.tool !== 'read') return false
+  const path = typeof call.input === 'object' && call.input !== null ? (call.input as Record<string, unknown>).filePath : undefined
+  if (typeof path !== 'string') return false
+  const normalized = posix.normalize(path.replace(/\\/g, '/'))
+  const suffix = `skills/${method}/SKILL.md`
+  return normalized === suffix || normalized.endsWith(`/${suffix}`)
+}
+
+const collapse = (text: string): string => text.replace(/\s+/g, ' ').trim()
+
+/** SKILL.md without its YAML frontmatter. */
+export function skillBodyOf(skillText: string): string {
+  const match = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/.exec(skillText)
+  return collapse(match ? skillText.slice(match[0].length) : skillText)
+}
+
+/** The `read` tool prefixes each line with `N: `; strip those before comparing. */
+function readContent(output: string): string {
+  return output
+    .split('\n')
+    .map((line) => line.replace(/^\d+: ?/, ''))
+    .join('\n')
+}
+
+/** A completed read of the skill file whose output carries the skill body (not a truncated or empty read). */
+export function isSkillBodyRead(call: ToolUse, method: string, skillText: string | undefined): boolean {
+  if (skillText === undefined || !isSkillFileRead(call, method) || call.status !== 'completed' || !call.output) return false
+  const body = skillBodyOf(skillText)
+  return body.length > 0 && collapse(readContent(call.output)).includes(body)
+}
+
+export type FireBasis = 'skill_tool' | 'direct_read'
+
 export interface FireEvidence {
   /** `skill` tool call naming the method (any status). */
   skillCalled: boolean
-  /** Skill content reached the model. */
+  /** Skill content reached the model through a completed skill-tool call. */
   skillLoaded: boolean
+  /** `read` tool call on the skill file (any status, any output): a fire when the fixture is a negative. */
+  skillFileRead: boolean
+  /** The skill body reached the model through a direct read. Needs the skill text; absent text never credits. */
+  skillBodyRead: boolean
+  /** How the method fired on a positive fixture; `null` when the skill text never reached the model. The skill tool wins when both happened. */
+  fireBasis: FireBasis | null
   /** `invalid` tool_use for the unavailable `skill` tool: an attempted fire, not silence. */
   deniedSkillCall: boolean
   helperInvoked: boolean
   recordFiles: number
 }
 
-export function fireEvidence(method: string, events: EventSummary, records: readonly RecordFile[]): FireEvidence {
+export function fireEvidence(method: string, events: EventSummary, records: readonly RecordFile[], skillText?: string): FireEvidence {
+  const skillLoaded = events.skillCalls.some((c) => isSkillContentLoad(c, method))
+  const skillBodyRead = events.toolUses.some((c) => isSkillBodyRead(c, method, skillText))
   return {
     skillCalled: events.skillCalls.some((c) => skillCallName(c) === method),
-    skillLoaded: events.skillCalls.some((c) => isSkillContentLoad(c, method)),
+    skillLoaded,
+    skillFileRead: events.toolUses.some((c) => isSkillFileRead(c, method)),
+    skillBodyRead,
+    fireBasis: skillLoaded ? 'skill_tool' : skillBodyRead ? 'direct_read' : null,
     deniedSkillCall: events.toolUses.some(isDeniedSkillCall),
     helperInvoked: events.toolUses.some(isHelperInvocation),
     recordFiles: records.length,
   }
 }
 
-export const hasFired = (f: FireEvidence): boolean => f.skillCalled || f.deniedSkillCall || f.helperInvoked || f.recordFiles > 0
+export const hasFired = (f: FireEvidence): boolean => f.skillCalled || f.skillFileRead || f.deniedSkillCall || f.helperInvoked || f.recordFiles > 0
 
 // ── the checks ─────────────────────────────────────────────────────────────
 
@@ -81,9 +132,11 @@ export type CheckCode =
   | 'unrecognized_events'
   | 'false_fire_skill_call'
   | 'false_fire_denied_skill_call'
+  | 'false_fire_direct_read'
   | 'false_fire_helper'
   | 'false_fire_record'
   | 'skill_not_loaded'
+  | 'record_without_load'
   | 'record_missing'
   | 'record_unexpected'
   | 'record_invalid'
@@ -105,6 +158,8 @@ export interface CheckInput {
   records: readonly RecordFile[]
   /** Accepted `execution_mode` values on skill-condition records. Default: every mode but `unrecorded`. */
   expectedExecutionModes?: readonly string[]
+  /** The installed SKILL.md. Without it a direct read cannot be verified and never credits a fire. */
+  skillText?: string
 }
 
 export interface CheckResult {
@@ -118,7 +173,7 @@ export interface CheckResult {
 export function runChecks(input: CheckInput): CheckResult {
   const { method, condition, kind, events, records } = input
   const failures: CheckFailure[] = []
-  const fire = fireEvidence(method, events, records)
+  const fire = fireEvidence(method, events, records, input.skillText)
   const validRecords: string[] = []
   const fail = (code: CheckCode, message: string) => failures.push({ code, message })
 
@@ -135,6 +190,8 @@ export function runChecks(input: CheckInput): CheckResult {
     // `node scripts/record.mjs` is noise (kept as evidence). The baseline pass criterion is rubric-only.
     const strictSilence = kind === 'negative'
     if (fire.skillCalled && (strictSilence || condition === 'skill')) fail('false_fire_skill_call', `skill tool called for ${method}`)
+    // Negatives stay strict: opening the skill file at all is a fire, whatever the read returned.
+    if (fire.skillFileRead && strictSilence) fail('false_fire_direct_read', `SKILL.md for ${method} was read`)
     if (fire.deniedSkillCall && strictSilence) fail('false_fire_denied_skill_call', 'model called the unavailable skill tool (attempted fire)')
     if (fire.helperInvoked && condition === 'skill') fail('false_fire_helper', 'record helper invoked')
     if (fire.recordFiles > 0) fail('false_fire_record', `${fire.recordFiles} file(s) in the records dir: ${records.map((r) => r.name).join(', ')}`)
@@ -142,7 +199,12 @@ export function runChecks(input: CheckInput): CheckResult {
   }
 
   // Skill condition on a positive fixture: the method must fire and leave a valid record.
-  if (!fire.skillLoaded) fail('skill_not_loaded', `no completed skill call loaded ${method}`)
+  // Fired = the skill tool loaded it, or the agent read the installed SKILL.md and got the body.
+  if (fire.fireBasis === null) {
+    fail('skill_not_loaded', `no completed skill call and no complete read of SKILL.md loaded ${method}`)
+    // A record with no skill text ever seen means the model guessed the contract; it does not count as a fire.
+    if (records.length > 0) fail('record_without_load', 'a record exists but the skill text never reached the model')
+  }
   if (!fire.helperInvoked) fail('helper_not_invoked', 'no bash call invoked scripts/record.mjs')
   if (records.length === 0) fail('record_missing', 'records dir is empty')
 
@@ -205,11 +267,13 @@ export function classifyHostOutcome(
   spawn: Pick<SpawnResult, 'exitCode' | 'timedOut' | 'aborted'>,
   events: EventSummary,
   method: string,
+  skillText?: string,
 ): HostOutcome {
   if (spawn.aborted) return 'interrupted'
   if (spawn.timedOut) return 'timeout'
   if (spawn.exitCode !== 0) {
-    return events.skillCalls.some((c) => isSkillContentLoad(c, method)) ? 'host_crash' : 'infra_error'
+    const loaded = events.skillCalls.some((c) => isSkillContentLoad(c, method)) || events.toolUses.some((c) => isSkillBodyRead(c, method, skillText))
+    return loaded ? 'host_crash' : 'infra_error'
   }
   return 'completed'
 }

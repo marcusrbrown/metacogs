@@ -284,6 +284,30 @@ describe('run outcomes (fake host)', () => {
     expect(m.isolation?.expectedSkills).toEqual(['demo'])
   })
 
+  test('a complete direct read of the installed SKILL.md fires with fire_basis direct_read; the skill tool records skill_tool', async () => {
+    const skillText = readFileSync(join(repo.dir, 'skills', 'demo', 'SKILL.md'), 'utf8')
+    const numbered = skillText.split('\n').map((l, i) => `${i + 1}: ${l}`).join('\n')
+    const directRead = toolUse('read', { status: 'completed', input: { filePath: '/ws/.agents/skills/demo/SKILL.md' }, output: `<content>\n${numbered}\n</content>` })
+    const during = (req: HostRunRequest) => {
+      const dir = req.env.METACOGS_RECORDS_DIR!
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(join(dir, recordFilename(SAMPLE_RECORD)), JSON.stringify(SAMPLE_RECORD))
+    }
+    const direct = campaign([planOne('dev', 'skill', 'd1')], fakeHost({ stdout: [directRead, helperEvent, textEvents].join('\n'), during }))
+    const res = await runCampaign(direct)
+    expect(res.results[0]).toMatchObject({ status: 'completed', outcome: 'pass' })
+    expect(manifestOf(direct.campaignDir, res.results[0]!.runId).fire_basis).toBe('direct_read')
+    const tool = campaign([planOne('dev', 'skill', 'd1')], fakeHost({ stdout: [skillLoadEvent, helperEvent, textEvents].join('\n'), during }))
+    const res2 = await runCampaign(tool)
+    expect(manifestOf(tool.campaignDir, res2.results[0]!.runId).fire_basis).toBe('skill_tool')
+    // A record with no skill text loaded at all is not a fire.
+    const guessed = campaign([planOne('dev', 'skill', 'd1')], fakeHost({ stdout: [helperEvent, textEvents].join('\n'), during }))
+    const res3 = await runCampaign(guessed)
+    expect(res3.results[0]).toMatchObject({ outcome: 'fail' })
+    expect(res3.results[0]!.reasons).toContain('record_without_load')
+    expect(manifestOf(guessed.campaignDir, res3.results[0]!.runId).fire_basis).toBeNull()
+  })
+
   test('any isolation check failing → non_isolated, excluded from the denominator, and reported', async () => {
     const res = await runCampaign(campaign([planOne('dev', 'baseline')], fakeHost({ shownSkills: ['author-private-skill'] })))
     expect(res.results[0]).toMatchObject({ status: 'non_isolated', outcome: 'non_isolated', reasons: ['available_skills_exact'] })

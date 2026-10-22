@@ -512,6 +512,15 @@ export function writeReport(repoRoot: string, report: RedReport): string {
 /** Dev fixtures: pass at least this fraction of attempted runs (4/5 at N=5). Negatives: no false fire. */
 export const DEV_BAR = { min_pass_fraction: 0.8, max_negative_false_fires: 0 } as const
 
+/** Runs per way the skill text reached the model. Negatives and non-fires are `none`. */
+export interface FireBasisTally {
+  skill_tool: number
+  direct_read: number
+  none: number
+}
+
+const emptyFireBasis = (): FireBasisTally => ({ skill_tool: 0, direct_read: 0, none: 0 })
+
 export interface DevFixtureReport {
   id: string
   kind: 'dev' | 'negative'
@@ -527,6 +536,8 @@ export interface DevFixtureReport {
   criteria: Record<string, CriterionTally>
   /** Deterministic-check failure codes (a closed vocabulary) → run count. */
   check_codes: Record<string, number>
+  /** How the skill fired in the runs counted above (infra_error and non_isolated attempts excluded). */
+  fire_basis: FireBasisTally
   meets_dev_bar: boolean
 }
 
@@ -559,6 +570,8 @@ export interface DevReport {
     dev_fixtures_meeting_bar: number
     negative_fixtures: number
     negative_false_fires: number
+    /** Summed over the dev (positive) fixtures. */
+    fire_basis: FireBasisTally
     passes_dev_bar: boolean
   }
 }
@@ -605,6 +618,7 @@ export function buildDevReport(input: DevReportInput): DevReport {
       const taxonomy = emptyTaxonomy()
       const criteria: Record<string, CriterionTally> = {}
       const checkCodes: Record<string, number> = {}
+      const fireBasis = emptyFireBasis()
       for (const { manifest } of entry.runs) {
         const bucket = bucketOf(manifest)
         if (bucket === 'incomplete') {
@@ -612,6 +626,7 @@ export function buildDevReport(input: DevReportInput): DevReport {
           continue
         }
         outcomes[bucket] += 1
+        if (bucket !== 'infra_error' && bucket !== 'non_isolated') fireBasis[manifest.fire_basis ?? 'none'] += 1
         addToTaxonomy(taxonomy, bucket)
         addToTaxonomy(totalsTaxonomy, bucket)
         wall += manifest.wall_clock_ms ?? 0
@@ -649,6 +664,7 @@ export function buildDevReport(input: DevReportInput): DevReport {
         taxonomy,
         criteria,
         check_codes: Object.fromEntries(Object.entries(checkCodes).sort(([a], [b]) => (a < b ? -1 : 1))),
+        fire_basis: fireBasis,
         meets_dev_bar: meets,
       }
     })
@@ -710,6 +726,7 @@ export function buildDevReport(input: DevReportInput): DevReport {
       dev_fixtures_meeting_bar: devMeeting,
       negative_fixtures: negatives.length,
       negative_false_fires: falseFires,
+      fire_basis: dev.reduce((t, f) => ({ skill_tool: t.skill_tool + f.fire_basis.skill_tool, direct_read: t.direct_read + f.fire_basis.direct_read, none: t.none + f.fire_basis.none }), emptyFireBasis()),
       passes_dev_bar: dev.length > 0 && negatives.length > 0 && devMeeting === dev.length && negatives.every((f) => f.meets_dev_bar),
     },
   }
@@ -764,10 +781,18 @@ export const DEV_REPORT_SCHEMA: Schema = obj({
       taxonomy: taxonomyShape(),
       criteria: { t: 'rec', keys: /^[A-Z]{2}\d+$/, of: obj({ pass: INT, fail_quoted: INT, fail_absent: INT }) },
       check_codes: { t: 'rec', keys: /^[a-z][a-z_]*$/, of: INT },
+      fire_basis: obj({ skill_tool: INT, direct_read: INT, none: INT }),
       meets_dev_bar: BOOL,
     }),
   ),
-  dev: obj({ dev_fixtures: INT, dev_fixtures_meeting_bar: INT, negative_fixtures: INT, negative_false_fires: INT, passes_dev_bar: BOOL }),
+  dev: obj({
+    dev_fixtures: INT,
+    dev_fixtures_meeting_bar: INT,
+    negative_fixtures: INT,
+    negative_false_fires: INT,
+    fire_basis: obj({ skill_tool: INT, direct_read: INT, none: INT }),
+    passes_dev_bar: BOOL,
+  }),
 })
 
 /** Empty when `report` has exactly the allowlisted keys with allowlisted value shapes. */

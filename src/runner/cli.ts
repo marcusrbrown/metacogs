@@ -410,7 +410,7 @@ function devReportMain(
   }
   const path = writeDevReport(c.repoRoot, report)
   a.out(`wrote ${path.slice(c.repoRoot.length + 1)}`)
-  for (const f of report.fixtures) a.out(`  ${f.kind}/${f.id}: ${f.kind === 'dev' ? `pass ${f.pass_over_total}${f.meets_dev_bar ? ' · meets dev bar' : ''}` : `false fires ${f.fail}/${f.attempted}`}`)
+  for (const f of report.fixtures) a.out(`  ${f.kind}/${f.id}: ${f.kind === 'dev' ? `pass ${f.pass_over_total} (skill tool ${f.fire_basis.skill_tool} · direct read ${f.fire_basis.direct_read} · none ${f.fire_basis.none})${f.meets_dev_bar ? ' · meets dev bar' : ''}` : `false fires ${f.fail}/${f.attempted}`}`)
   a.out(`passes_dev_bar=${report.dev.passes_dev_bar} (${report.dev.dev_fixtures_meeting_bar}/${report.dev.dev_fixtures} dev fixtures; ${report.dev.negative_false_fires} negative false fires)`)
   return EXIT.OK
 }
