@@ -12,6 +12,7 @@
     "test": "bun test --pass-with-no-tests",
     "generate": "bun src/generate/bundle-helpers.ts",
     "generate:check": "bun src/generate/check.ts",
+    "eval": "bun src/runner/cli.ts",
     "matrix:check": "echo 'matrix:check: placeholder, implemented in unit 8' && exit 0",
     "scan:secrets": "echo 'scan:secrets: placeholder, implemented in units 2/5' && exit 0"
   },

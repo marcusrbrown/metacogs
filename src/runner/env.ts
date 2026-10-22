@@ -25,7 +25,7 @@ export interface Fixture {
   configPath: string
   /** `git init`'d workspace; the run's cwd. */
   workspace: string
-  /** Where the runner would put records; inside the fixture, outside the workspace. */
+  /** `METACOGS_RECORDS_DIR` target: inside the workspace; created lazily by the helper, never pre-created. */
   recordsDir: string
 }
 
@@ -36,6 +36,7 @@ export function createFixture(prefix = 'metacogs-spike-'): Fixture {
     mkdirSync(full, { recursive: true })
     return full
   }
+  const workspace = dir('workspace')
   return {
     root,
     home: dir('home'),
@@ -46,8 +47,8 @@ export function createFixture(prefix = 'metacogs-spike-'): Fixture {
     tmp: dir('tmp'),
     opencodeConfigDir: dir('opencode-config-dir'),
     configPath: join(root, 'opencode.json'),
-    workspace: dir('workspace'),
-    recordsDir: dir('records'),
+    workspace,
+    recordsDir: join(workspace, '.metacogs-records'),
   }
 }
 
@@ -71,6 +72,8 @@ export interface BuildChildEnvInput {
   config: Record<string, unknown>
   /** Which injection channel(s) to use. Default: file. */
   injection?: 'file' | 'content' | 'both'
+  /** Sets `METACOGS_RECORDS_DIR`, the only `METACOGS_*` variable the child may see. */
+  withRecordsDir?: boolean
   /** Test-only additions (e.g. a deliberately planted env var). */
   extra?: Record<string, string>
 }
@@ -82,7 +85,7 @@ const PARENT_PATH = process.env.PATH ?? '/usr/bin:/bin:/usr/sbin:/sbin'
  * (when the injection includes a file) so env and file cannot drift.
  */
 export function buildChildEnv(input: BuildChildEnvInput): Record<string, string> {
-  const { fixture, config, injection = 'file', extra } = input
+  const { fixture, config, injection = 'file', withRecordsDir = false, extra } = input
   const serialized = JSON.stringify(config)
   const env: Record<string, string> = {
     PATH: PARENT_PATH,
@@ -108,6 +111,7 @@ export function buildChildEnv(input: BuildChildEnvInput): Record<string, string>
     OPENCODE_DISABLE_DEFAULT_PLUGINS: '1',
     BUN_INSTALL_CACHE_DIR: bunInstallCacheDir(),
   }
+  if (withRecordsDir) env.METACOGS_RECORDS_DIR = fixture.recordsDir
   if (injection === 'file' || injection === 'both') {
     writeFileSync(fixture.configPath, serialized, { mode: 0o600 })
     env.OPENCODE_CONFIG = fixture.configPath

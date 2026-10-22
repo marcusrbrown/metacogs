@@ -1,0 +1,549 @@
+/**
+ * Campaign execution: plan interleaved runs, execute each in an isolated
+ * workspace, classify outcomes, retry `infra_error`, and write manifests.
+ *
+ * Orchestration only. Policy lives in the modules it calls: env/workspace
+ * (what the child can see), isolation (is the run admissible), checks
+ * (did it pass), prereg (may it run at all), manifest (what we record).
+ */
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+import { checkBudget, classifyHostOutcome, type CheckFailure, listRecordFiles, runChecks } from './checks'
+import { destroyFixture } from './env'
+import { analyzeEvents, type EventSummary } from './events'
+import { checkDebugConfig, checkIsolation, type IsolationEvidence } from './isolation'
+import {
+  type ArtifactRef,
+  type FinalStatus,
+  MANIFEST_SCHEMA_VERSION,
+  type Needle,
+  type RunManifest,
+  type RunOutcomeName,
+  scanForLeaks,
+  writeManifest,
+} from './manifest'
+import { debugConfig, OPENCODE_PIN, runArgv, type SpawnResult, spawnCapture } from './opencode'
+import { type LoadedFixture, type PreregVerification } from './prereg'
+import {
+  PLACEHOLDER_API_KEY,
+  type RecordedRequest,
+  SPIKE_MODEL_ID,
+  SPIKE_PROVIDER_ID,
+  skillCallStep,
+  type ScriptedStep,
+  startRecordingProxy,
+  startScriptedProvider,
+} from './scripted-provider'
+import { type Condition, createRunWorkspace, type FixtureKind, type RunWorkspace, sha256 } from './workspace'
+
+export type ProviderMode = 'scripted' | 'live'
+export const SCRIPTED_MODEL = `${SPIKE_PROVIDER_ID}/${SPIKE_MODEL_ID}`
+
+// ── planning ───────────────────────────────────────────────────────────────
+
+export interface PlannedRun {
+  fixture: { id: string; kind: FixtureKind; text: string; hash: string }
+  condition: Condition
+  /** 1-based repetition for this fixture and condition. */
+  index: number
+}
+
+export interface PlanInput {
+  mode: 'red' | 'green'
+  fixtures: { dev: readonly LoadedFixture[]; negative: readonly LoadedFixture[]; heldout: readonly LoadedFixture[] }
+  runsPerCondition: number
+  /** Restrict to fixtures with this id (single-run debugging). */
+  onlyFixture?: string
+  /** GREEN only: also run dev fixtures under the skill condition (dev-regression check). */
+  includeDev?: boolean
+}
+
+/**
+ * RED: baseline on dev and negative fixtures. GREEN: baseline and skill on
+ * held-out, skill on negatives (false-fire gate), optionally skill on dev.
+ * Rounds interleave conditions and flip which goes first per fixture, so
+ * neither condition systematically runs earlier (provider drift hits both).
+ */
+export function planRuns(input: PlanInput): PlannedRun[] {
+  const groups: { fixture: LoadedFixture; kind: FixtureKind; conditions: Condition[] }[] = []
+  const add = (fixtures: readonly LoadedFixture[], kind: FixtureKind, conditions: Condition[]) => {
+    for (const fixture of fixtures) groups.push({ fixture, kind, conditions })
+  }
+  if (input.mode === 'red') {
+    add(input.fixtures.dev, 'dev', ['baseline'])
+    add(input.fixtures.negative, 'negative', ['baseline'])
+  } else {
+    add(input.fixtures.heldout, 'heldout', ['baseline', 'skill'])
+    add(input.fixtures.negative, 'negative', ['skill'])
+    if (input.includeDev) add(input.fixtures.dev, 'dev', ['skill'])
+  }
+  const selected = input.onlyFixture ? groups.filter((g) => g.fixture.id === input.onlyFixture) : groups
+  if (input.onlyFixture && selected.length === 0) {
+    throw new Error(`no fixture with id "${input.onlyFixture}" in the ${input.mode} plan`)
+  }
+  const plan: PlannedRun[] = []
+  for (let round = 1; round <= input.runsPerCondition; round += 1) {
+    selected.forEach((g, gi) => {
+      const ordered = (round + gi) % 2 === 0 ? g.conditions : [...g.conditions].reverse()
+      for (const condition of ordered) {
+        plan.push({
+          fixture: { id: g.fixture.id, kind: g.kind, text: g.fixture.text, hash: g.fixture.hash },
+          condition,
+          index: round,
+        })
+      }
+    })
+  }
+  return plan
+}
+
+// ── host seam ──────────────────────────────────────────────────────────────
+
+export interface HostRunRequest {
+  argv: string[]
+  cwd: string
+  env: Record<string, string>
+  timeoutMs: number
+  signal: AbortSignal
+  /** Live array filled by the provider stub/proxy. Real hosts ignore it; test hosts may append to it. */
+  requests: RecordedRequest[]
+  /** The generated config the child was given. */
+  config: Record<string, unknown>
+}
+
+export interface Host {
+  run(request: HostRunRequest): Promise<SpawnResult>
+  /** Output of `opencode debug config`, or `undefined` if it could not be obtained. */
+  debugConfig(request: { cwd: string; env: Record<string, string>; config: Record<string, unknown> }): Promise<unknown>
+}
+
+export const realHost: Host = {
+  run: (r) => spawnCapture(r.argv, { cwd: r.cwd, env: r.env, timeoutMs: r.timeoutMs, signal: r.signal }),
+  debugConfig: async (r) => (await debugConfig({ cwd: r.cwd, env: r.env, timeoutMs: 120_000 })).json,
+}
+
+// ── judge hook (Unit 6) ────────────────────────────────────────────────────
+
+export interface JudgeInput {
+  method: string
+  condition: Condition
+  fixture: PlannedRun['fixture']
+  finalAnswer: string
+  recordJson: string[]
+}
+
+export type JudgeVerdict = { verdict: 'pass' | 'fail' } | { verdict: 'judge_error'; detail: string }
+
+/** Unit 6 implements this. Absent a judge, positive-fixture outcomes are deterministic-only and marked `pending-judge`. */
+export type JudgeHook = (input: JudgeInput) => Promise<JudgeVerdict>
+
+// ── campaign ───────────────────────────────────────────────────────────────
+
+export interface CampaignInput {
+  repoRoot: string
+  method: string
+  mode: 'red' | 'green'
+  providerMode: ProviderMode
+  verification: PreregVerification
+  campaignId: string
+  /** `<out>/<campaignId>`; one subdirectory per run. */
+  campaignDir: string
+  runs: readonly PlannedRun[]
+  host?: Host
+  /** Scripted mode: the model's turns for a run. Default: baseline answers; skill condition loads the skill. */
+  scriptFor?: (run: PlannedRun) => readonly ScriptedStep[]
+  finalText?: string
+  judge?: JudgeHook
+  signal?: AbortSignal
+  /** Default 2. */
+  maxInfraRetries?: number
+  log?: (line: string) => void
+}
+
+export interface RunResult {
+  runId: string
+  runDir: string
+  fixtureId: string
+  kind: FixtureKind
+  condition: Condition
+  index: number
+  attempt: number
+  status: FinalStatus
+  outcome?: RunOutcomeName
+  reasons: string[]
+}
+
+export type CampaignAbort = 'interrupted' | 'credential_leak'
+
+export interface Tally {
+  attempted: number
+  pass: number
+  fail: number
+  infra_error: number
+  non_isolated: number
+}
+
+export interface CampaignResult {
+  /** The final attempt of each planned run that got that far. */
+  results: RunResult[]
+  /** Every attempt that ended in `infra_error`, retries included: reported, never in a denominator. */
+  infraErrors: RunResult[]
+  aborted?: CampaignAbort
+  tallies: Record<string, Tally>
+  summaryPath: string
+}
+
+export class CredentialLeakError extends Error {
+  constructor(readonly runId: string, readonly labels: string[]) {
+    super(`credential_leak in run ${runId}: ${labels.join(', ')}`)
+    this.name = 'CredentialLeakError'
+  }
+}
+
+const LEAK_NEEDLES: Needle[] = [{ label: 'scripted_placeholder_api_key', value: PLACEHOLDER_API_KEY }]
+
+export function tallyResults(results: readonly RunResult[], infraErrors: readonly RunResult[] = []): Record<string, Tally> {
+  const tallies: Record<string, Tally> = {}
+  const tallyFor = (r: RunResult) => (tallies[`${r.kind}/${r.fixtureId}/${r.condition}`] ??= { attempted: 0, pass: 0, fail: 0, infra_error: 0, non_isolated: 0 })
+  for (const r of results) {
+    const t = tallyFor(r)
+    if (r.outcome === 'pass') t.pass += 1
+    else if (r.outcome === 'fail') t.fail += 1
+    else if (r.outcome === 'non_isolated') t.non_isolated += 1
+    // Denominator: attempted = pass + fail. infra_error and non_isolated are reported, not counted.
+    t.attempted = t.pass + t.fail
+  }
+  for (const r of infraErrors) tallyFor(r).infra_error += 1
+  return tallies
+}
+
+export async function runCampaign(c: CampaignInput): Promise<CampaignResult> {
+  mkdirSync(c.campaignDir, { recursive: true, mode: 0o700 })
+  const retries = c.maxInfraRetries ?? 2
+  const results: RunResult[] = []
+  const infraErrors: RunResult[] = []
+  let aborted: CampaignAbort | undefined
+
+  outer: for (const [i, run] of c.runs.entries()) {
+    for (let attempt = 1; attempt <= 1 + retries; attempt += 1) {
+      let result: RunResult
+      try {
+        result = await executeAttempt(c, run, i + 1, attempt)
+      } catch (e) {
+        if (e instanceof CredentialLeakError) {
+          aborted = 'credential_leak'
+          c.log?.(`ABORT ${e.message}`)
+          break outer
+        }
+        throw e
+      }
+      c.log?.(`${result.runId}: ${result.status}${result.outcome ? ` → ${result.outcome}` : ''}${result.reasons.length ? ` (${result.reasons.join(', ')})` : ''}`)
+      if (result.status === 'interrupted') {
+        results.push(result)
+        aborted = 'interrupted'
+        break outer
+      }
+      // Only the final attempt of a planned run counts; an infra_error is retried.
+      if (result.status === 'infra_error') {
+        infraErrors.push(result)
+        if (attempt <= retries) continue
+      }
+      results.push(result)
+      break
+    }
+  }
+
+  const tallies = tallyResults(results, infraErrors)
+  const summaryPath = join(c.campaignDir, 'summary.json')
+  writeFileSync(
+    summaryPath,
+    `${JSON.stringify(
+      {
+        campaign_id: c.campaignId,
+        method: c.method,
+        mode: c.mode,
+        provider_mode: c.providerMode,
+        aborted: aborted ?? null,
+        planned_runs: c.runs.length,
+        prereg_runs_per_condition: c.verification.prereg.runs_per_condition,
+        tallies,
+        infra_errors: infraErrors.map(({ runId, reasons }) => ({ run_id: runId, reasons })),
+        runs: results.map(({ runId, status, outcome, reasons }) => ({ run_id: runId, status, outcome: outcome ?? null, reasons })),
+      },
+      null,
+      2,
+    )}\n`,
+    { mode: 0o600 },
+  )
+  return { results, infraErrors, aborted, tallies, summaryPath }
+}
+
+// ── one attempt ────────────────────────────────────────────────────────────
+
+const pad = (n: number) => String(n).padStart(3, '0')
+
+function defaultScript(run: PlannedRun, method: string): readonly ScriptedStep[] {
+  return run.condition === 'skill' && run.fixture.kind !== 'negative' ? [skillCallStep(method)] : []
+}
+
+/**
+ * The `available_skills_exact` check needs a tool-capable request. When the run
+ * ended abnormally before any was made, that is "unobserved", not a violation:
+ * otherwise a hang would be excluded as `non_isolated` instead of counted as FAIL.
+ */
+function isolationViolated(evidence: IsolationEvidence, completed: boolean): boolean {
+  const unobserved = !evidence.skillListObserved && !completed
+  return evidence.checks.some((c) => !c.passed && !(unobserved && c.name === 'available_skills_exact'))
+}
+
+async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, attempt: number): Promise<RunResult> {
+  const { verification } = c
+  const prereg = verification.prereg
+  const host = c.host ?? realHost
+  const runId = `${pad(seq)}-${run.fixture.kind}-${run.fixture.id}-${run.condition}-r${run.index}${attempt > 1 ? `-a${attempt}` : ''}`
+  const runDir = join(c.campaignDir, runId)
+  mkdirSync(runDir, { recursive: true, mode: 0o700 })
+
+  let model: string
+  if (c.providerMode === 'scripted') {
+    model = SCRIPTED_MODEL
+  } else {
+    model = prereg.agent_model_id
+    if (!model.startsWith('opencode/')) {
+      throw new Error(`live mode only supports free-tier opencode/* models (prereg pins ${model}); no provider key is ever forwarded`)
+    }
+  }
+
+  const manifest: RunManifest = {
+    schema_version: MANIFEST_SCHEMA_VERSION,
+    run_id: runId,
+    campaign_id: c.campaignId,
+    status: 'running',
+    reasons: [],
+    verdict_basis: 'deterministic',
+    method: c.method,
+    condition: run.condition,
+    fixture: { id: run.fixture.id, kind: run.fixture.kind, hash: run.fixture.hash },
+    attempt,
+    skill: null,
+    prereg: {
+      tag: verification.shas.tag,
+      tag_object_sha: verification.shas.tagObjectSha,
+      commit_sha: verification.shas.commitSha,
+      blob_sha: verification.shas.blobSha,
+      epoch: prereg.epoch,
+    },
+    provider_mode: c.providerMode,
+    opencode: { package: 'opencode-ai', version: OPENCODE_PIN },
+    model: { pinned: model, returned: [] },
+    isolation: null,
+    config: { path: '', sha256: '' },
+    usage: null,
+    wall_clock_ms: null,
+    tool_call_count: null,
+    host_errors: [],
+    records: [],
+    check_failures: [],
+    artifacts: {},
+    started_at: new Date().toISOString(),
+    finished_at: null,
+  }
+  // Written as `running` before anything launches, so a crash leaves a visible stale manifest.
+  writeManifest(runDir, manifest)
+
+  const result = (status: FinalStatus, outcome: RunOutcomeName | undefined): RunResult => ({
+    runId,
+    runDir,
+    fixtureId: run.fixture.id,
+    kind: run.fixture.kind,
+    condition: run.condition,
+    index: run.index,
+    attempt,
+    status,
+    outcome,
+    reasons: manifest.reasons,
+  })
+  const settle = (status: FinalStatus, outcome: RunOutcomeName | undefined, reasons: string[]): RunResult => {
+    manifest.status = status
+    manifest.outcome = outcome
+    manifest.reasons = reasons
+    manifest.finished_at = new Date().toISOString()
+    return result(status, outcome)
+  }
+  const interrupted = (): RunResult => {
+    settle('interrupted', undefined, ['interrupted'])
+    writeManifest(runDir, manifest)
+    return result('interrupted', undefined)
+  }
+
+  if (c.signal?.aborted) return interrupted()
+
+  const server =
+    c.providerMode === 'scripted'
+      ? startScriptedProvider({ steps: (c.scriptFor ?? ((r) => defaultScript(r, c.method)))(run), finalText: c.finalText })
+      : startRecordingProxy()
+  let workspace: RunWorkspace
+  try {
+    workspace = createRunWorkspace({
+      repoRoot: c.repoRoot,
+      method: c.method,
+      condition: run.condition,
+      fixtureId: run.fixture.id,
+      fixtureText: run.fixture.text,
+      provider: c.providerMode === 'scripted' ? { kind: 'scripted', url: server.url } : { kind: 'live', recordingProxyUrl: server.url },
+      model,
+    })
+  } catch (e) {
+    server.stop()
+    throw e
+  }
+  const signal = c.signal ?? new AbortController().signal
+
+  try {
+    manifest.config = { path: workspace.fixture.configPath, sha256: sha256(JSON.stringify(workspace.config)) }
+    manifest.skill = workspace.skill ? { sha256: workspace.skill.sha256, tree_sha: verification.shas.skillTreeSha ?? null } : null
+    writeManifest(runDir, manifest)
+
+    const base = { cwd: workspace.fixture.workspace, env: workspace.env, config: workspace.config }
+    const evidenceFor = (requests: RecordedRequest[], stdout: string, stderr: string, debugConfigJson: unknown) =>
+      checkIsolation({
+        expectedSkills: workspace.expectedSkills,
+        requests,
+        stdout,
+        stderr,
+        debugConfigJson,
+        generatedConfig: workspace.config,
+        childEnv: workspace.env,
+        decoys: workspace.decoys.needles,
+      })
+
+    // Effective config first: if something outside the generated file contributes, do not spend a model request.
+    const debugJson = await host.debugConfig(base)
+    if (signal.aborted) return interrupted()
+    const dbg = debugJson === undefined ? { passed: false } : checkDebugConfig(debugJson, workspace.config)
+    if (!dbg.passed) {
+      manifest.isolation = evidenceFor([], '', '', debugJson)
+      return finish(settle('non_isolated', 'non_isolated', ['debug_config_generated_only']))
+    }
+
+    const spawn = await host.run({
+      ...base,
+      argv: runArgv(model, run.fixture.text),
+      timeoutMs: prereg.per_run_timeout_ms,
+      signal,
+      requests: server.requests,
+    })
+    if (c.providerMode === 'live') await Bun.sleep(50) // let the proxy's response scan settle
+
+    if (spawn.aborted) return interrupted()
+
+    const events: EventSummary = analyzeEvents(spawn.stdout)
+    const hostOutcome = classifyHostOutcome(spawn, events, c.method)
+    const records = listRecordFiles(workspace.fixture.recordsDir)
+    const evidence = evidenceFor(server.requests, spawn.stdout, spawn.stderr, debugJson)
+
+    manifest.isolation = evidence
+    manifest.usage = events.usage
+    manifest.wall_clock_ms = spawn.wallMs
+    manifest.tool_call_count = events.toolUses.length
+    manifest.host_errors = events.hostErrors
+    manifest.records = records.map((r) => ({ name: r.name, sha256: sha256(r.content) }))
+    manifest.model.returned = [...new Set(server.requests.filter((r) => r.hasTools).map((r) => r.returnedModel).filter((m): m is string => Boolean(m)))]
+
+    const artifacts = {
+      'stdout.jsonl': spawn.stdout,
+      'stderr.txt': spawn.stderr,
+      'requests.json': JSON.stringify(server.requests.map((r) => r.body), null, 1),
+    }
+    const artifactRefs: Record<string, ArtifactRef> = {}
+    for (const [file, text] of Object.entries(artifacts)) {
+      writeFileSync(join(runDir, file), text, { mode: 0o600 })
+      artifactRefs[file] = { file, sha256: sha256(text), bytes: Buffer.byteLength(text) }
+    }
+    manifest.artifacts = artifactRefs
+
+    // Classification, in precedence order.
+    let final: RunResult
+    if (hostOutcome === 'infra_error') {
+      final = settle('infra_error', 'infra_error', ['host_exit_before_skill_load'])
+    } else if (isolationViolated(evidence, hostOutcome === 'completed')) {
+      final = settle('non_isolated', 'non_isolated', evidence.checks.filter((k) => !k.passed).map((k) => k.name))
+    } else if (hostOutcome === 'timeout') {
+      final = settle('timeout', 'fail', ['timeout'])
+    } else if (hostOutcome === 'host_crash') {
+      final = settle('host_crash', 'fail', ['host_exit_after_skill_load'])
+    } else {
+      const breach = checkBudget(events, prereg.budget)
+      if (breach) {
+        final = settle('budget_exceeded', 'fail', [`budget_${breach.what}`])
+      } else {
+        const checks = runChecks({
+          method: c.method,
+          condition: run.condition,
+          kind: run.fixture.kind,
+          events,
+          records,
+          expectedExecutionModes: prereg.expected_execution_modes,
+        })
+        manifest.check_failures = checks.failures
+        const reasons = checks.failures.map((f: CheckFailure) => f.code)
+        const needsJudge = run.fixture.kind !== 'negative'
+        if (!checks.ok) {
+          final = settle('completed', 'fail', reasons)
+        } else if (needsJudge && c.judge) {
+          const verdict = await c.judge({
+            method: c.method,
+            condition: run.condition,
+            fixture: run.fixture,
+            finalAnswer: events.assistantText,
+            recordJson: records.map((r) => r.content),
+          })
+          manifest.verdict_basis = 'judge'
+          final =
+            verdict.verdict === 'pass'
+              ? settle('completed', 'pass', [])
+              : settle('completed', 'fail', verdict.verdict === 'judge_error' ? ['judge_error'] : ['judge_fail'])
+        } else {
+          if (needsJudge) manifest.verdict_basis = 'pending-judge'
+          final = settle('completed', 'pass', [])
+        }
+      }
+    }
+    return finish(final)
+  } finally {
+    server.stop()
+    destroyFixture(workspace.fixture)
+  }
+
+  /** Credential scan, then the final manifest write. Runs before the workspace is deleted. */
+  function finish(final: RunResult): RunResult {
+    const artifactTexts: Record<string, string> = {}
+    for (const file of Object.keys(manifest.artifacts)) {
+      artifactTexts[file] = readFileSync(join(runDir, file), 'utf8')
+    }
+    const findings = scanForLeaks({
+      needles: LEAK_NEEDLES,
+      manifestJson: JSON.stringify(manifest),
+      artifacts: artifactTexts,
+      dirs: [workspace.fixture.workspace],
+    })
+    if (findings.length) {
+      // Purge everything that could carry the key, keep only a sanitized manifest.
+      for (const file of Object.keys(manifest.artifacts)) rmSync(join(runDir, file), { force: true })
+      manifest.artifacts = {}
+      manifest.records = []
+      manifest.host_errors = []
+      manifest.check_failures = []
+      manifest.isolation = null
+      manifest.status = 'credential_leak'
+      manifest.outcome = undefined
+      manifest.reasons = [...new Set(findings.map((f) => `credential_leak:${f.label}:${f.where.startsWith('manifest') ? 'manifest' : f.where.includes('::') ? 'workspace' : 'artifact'}`))]
+      manifest.finished_at = new Date().toISOString()
+      writeManifest(runDir, manifest)
+      throw new CredentialLeakError(runId, findings.map((f) => f.label))
+    }
+    writeManifest(runDir, manifest)
+    return final
+  }
+}

@@ -221,3 +221,48 @@ Verdict: **GO** for Unit 4 on macOS with the amendments. No plan reopening requi
 - Live isolation test uses only a trivial prompt, so it shows nothing was *offered*, not what a live model would *do* with a leaked instruction. The scripted control covers detection, not live behavior.
 - Event schema is undocumented and may change in any release; the pin and `isolation.test.ts` are the tripwire.
 - Artifacts (raw stdout/stderr/request bodies) are written to a temp dir (`METACOGS_SPIKE_ARTIFACTS` to keep). They contain only synthetic canaries and paths; real runs must still go through the allowlist projection before anything lands in `evals/reports/`.
+
+# Runner (Unit 4)
+
+`bun run eval <red|green> --method <m> [--runs N] [--provider scripted|live] [--fixture <id>] [--include-dev] [--repo <dir>] [--out <dir>]`. Code: `src/runner/`. Judge and report generation are Unit 6; `JudgeHook` in `run.ts` is the seam.
+
+Promoted from the spike (the spike suite re-exports them): the env allowlist (`env.ts`), scripted provider and recording proxy (`scripted-provider.ts`), spawn/availability (`opencode.ts`), event parsing (`events.ts`), model-visible-prompt instruments (`isolation.ts`), permission/config generation and `gitInit` (`workspace.ts`). The spike's `OPENCODE_PIN` and allowlist references above now live in `src/runner/env.ts`.
+
+## Live-mode isolation instrument: recording proxy, not stdout-only
+
+**Decision: live runs go through the recording proxy** (`startRecordingProxy` in `src/runner/scripted-provider.ts`). `provider.opencode.options.baseURL` points at a local pass-through to `https://opencode.ai/zen/v1`.
+
+Why:
+
+- The plan's isolation criterion is about what the **model was shown**. In 1.19.4 `<available_skills>` is in the system prompt, and no stdout event carries it. Stdout-only leaves `debug agent`/`debug skill` as the only fallback, and the Unit 1 README marks that as derived, not observed.
+- The proxy gives live runs the same evidence as the scripted stub: the same `available_skills_exact` check, and the same decoy scan over request bodies. One code path, so a RED/GREEN run and a scripted test cannot disagree about what "isolated" means.
+- It was proven live in Unit 1 (the proxy forwards client headers untouched, so the free tier accepts it) and again in the Unit 4 live smoke (`METACOGS_LIVE=1 bun test src/runner/run.test.ts -t "live smoke"`: exit 0, usage, `skillListObserved: true`, returned model `big-pickle`).
+- Request headers are never recorded. The response is tee'd; one branch is scanned only for the first `"model"` field, so the manifest can state the returned model next to the pinned one.
+
+Cost and failure mode: one extra local hop, and a dependency on the free tier tolerating a pass-through. If that breaks (e.g. 403), the run exits non-zero before skill content loads and is an `infra_error` (retried, reported). There is no silent fallback to unchecked runs.
+
+## Per-run flow
+
+1. `enforcePrereg` (before any model request): parse `evals/<m>/prereg.json`, git ordering, fixture/rubric hashes. Held-out fixtures are read from `METACOGS_HELDOUT_DIR` (default `$XDG_STATE_HOME/metacogs/heldout/<m>/`, fallback `~/.local/state/...`) and only for GREEN.
+2. Output dir: dev runs under `evals/runs/<campaign>/` (gitignored); any run that touches held-out content under `$XDG_STATE_HOME/metacogs/runs/<campaign>/`. The runner refuses if the resolved path (symlinks followed) is inside the repo, including via `--out`.
+3. Manifest written as `running`, then a fresh workspace: `fixture.md` only (plus `.agents/skills/<m>/` copied from `skills/<m>/` for the skill condition), `git init`, `HOME`/`XDG_*`/`TMPDIR` as siblings, decoys (sentinel `AGENTS.md`, `auth.json` canary, outside-workspace file) planted beside them. The prompt is the fixture text, passed on argv.
+4. `opencode debug config` → compared with the generated config (generated keys must match, apparent host defaults must be empty). A mismatch is `non_isolated` and **no model request is made**.
+5. `opencode run --format json --model <m> <prompt>` in its own process group, with the prereg per-run timeout. SIGINT/SIGTERM abort the campaign: group killed, workspace deleted, manifest `interrupted`, later runs skipped (a second signal exits immediately).
+6. Classification, first match wins: `infra_error` (non-zero exit, no skill content loaded) → `non_isolated` (any isolation check failed; a never-observed skill list does not count against a run that timed out or crashed, otherwise a hang would be excluded instead of failed) → `timeout` → `host_crash` (non-zero exit after skill content loaded) → `budget_exceeded` → deterministic checks. Everything but `infra_error`, `non_isolated`, `interrupted` is in the denominator (attempted = pass + fail).
+7. Artifacts (`stdout.jsonl`, `stderr.txt`, `requests.json`) and the manifest are scanned, with the workspace tree, for the scripted provider's placeholder key. A hit purges the artifacts, writes a sanitized manifest with status `credential_leak`, and stops the campaign.
+
+Retries: `infra_error` is retried up to 2 times, each attempt with its own run dir and manifest; every attempt is listed in `summary.json` under `infra_errors` and counted in the per-fixture `infra_error` tally, never in `attempted`.
+
+Positive-fixture outcomes (dev/held-out) are deterministic-only until the judge exists. Their manifests say `verdict_basis: "pending-judge"`.
+
+## Prereg fields the runner reads
+
+`schema_version, method, epoch, prev_epoch_closing_commit, salt, fixture_hashes{dev,negative,heldout}, rubric_hash, runs_per_condition, red_bar, green_bar, false_fire_max, per_run_timeout_ms, budget{max_tool_calls,max_total_tokens}, infra_error_definition, run_outcome_taxonomy, agreement_floor, agent_model_id, judge_model_id, accepted_error_rates, expected_execution_modes?, metadata{source_url,licence}`. The type is `Prereg` in `src/runner/prereg.ts`; unknown fields are refused. Fixture hash: `sha256(salt NUL canonical-text)` with canonical = UTF-8, BOM stripped, LF, one final newline; id = file stem. `prev_epoch_closing_commit` is how epoch N>1 names its base (`null` for epoch 1, where history is searched from `HEAD`).
+
+## Finding: denial text leaks the `bash` allowlist to the model
+
+A denied `bash` call returns the matching rules, including `node *scripts/record.mjs*`. In a live baseline the model can therefore probe `scripts/record.mjs` even though no helper exists. The first live smoke did exactly that. The checks treat a helper call as a false fire only when the skill is installed; in a baseline it is recorded evidence only. It does not touch the isolation criterion (the skill list and config are still exact), but baseline transcripts will contain those probes.
+
+## Cost
+
+Per run: `debug config` (≈3.3 s warm) + the run (≈2 to 5 s scripted, ≈17 s for the live smoke). The prereg per-run timeout covers the run, not `debug config`.

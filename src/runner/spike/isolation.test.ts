@@ -28,7 +28,7 @@ import {
   OUTSIDE_FILE_CANARY,
   plantAuthorHome,
   SENTINEL_AGENTS_MD,
-} from './env'
+} from '../env'
 import {
   assistantText,
   availableSkillsFromRequests,
@@ -56,7 +56,7 @@ import {
   SPIKE_MODEL_ID,
   SPIKE_PROVIDER_ID,
   skillCallStep,
-} from './scripted-provider'
+} from '../scripted-provider'
 
 const availability = opencodeAvailability()
 const suite = describe.skipIf(!availability.available)

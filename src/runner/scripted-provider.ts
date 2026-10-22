@@ -14,6 +14,8 @@
 
 export const SPIKE_PROVIDER_ID = 'metacogs-spike-provider'
 export const SPIKE_MODEL_ID = 'metacogs-spike-model'
+/** The only key string the runner ever writes to a config. A copy anywhere else is a leak. */
+export const PLACEHOLDER_API_KEY = 'placeholder-not-a-secret'
 
 export interface ScriptedToolCall {
   id: string
@@ -31,6 +33,8 @@ export interface RecordedRequest {
   /** Number of completed assistant tool-call rounds in the request history. */
   round: number
   body: unknown
+  /** Model id the provider reported in its response; filled in once the response is seen. */
+  returnedModel?: string
 }
 
 export interface ScriptedProviderServer {
@@ -157,7 +161,7 @@ export function startScriptedProvider(
       const record = isRecord(body) ? body : {}
       const hasTools = Array.isArray(record.tools) && record.tools.length > 0
       const round = countToolRounds(record.messages)
-      requests.push({ hasTools, round, body })
+      requests.push({ hasTools, round, body, returnedModel: SPIKE_MODEL_ID })
 
       let step: ScriptedStep
       if (!hasTools) {
@@ -212,9 +216,30 @@ export function scriptedProviderConfig(baseUrl: string): Record<string, unknown>
           options: {},
         },
       },
-      options: { apiKey: 'placeholder-not-a-secret', baseURL: baseUrl },
+      options: { apiKey: PLACEHOLDER_API_KEY, baseURL: baseUrl },
     },
   }
+}
+
+/** Reads at most 64 KiB of a response stream looking for the provider-reported model id. */
+async function scanReturnedModel(stream: ReadableStream<Uint8Array>): Promise<string | undefined> {
+  const reader = stream.getReader()
+  const decoder = new TextDecoder()
+  let seen = ''
+  try {
+    while (seen.length < 65_536) {
+      const { done, value } = await reader.read()
+      if (done) break
+      seen += decoder.decode(value, { stream: true })
+      const match = /"model"\s*:\s*"([^"]+)"/.exec(seen)
+      if (match) return match[1]
+    }
+  } catch {
+    // scanning is best-effort; the pinned id is still recorded
+  } finally {
+    void reader.cancel().catch(() => {})
+  }
+  return undefined
 }
 
 export const ZEN_UPSTREAM = 'https://opencode.ai/zen/v1'
@@ -240,11 +265,12 @@ export function startRecordingProxy(upstream = ZEN_UPSTREAM): ScriptedProviderSe
         // non-JSON body: record nothing useful
       }
       const rec = isRecord(body) ? body : {}
-      requests.push({
+      const recorded: RecordedRequest = {
         hasTools: Array.isArray(rec.tools) && rec.tools.length > 0,
         round: countToolRounds(rec.messages),
         body,
-      })
+      }
+      requests.push(recorded)
       // Forward the client's own headers untouched (the free tier checks the
       // OpenCode client headers). They are never recorded.
       const headers = new Headers(request.headers)
@@ -254,7 +280,17 @@ export function startRecordingProxy(upstream = ZEN_UPSTREAM): ScriptedProviderSe
         headers,
         body: text,
       })
-      return new Response(res.body, {
+      let passthrough = res.body
+      if (res.body) {
+        // Tee the response: one branch goes to OpenCode untouched, the other is only
+        // scanned for the first `"model":"..."` so the manifest can state what answered.
+        const [toClient, toScan] = res.body.tee()
+        passthrough = toClient
+        void scanReturnedModel(toScan).then((model) => {
+          if (model) recorded.returnedModel = model
+        })
+      }
+      return new Response(passthrough, {
         status: res.status,
         headers: { 'content-type': res.headers.get('content-type') ?? 'application/json' },
       })
