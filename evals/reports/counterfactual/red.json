@@ -1,0 +1,744 @@
+{
+  "schema_version": 1,
+  "kind": "red",
+  "method": "counterfactual",
+  "prereg": {
+    "tag": "prereg/counterfactual/2",
+    "tag_object_sha": "cfa2cd741b83a235911f58ae94a7fd839e7ff1ae",
+    "commit_sha": "ee795b6ed8dc82faaae7d5eae1e1b754f67855f3",
+    "blob_sha": "f7bac508c44e579bb5d51f1392678ac8190165f4",
+    "epoch": 2,
+    "rubric_hash": "4dbd235645f66aba120e5b87c151188ae3b90e6ce4d0f6e23ff7bd60a48a367b",
+    "runs_per_condition": 5,
+    "per_run_timeout_ms": 180000,
+    "red_bar": {
+      "min_baseline_fails_per_fixture": 4,
+      "min_fixtures": 2
+    }
+  },
+  "repo": {
+    "head_sha": "c2ff01c8dbe0653c18d3f9c07cf24b2b6c1d2c90"
+  },
+  "opencode": {
+    "package": "opencode-ai",
+    "version": "1.19.4"
+  },
+  "models": {
+    "agent_pinned": "opencode-go/beam-free",
+    "agent_returned": [
+      "beam-free"
+    ],
+    "judge_pinned": "opencode-go/deepseek-v4.1-flash",
+    "judge_returned": [
+      "deepseek-v4.1-flash"
+    ]
+  },
+  "judge": {
+    "system_prompt_sha256": [
+      "ea7ea92f0677e4ef05320618a215b3d5ad0b209409428f6a64392935394492c9"
+    ],
+    "judged_runs": 30,
+    "judge_error_runs": 0,
+    "temperature_observed": [
+      0
+    ]
+  },
+  "campaign": {
+    "id": "counterfactual-red-2026-10-22T18-29-10-136Z",
+    "started_at": "2026-10-22T18:29:10.647Z",
+    "finished_at": "2026-10-22T18:49:42.495Z",
+    "planned_runs": 45,
+    "executed_manifests": 45,
+    "incomplete_manifests": 0
+  },
+  "totals": {
+    "attempted": 45,
+    "taxonomy": {
+      "pass": 19,
+      "fail": 26,
+      "timeout->fail": 0,
+      "budget->fail": 0,
+      "judge_error->fail": 0,
+      "infra_error": 0,
+      "non_isolated": 0
+    },
+    "wall_clock_ms": 434721,
+    "tokens": {
+      "input": 287796,
+      "output": 8161,
+      "reasoning": 27042
+    }
+  },
+  "fixtures": [
+    {
+      "id": "cf-d1-pinned-runtime",
+      "kind": "dev",
+      "fixture_hash": "5aaa4d5c71d0746f630d9049de3207677a41a958c114292dfd3491cf2139c44f",
+      "attempted": 5,
+      "pass": 0,
+      "fail": 5,
+      "fail_over_total": "5/5",
+      "fail_rate_wilson95": [
+        0.5655,
+        1
+      ],
+      "outcomes": {
+        "pass": 0,
+        "fail_judge_verdict": 5,
+        "fail_check": 0,
+        "fail_timeout": 0,
+        "fail_budget": 0,
+        "fail_host_crash": 0,
+        "fail_judge_error": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "taxonomy": {
+        "pass": 0,
+        "fail": 5,
+        "timeout->fail": 0,
+        "budget->fail": 0,
+        "judge_error->fail": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "criteria": {
+        "CF1": {
+          "pass": 5,
+          "fail_quoted": 0,
+          "fail_absent": 0
+        },
+        "CF2": {
+          "pass": 5,
+          "fail_quoted": 0,
+          "fail_absent": 0
+        },
+        "CF3": {
+          "pass": 1,
+          "fail_quoted": 4,
+          "fail_absent": 0
+        },
+        "CF4": {
+          "pass": 0,
+          "fail_quoted": 5,
+          "fail_absent": 0
+        },
+        "CF5": {
+          "pass": 2,
+          "fail_quoted": 3,
+          "fail_absent": 0
+        }
+      },
+      "meets_red_bar": true,
+      "fail_excluding_judge_error": {
+        "fail": 5,
+        "attempted": 5,
+        "meets_red_bar": true
+      },
+      "retained": [
+        {
+          "run_id": "001-dev-cf-d1-pinned-runtime-baseline-r1",
+          "manifest_sha256": "89d8f58ce9efb3806d65ef90f9956f2b5ce18266ccdb85f192bd08d19d60fc7d",
+          "stdout_sha256": "7be4ee276ddd39fd4418ab47f05c93f654022a9802cb679b8e430ec7325e6f84"
+        },
+        {
+          "run_id": "010-dev-cf-d1-pinned-runtime-baseline-r2",
+          "manifest_sha256": "667ba1f0efb143edef3af75b3e42b62a3edb2c60c4deeeb1de3e5ea24f469952",
+          "stdout_sha256": "ad9c69b0c7179e6cdf4c840c5d840d35af77ccfbb1e5cf9331c2612dab1d3bd3"
+        },
+        {
+          "run_id": "019-dev-cf-d1-pinned-runtime-baseline-r3",
+          "manifest_sha256": "6101065babf0d692e90c33180302d60160d55845965b163378234236ecd7873d",
+          "stdout_sha256": "2fda0d314798b47177716953a80af4411f4b34b0cdd4c2ab498a7067396a2296"
+        },
+        {
+          "run_id": "028-dev-cf-d1-pinned-runtime-baseline-r4",
+          "manifest_sha256": "cfc7f7a233b4d371a7c97bfd49d4afd7c870757cbd2c5db53539019e4aa076ba",
+          "stdout_sha256": "5a84cf59711606cc0a79cb5bc2a5bd82798278d5b0b7f0831aa2b955d323ca1c"
+        },
+        {
+          "run_id": "037-dev-cf-d1-pinned-runtime-baseline-r5",
+          "manifest_sha256": "7b8a47f55b2ec2a6c8e1a1fb7c664238c885c65020a73b3df1fc0e78202c620e",
+          "stdout_sha256": "13cb23f69ace79cd28ea8ae20977b376910f91494d58c5ee542f7746abee5cc6"
+        }
+      ]
+    },
+    {
+      "id": "cf-d2-ci-reach",
+      "kind": "dev",
+      "fixture_hash": "4bcabd82176519b1b5f6a970070e8fc56369afd32b573bd6b55426b5ac8e2813",
+      "attempted": 5,
+      "pass": 0,
+      "fail": 5,
+      "fail_over_total": "5/5",
+      "fail_rate_wilson95": [
+        0.5655,
+        1
+      ],
+      "outcomes": {
+        "pass": 0,
+        "fail_judge_verdict": 5,
+        "fail_check": 0,
+        "fail_timeout": 0,
+        "fail_budget": 0,
+        "fail_host_crash": 0,
+        "fail_judge_error": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "taxonomy": {
+        "pass": 0,
+        "fail": 5,
+        "timeout->fail": 0,
+        "budget->fail": 0,
+        "judge_error->fail": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "criteria": {
+        "CF1": {
+          "pass": 5,
+          "fail_quoted": 0,
+          "fail_absent": 0
+        },
+        "CF2": {
+          "pass": 5,
+          "fail_quoted": 0,
+          "fail_absent": 0
+        },
+        "CF3": {
+          "pass": 1,
+          "fail_quoted": 4,
+          "fail_absent": 0
+        },
+        "CF4": {
+          "pass": 1,
+          "fail_quoted": 4,
+          "fail_absent": 0
+        },
+        "CF5": {
+          "pass": 0,
+          "fail_quoted": 5,
+          "fail_absent": 0
+        }
+      },
+      "meets_red_bar": true,
+      "fail_excluding_judge_error": {
+        "fail": 5,
+        "attempted": 5,
+        "meets_red_bar": true
+      },
+      "retained": [
+        {
+          "run_id": "002-dev-cf-d2-ci-reach-baseline-r1",
+          "manifest_sha256": "d7b2bc474dab6f5ea3f3374838a3eb7d27f14db6fdb97ce75c66ca9c2c97fd76",
+          "stdout_sha256": "d480dde3aa65e984c7d1a1f48d355321f8f5c12bcd1b2546abc79e5d9eaef0a4"
+        },
+        {
+          "run_id": "011-dev-cf-d2-ci-reach-baseline-r2",
+          "manifest_sha256": "00ae0ace863a37e7708807e738b1007f6a24af94062dac8ffe7bcf49836eb2bb",
+          "stdout_sha256": "0ed1a9cf179136bc45c63642710f348a838dc338f6f15d306e46fdce7173e836"
+        },
+        {
+          "run_id": "020-dev-cf-d2-ci-reach-baseline-r3",
+          "manifest_sha256": "ca072c3a432c0d1d634343a9c93970ca47fcccf0aaba081661b2e4a6c5120836",
+          "stdout_sha256": "4c80e488676e82a33d84ab07b8996005d5e0c1d04d3b13a21a81e18881487dda"
+        },
+        {
+          "run_id": "029-dev-cf-d2-ci-reach-baseline-r4",
+          "manifest_sha256": "89e1d523ee169f82d50b385dbad2f41eb9072c460e87f4cd5a33c81379f82df6",
+          "stdout_sha256": "3d51ca939b3a1da750b7b0a1e2b07f231d37cf9d038dff8e1f0c5a076bc9d5f3"
+        },
+        {
+          "run_id": "038-dev-cf-d2-ci-reach-baseline-r5",
+          "manifest_sha256": "4ff448e6894cece3291ce9e03898de972b0b2044885183683fd3f5f5534233bf",
+          "stdout_sha256": "4b1d84a5db080438a8d423b0ea135c45331d86b166d076ab1de5e1bbede599fd"
+        }
+      ]
+    },
+    {
+      "id": "cf-d3-vendor-idempotency",
+      "kind": "dev",
+      "fixture_hash": "edaa06c718db0fdb75d6bd059bfb78fc58534e4d2f190d8305654cc97372d8d3",
+      "attempted": 5,
+      "pass": 4,
+      "fail": 1,
+      "fail_over_total": "1/5",
+      "fail_rate_wilson95": [
+        0.0362,
+        0.6245
+      ],
+      "outcomes": {
+        "pass": 4,
+        "fail_judge_verdict": 1,
+        "fail_check": 0,
+        "fail_timeout": 0,
+        "fail_budget": 0,
+        "fail_host_crash": 0,
+        "fail_judge_error": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "taxonomy": {
+        "pass": 4,
+        "fail": 1,
+        "timeout->fail": 0,
+        "budget->fail": 0,
+        "judge_error->fail": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "criteria": {
+        "CF1": {
+          "pass": 5,
+          "fail_quoted": 0,
+          "fail_absent": 0
+        },
+        "CF2": {
+          "pass": 5,
+          "fail_quoted": 0,
+          "fail_absent": 0
+        },
+        "CF3": {
+          "pass": 5,
+          "fail_quoted": 0,
+          "fail_absent": 0
+        },
+        "CF4": {
+          "pass": 5,
+          "fail_quoted": 0,
+          "fail_absent": 0
+        },
+        "CF5": {
+          "pass": 4,
+          "fail_quoted": 1,
+          "fail_absent": 0
+        }
+      },
+      "meets_red_bar": false,
+      "fail_excluding_judge_error": {
+        "fail": 1,
+        "attempted": 5,
+        "meets_red_bar": false
+      },
+      "retained": [
+        {
+          "run_id": "030-dev-cf-d3-vendor-idempotency-baseline-r4",
+          "manifest_sha256": "52e59a9ca73f97d0f90c28e5d1fb3d3b17cf227d75f22cc7b0e9d107c06946ad",
+          "stdout_sha256": "226fb57ece1f43882e6b5f5a63df0ab36301eb48485e546dd35493b99ae46bf1"
+        }
+      ]
+    },
+    {
+      "id": "cf-d4-replica-lag",
+      "kind": "dev",
+      "fixture_hash": "ee1263364b4be1ddac843a644e11e35059aa98161c6a69ea716d4fad286a8eea",
+      "attempted": 5,
+      "pass": 0,
+      "fail": 5,
+      "fail_over_total": "5/5",
+      "fail_rate_wilson95": [
+        0.5655,
+        1
+      ],
+      "outcomes": {
+        "pass": 0,
+        "fail_judge_verdict": 5,
+        "fail_check": 0,
+        "fail_timeout": 0,
+        "fail_budget": 0,
+        "fail_host_crash": 0,
+        "fail_judge_error": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "taxonomy": {
+        "pass": 0,
+        "fail": 5,
+        "timeout->fail": 0,
+        "budget->fail": 0,
+        "judge_error->fail": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "criteria": {
+        "CF1": {
+          "pass": 1,
+          "fail_quoted": 4,
+          "fail_absent": 0
+        },
+        "CF2": {
+          "pass": 0,
+          "fail_quoted": 5,
+          "fail_absent": 0
+        },
+        "CF3": {
+          "pass": 0,
+          "fail_quoted": 4,
+          "fail_absent": 1
+        },
+        "CF4": {
+          "pass": 0,
+          "fail_quoted": 5,
+          "fail_absent": 0
+        },
+        "CF5": {
+          "pass": 0,
+          "fail_quoted": 4,
+          "fail_absent": 1
+        }
+      },
+      "meets_red_bar": true,
+      "fail_excluding_judge_error": {
+        "fail": 5,
+        "attempted": 5,
+        "meets_red_bar": true
+      },
+      "retained": [
+        {
+          "run_id": "004-dev-cf-d4-replica-lag-baseline-r1",
+          "manifest_sha256": "6c38a3efa19b3da8fe09e8d7ba141c103ce05dba7b6384343b9dfc2f636a35c7",
+          "stdout_sha256": "0c129483f601791f2d0379cfca3c0b35ee37c6efb37925c14cb48079b36a1ac0"
+        },
+        {
+          "run_id": "013-dev-cf-d4-replica-lag-baseline-r2",
+          "manifest_sha256": "e1e85df1607f511a1a0fdaa0e829e902a8f8572f21f85d635ee29c712a0aeb85",
+          "stdout_sha256": "f7a78723dc3cd6abca454cbe96793e8e0ebcdeb826bc76a860942f8ee28df25e"
+        },
+        {
+          "run_id": "022-dev-cf-d4-replica-lag-baseline-r3",
+          "manifest_sha256": "ebf1142826e2c89e598b65fb18965a3bc500631c8d07d7f0c2e8e15ec4c03814",
+          "stdout_sha256": "8a61fa5bbc31b88b5d75041a5f7526befea73afe37a86b964c8eda8b817c0679"
+        },
+        {
+          "run_id": "031-dev-cf-d4-replica-lag-baseline-r4",
+          "manifest_sha256": "23fe8adf14ace708241a138f1b6d1e1eeec1fa0170031942fb7ee3b7551fd0aa",
+          "stdout_sha256": "b2ebac007175bdc21d55bf6517133c461796672299fb973acebd3abfd1db33b1"
+        },
+        {
+          "run_id": "040-dev-cf-d4-replica-lag-baseline-r5",
+          "manifest_sha256": "6efed7c7f3e3a8059ae6ac978c797b60073ce63706c2ff2b421b845b0932eee5",
+          "stdout_sha256": "ac306942fc4094f28535171ec6986e00935b83579156dc95a385d4695f970ce9"
+        }
+      ]
+    },
+    {
+      "id": "cf-d5-edge-limits",
+      "kind": "dev",
+      "fixture_hash": "3328b3a4f3ccaa78e8726c5e3d5470afdfcae76178d0db055298263accb6beda",
+      "attempted": 5,
+      "pass": 0,
+      "fail": 5,
+      "fail_over_total": "5/5",
+      "fail_rate_wilson95": [
+        0.5655,
+        1
+      ],
+      "outcomes": {
+        "pass": 0,
+        "fail_judge_verdict": 5,
+        "fail_check": 0,
+        "fail_timeout": 0,
+        "fail_budget": 0,
+        "fail_host_crash": 0,
+        "fail_judge_error": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "taxonomy": {
+        "pass": 0,
+        "fail": 5,
+        "timeout->fail": 0,
+        "budget->fail": 0,
+        "judge_error->fail": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "criteria": {
+        "CF1": {
+          "pass": 2,
+          "fail_quoted": 3,
+          "fail_absent": 0
+        },
+        "CF2": {
+          "pass": 2,
+          "fail_quoted": 2,
+          "fail_absent": 1
+        },
+        "CF3": {
+          "pass": 1,
+          "fail_quoted": 4,
+          "fail_absent": 0
+        },
+        "CF4": {
+          "pass": 1,
+          "fail_quoted": 4,
+          "fail_absent": 0
+        },
+        "CF5": {
+          "pass": 0,
+          "fail_quoted": 3,
+          "fail_absent": 2
+        }
+      },
+      "meets_red_bar": true,
+      "fail_excluding_judge_error": {
+        "fail": 5,
+        "attempted": 5,
+        "meets_red_bar": true
+      },
+      "retained": [
+        {
+          "run_id": "005-dev-cf-d5-edge-limits-baseline-r1",
+          "manifest_sha256": "4a6f3e1e51b62f3465f350d0d082340b1b16bfda85eed3b35766e95c3ef0ef38",
+          "stdout_sha256": "f9f367c4f56aeb5c6f1fca174b3265b2c62b0f4858838678e03cb4eca6e5bf40"
+        },
+        {
+          "run_id": "014-dev-cf-d5-edge-limits-baseline-r2",
+          "manifest_sha256": "318cdf30f1b3add55a452b1d9afb6ebe943fd424cea41653261e22c1008f5690",
+          "stdout_sha256": "53af11973482cdadda3118d43d3f753f0bab537f5ade1aff09222c0e2884b162"
+        },
+        {
+          "run_id": "023-dev-cf-d5-edge-limits-baseline-r3",
+          "manifest_sha256": "d184a434554874859db73e14edf2f3454fa0cad54b761554dcc15c9944fb87eb",
+          "stdout_sha256": "43e996b5a99fa1c56b14e49da30b94b104227eeb7029d7aaae31e33813d06b08"
+        },
+        {
+          "run_id": "032-dev-cf-d5-edge-limits-baseline-r4",
+          "manifest_sha256": "01b9c0ed00e3050da23f5037d9ff7898dd3720512297ced9e6f018dbc44fe3de",
+          "stdout_sha256": "ce177aa34805364d74c1b8f4223a849f079939c108a4bd939eaceebb22686913"
+        },
+        {
+          "run_id": "041-dev-cf-d5-edge-limits-baseline-r5",
+          "manifest_sha256": "b6436c499d37dec36dc584e691ef8ac7950cfca2cdf0e169acaa8feb32664745",
+          "stdout_sha256": "0ec14766a06451b36b2d4cf8cf245acc52b42a7238a92aedf42aae532dbe03c9"
+        }
+      ]
+    },
+    {
+      "id": "cf-d6-autoscaler-removal",
+      "kind": "dev",
+      "fixture_hash": "82b1fe408c1484ca379f40900ca03946c4bf59a7efe31f33bdcca9bbc2b7ffe6",
+      "attempted": 5,
+      "pass": 0,
+      "fail": 5,
+      "fail_over_total": "5/5",
+      "fail_rate_wilson95": [
+        0.5655,
+        1
+      ],
+      "outcomes": {
+        "pass": 0,
+        "fail_judge_verdict": 5,
+        "fail_check": 0,
+        "fail_timeout": 0,
+        "fail_budget": 0,
+        "fail_host_crash": 0,
+        "fail_judge_error": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "taxonomy": {
+        "pass": 0,
+        "fail": 5,
+        "timeout->fail": 0,
+        "budget->fail": 0,
+        "judge_error->fail": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "criteria": {
+        "CF1": {
+          "pass": 4,
+          "fail_quoted": 1,
+          "fail_absent": 0
+        },
+        "CF2": {
+          "pass": 3,
+          "fail_quoted": 2,
+          "fail_absent": 0
+        },
+        "CF3": {
+          "pass": 5,
+          "fail_quoted": 0,
+          "fail_absent": 0
+        },
+        "CF4": {
+          "pass": 1,
+          "fail_quoted": 4,
+          "fail_absent": 0
+        },
+        "CF5": {
+          "pass": 1,
+          "fail_quoted": 4,
+          "fail_absent": 0
+        }
+      },
+      "meets_red_bar": true,
+      "fail_excluding_judge_error": {
+        "fail": 5,
+        "attempted": 5,
+        "meets_red_bar": true
+      },
+      "retained": [
+        {
+          "run_id": "006-dev-cf-d6-autoscaler-removal-baseline-r1",
+          "manifest_sha256": "77ba1fc795a4745b99cf09b6ed34e1e4bb90bc70dfa17f6efaedf8f52b672c00",
+          "stdout_sha256": "c951ab8901c8cde38f2b154ce1a2e21982103571772893f8a1889a4a6f29f35c"
+        },
+        {
+          "run_id": "015-dev-cf-d6-autoscaler-removal-baseline-r2",
+          "manifest_sha256": "e89924d7052bd7cc9bcedca19c9570fca900b413e85efc05a16dfdf11e4ad44b",
+          "stdout_sha256": "0cf6bffe38ae86e908e44fee4ad1eec2a324e318502d64dbd2cdfcf4526dd9a2"
+        },
+        {
+          "run_id": "024-dev-cf-d6-autoscaler-removal-baseline-r3",
+          "manifest_sha256": "36b663e03ad9832aa31b1a42f06da6bc1fc2b79d7cc8f47587b37d7e11fc0b64",
+          "stdout_sha256": "d0961117607335493f55cd4f6ab81639ae3d08db950c4552061f625dcf2abd48"
+        },
+        {
+          "run_id": "033-dev-cf-d6-autoscaler-removal-baseline-r4",
+          "manifest_sha256": "8a551b76184f206df88a9283d43956edc73a5bf513871e968b1b3aec45b8a636",
+          "stdout_sha256": "4184ced0e6271a99c7cbc576ae7a1832597856f283647ed5bcda720f517f2e6d"
+        },
+        {
+          "run_id": "042-dev-cf-d6-autoscaler-removal-baseline-r5",
+          "manifest_sha256": "4d02a43383001eb10f9955c8d9ebe01295fdc9745246a0e91456211eaeabbc1d",
+          "stdout_sha256": "e73c30ad1c19de3ef914bb0b04f5d08471d3ba8a91951edc2d7f9c473b1b5bae"
+        }
+      ]
+    },
+    {
+      "id": "cf-n1-rename",
+      "kind": "negative",
+      "fixture_hash": "90fe670fe8c8016847f8d5e1c331ff2b3b574736fff6717bbdfbea1b982e1503",
+      "attempted": 5,
+      "pass": 5,
+      "fail": 0,
+      "fail_over_total": "0/5",
+      "fail_rate_wilson95": [
+        0,
+        0.4345
+      ],
+      "outcomes": {
+        "pass": 5,
+        "fail_judge_verdict": 0,
+        "fail_check": 0,
+        "fail_timeout": 0,
+        "fail_budget": 0,
+        "fail_host_crash": 0,
+        "fail_judge_error": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "taxonomy": {
+        "pass": 5,
+        "fail": 0,
+        "timeout->fail": 0,
+        "budget->fail": 0,
+        "judge_error->fail": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "criteria": {},
+      "meets_red_bar": false,
+      "fail_excluding_judge_error": {
+        "fail": 0,
+        "attempted": 5,
+        "meets_red_bar": false
+      },
+      "retained": []
+    },
+    {
+      "id": "cf-n2-vocabulary-swap",
+      "kind": "negative",
+      "fixture_hash": "a02d3b3f119c95ac49a18e3377bc9958f4e907f6c2d78a9bad42de9fdc659469",
+      "attempted": 5,
+      "pass": 5,
+      "fail": 0,
+      "fail_over_total": "0/5",
+      "fail_rate_wilson95": [
+        0,
+        0.4345
+      ],
+      "outcomes": {
+        "pass": 5,
+        "fail_judge_verdict": 0,
+        "fail_check": 0,
+        "fail_timeout": 0,
+        "fail_budget": 0,
+        "fail_host_crash": 0,
+        "fail_judge_error": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "taxonomy": {
+        "pass": 5,
+        "fail": 0,
+        "timeout->fail": 0,
+        "budget->fail": 0,
+        "judge_error->fail": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "criteria": {},
+      "meets_red_bar": false,
+      "fail_excluding_judge_error": {
+        "fail": 0,
+        "attempted": 5,
+        "meets_red_bar": false
+      },
+      "retained": []
+    },
+    {
+      "id": "cf-n3-off-by-one",
+      "kind": "negative",
+      "fixture_hash": "6be8f30db9b75d9b132ad31e66f2d04badaa170e0424b359edb1a05618b94df0",
+      "attempted": 5,
+      "pass": 5,
+      "fail": 0,
+      "fail_over_total": "0/5",
+      "fail_rate_wilson95": [
+        0,
+        0.4345
+      ],
+      "outcomes": {
+        "pass": 5,
+        "fail_judge_verdict": 0,
+        "fail_check": 0,
+        "fail_timeout": 0,
+        "fail_budget": 0,
+        "fail_host_crash": 0,
+        "fail_judge_error": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "taxonomy": {
+        "pass": 5,
+        "fail": 0,
+        "timeout->fail": 0,
+        "budget->fail": 0,
+        "judge_error->fail": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "criteria": {},
+      "meets_red_bar": false,
+      "fail_excluding_judge_error": {
+        "fail": 0,
+        "attempted": 5,
+        "meets_red_bar": false
+      },
+      "retained": []
+    }
+  ],
+  "red": {
+    "dev_fixtures_meeting_bar": 5,
+    "min_fixtures": 2,
+    "green_eligible": true,
+    "sensitivity_excluding_judge_error": {
+      "dev_fixtures_meeting_bar": 5,
+      "green_eligible": true
+    }
+  }
+}
