@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "method": "counterfactual",
+  "epoch": 1,
+  "prev_epoch_closing_commit": null,
+  "salt": "af182ba5406334c61adfb583f4cb814e",
+  "fixture_hashes": {
+    "dev": {
+      "cf-d1-pinned-runtime": "5aaa4d5c71d0746f630d9049de3207677a41a958c114292dfd3491cf2139c44f",
+      "cf-d2-ci-reach": "4bcabd82176519b1b5f6a970070e8fc56369afd32b573bd6b55426b5ac8e2813",
+      "cf-d3-vendor-idempotency": "edaa06c718db0fdb75d6bd059bfb78fc58534e4d2f190d8305654cc97372d8d3",
+      "cf-d4-replica-lag": "ee1263364b4be1ddac843a644e11e35059aa98161c6a69ea716d4fad286a8eea",
+      "cf-d5-edge-limits": "3328b3a4f3ccaa78e8726c5e3d5470afdfcae76178d0db055298263accb6beda",
+      "cf-d6-autoscaler-removal": "82b1fe408c1484ca379f40900ca03946c4bf59a7efe31f33bdcca9bbc2b7ffe6"
+    },
+    "negative": {
+      "cf-n1-rename": "90fe670fe8c8016847f8d5e1c331ff2b3b574736fff6717bbdfbea1b982e1503",
+      "cf-n2-vocabulary-swap": "a02d3b3f119c95ac49a18e3377bc9958f4e907f6c2d78a9bad42de9fdc659469",
+      "cf-n3-off-by-one": "6be8f30db9b75d9b132ad31e66f2d04badaa170e0424b359edb1a05618b94df0"
+    },
+    "heldout": {
+      "cf-h1": "bb78c57d65851e2d7ef1478783e37dfec319139f29496ab0c474ed268c182ddc",
+      "cf-h2": "efa68e7a1031432dbfb9c4fa801e9b66081621b9be481e60c55f4cff86642e3b",
+      "cf-h3": "9535ba4e03762c1f8188b5d3cb63ee20ad4c38113ec81750a84041188db499d1",
+      "cf-h4": "6c4ae5764a89a9ba93d10d47249de982297e601e98b321413e7922240feab7dd"
+    }
+  },
+  "rubric_hash": "4dbd235645f66aba120e5b87c151188ae3b90e6ce4d0f6e23ff7bd60a48a367b",
+  "runs_per_condition": 5,
+  "red_bar": {
+    "min_baseline_fails_per_fixture": 4,
+    "min_fixtures": 2
+  },
+  "green_bar": {
+    "skill_pooled_pass_min": 17,
+    "skill_per_fixture_pass_min": 3,
+    "baseline_pooled_pass_max": 10
+  },
+  "false_fire_max": 0,
+  "per_run_timeout_ms": 180000,
+  "budget": {
+    "max_tool_calls": 20,
+    "max_total_tokens": 300000
+  },
+  "infra_error_definition": "A provider or host outage before any skill content reaches the model: a non-zero host exit, a provider 4xx/5xx or network error, or a recording-proxy failure, with no skill content loaded. Retried at most 2 times, reported separately, and excluded from the denominator. A timeout, a budget breach, a judge_error, or any host exit after skill content loads counts as FAIL and stays in the denominator.",
+  "run_outcome_taxonomy": [
+    "pass",
+    "fail",
+    "timeout->fail",
+    "budget->fail",
+    "judge_error->fail",
+    "infra_error",
+    "non_isolated"
+  ],
+  "agreement_floor": 0.8,
+  "agent_model_id": "opencode/big-pickle",
+  "judge_model_id": "anthropic/claude-haiku-4-5-20251001",
+  "accepted_error_rates": {
+    "false_red": 0.314,
+    "false_green": 0.225
+  },
+  "metadata": {
+    "source_url": "synthesized (no external source)",
+    "licence": "MIT",
+    "notes": "v0.1 profile. Fixtures synthesized by the author; no external source. Fixtures are prompt-only files; per-fixture family, probes, and expected sketches are in rubric.md (dev, negative) or in sidecar .expected.txt files beside the held-out set (held-out, never in the repo). Per-run timeout 180000 ms: Unit 1 measured a trivial live opencode/big-pickle run at 6.9 s and warm startup at ~5 s (cold 17-60 s); 180 s is ~26x the trivial live run and covers a long reasoning answer plus a skill load and a helper call. Budget: 20 tool calls (skill load, one helper call, one retry, and probing denials fit well inside) and 300000 total tokens (a live step is ~5-7k input tokens, so roughly 40 steps). Judge: anthropic/claude-haiku-4-5-20251001, a different model family from the agent (opencode/big-pickle is a stealth model, community-identified as GLM/DeepSeek family, which is not Anthropic); supports temperature 0. Pinned here; Unit 6 owns the judge client and must confirm the id resolves before RED, or a new epoch is needed to change it. accepted_error_rates.false_green = 0.225: probability that a skill whose true per-run pass rate is 0.75 reaches pooled >=17/20 on the 4 held-out fixtures (N=5 each). Adding the per-fixture floor of 3/5 lowers it to 0.220; the pooled-only figure is the stated upper bound. A skill with true rate 0.90 clears with probability 0.860 (floor included). accepted_error_rates.false_red = 0.314: probability that the RED bar (baseline fails >=4/5 on >=2 of the 6 dev fixtures) is met when the true baseline fail rate is only 0.5 on every dev fixture (per-fixture chance 0.188; fixtures treated as independent). At true fail rate 0.3 it is 0.013; at 0.7 it is 0.915. The baseline-held-out ceiling of <=10/20 is cleared with probability 0.588 when the true baseline pass rate is 0.5. Pragmatic gate, not proof. A passing run is a judge-verified, human-spot-checked process outcome on a free-tier model; verified matrix cells pin the (host version, model) pair they were earned on."
+  }
+}
