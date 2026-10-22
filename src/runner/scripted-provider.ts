@@ -243,6 +243,14 @@ async function scanReturnedModel(stream: ReadableStream<Uint8Array>): Promise<st
 }
 
 export const ZEN_UPSTREAM = 'https://opencode.ai/zen/v1'
+/** OpenCode Go's OpenAI-compatible endpoint (`api.url` of the `opencode-go` provider in the 1.19.4 catalogue). */
+export const GO_UPSTREAM = 'https://opencode.ai/inference/go/openai/v1'
+
+/** Live runs reach OpenCode's gateway only: `opencode/*` (free tier) or `opencode-go/*` (authenticated). */
+export const LIVE_PROVIDERS = ['opencode', 'opencode-go'] as const
+export const isLiveModel = (model: string): boolean => LIVE_PROVIDERS.some((p) => model.startsWith(`${p}/`))
+export const providerOf = (model: string): string => model.slice(0, model.indexOf('/'))
+export const upstreamFor = (providerId: string): string => (providerId === 'opencode-go' ? GO_UPSTREAM : ZEN_UPSTREAM)
 
 /**
  * Recording pass-through for live mode: the `opencode` provider's `baseURL`

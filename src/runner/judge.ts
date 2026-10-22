@@ -32,7 +32,7 @@ import type { JudgeEvidence } from './manifest'
 import { opencodeArgv, type SpawnOptions, type SpawnResult, spawnCapture } from './opencode'
 import { loadRedactTokens, redactOrThrow, RedactionFailed } from './redact'
 import type { JudgeHook, JudgeInput, JudgeVerdict } from './run'
-import { type ScriptedProviderServer, startRecordingProxy } from './scripted-provider'
+import { providerOf, type ScriptedProviderServer, startRecordingProxy, upstreamFor } from './scripted-provider'
 import { buildConfig, gitInit, sha256 } from './workspace'
 
 // ── rubric → system prompt ─────────────────────────────────────────────────
@@ -180,11 +180,11 @@ export function judgePermission(): Record<string, 'allow' | 'deny'> {
   return { read: 'allow', ...Object.fromEntries(DENIED_TOOLS.map((k) => [k, 'deny' as const])) }
 }
 
-export function judgeConfig(systemPrompt: string, proxyUrl: string): Record<string, unknown> {
+export function judgeConfig(systemPrompt: string, proxyUrl: string, providerId = 'opencode'): Record<string, unknown> {
   const permission = judgePermission()
   return buildConfig({
     permission,
-    provider: { opencode: { options: { baseURL: proxyUrl } } },
+    provider: { [providerId]: { options: { baseURL: proxyUrl } } },
     extra: { agent: { [JUDGE_AGENT]: { mode: 'primary', description: 'metacogs rubric judge', prompt: systemPrompt, temperature: 0, permission } } },
   })
 }
@@ -320,12 +320,12 @@ export interface JudgeTransportResponse {
 export type JudgeTransport = (request: JudgeTransportRequest) => Promise<JudgeTransportResponse>
 
 export interface TransportDeps {
-  startProxy: () => ScriptedProviderServer
+  startProxy: (upstream: string) => ScriptedProviderServer
   spawn: (argv: readonly string[], options: SpawnOptions) => Promise<SpawnResult>
   sleep: (ms: number) => Promise<void>
 }
 
-const defaultDeps: TransportDeps = { startProxy: () => startRecordingProxy(), spawn: spawnCapture, sleep: (ms) => Bun.sleep(ms) }
+const defaultDeps: TransportDeps = { startProxy: (upstream) => startRecordingProxy(upstream), spawn: spawnCapture, sleep: (ms) => Bun.sleep(ms) }
 
 /** Backoff before re-sending after a provider 429: the free gateway throttles bursts. */
 const RATE_LIMIT_BACKOFF_MS = [20_000, 60_000] as const
@@ -341,10 +341,11 @@ export function opencodeTransport(overrides: Partial<TransportDeps> = {}, auth: 
   const needles = needlesOf(auth)
   const once = async (request: JudgeTransportRequest): Promise<JudgeTransportResponse> => {
     const fixture = createFixture('metacogs-judge-')
-    const server = deps.startProxy()
+    const providerId = providerOf(request.model)
+    const server = deps.startProxy(upstreamFor(providerId))
     try {
       gitInit(fixture.workspace)
-      const config = judgeConfig(request.system, server.url)
+      const config = judgeConfig(request.system, server.url, providerId)
       const env = buildChildEnv({ fixture, config })
       writeIsolatedAuth(fixture, auth)
       const spawn = await deps.spawn(opencodeArgv('run', '--format', 'json', '--agent', JUDGE_AGENT, '--model', request.model, JUDGE_ARGV_MESSAGE), {

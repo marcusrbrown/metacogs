@@ -30,7 +30,7 @@ import {
   plantAuthorHome,
   SENTINEL_AGENTS_MD,
 } from './env'
-import { scriptedProviderConfig } from './scripted-provider'
+import { providerOf, scriptedProviderConfig } from './scripted-provider'
 
 export type Condition = 'baseline' | 'skill'
 export type FixtureKind = 'dev' | 'negative' | 'heldout'
@@ -262,7 +262,7 @@ function populateRunWorkspace(input: RunWorkspaceInput, fixture: Fixture): RunWo
   const providerConfig =
     provider.kind === 'scripted'
       ? scriptedProviderConfig(provider.url)
-      : { opencode: { options: { baseURL: provider.recordingProxyUrl } } }
+      : { [providerOf(input.model)]: { options: { baseURL: provider.recordingProxyUrl } } }
   const config = buildConfig({
     permission: permissionFor(condition, method),
     provider: providerConfig,

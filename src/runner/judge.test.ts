@@ -7,6 +7,7 @@ import {
   createJudge,
   JUDGE_AGENT,
   JUDGE_ARGV_MESSAGE,
+  judgeConfig,
   judgePermission,
   normalizeForQuote,
   opencodeTransport,
@@ -15,6 +16,7 @@ import {
   verifyQuote,
 } from './judge'
 import { RedactionFailed } from './redact'
+import { GO_UPSTREAM, isLiveModel, providerOf, upstreamFor, ZEN_UPSTREAM } from './scripted-provider'
 import type { RecordedRequest } from './scripted-provider'
 import type { SpawnOptions, SpawnResult } from './opencode'
 import { sha256 } from './workspace'
@@ -238,6 +240,34 @@ describe('opencodeTransport (fake spawn)', () => {
     const res = await transport({ model: PINNED, system: 'S', user: 'U', timeoutMs: 1000 })
     expect(res.ok).toBe(false)
     expect(res.error).toContain('APIError')
+  })
+})
+
+describe('live providers', () => {
+  test('opencode/ and opencode-go/ ids are live models; anything else is refused', () => {
+    expect(isLiveModel('opencode/big-pickle')).toBe(true)
+    expect(isLiveModel('opencode-go/deepseek-v4.1-flash')).toBe(true)
+    for (const m of ['anthropic/claude-haiku-4-5', 'openai/gpt-5', 'opencode-gox/x', 'opencode', '']) expect(isLiveModel(m)).toBe(false)
+  })
+  test('provider and upstream follow the model id', () => {
+    expect(providerOf('opencode-go/beam-free')).toBe('opencode-go')
+    expect(upstreamFor('opencode-go')).toBe(GO_UPSTREAM)
+    expect(upstreamFor('opencode')).toBe(ZEN_UPSTREAM)
+  })
+  test('the judge config routes the pinned model\'s own provider through the proxy', async () => {
+    const cfg = judgeConfig('S', 'http://127.0.0.1:1/v1', 'opencode-go') as { provider: Record<string, unknown> }
+    expect(Object.keys(cfg.provider)).toEqual(['opencode-go'])
+    let upstream = ''
+    const t = opencodeTransport({
+      startProxy: (u) => {
+        upstream = u
+        return { url: 'http://127.0.0.1:1/v1', requests: [], stop: () => {} }
+      },
+      spawn: async () => ({ stdout: textEvents('x'), stderr: '', exitCode: 0, timedOut: false, aborted: false, wallMs: 1, startedAtMs: 0 }),
+      sleep: async () => {},
+    })
+    await t({ model: 'opencode-go/deepseek-v4.1-flash', system: 'S', user: 'U', timeoutMs: 1000 })
+    expect(upstream).toBe(GO_UPSTREAM)
   })
 })
 

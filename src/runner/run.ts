@@ -28,7 +28,9 @@ import {
 import { debugConfig, OPENCODE_PIN, runArgv, type SpawnResult, spawnCapture } from './opencode'
 import { type LoadedFixture, type PreregVerification } from './prereg'
 import {
+  isLiveModel,
   PLACEHOLDER_API_KEY,
+  providerOf,
   type RecordedRequest,
   SPIKE_MODEL_ID,
   SPIKE_PROVIDER_ID,
@@ -36,6 +38,7 @@ import {
   type ScriptedStep,
   startRecordingProxy,
   startScriptedProvider,
+  upstreamFor,
 } from './scripted-provider'
 import { type Condition, createRunWorkspace, type FixtureKind, type RunWorkspace, sha256 } from './workspace'
 
@@ -334,8 +337,8 @@ async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, at
     model = SCRIPTED_MODEL
   } else {
     model = prereg.agent_model_id
-    if (!model.startsWith('opencode/')) {
-      throw new Error(`live mode only supports free-tier opencode/* models (prereg pins ${model}); no provider key is ever forwarded`)
+    if (!isLiveModel(model)) {
+      throw new Error(`live mode only supports opencode/* and opencode-go/* models (prereg pins ${model})`)
     }
   }
 
@@ -407,7 +410,7 @@ async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, at
   const server =
     c.providerMode === 'scripted'
       ? startScriptedProvider({ steps: (c.scriptFor ?? ((r) => defaultScript(r, c.method)))(run), finalText: c.finalText })
-      : startRecordingProxy()
+      : startRecordingProxy(upstreamFor(providerOf(model)))
   let workspace: RunWorkspace
   try {
     workspace = createRunWorkspace({

@@ -14,6 +14,7 @@ import { Git } from './git'
 import { createJudge } from './judge'
 import { findStaleManifests } from './manifest'
 import { opencodeAvailability } from './opencode'
+import { isLiveModel } from './scripted-provider'
 import { enforcePrereg, PreregRefusal } from './prereg'
 import { buildRedReport, loadCampaignManifests, writeReport } from './report'
 import { planRuns, type ProviderMode, runCampaign } from './run'
@@ -25,7 +26,7 @@ const USAGE = `usage: bun run eval <red|green> --method <name> [options]
        bun run eval report --method <name> [--campaign <dir>]
 
   --runs <n>              runs per condition per fixture (default: prereg runs_per_condition)
-  --provider scripted|live   scripted = local stub (default), live = free-tier opencode/* model from prereg
+  --provider scripted|live   scripted = local stub (default), live = the opencode/* or opencode-go/* model pinned in the prereg
   --fixture <id>          only this fixture (single-run debugging; marks the campaign as deviating from prereg)
   --include-dev           green only: also run dev fixtures under the skill condition
   --repo <dir>            repository to enforce prereg against (default: current git toplevel)
@@ -153,8 +154,8 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
 
   let judge: ReturnType<typeof createJudge> | undefined
   if (providerMode === 'live') {
-    if (!prereg.judge_model_id.startsWith('opencode/')) {
-      err(`prereg pins judge ${prereg.judge_model_id}; this runner only reaches free opencode/* judges (no provider key is ever forwarded)`)
+    if (!isLiveModel(prereg.judge_model_id)) {
+      err(`prereg pins judge ${prereg.judge_model_id}; this runner only reaches opencode/* and opencode-go/* judges`)
       return EXIT.ERROR
     }
     judge = createJudge({ repoRoot, method, model: prereg.judge_model_id, auth })
