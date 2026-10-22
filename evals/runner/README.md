@@ -266,3 +266,57 @@ A denied `bash` call returns the matching rules, including `node *scripts/record
 ## Cost
 
 Per run: `debug config` (≈3.3 s warm) + the run (≈2 to 5 s scripted, ≈17 s for the live smoke). The prereg per-run timeout covers the run, not `debug config`.
+
+## Auth passthrough (opt-in, Unit 6)
+
+The unauthenticated free tier stopped serving requests on 2026-10-22 ("Free usage limit reached", surfaced as a multi-minute hang because OpenCode retries `APIError` internally). The owner authorized one exception to "no key anywhere": copying the `opencode` and `opencode-go` entries of the real `auth.json` into each run's throwaway data dir.
+
+`--auth-passthrough opencode,opencode-go` (or `METACOGS_AUTH_PASSTHROUGH`) on `bun run eval`:
+
+- `src/runner/auth.ts` reads the real `auth.json` programmatically at spawn time and writes only the named entries to `<fixture>/xdg/data/opencode/auth.json` (0600). The fixture, including that file, is deleted with the workspace. No other provider is ever copied; any other name is refused.
+- Values are never logged, put in an error, or written to a manifest. The manifest records `auth_passthrough: ["opencode","opencode-go"]` (names only).
+- The credential-leak scan gains one needle per secret-length string value of each copied entry. It covers the manifest, `stdout.jsonl`, `stderr.txt`, `requests.json` (request bodies), and the workspace. A hit purges the artifacts, writes a sanitized `credential_leak` manifest, and stops the campaign. The judge transport scans its own stdout, stderr, and request bodies the same way. `report` refuses to write a report that contains a value.
+- Isolation checks are unchanged. The author-home `auth.json` canary is still planted beside the fixture and still must not be quotable (tested with the passthrough on): copying two named entries does not widen what a run can reach.
+- A provider 429 before skill content loads is an `infra_error` with reason `provider_429`; the retry waits 30 s, then 90 s. The judge transport retries a 429 after 20 s, then 60 s, before the judge's own single retry.
+
+### Finding: authentication does not lift the free-tier limit
+
+With the passthrough on, `opencode/big-pickle` and six of the seven other `-free` ids probed still fail with `Free usage limit reached. Subscribe to OpenCode Go to keep going` (`nemotron-3.5-lightning-free` and `nemotron-3.5-super-vl-free` were not re-probed; `minimax-m3.1-flash-free` reports itself deprecated). The `opencode-go/*` ids answer with the same credential (`opencode-go/beam-free` and `opencode-go/deepseek-v4.1-flash` each completed one probe turn). The prereg pins `opencode/big-pickle` as the agent, and the runner refuses non-`opencode/` ids in live mode, so RED could not run on free-tier ids at the time of writing. This needs an owner decision (wait for the quota to reset, or pin `opencode-go/*` ids in a new epoch).
+
+## Judge (Unit 6)
+
+Status: implementation complete and covered by mock tests; **model selection not final** (see above). Code: `src/runner/judge.ts`, `src/runner/redact.ts`, probe `src/runner/judge-probe.ts`.
+
+### Transport
+
+`opencode run --format json --agent judge --model <pinned>` in a fresh isolated fixture with an empty `git init`'d workspace, the recording proxy, and `temperature: 0` on the agent. The system prompt is built from `rubric.md` (measured construct, `judge` criteria with anchors, judge instructions; never the annex). The data (task, answer, record) goes on **stdin** inside per-request random delimiters, because `opencode run` JSON-quotes a multi-word argv message but appends stdin verbatim.
+
+Two measured departures from "no tools":
+
+1. **`read` must stay enabled.** Denying `read` makes the free gateway answer `OpenCode's free tier can only be used from within OpenCode` (denying `webfetch`, `websearch`, or `task` does not; `'*': 'deny'` does). `read` is allowed with `external_directory: deny` in an empty workspace, so there is nothing to read. Any tool call by the judge is an error (retry, then `judge_error`).
+2. The agent prompt is the fixed system prompt, but OpenCode appends an environment block (model id, cwd, date). The transport asserts the provider received the fixed prompt as a prefix of the system message.
+
+The request body the provider received is recorded (never headers): `temperature: 0` was observed, and the returned model id is read from the response and compared with the pinned id.
+
+### Candidate probe (2026-10-22, opencode-ai 1.19.4, no key)
+
+`bun src/runner/judge-probe.ts [model ...]`: two identical single-turn probes (`{"sum": 42, "word": "ready"}` expected), then the real judge on three canned answers.
+
+| Model | Answers without key | Temperature 0 sent | Identical JSON on two probes | Returned id matches |
+| --- | --- | --- | --- | --- |
+| `opencode/big-pickle` | yes | yes | yes | `big-pickle` |
+| `opencode/beam-free` | yes | yes | yes | `beam-free` |
+| `opencode/deepseek-v4.1-flash-free` | intermittent (probe 2 failed with `APIError`) | yes | not established | `deepseek-v4.1-flash-free` |
+| `opencode/flint-40b-free`, `glm-5.3-flash-free`, `mimo-v2.6-flash-free`, `minimax-m3.1-flash-free`, `nemotron-3-ultra-free`, `nemotron-3.5-lightning-free`, `nemotron-3.5-super-vl-free` | no: `APIError` or a hang (probe window) | yes | no | none returned |
+
+The probe ran while the free tier was degrading, so the failures are availability, not capability. Later the free limit was hit for every id (above).
+
+### Family
+
+`opencode/big-pickle` is a stealth id: OpenCode's catalogue says `family: big-pickle` and nothing else, and the epoch-1 prereg records only a community guess (GLM/DeepSeek). `opencode/beam-free` is likewise a stealth id (`family: beam`, released 2026-10-05). **Neither family can be established from available evidence**, so "different family from the agent" is unverified for any free id. `deepseek-v4.1-flash-free` and `glm-5.3-flash-free` would be the likeliest same-family candidates if big-pickle is GLM/DeepSeek, so they are the wrong choice for a different-family judge. Record this limitation in `evals/reports/README.md`.
+
+### Contract
+
+Strict JSON `{"criteria":[{"id","verdict","quote"}…]}` (one code fence tolerated), exactly the rubric's `judge` ids. Every `quote` must occur verbatim (case, whitespace, and emphasis-insensitive) in the redacted answer or record; `absent` is valid only for a `fail`. One retry, then `judge_error` (FAIL). Redaction (`redact.json`, NFKC and zero-width-insensitive) is asserted before any request; a surviving token is `judge_error: redaction_failed` with no request made. A returned model id different from the pinned one, or none observed, is `judge_error` with no retry.
+
+Limits: quote verification proves the quote is in the answer, not that it supports the verdict. An injection that makes the judge quote the injected text would pass the check; the tests cover a hijacked judge with invented quotes (caught) and a resisting judge (grounded verdict). RED verdicts from a stealth-family judge are **not** human-reviewed.

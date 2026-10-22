@@ -1,0 +1,504 @@
+/**
+ * Allowlist projection of a campaign into `evals/reports/<method>/red.json`.
+ *
+ * The report contains counts, Wilson intervals, per-fixture `fail/total`,
+ * outcome-taxonomy tallies, verdict enums, hashes, model ids, SHAs, and the
+ * prereg tag. It never contains stdout, stderr, transcripts, quotes, paths,
+ * or environment. Two layers enforce that: `buildRedReport` only reads named
+ * manifest fields, and `validateReport` rejects any key or string value that
+ * is not in the schema below (checked again before every write).
+ */
+import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+
+import { type RunManifest, manifestPath, readManifest } from './manifest'
+import type { Prereg, PreregShas } from './prereg'
+import { sha256 } from './workspace'
+
+export const REPORT_SCHEMA_VERSION = 1 as const
+
+// ── statistics ─────────────────────────────────────────────────────────────
+
+const round4 = (x: number) => Math.round(x * 10_000) / 10_000
+
+/** Wilson score interval (z = 1.96) for `k` successes in `n` trials; `[0, 1]` when `n` is 0. */
+export function wilson95(k: number, n: number): [number, number] {
+  if (n <= 0) return [0, 1]
+  const z = 1.959964
+  const p = k / n
+  const denom = 1 + (z * z) / n
+  const centre = (p + (z * z) / (2 * n)) / denom
+  const half = (z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) / denom
+  return [round4(Math.max(0, centre - half)), round4(Math.min(1, centre + half))]
+}
+
+// ── shape ──────────────────────────────────────────────────────────────────
+
+export interface OutcomeCounts {
+  pass: number
+  /** Judge returned `fail`. */
+  fail_judge_verdict: number
+  /** A deterministic check failed (a baseline's only possible one is an unreadable event stream). */
+  fail_check: number
+  fail_timeout: number
+  fail_budget: number
+  fail_host_crash: number
+  /** judge_error, counted as FAIL per the prereg. */
+  fail_judge_error: number
+  /** Attempts (retries included) that ended in `infra_error`; not in any denominator. */
+  infra_error: number
+  non_isolated: number
+}
+
+export interface Taxonomy {
+  pass: number
+  fail: number
+  'timeout->fail': number
+  'budget->fail': number
+  'judge_error->fail': number
+  infra_error: number
+  non_isolated: number
+}
+
+export interface CriterionTally {
+  pass: number
+  fail_quoted: number
+  fail_absent: number
+}
+
+export interface RetainedRun {
+  run_id: string
+  manifest_sha256: string
+  stdout_sha256: string
+}
+
+export interface FixtureReport {
+  id: string
+  kind: 'dev' | 'negative'
+  fixture_hash: string
+  attempted: number
+  pass: number
+  fail: number
+  fail_over_total: string
+  fail_rate_wilson95: [number, number]
+  outcomes: OutcomeCounts
+  taxonomy: Taxonomy
+  criteria: Record<string, CriterionTally>
+  /** Dev fixtures: baseline fails >= the prereg bar. Negatives: always false (not part of the bar). */
+  meets_red_bar: boolean
+  /** The same fail count with `judge_error` runs removed from numerator and denominator (sensitivity only). */
+  fail_excluding_judge_error: { fail: number; attempted: number; meets_red_bar: boolean }
+  retained: RetainedRun[]
+}
+
+export interface RedReport {
+  schema_version: typeof REPORT_SCHEMA_VERSION
+  kind: 'red'
+  method: string
+  prereg: {
+    tag: string
+    tag_object_sha: string
+    commit_sha: string
+    blob_sha: string
+    epoch: number
+    rubric_hash: string
+    runs_per_condition: number
+    per_run_timeout_ms: number
+    red_bar: { min_baseline_fails_per_fixture: number; min_fixtures: number }
+  }
+  repo: { head_sha: string }
+  opencode: { package: string; version: string }
+  models: { agent_pinned: string; agent_returned: string[]; judge_pinned: string; judge_returned: string[] }
+  judge: { system_prompt_sha256: string[]; judged_runs: number; judge_error_runs: number; temperature_observed: number[] }
+  campaign: { id: string; started_at: string; finished_at: string; planned_runs: number; executed_manifests: number; incomplete_manifests: number }
+  totals: { attempted: number; taxonomy: Taxonomy; wall_clock_ms: number; tokens: { input: number; output: number; reasoning: number } }
+  fixtures: FixtureReport[]
+  red: {
+    dev_fixtures_meeting_bar: number
+    min_fixtures: number
+    green_eligible: boolean
+    sensitivity_excluding_judge_error: { dev_fixtures_meeting_bar: number; green_eligible: boolean }
+  }
+}
+
+// ── building ───────────────────────────────────────────────────────────────
+
+const emptyOutcomes = (): OutcomeCounts => ({ pass: 0, fail_judge_verdict: 0, fail_check: 0, fail_timeout: 0, fail_budget: 0, fail_host_crash: 0, fail_judge_error: 0, infra_error: 0, non_isolated: 0 })
+const emptyTaxonomy = (): Taxonomy => ({ pass: 0, fail: 0, 'timeout->fail': 0, 'budget->fail': 0, 'judge_error->fail': 0, infra_error: 0, non_isolated: 0 })
+
+type Bucket = keyof OutcomeCounts | 'incomplete'
+
+/** One manifest → exactly one bucket. */
+export function bucketOf(m: Pick<RunManifest, 'status' | 'outcome' | 'reasons'>): Bucket {
+  if (m.status === 'infra_error') return 'infra_error'
+  if (m.status === 'non_isolated') return 'non_isolated'
+  if (m.status === 'running' || m.status === 'interrupted' || m.status === 'credential_leak') return 'incomplete'
+  if (m.outcome === 'pass') return 'pass'
+  if (m.outcome !== 'fail') return 'incomplete'
+  if (m.status === 'timeout') return 'fail_timeout'
+  if (m.status === 'budget_exceeded') return 'fail_budget'
+  if (m.status === 'host_crash') return 'fail_host_crash'
+  if (m.reasons.includes('judge_error')) return 'fail_judge_error'
+  if (m.reasons.includes('judge_fail')) return 'fail_judge_verdict'
+  return 'fail_check'
+}
+
+function addToTaxonomy(t: Taxonomy, bucket: keyof OutcomeCounts): void {
+  switch (bucket) {
+    case 'pass':
+      t.pass += 1
+      break
+    case 'fail_judge_verdict':
+    case 'fail_check':
+    case 'fail_host_crash':
+      t.fail += 1
+      break
+    case 'fail_timeout':
+      t['timeout->fail'] += 1
+      break
+    case 'fail_budget':
+      t['budget->fail'] += 1
+      break
+    case 'fail_judge_error':
+      t['judge_error->fail'] += 1
+      break
+    case 'infra_error':
+      t.infra_error += 1
+      break
+    case 'non_isolated':
+      t.non_isolated += 1
+      break
+  }
+}
+
+export interface LoadedRun {
+  manifest: RunManifest
+  manifestSha256: string
+}
+
+/** Every `<campaignDir>/<run>/manifest.json`, in run-id order. */
+export function loadCampaignManifests(campaignDir: string): LoadedRun[] {
+  const out: LoadedRun[] = []
+  for (const entry of readdirSync(campaignDir).sort()) {
+    const path = manifestPath(join(campaignDir, entry))
+    if (!existsSync(path)) continue
+    out.push({ manifest: readManifest(path), manifestSha256: sha256(readFileSync(path)) })
+  }
+  return out
+}
+
+export interface RedReportInput {
+  prereg: Prereg
+  shas: PreregShas
+  headSha: string
+  runs: readonly LoadedRun[]
+  /** `summary.json`'s `planned_runs`, when the campaign wrote one. */
+  plannedRuns: number
+}
+
+const sorted = <T>(values: Iterable<T>): T[] => [...new Set(values)].sort()
+
+export function buildRedReport(input: RedReportInput): RedReport {
+  const { prereg, shas, runs } = input
+  if (runs.length === 0) throw new Error('no run manifests to report')
+  const bar = prereg.red_bar
+
+  const byFixture = new Map<string, { id: string; kind: 'dev' | 'negative'; hash: string; runs: LoadedRun[] }>()
+  for (const run of runs) {
+    const { fixture, condition } = run.manifest
+    if (condition !== 'baseline') throw new Error(`RED reports baseline runs only; ${run.manifest.run_id} is ${condition}`)
+    if (fixture.kind !== 'dev' && fixture.kind !== 'negative') throw new Error(`unexpected fixture kind ${fixture.kind} in ${run.manifest.run_id}`)
+    const key = `${fixture.kind}/${fixture.id}`
+    const entry = byFixture.get(key) ?? { id: fixture.id, kind: fixture.kind, hash: fixture.hash, runs: [] }
+    entry.runs.push(run)
+    byFixture.set(key, entry)
+  }
+
+  const totalsTaxonomy = emptyTaxonomy()
+  let wall = 0
+  const tokens = { input: 0, output: 0, reasoning: 0 }
+  let incomplete = 0
+  let judged = 0
+  let judgeErrors = 0
+
+  const fixtures: FixtureReport[] = [...byFixture.values()]
+    .sort((a, b) => (a.kind === b.kind ? (a.id < b.id ? -1 : 1) : a.kind === 'dev' ? -1 : 1))
+    .map((entry) => {
+      const outcomes = emptyOutcomes()
+      const taxonomy = emptyTaxonomy()
+      const criteria: Record<string, CriterionTally> = {}
+      const retained: RetainedRun[] = []
+      for (const { manifest, manifestSha256 } of entry.runs) {
+        const bucket = bucketOf(manifest)
+        if (bucket === 'incomplete') {
+          incomplete += 1
+          continue
+        }
+        outcomes[bucket] += 1
+        addToTaxonomy(taxonomy, bucket)
+        addToTaxonomy(totalsTaxonomy, bucket)
+        wall += manifest.wall_clock_ms ?? 0
+        tokens.input += manifest.usage?.input ?? 0
+        tokens.output += manifest.usage?.output ?? 0
+        tokens.reasoning += manifest.usage?.reasoning ?? 0
+        if (manifest.judge) {
+          judged += 1
+          if (manifest.judge.error_code !== null) judgeErrors += 1
+          for (const c of manifest.judge.criteria) {
+            const t = (criteria[c.id] ??= { pass: 0, fail_quoted: 0, fail_absent: 0 })
+            if (c.verdict === 'pass') t.pass += 1
+            else if (c.quote.trim().toLowerCase() === 'absent') t.fail_absent += 1
+            else t.fail_quoted += 1
+          }
+        }
+        if (manifest.outcome === 'fail') {
+          retained.push({ run_id: manifest.run_id, manifest_sha256: manifestSha256, stdout_sha256: manifest.artifacts['stdout.jsonl']?.sha256 ?? '' })
+        }
+      }
+      const fail = outcomes.fail_judge_verdict + outcomes.fail_check + outcomes.fail_timeout + outcomes.fail_budget + outcomes.fail_host_crash + outcomes.fail_judge_error
+      const attempted = outcomes.pass + fail
+      const cleanFail = fail - outcomes.fail_judge_error
+      const cleanAttempted = attempted - outcomes.fail_judge_error
+      const isDev = entry.kind === 'dev'
+      return {
+        id: entry.id,
+        kind: entry.kind,
+        fixture_hash: entry.hash,
+        attempted,
+        pass: outcomes.pass,
+        fail,
+        fail_over_total: `${fail}/${attempted}`,
+        fail_rate_wilson95: wilson95(fail, attempted),
+        outcomes,
+        taxonomy,
+        criteria,
+        meets_red_bar: isDev && fail >= bar.min_baseline_fails_per_fixture,
+        fail_excluding_judge_error: { fail: cleanFail, attempted: cleanAttempted, meets_red_bar: isDev && cleanFail >= bar.min_baseline_fails_per_fixture },
+        retained,
+      }
+    })
+
+  const dev = fixtures.filter((f) => f.kind === 'dev')
+  const meeting = dev.filter((f) => f.meets_red_bar).length
+  const meetingClean = dev.filter((f) => f.fail_excluding_judge_error.meets_red_bar).length
+  const manifests = runs.map((r) => r.manifest)
+
+  return {
+    schema_version: REPORT_SCHEMA_VERSION,
+    kind: 'red',
+    method: prereg.method,
+    prereg: {
+      tag: shas.tag,
+      tag_object_sha: shas.tagObjectSha,
+      commit_sha: shas.commitSha,
+      blob_sha: shas.blobSha,
+      epoch: prereg.epoch,
+      rubric_hash: prereg.rubric_hash,
+      runs_per_condition: prereg.runs_per_condition,
+      per_run_timeout_ms: prereg.per_run_timeout_ms,
+      red_bar: { ...bar },
+    },
+    repo: { head_sha: input.headSha },
+    opencode: { package: manifests[0]!.opencode.package, version: manifests[0]!.opencode.version },
+    models: {
+      agent_pinned: prereg.agent_model_id,
+      agent_returned: sorted(manifests.flatMap((m) => m.model.returned)),
+      judge_pinned: prereg.judge_model_id,
+      judge_returned: sorted(manifests.flatMap((m) => m.judge?.model.returned ?? [])),
+    },
+    judge: {
+      system_prompt_sha256: sorted(manifests.flatMap((m) => (m.judge ? [m.judge.system_prompt_sha256] : []))),
+      judged_runs: judged,
+      judge_error_runs: judgeErrors,
+      temperature_observed: sorted(manifests.flatMap((m) => (m.judge?.temperature == null ? [] : [m.judge.temperature]))),
+    },
+    campaign: {
+      id: manifests[0]!.campaign_id,
+      started_at: sorted(manifests.map((m) => m.started_at))[0]!,
+      finished_at: sorted(manifests.map((m) => m.finished_at ?? m.started_at)).at(-1)!,
+      planned_runs: input.plannedRuns,
+      executed_manifests: manifests.length,
+      incomplete_manifests: incomplete,
+    },
+    totals: {
+      attempted: totalsTaxonomy.pass + totalsTaxonomy.fail + totalsTaxonomy['timeout->fail'] + totalsTaxonomy['budget->fail'] + totalsTaxonomy['judge_error->fail'],
+      taxonomy: totalsTaxonomy,
+      wall_clock_ms: wall,
+      tokens,
+    },
+    fixtures,
+    red: {
+      dev_fixtures_meeting_bar: meeting,
+      min_fixtures: bar.min_fixtures,
+      green_eligible: meeting >= bar.min_fixtures,
+      sensitivity_excluding_judge_error: { dev_fixtures_meeting_bar: meetingClean, green_eligible: meetingClean >= bar.min_fixtures },
+    },
+  }
+}
+
+// ── allowlist validation ───────────────────────────────────────────────────
+
+const HEX64 = /^[0-9a-f]{64}$/
+const HEX40 = /^[0-9a-f]{40}$/
+/** `provider/model` as pinned in a prereg. */
+const PINNED_MODEL = /^[a-z0-9][a-z0-9-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/
+const RETURNED_MODEL = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+const ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+
+type Schema =
+  | { t: 'str'; re: RegExp }
+  | { t: 'lit'; v: string | number }
+  | { t: 'int' }
+  | { t: 'num' }
+  | { t: 'bool' }
+  | { t: 'arr'; of: Schema }
+  | { t: 'tuple2num' }
+  | { t: 'obj'; shape: Record<string, Schema> }
+  | { t: 'rec'; keys: RegExp; of: Schema }
+
+const str = (re: RegExp): Schema => ({ t: 'str', re })
+const INT: Schema = { t: 'int' }
+const NUM: Schema = { t: 'num' }
+const BOOL: Schema = { t: 'bool' }
+const obj = (shape: Record<string, Schema>): Schema => ({ t: 'obj', shape })
+const arr = (of: Schema): Schema => ({ t: 'arr', of })
+
+const outcomesShape = (): Schema =>
+  obj(Object.fromEntries(Object.keys(emptyOutcomes()).map((k) => [k, INT])))
+const taxonomyShape = (): Schema =>
+  obj(Object.fromEntries(Object.keys(emptyTaxonomy()).map((k) => [k, INT])))
+
+export const RED_REPORT_SCHEMA: Schema = obj({
+  schema_version: { t: 'lit', v: REPORT_SCHEMA_VERSION },
+  kind: { t: 'lit', v: 'red' },
+  method: str(/^[a-z][a-z0-9-]{0,63}$/),
+  prereg: obj({
+    tag: str(/^prereg\/[a-z][a-z0-9-]{0,63}\/\d+$/),
+    tag_object_sha: str(HEX40),
+    commit_sha: str(HEX40),
+    blob_sha: str(HEX40),
+    epoch: INT,
+    rubric_hash: str(HEX64),
+    runs_per_condition: INT,
+    per_run_timeout_ms: INT,
+    red_bar: obj({ min_baseline_fails_per_fixture: INT, min_fixtures: INT }),
+  }),
+  repo: obj({ head_sha: str(HEX40) }),
+  opencode: obj({ package: str(/^[a-z][a-z0-9-]*$/), version: str(/^\d+\.\d+\.\d+$/) }),
+  models: obj({
+    agent_pinned: str(PINNED_MODEL),
+    agent_returned: arr(str(RETURNED_MODEL)),
+    judge_pinned: str(PINNED_MODEL),
+    judge_returned: arr(str(RETURNED_MODEL)),
+  }),
+  judge: obj({ system_prompt_sha256: arr(str(HEX64)), judged_runs: INT, judge_error_runs: INT, temperature_observed: arr(NUM) }),
+  campaign: obj({
+    id: str(/^[a-z][a-z0-9-]*-red-[0-9TZ-]+$/),
+    started_at: str(ISO),
+    finished_at: str(ISO),
+    planned_runs: INT,
+    executed_manifests: INT,
+    incomplete_manifests: INT,
+  }),
+  totals: obj({ attempted: INT, taxonomy: taxonomyShape(), wall_clock_ms: INT, tokens: obj({ input: INT, output: INT, reasoning: INT }) }),
+  fixtures: arr(
+    obj({
+      id: str(ID),
+      kind: str(/^(dev|negative)$/),
+      fixture_hash: str(HEX64),
+      attempted: INT,
+      pass: INT,
+      fail: INT,
+      fail_over_total: str(/^\d+\/\d+$/),
+      fail_rate_wilson95: { t: 'tuple2num' },
+      outcomes: outcomesShape(),
+      taxonomy: taxonomyShape(),
+      criteria: { t: 'rec', keys: /^[A-Z]{2}\d+$/, of: obj({ pass: INT, fail_quoted: INT, fail_absent: INT }) },
+      meets_red_bar: BOOL,
+      fail_excluding_judge_error: obj({ fail: INT, attempted: INT, meets_red_bar: BOOL }),
+      retained: arr(obj({ run_id: str(/^\d{3}-(dev|negative)-[A-Za-z0-9._-]+-baseline-r\d+(-a\d+)?$/), manifest_sha256: str(HEX64), stdout_sha256: str(HEX64) })),
+    }),
+  ),
+  red: obj({
+    dev_fixtures_meeting_bar: INT,
+    min_fixtures: INT,
+    green_eligible: BOOL,
+    sensitivity_excluding_judge_error: obj({ dev_fixtures_meeting_bar: INT, green_eligible: BOOL }),
+  }),
+})
+
+function check(value: unknown, schema: Schema, path: string, errors: string[]): void {
+  const fail = (message: string): void => {
+    errors.push(`${path || '$'}: ${message}`)
+  }
+  switch (schema.t) {
+    case 'str':
+      if (typeof value !== 'string') fail('expected a string')
+      else if (!schema.re.test(value)) fail('string is outside the allowlisted pattern')
+      return
+    case 'lit':
+      if (value !== schema.v) fail(`expected ${JSON.stringify(schema.v)}`)
+      return
+    case 'int':
+      if (!Number.isInteger(value) || (value as number) < 0) fail('expected a non-negative integer')
+      return
+    case 'num':
+      if (typeof value !== 'number' || !Number.isFinite(value)) fail('expected a finite number')
+      return
+    case 'bool':
+      if (typeof value !== 'boolean') fail('expected a boolean')
+      return
+    case 'tuple2num':
+      if (!Array.isArray(value) || value.length !== 2 || !value.every((n) => typeof n === 'number' && n >= 0 && n <= 1)) fail('expected [lo, hi] within [0, 1]')
+      return
+    case 'arr':
+      if (!Array.isArray(value)) fail('expected an array')
+      else value.forEach((v, i) => check(v, schema.of, `${path}[${i}]`, errors))
+      return
+    case 'obj': {
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        fail('expected an object')
+        return
+      }
+      const record = value as Record<string, unknown>
+      for (const key of Object.keys(record)) if (!(key in schema.shape)) errors.push(`${path ? `${path}.` : ''}${key}: key is not in the allowlist`)
+      for (const [key, sub] of Object.entries(schema.shape)) {
+        if (!(key in record)) errors.push(`${path ? `${path}.` : ''}${key}: missing`)
+        else check(record[key], sub, path ? `${path}.${key}` : key, errors)
+      }
+      return
+    }
+    case 'rec': {
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        fail('expected an object')
+        return
+      }
+      for (const [key, v] of Object.entries(value)) {
+        if (!schema.keys.test(key)) errors.push(`${path}.${key}: key is not in the allowlist`)
+        else check(v, schema.of, `${path}.${key}`, errors)
+      }
+    }
+  }
+}
+
+/** Empty when `report` has exactly the allowlisted keys with allowlisted value shapes. */
+export function validateReport(report: unknown): string[] {
+  const errors: string[] = []
+  check(report, RED_REPORT_SCHEMA, '', errors)
+  return errors
+}
+
+export function reportPath(repoRoot: string, method: string): string {
+  return join(repoRoot, 'evals', 'reports', method, 'red.json')
+}
+
+/** Validates, then writes with stable formatting. Throws on any allowlist violation. */
+export function writeReport(repoRoot: string, report: RedReport): string {
+  const errors = validateReport(report)
+  if (errors.length) throw new Error(`report is not an allowlist projection:\n  ${errors.join('\n  ')}`)
+  const path = reportPath(repoRoot, report.method)
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, `${JSON.stringify(report, null, 2)}\n`)
+  return path
+}

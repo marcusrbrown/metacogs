@@ -89,6 +89,11 @@ export interface SpawnOptions {
   signal?: AbortSignal
   /** Grace between SIGTERM and SIGKILL. Default 5 s. */
   killGraceMs?: number
+  /**
+   * Text written to the child's stdin, then closed. `opencode run` appends piped stdin to the
+   * message verbatim, whereas a multi-word argv message reaches the model JSON-quoted. Absent: stdin is closed.
+   */
+  stdin?: string
 }
 
 /**
@@ -105,8 +110,12 @@ export function spawnCapture(argv: readonly string[], options: SpawnOptions): Pr
       cwd: options.cwd,
       env: options.env,
       detached: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [options.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
     })
+    if (options.stdin !== undefined) {
+      child.stdin?.on('error', () => {}) // EPIPE if the child exits before reading
+      child.stdin?.end(options.stdin)
+    }
     child.stdout?.setEncoding('utf8')
     child.stderr?.setEncoding('utf8')
     let stdout = ''

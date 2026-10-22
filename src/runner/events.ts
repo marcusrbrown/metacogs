@@ -134,6 +134,8 @@ export const KNOWN_EVENT_TYPES = ['step_start', 'step_finish', 'tool_use', 'text
 export interface HostError {
   name: string | undefined
   message: string | undefined
+  /** HTTP status of a provider `APIError`, when the host reports one. */
+  statusCode?: number
 }
 
 export interface EventSummary {
@@ -199,6 +201,7 @@ export function analyzeEvents(stdout: string): EventSummary {
         hostErrors.push({
           name: typeof e.error?.name === 'string' ? e.error.name : undefined,
           message: typeof data.message === 'string' ? data.message : undefined,
+          ...(typeof data.statusCode === 'number' ? { statusCode: data.statusCode } : {}),
         })
         break
       }

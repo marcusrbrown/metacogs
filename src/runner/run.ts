@@ -9,6 +9,7 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { needlesOf, type PassthroughAuth, passthroughNames } from './auth'
 import { checkBudget, classifyHostOutcome, type CheckFailure, listRecordFiles, runChecks } from './checks'
 import { destroyFixture } from './env'
 import { analyzeEvents, type EventSummary } from './events'
@@ -16,6 +17,7 @@ import { checkDebugConfig, checkIsolation, type IsolationEvidence } from './isol
 import {
   type ArtifactRef,
   type FinalStatus,
+  type JudgeEvidence,
   MANIFEST_SCHEMA_VERSION,
   type Needle,
   type RunManifest,
@@ -133,9 +135,11 @@ export interface JudgeInput {
   recordJson: string[]
 }
 
-export type JudgeVerdict = { verdict: 'pass' | 'fail' } | { verdict: 'judge_error'; detail: string }
+export type JudgeVerdict =
+  | { verdict: 'pass' | 'fail'; evidence?: JudgeEvidence }
+  | { verdict: 'judge_error'; detail: string; evidence?: JudgeEvidence }
 
-/** Unit 6 implements this. Absent a judge, positive-fixture outcomes are deterministic-only and marked `pending-judge`. */
+/** `createJudge` in `judge.ts` implements this. Absent a judge, positive-fixture outcomes are deterministic-only and marked `pending-judge`. */
 export type JudgeHook = (input: JudgeInput) => Promise<JudgeVerdict>
 
 // ── campaign ───────────────────────────────────────────────────────────────
@@ -158,6 +162,12 @@ export interface CampaignInput {
   signal?: AbortSignal
   /** Default 2. */
   maxInfraRetries?: number
+  /** Opt-in: real provider credentials copied into each run's isolated auth.json (names go in the manifest, values never). */
+  auth?: PassthroughAuth
+  /** Wait before retrying an `infra_error` caused by a provider 429; attempt is 1-based. Default 30 s, then 90 s. */
+  backoffMs?: (attempt: number) => number
+  /** Test seam. */
+  sleep?: (ms: number) => Promise<void>
   log?: (line: string) => void
 }
 
@@ -218,6 +228,13 @@ export function tallyResults(results: readonly RunResult[], infraErrors: readonl
   return tallies
 }
 
+const defaultBackoffMs = (attempt: number): number => (attempt <= 1 ? 30_000 : 90_000)
+
+/** A provider rate limit: HTTP 429 from the host's error event, or its message. */
+export function isRateLimited(errors: readonly { message?: string | undefined; statusCode?: number }[]): boolean {
+  return errors.some((e) => e.statusCode === 429 || /rate.?limit|too many requests|\b429\b/i.test(e.message ?? ''))
+}
+
 export async function runCampaign(c: CampaignInput): Promise<CampaignResult> {
   mkdirSync(c.campaignDir, { recursive: true, mode: 0o700 })
   const retries = c.maxInfraRetries ?? 2
@@ -247,7 +264,14 @@ export async function runCampaign(c: CampaignInput): Promise<CampaignResult> {
       // Only the final attempt of a planned run counts; an infra_error is retried.
       if (result.status === 'infra_error') {
         infraErrors.push(result)
-        if (attempt <= retries) continue
+        if (attempt <= retries) {
+          if (result.reasons.includes('provider_429')) {
+            const wait = (c.backoffMs ?? defaultBackoffMs)(attempt)
+            c.log?.(`${result.runId}: provider 429, backing off ${Math.round(wait / 1000)}s before retry`)
+            await (c.sleep ?? ((ms: number) => Bun.sleep(ms)))(wait)
+          }
+          continue
+        }
       }
       results.push(result)
       break
@@ -335,6 +359,7 @@ async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, at
       epoch: prereg.epoch,
     },
     provider_mode: c.providerMode,
+    ...(c.auth && Object.keys(c.auth).length ? { auth_passthrough: passthroughNames(c.auth) } : {}),
     opencode: { package: 'opencode-ai', version: OPENCODE_PIN },
     model: { pinned: model, returned: [] },
     isolation: null,
@@ -393,6 +418,7 @@ async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, at
       fixtureText: run.fixture.text,
       provider: c.providerMode === 'scripted' ? { kind: 'scripted', url: server.url } : { kind: 'live', recordingProxyUrl: server.url },
       model,
+      auth: c.auth,
     })
   } catch (e) {
     server.stop()
@@ -466,7 +492,7 @@ async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, at
     // Classification, in precedence order.
     let final: RunResult
     if (hostOutcome === 'infra_error') {
-      final = settle('infra_error', 'infra_error', ['host_exit_before_skill_load'])
+      final = settle('infra_error', 'infra_error', ['host_exit_before_skill_load', ...(isRateLimited(events.hostErrors) ? ['provider_429'] : [])])
     } else if (isolationViolated(evidence, hostOutcome === 'completed')) {
       final = settle('non_isolated', 'non_isolated', evidence.checks.filter((k) => !k.passed).map((k) => k.name))
     } else if (hostOutcome === 'timeout') {
@@ -492,14 +518,18 @@ async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, at
         if (!checks.ok) {
           final = settle('completed', 'fail', reasons)
         } else if (needsJudge && c.judge) {
-          const verdict = await c.judge({
-            method: c.method,
-            condition: run.condition,
-            fixture: run.fixture,
-            finalAnswer: events.assistantText,
-            recordJson: records.map((r) => r.content),
-          })
+          // A throwing judge is a judge_error (FAIL), never an unhandled crash that loses the campaign.
+          const verdict: JudgeVerdict = await c
+            .judge({
+              method: c.method,
+              condition: run.condition,
+              fixture: run.fixture,
+              finalAnswer: events.assistantText,
+              recordJson: records.map((r) => r.content),
+            })
+            .catch((e: unknown) => ({ verdict: 'judge_error' as const, detail: `judge_threw: ${(e as Error).message}` }))
           manifest.verdict_basis = 'judge'
+          if (verdict.evidence) manifest.judge = verdict.evidence
           final =
             verdict.verdict === 'pass'
               ? settle('completed', 'pass', [])
@@ -523,7 +553,7 @@ async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, at
       artifactTexts[file] = readFileSync(join(runDir, file), 'utf8')
     }
     const findings = scanForLeaks({
-      needles: LEAK_NEEDLES,
+      needles: [...LEAK_NEEDLES, ...needlesOf(c.auth ?? {})],
       manifestJson: JSON.stringify(manifest),
       artifacts: artifactTexts,
       dirs: [workspace.fixture.workspace],

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -397,6 +397,113 @@ describe('interruption', () => {
     expect(host.runCalls).toBe(0)
     expect(host.debugCalls).toBe(0)
     expect(res.aborted).toBe('interrupted')
+  })
+})
+
+describe('auth passthrough', () => {
+  // Synthetic values: shaped like secrets, issued to nobody.
+  const AUTH = {
+    opencode: { type: 'api', key: 'synthetic-oc-secret-aaaa1111bbbb' },
+    'opencode-go': { type: 'api', key: 'synthetic-go-secret-cccc2222dddd' },
+  } as const
+
+  test('only the passed providers land in the run\'s isolated auth.json (0600); manifest names providers, never values', async () => {
+    let seen: { files: string[]; mode: number; providers: string[]; underHome: boolean } | undefined
+    const host = fakeHost({
+      during: (req) => {
+        const path = join(req.env.XDG_DATA_HOME!, 'opencode', 'auth.json')
+        seen = {
+          files: readdirSync(join(req.env.XDG_DATA_HOME!, 'opencode')),
+          mode: statSync(path).mode & 0o777,
+          providers: Object.keys(JSON.parse(readFileSync(path, 'utf8'))).sort(),
+          underHome: path.startsWith(dirname(req.env.HOME!)),
+        }
+      },
+    })
+    const c = campaign([planOne('dev', 'baseline')], host, { auth: AUTH })
+    const res = await runCampaign(c)
+    expect(res.aborted).toBeUndefined()
+    expect(seen).toEqual({ files: ['auth.json'], mode: 0o600, providers: ['opencode', 'opencode-go'], underHome: true })
+    const m = manifestOf(c.campaignDir, res.results[0]!.runId)
+    expect(m.auth_passthrough).toEqual(['opencode', 'opencode-go'])
+    expect(res.results[0]!.outcome).toBe('pass')
+    const text = readFileSync(join(c.campaignDir, res.results[0]!.runId, 'manifest.json'), 'utf8')
+    expect(text).not.toContain(AUTH.opencode.key)
+    expect(text).not.toContain(AUTH['opencode-go'].key)
+  })
+
+  test('without a passthrough there is no auth.json and no manifest field', async () => {
+    let exists: boolean | undefined
+    const host = fakeHost({ during: (req) => void (exists = existsSync(join(req.env.XDG_DATA_HOME!, 'opencode', 'auth.json'))) })
+    const c = campaign([planOne('dev', 'baseline')], host)
+    const res = await runCampaign(c)
+    expect(exists).toBe(false)
+    expect(manifestOf(c.campaignDir, res.results[0]!.runId).auth_passthrough).toBeUndefined()
+  })
+
+  test('the canary in the author home is still not quotable: another provider\'s key in a transcript is non_isolated, not passthrough', async () => {
+    const host = fakeHost({ stdout: ev({ type: 'text', timestamp: 2, part: { type: 'text', text: 'METACOGS_CANARY_AUTH_SECRET_c04e55' } }) })
+    const res = await runCampaign(campaign([planOne('dev', 'baseline')], host, { auth: AUTH }))
+    expect(res.results[0]).toMatchObject({ status: 'non_isolated' })
+  })
+
+  test.each([
+    ['stdout', (key: string) => ({ stdout: ev({ type: 'text', timestamp: 2, part: { type: 'text', text: `leak ${key}` } }) })],
+    ['stderr', (key: string) => ({ stderr: `warn ${key}` })],
+    ['the model-visible request body', (key: string) => ({ during: (req: HostRunRequest) => void req.requests.push({ hasTools: false, round: 0, body: { messages: [{ role: 'user', content: key }] } }) })],
+  ])('a passthrough value in %s → credential_leak, artifacts purged, campaign stops', async (_where, behavior) => {
+    const host = fakeHost(behavior(AUTH['opencode-go'].key))
+    const c = campaign([planOne('dev', 'baseline', 'a'), planOne('dev', 'baseline', 'b')], host, { auth: AUTH })
+    const res = await runCampaign(c)
+    expect(res.aborted).toBe('credential_leak')
+    expect(host.runCalls).toBe(1)
+    const runId = readdirSync(c.campaignDir).find((d) => d !== 'summary.json')!
+    expect(readdirSync(join(c.campaignDir, runId))).toEqual(['manifest.json'])
+    const raw = readFileSync(join(c.campaignDir, runId, 'manifest.json'), 'utf8')
+    const m = JSON.parse(raw) as RunManifest
+    expect(m.status).toBe('credential_leak')
+    expect(m.reasons.join()).toContain('auth_passthrough:opencode-go.key')
+    expect(m.auth_passthrough).toEqual(['opencode', 'opencode-go'])
+    expect(raw).not.toContain(AUTH['opencode-go'].key)
+  })
+
+  test('a passthrough value dropped into the workspace is found too', async () => {
+    const host = fakeHost({ during: (req) => writeFileSync(join(req.cwd, 'oops.txt'), AUTH.opencode.key) })
+    const res = await runCampaign(campaign([planOne('dev', 'baseline')], host, { auth: AUTH }))
+    expect(res.aborted).toBe('credential_leak')
+  })
+})
+
+describe('provider 429', () => {
+  const rateLimited = ev({ type: 'error', timestamp: 1, error: { name: 'APIError', data: { message: 'Rate limit exceeded', statusCode: 429 } } })
+
+  test('retried with backoff, recorded as provider_429 infra_error, and never counted in the denominator', async () => {
+    const waits: number[] = []
+    const host = fakeHost((call) => (call <= 2 ? { exitCode: 1, stdout: rateLimited } : {}))
+    const c = campaign([planOne('dev', 'baseline')], host, { sleep: async (ms) => void waits.push(ms) })
+    const res = await runCampaign(c)
+    expect(waits).toEqual([30_000, 90_000])
+    expect(res.results[0]).toMatchObject({ outcome: 'pass', attempt: 3 })
+    expect(res.infraErrors.map((r) => r.reasons)).toEqual([
+      ['host_exit_before_skill_load', 'provider_429'],
+      ['host_exit_before_skill_load', 'provider_429'],
+    ])
+    expect(res.tallies['dev/x/baseline']).toMatchObject({ attempted: 1, pass: 1, infra_error: 2 })
+    expect(manifestOf(c.campaignDir, res.infraErrors[0]!.runId).host_errors[0]).toEqual({ name: 'APIError', message: 'Rate limit exceeded', statusCode: 429 })
+  })
+
+  test('a non-429 outage retries immediately (no backoff)', async () => {
+    const waits: number[] = []
+    const crash = ev({ type: 'error', timestamp: 1, error: { name: 'APIError', data: { message: 'provider down', statusCode: 503 } } })
+    const host = fakeHost((call) => (call <= 1 ? { exitCode: 1, stdout: crash } : {}))
+    await runCampaign(campaign([planOne('dev', 'baseline')], host, { sleep: async (ms) => void waits.push(ms) }))
+    expect(waits).toEqual([])
+  })
+
+  test('a 429 after skill content loaded is a FAIL, not an infra_error', async () => {
+    const host = fakeHost({ exitCode: 1, stdout: `${skillLoadEvent}\n${rateLimited}` })
+    const res = await runCampaign(campaign([planOne('heldout', 'skill', 'h1')], host))
+    expect(res.results[0]).toMatchObject({ status: 'host_crash', outcome: 'fail' })
   })
 })
 

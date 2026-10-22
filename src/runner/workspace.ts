@@ -18,6 +18,7 @@ import {
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
+import { type PassthroughAuth, writeIsolatedAuth } from './auth'
 import {
   AUTH_CANARY,
   AUTHOR_SKILL_BODY,
@@ -200,6 +201,8 @@ export interface RunWorkspaceInput {
   provider: ProviderWiring
   /** `provider/model`. */
   model: string
+  /** Opt-in: provider entries copied into this run's isolated `auth.json` (never the author's other providers). */
+  auth?: PassthroughAuth
 }
 
 /** Strings that must never be quotable from inside the run. */
@@ -265,6 +268,7 @@ function populateRunWorkspace(input: RunWorkspaceInput, fixture: Fixture): RunWo
     provider: providerConfig,
   })
   const env = buildChildEnv({ fixture, config, withRecordsDir: true })
+  writeIsolatedAuth(fixture, input.auth ?? {})
 
   return {
     fixture,

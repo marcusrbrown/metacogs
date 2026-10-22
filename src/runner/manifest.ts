@@ -37,6 +37,24 @@ export interface ArtifactRef {
   bytes: number
 }
 
+/** What the judge saw and said for one run (Unit 6). Quotes come from the (redacted) agent answer; manifests are local artifacts. */
+export interface JudgeEvidence {
+  model: { pinned: string; returned: string[] }
+  system_prompt_sha256: string
+  /** Hash of the final attempt's request body (the stdin message). */
+  input_sha256: string
+  attempts: number
+  /** Temperature observed in the request the provider received; `null` if no request was seen. */
+  temperature: number | null
+  /** Why the verdict is `judge_error`; `null` otherwise. */
+  error_code: string | null
+  criteria: { id: string; verdict: 'pass' | 'fail'; quote: string; quote_verified: boolean }[]
+  /** The runner's overclaim-phrase flag (synthesis SY5m); always false for methods without one. */
+  overclaim_flag: boolean
+  tool_calls: number
+  wall_ms: number
+}
+
 export interface RunManifest {
   schema_version: typeof MANIFEST_SCHEMA_VERSION
   run_id: string
@@ -62,6 +80,8 @@ export interface RunManifest {
     epoch: number
   }
   provider_mode: 'scripted' | 'live'
+  /** Provider names whose real credentials were copied into this run's isolated auth.json. Never values. */
+  auth_passthrough?: string[]
   opencode: { package: string; version: string }
   model: { pinned: string; returned: string[] }
   isolation: IsolationEvidence | null
@@ -72,6 +92,8 @@ export interface RunManifest {
   host_errors: HostError[]
   records: { name: string; sha256: string }[]
   check_failures: CheckFailure[]
+  /** Present when the judge ran (verdict_basis `judge`). */
+  judge?: JudgeEvidence
   artifacts: Record<string, ArtifactRef>
   started_at: string
   finished_at: string | null
