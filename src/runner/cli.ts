@@ -17,7 +17,8 @@ import { HUMAN_REVIEW_FILE, loadCampaignRuns, reconcileCampaign, rejudgeCampaign
 import { type HumanReview, humanReviewBlock, summarize } from './human-review'
 import { createJudge } from './judge'
 import { findStaleManifests } from './manifest'
-import { opencodeAvailability } from './opencode'
+import { removeLiveFixtures } from './env'
+import { killLiveGroups, opencodeAvailability } from './opencode'
 import { isLiveModel } from './scripted-provider'
 import { enforcePrereg, parsePrereg, PreregRefusal } from './prereg'
 import { buildDevReport, buildGreenReport, buildRedReport, type DevReport, type GreenReport, greenReportPath, loadCampaignManifests, recomputeDevRegression, validateDevReport, validateGreenReport, writeDevReport, writeGreenReport, writeReport } from './report'
@@ -69,18 +70,27 @@ export interface MainIO {
   cwd: string
 }
 
-function defaultInstallSignalHandlers(abort: () => void): () => void {
+const INTERRUPT_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const
+
+/**
+ * First signal: abort the campaign (the runner cleans up as it unwinds). Second signal: the unwind is taking too long, so
+ * kill every child process group still alive, delete every fixture directory (one may hold a copied credential), and exit.
+ * Returns the uninstall function.
+ */
+export function defaultInstallSignalHandlers(abort: () => void): () => void {
   let count = 0
   const handler = () => {
     count += 1
-    if (count > 1) process.exit(EXIT.INTERRUPTED)
+    if (count > 1) {
+      killLiveGroups()
+      removeLiveFixtures()
+      process.exit(EXIT.INTERRUPTED)
+    }
     abort()
   }
-  process.on('SIGINT', handler)
-  process.on('SIGTERM', handler)
+  for (const signal of INTERRUPT_SIGNALS) process.on(signal, handler)
   return () => {
-    process.off('SIGINT', handler)
-    process.off('SIGTERM', handler)
+    for (const signal of INTERRUPT_SIGNALS) process.off(signal, handler)
   }
 }
 
@@ -231,6 +241,7 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
     throw e
   }
 
+  const controller = new AbortController()
   let judge: ReturnType<typeof createJudge> | undefined
   if (providerMode === 'live') {
     if (!isLiveModel(prereg.judge_model_id)) {
@@ -242,7 +253,7 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
       err(`REFUSED: ${mismatch}`)
       return EXIT.REFUSED
     }
-    judge = createJudge({ repoRoot, method, model: prereg.judge_model_id, auth })
+    judge = createJudge({ repoRoot, method, model: prereg.judge_model_id, auth, signal: controller.signal })
   }
 
   const availability = opencodeAvailability()
@@ -255,7 +266,6 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
   if (deviates) err('note: --runs/--fixture deviate from the prereg plan; this campaign is a debugging run, not evidence.')
   out(`campaign ${campaignId}: ${plan.length} runs (${providerMode}, ${mode}) → ${campaignDir}`)
 
-  const controller = new AbortController()
   const uninstall = (io.installSignalHandlers ?? defaultInstallSignalHandlers)(() => controller.abort())
   let result: Awaited<ReturnType<typeof runCampaign>>
   try {

@@ -317,6 +317,37 @@ describe('opencodeTransport: passthrough auth and 429', () => {
     expect(waits).toEqual([20_000, 60_000])
   })
 
+  test('an interrupt during the 429 backoff stops the retries and reports aborted', async () => {
+    const ac = new AbortController()
+    let spawns = 0
+    const transport = opencodeTransport({
+      sleep: async (_ms, signal) => {
+        expect(signal).toBe(ac.signal) // the wait is handed the interrupt, so a real sleep ends early
+        ac.abort()
+      },
+      startProxy: () => ({ url: 'http://127.0.0.1:1/v1', requests: [], stop: () => {} }),
+      spawn: async (): Promise<SpawnResult> => {
+        spawns += 1
+        return { stdout: rateLimited, stderr: '', exitCode: 1, timedOut: false, aborted: false, wallMs: 1, startedAtMs: 0 }
+      },
+    })
+    const res = await transport({ model: PINNED, system: 'S', user: 'U', timeoutMs: 1000, signal: ac.signal })
+    expect(spawns).toBe(1)
+    expect(res).toMatchObject({ ok: false, error: 'aborted' })
+  })
+
+  test('the judge hands the run\'s interrupt to its transport', async () => {
+    const ac = new AbortController()
+    let seen: AbortSignal | undefined
+    const transport = async (request: { signal?: AbortSignal }) => {
+      seen = request.signal
+      return { ok: false, error: 'aborted', text: '', returnedModels: [], temperature: null, systemPromptSeen: false, toolCalls: 0, wallMs: 1 }
+    }
+    const judge = createJudge({ repoRoot: REPO_ROOT, method: 'counterfactual', model: PINNED, transport })
+    expect(await judge.hook({ ...inputFor(ANSWER), signal: ac.signal })).toMatchObject({ verdict: 'infra_error', code: 'aborted' })
+    expect(seen).toBe(ac.signal)
+  })
+
   test('a passthrough value in the judge output is a credential leak: the text is discarded', async () => {
     const res = await transportWith([{ stdout: textEvents(`my key is ${KEY}`) }], [], {})({ model: PINNED, system: 'S', user: 'U', timeoutMs: 1000 })
     expect(res).toMatchObject({ ok: false, error: 'credential_leak', text: '' })

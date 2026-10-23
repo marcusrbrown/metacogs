@@ -32,7 +32,7 @@ import { createFixture, buildChildEnv, destroyFixture } from './env'
 import { analyzeEvents, isRateLimited } from './events'
 import { systemPromptSent } from './isolation'
 import { CredentialLeakError, type JudgeEvidence } from './manifest'
-import { opencodeArgv, type SpawnOptions, type SpawnResult, spawnCapture } from './opencode'
+import { opencodeArgv, type SpawnOptions, type SpawnResult, sleepUnlessAborted, spawnCapture } from './opencode'
 import { loadRedactTokens, redactOrThrow, RedactionFailed } from './redact'
 import type { JudgeHook, JudgeInfraCode, JudgeInput, JudgeVerdict } from './run'
 import { type Gateway, gatewayOf, providerOf, type ScriptedProviderServer, startRecordingProxy, upstreamFor } from './scripted-provider'
@@ -327,10 +327,11 @@ export type JudgeTransport = (request: JudgeTransportRequest) => Promise<JudgeTr
 export interface TransportDeps {
   startProxy: (upstream: string) => ScriptedProviderServer
   spawn: (argv: readonly string[], options: SpawnOptions) => Promise<SpawnResult>
-  sleep: (ms: number) => Promise<void>
+  /** Ends early when `signal` fires. */
+  sleep: (ms: number, signal?: AbortSignal) => Promise<void>
 }
 
-const defaultDeps: TransportDeps = { startProxy: (upstream) => startRecordingProxy(upstream), spawn: spawnCapture, sleep: (ms) => Bun.sleep(ms) }
+const defaultDeps: TransportDeps = { startProxy: (upstream) => startRecordingProxy(upstream), spawn: spawnCapture, sleep: sleepUnlessAborted }
 
 /** Backoff before re-sending after a provider 429: the free gateway throttles bursts. */
 const RATE_LIMIT_BACKOFF_MS = [20_000, 60_000] as const
@@ -400,8 +401,9 @@ export function opencodeTransport(overrides: Partial<TransportDeps> = {}, auth: 
   return async (request) => {
     let response = await once(request)
     for (const wait of RATE_LIMIT_BACKOFF_MS) {
-      if (response.ok || !response.rateLimited) break
-      await deps.sleep(wait)
+      if (response.ok || !response.rateLimited || request.signal?.aborted) break
+      await deps.sleep(wait, request.signal)
+      if (request.signal?.aborted) return { ...response, ok: false, error: 'aborted', rateLimited: false }
       response = await once(request)
     }
     return response
@@ -501,7 +503,7 @@ export function createJudge(options: CreateJudgeOptions): Judge {
       const user = buildUserMessage({ nonce, task, answer, record, overclaimFlag: evidence.overclaim_flag })
       evidence.input_sha256 = sha256(user)
 
-      const response = await transport({ model, system: spec.systemPrompt, user, timeoutMs, signal: options.signal })
+      const response = await transport({ model, system: spec.systemPrompt, user, timeoutMs, signal: input.signal ?? options.signal })
       evidence.model.returned = response.returnedModels
       evidence.gateway = response.gateway ?? null
       evidence.temperature = response.temperature

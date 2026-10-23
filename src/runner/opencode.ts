@@ -67,6 +67,21 @@ export interface SpawnResult {
   startedAtMs: number
 }
 
+/** Process groups of children that are still running, so a forced exit can kill them. */
+const liveGroups = new Set<number>()
+
+/** SIGKILL to every live child's process group. For the second-signal exit path only. */
+export function killLiveGroups(): void {
+  for (const pid of liveGroups) {
+    try {
+      process.kill(-pid, 'SIGKILL')
+    } catch {
+      // already gone
+    }
+  }
+  liveGroups.clear()
+}
+
 export function killGroup(child: ChildProcess, signal: NodeJS.Signals): void {
   const pid = child.pid
   if (pid === undefined) return
@@ -112,6 +127,7 @@ export function spawnCapture(argv: readonly string[], options: SpawnOptions): Pr
       detached: true,
       stdio: [options.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
     })
+    if (child.pid !== undefined) liveGroups.add(child.pid)
     if (options.stdin !== undefined) {
       child.stdin?.on('error', () => {}) // EPIPE if the child exits before reading
       child.stdin?.end(options.stdin)
@@ -127,6 +143,7 @@ export function spawnCapture(argv: readonly string[], options: SpawnOptions): Pr
     const finish = (exitCode: number) => {
       if (settled) return
       settled = true
+      if (child.pid !== undefined) liveGroups.delete(child.pid)
       clearTimeout(timer)
       if (forceKill) clearTimeout(forceKill)
       options.signal?.removeEventListener('abort', onAbort)
@@ -170,6 +187,20 @@ export function spawnCapture(argv: readonly string[], options: SpawnOptions): Pr
       finish(-1)
     })
     child.once('close', (code) => finish(timedOut || aborted ? -1 : (code ?? -1)))
+  })
+}
+
+/** Resolves after `ms`, or as soon as `signal` fires (the caller checks the signal afterwards). */
+export function sleepUnlessAborted(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve()
+    const done = () => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', done)
+      resolve()
+    }
+    const timer = setTimeout(done, ms)
+    signal?.addEventListener('abort', done, { once: true })
   })
 }
 

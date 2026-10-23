@@ -29,8 +29,24 @@ export interface Fixture {
   recordsDir: string
 }
 
+/** Fixture roots that exist right now, so a forced exit can delete them (they can hold a copied credential). */
+const liveFixtureRoots = new Set<string>()
+
+/** Synchronously deletes every fixture that has not been destroyed yet. For the second-signal exit path only. */
+export function removeLiveFixtures(): void {
+  for (const root of liveFixtureRoots) {
+    try {
+      rmSync(root, { recursive: true, force: true })
+    } catch {
+      // best effort on the way out
+    }
+  }
+  liveFixtureRoots.clear()
+}
+
 export function createFixture(prefix = 'metacogs-spike-'): Fixture {
   const root = mkdtempSync(join(tmpdir(), prefix))
+  liveFixtureRoots.add(root)
   const dir = (...p: string[]) => {
     const full = join(root, ...p)
     mkdirSync(full, { recursive: true })
@@ -54,6 +70,7 @@ export function createFixture(prefix = 'metacogs-spike-'): Fixture {
 
 export function destroyFixture(fixture: Fixture): void {
   rmSync(fixture.root, { recursive: true, force: true })
+  liveFixtureRoots.delete(fixture.root)
 }
 
 /** Shared across runs so `bunx` does not re-download the pinned package. */

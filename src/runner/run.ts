@@ -27,7 +27,7 @@ import {
   scanForLeaks,
   writeManifest,
 } from './manifest'
-import { debugConfig, OPENCODE_PIN, runArgv, type SpawnResult, spawnCapture } from './opencode'
+import { debugConfig, OPENCODE_PIN, runArgv, sleepUnlessAborted, type SpawnResult, spawnCapture } from './opencode'
 import { type LoadedFixture, type PreregVerification } from './prereg'
 import {
   gatewayOf,
@@ -129,12 +129,12 @@ export interface HostRunRequest {
 export interface Host {
   run(request: HostRunRequest): Promise<SpawnResult>
   /** Output of `opencode debug config`, or `undefined` if it could not be obtained. */
-  debugConfig(request: { cwd: string; env: Record<string, string>; config: Record<string, unknown> }): Promise<unknown>
+  debugConfig(request: { cwd: string; env: Record<string, string>; config: Record<string, unknown>; signal?: AbortSignal }): Promise<unknown>
 }
 
 export const realHost: Host = {
   run: (r) => spawnCapture(r.argv, { cwd: r.cwd, env: r.env, timeoutMs: r.timeoutMs, signal: r.signal }),
-  debugConfig: async (r) => (await debugConfig({ cwd: r.cwd, env: r.env, timeoutMs: 120_000 })).json,
+  debugConfig: async (r) => (await debugConfig({ cwd: r.cwd, env: r.env, timeoutMs: 120_000, signal: r.signal })).json,
 }
 
 // ── judge hook ────────────────────────────────────────────────────
@@ -145,6 +145,8 @@ export interface JudgeInput {
   fixture: PlannedRun['fixture']
   finalAnswer: string
   recordJson: string[]
+  /** The campaign's interrupt: the judge's spawn and its backoff waits stop when it fires. */
+  signal?: AbortSignal
 }
 
 /** Transport-level reasons a judge call produced no verdict at all; none of them says anything about the answer. */
@@ -191,7 +193,7 @@ export interface CampaignInput {
   leakNeedles?: readonly Needle[]
   /** Wait before retrying an `infra_error` caused by a provider 429; attempt is 1-based. Default 30 s, then 90 s. */
   backoffMs?: (attempt: number) => number
-  /** Test seam. */
+  /** Test seam. The default wait ends early when `signal` fires. */
   sleep?: (ms: number) => Promise<void>
   log?: (line: string) => void
 }
@@ -301,7 +303,12 @@ export async function runCampaign(c: CampaignInput): Promise<CampaignResult> {
             if (isBackoffWorthy(result.reasons)) {
               const wait = (c.backoffMs ?? defaultBackoffMs)(attempt)
               c.log?.(`${result.runId}: ${result.reasons.join(', ')}, backing off ${Math.round(wait / 1000)}s before retry`)
-              await (c.sleep ?? ((ms: number) => Bun.sleep(ms)))(wait)
+              await (c.sleep ?? ((ms: number) => sleepUnlessAborted(ms, c.signal)))(wait)
+              if (c.signal?.aborted) {
+                results.push(result)
+                aborted = 'interrupted'
+                break outer
+              }
             }
             continue
           }
@@ -567,7 +574,7 @@ async function runAttempt(c: CampaignInput, run: PlannedRun, state: AttemptState
       })
 
     // Effective config first: if something outside the generated file contributes, do not spend a model request.
-    const debugJson = await host.debugConfig(base)
+    const debugJson = await host.debugConfig({ ...base, signal })
     if (signal.aborted) return interrupted()
     const dbg = debugJson === undefined ? { passed: false } : checkDebugConfig(debugJson, workspace.config)
     if (!dbg.passed) {
@@ -658,6 +665,7 @@ async function runAttempt(c: CampaignInput, run: PlannedRun, state: AttemptState
               fixture: run.fixture,
               finalAnswer: events.assistantText,
               recordJson: records.map((r) => r.content),
+              signal,
             })
           } catch (e) {
             // The judge's transport saw a configured secret: nothing from this run may stay on disk, and the campaign stops.

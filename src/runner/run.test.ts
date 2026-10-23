@@ -689,6 +689,34 @@ describe('provider 429', () => {
     expect(res.tallies['heldout/h1/skill']).toMatchObject({ attempted: 0 })
   })
 
+  test('an interrupt during the backoff wait ends the wait and the campaign at once; the host never sees a second run', async () => {
+    const ac = new AbortController()
+    const host = fakeHost({ exitCode: 1, stdout: rateLimited, during: () => void setTimeout(() => ac.abort(), 50) })
+    const c = campaign([planOne('dev', 'baseline', 'a'), planOne('dev', 'baseline', 'b')], host, { signal: ac.signal, backoffMs: () => 600_000 })
+    const started = Date.now()
+    const res = await runCampaign(c)
+    expect(Date.now() - started).toBeLessThan(60_000)
+    expect(res.aborted).toBe('interrupted')
+    expect(host.runCalls).toBe(1)
+    expect(JSON.parse(readFileSync(res.summaryPath, 'utf8'))).toMatchObject({ aborted: 'interrupted' })
+  })
+
+  test('the judge receives the campaign\'s interrupt signal', async () => {
+    const ac = new AbortController()
+    let seen: AbortSignal | undefined
+    await runCampaign(campaign([planOne('dev', 'baseline', 'd')], fakeHost({}), { signal: ac.signal, judge: async (input) => ((seen = input.signal), ({ verdict: 'pass' }) as const) }))
+    expect(seen).toBe(ac.signal)
+  })
+
+  test('the host\'s debug-config probe receives it too', async () => {
+    const ac = new AbortController()
+    const inner = fakeHost({})
+    let seen: AbortSignal | undefined
+    const host: Host = { run: (r) => inner.run(r), debugConfig: (r) => ((seen = r.signal), inner.debugConfig(r)) }
+    await runCampaign(campaign([planOne('dev', 'baseline', 'd')], host, { signal: ac.signal }))
+    expect(seen).toBe(ac.signal)
+  })
+
   test('three rate-limited attempts in a row abort the campaign as provider_outage; later runs are never launched and the summary says so', async () => {
     const host = fakeHost({ exitCode: 1, stdout: rateLimited })
     const c = campaign([planOne('dev', 'baseline', 'a'), planOne('dev', 'baseline', 'b')], host, { sleep: async () => {} })

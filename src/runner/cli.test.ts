@@ -1,10 +1,11 @@
-import { afterAll, describe, expect, test } from 'bun:test'
+import { afterAll, describe, expect, spyOn, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { EXIT, main } from './cli'
-import { opencodeAvailability } from './opencode'
+import { defaultInstallSignalHandlers, EXIT, main } from './cli'
+import { createFixture, destroyFixture } from './env'
+import { opencodeAvailability, spawnCapture } from './opencode'
 import { buildHappyChain, scaffoldMethod, TestRepo, writePrereg } from './test-support'
 
 const cleanup: (() => void)[] = []
@@ -438,6 +439,52 @@ describe.skipIf(!opencodeAvailability().available)('scripted end-to-end', () => 
     await main(['red', '--runs', '1', '--fixture', 'n1', '--method', 'demo', '--repo', repo.dir, '--out', out], t.io)
     expect(t.lines.err.join('\n')).toContain('stale "running" manifest')
   }, 180_000)
+})
+
+describe('defaultInstallSignalHandlers', () => {
+  const COUNTS = () => ['SIGINT', 'SIGTERM', 'SIGHUP'].map((s) => process.listenerCount(s))
+
+  test('the first signal aborts; the second kills live process groups, deletes live fixtures, and exits 130; uninstalling removes every listener', async () => {
+    const before = COUNTS()
+    const exit = spyOn(process, 'exit').mockImplementation((() => undefined) as never)
+    const fixture = createFixture('metacogs-sigtest-')
+    const child = spawnCapture(['sleep', '60'], { cwd: fixture.workspace, env: { PATH: process.env.PATH ?? '' }, timeoutMs: 120_000 })
+    let aborts = 0
+    const uninstall = defaultInstallSignalHandlers(() => void (aborts += 1))
+    try {
+      expect(COUNTS()).toEqual(before.map((n) => n + 1))
+
+      process.emit('SIGINT')
+      expect(aborts).toBe(1)
+      expect(exit).not.toHaveBeenCalled()
+      expect(existsSync(fixture.root)).toBe(true)
+
+      process.emit('SIGTERM')
+      expect(exit).toHaveBeenCalledWith(EXIT.INTERRUPTED)
+      expect(EXIT.INTERRUPTED).toBe(130)
+      expect(existsSync(fixture.root)).toBe(false) // removed synchronously, before the exit
+      const result = await child // the group was SIGKILLed: the spawn resolves long before its 60 s sleep ends
+      expect(result.wallMs).toBeLessThan(30_000)
+    } finally {
+      uninstall()
+      exit.mockRestore()
+      destroyFixture(fixture)
+    }
+    expect(COUNTS()).toEqual(before)
+  })
+
+  test('SIGHUP counts as an interrupt', () => {
+    const exit = spyOn(process, 'exit').mockImplementation((() => undefined) as never)
+    let aborts = 0
+    const uninstall = defaultInstallSignalHandlers(() => void (aborts += 1))
+    try {
+      process.emit('SIGHUP')
+      expect(aborts).toBe(1)
+    } finally {
+      uninstall()
+      exit.mockRestore()
+    }
+  })
 })
 
 describe('review --reconcile', () => {
