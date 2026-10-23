@@ -7,21 +7,21 @@ compatibility: The record helper needs Node 22 or newer. Without it the method s
 
 # Synthesis
 
-A checklist for reconciling several perspectives without counting heads. It structures your own reasoning. It does not change how the model thinks, and nothing enforces it.
+A checklist for reconciling several perspectives without counting heads. It structures your own reasoning; nothing enforces it.
 
 ## Steps
 
-1. **Gate.** If there are not multiple material perspectives on a consequential decision, do nothing: no announcement, no helper, no record. Answer the task directly. A mechanical edit, sort, wording swap, or small fix is out, even when the text uses words like "consensus", "synthesis", or "perspectives".
-2. **Question.** Restate the decision being made. → `objective`
-3. **Extract each perspective.** Use the input's own labels. For each one, separately: its claim, the evidence it offers, and what it takes for granted. State it as its proponent would, and give dissent the same fidelity as the majority. → `evidence` (one entry per perspective, starting with its label), `assumptions`
-4. **Map shared ground.** Find premises, constraints, documents, or framings that two or more perspectives share, or that all omit. Say whether anything in the input supports each. → `assumptions`
-5. **Test dependence before aggregating.** Group perspectives that rest on the same premise, source, or artifact. Name the concrete path. Dependent agreement is one data point. Vote counts and "everyone agrees" are never evidence. → `findings`
-6. **Compare alternatives.** Weigh at least two options, the dissenting one included, against evidence that would discriminate between them. Where the evidence is insufficient, say so. → `alternatives`
-7. **Conclude.** State a conclusion no stronger than what survives step 5, what would change it, a next action, and an observable event that should reopen it, different from the next action. → `findings`, `next_action`, `reopen_condition`
+1. **Gate.** Without multiple material perspectives on a consequential decision, do nothing: no announcement, no helper, no record. Answer directly. A mechanical edit, sort, wording swap, or small fix is out, even when the text says "consensus", "synthesis", or "perspectives".
+2. **Question.** Restate the decision. → `objective`
+3. **Extract each perspective** under the input's own label: claim, evidence offered, what it takes for granted. State each as its proponent would; dissent gets the same fidelity as the majority. → `evidence` (one entry per perspective, starting with its label), `assumptions`
+4. **Map shared ground.** Find premises, constraints, documents, or framings that two or more perspectives share or that all omit. Say whether the input supports each. → `assumptions`
+5. **Test dependence before aggregating.** Name the concrete path tying the perspectives together: a shared source or artifact, a shared prompt or framing, a shared premise, or a constraint every one of them leaves out. Disagreeing perspectives can share a blind spot, so look for what both sides omit. Dependent agreement is one data point. If you find no path, say so and say what you checked; never call perspectives "independent" without that check. Vote counts and "everyone agrees" are never evidence. → `findings`
+6. **Compare alternatives**, the dissenting one included, against evidence that discriminates. Where evidence is insufficient, say so. → `alternatives`
+7. **Conclude** no more strongly than what survives step 5. Give what would change it, a next action, and an observable reopen event different from the next action. → `findings`, `next_action`, `reopen_condition`
 
 ## Record
 
-After step 7, run the helper exactly once. The host reports this skill's base directory when it loads the skill; use it, never a guessed path. Send the record as JSON on stdin:
+After step 7, run the helper once, before replying. Use the skill base directory the host reported, never a guessed path. JSON on stdin:
 
 ```
 node "<skill-base-dir>/scripts/record.mjs" <<'EOF'
@@ -29,18 +29,18 @@ node "<skill-base-dir>/scripts/record.mjs" <<'EOF'
 EOF
 ```
 
-`execution_mode`: `direct` when you applied the steps yourself. `sequential` when the host has no way to delegate and you worked the steps one after another. `delegated` only if you actually delegated.
+`execution_mode`: `direct` (you applied the steps), `sequential` (no delegation available), `delegated` (only if you did).
 
 - Exit 0: written.
-- Exit 2: the output names a field. Fix it and rerun once.
-- Exit 3 or 4, a refused command, or no Node: rerun nothing. Say no record was written and set `execution_mode` to `unrecorded` in your reply.
+- Exit 2: the output names a field. Fix it, rerun once.
+- Exit 3 or 4, a refused command, or no Node: do not rerun. Say no record was written; `execution_mode` is `unrecorded`.
 
 ## Reply
 
-The record is not your answer, and the user does not see it. Reply with the decision, then all five labelled lines, every time, even when the decision is short:
+The user does not see the record. Reply with the decision, then all five labelled lines, every time:
 
-- **Perspectives:** each one in its own terms, with the evidence it offers.
-- **Shared premise or constraint:** and whether anything in the input supports it.
-- **Dependence:** the concrete path (same source, framing, or artifact) and how many independent data points remain.
-- **Alternatives compared:** the dissenting one included, and the evidence that discriminates.
-- **Conclusion:** confidence matched to what survives, what would change it, and the next action.
+- **Perspectives:** each in its own terms, with its evidence.
+- **Shared premise or constraint:** and whether the input supports it.
+- **Dependence:** "Path:" the named shared source, framing, premise, or omitted constraint, and how many independent data points remain; or "No path found:" what you checked.
+- **Alternatives compared:** the dissent included, and the discriminating evidence.
+- **Conclusion:** confidence matched to what survives, what would change it, the next action.
