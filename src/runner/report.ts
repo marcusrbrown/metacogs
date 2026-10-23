@@ -11,6 +11,7 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
+import { type HumanReview, type HumanReviewBlock, humanReviewBlock } from './human-review'
 import { type RunManifest, manifestPath, readManifest } from './manifest'
 import type { Prereg, PreregShas } from './prereg'
 import { sha256 } from './workspace'
@@ -954,7 +955,8 @@ export interface GreenReport {
   /** `green` only if every check holds. Machine verdict: human review below is still owed. */
   verdict: 'green' | 'green-miss'
   held_out_too_easy: boolean
-  human_review: { status: 'pending'; judged_runs: number; reviewed: number }
+  /** `pending` until `eval review --reconcile` has produced `human-review.json`; then counts, per-criterion agreement, flipped runs, and a recomputed verdict. */
+  human_review: HumanReviewBlock
   /** One-shot: any edit under `skills/<method>/` after this report, in this epoch, burns the held-out set. */
   burn_rule: { one_shot_read: true; skill_edit_burns_set: true }
 }
@@ -970,6 +972,8 @@ export interface GreenReportInput {
   /** The committed `green-dev.json`, parsed; `null` when absent. */
   devReport: Pick<DevReport, 'skill' | 'dev'> | null
   nearDuplicate: 'pass' | 'fail'
+  /** The reconciled human review of this campaign, when `human-review.json` exists. */
+  humanReview?: HumanReview | null
 }
 
 interface Accumulator {
@@ -1164,7 +1168,9 @@ export function buildGreenReport(input: GreenReportInput): GreenReport {
     checks,
     verdict: Object.values(checks).every(Boolean) ? 'green' : 'green-miss',
     held_out_too_easy: !checks.baseline_ceiling,
-    human_review: { status: 'pending', judged_runs: acc.judged, reviewed: 0 },
+    human_review: input.humanReview
+      ? humanReviewBlock(input.humanReview, bar, { negatives_silent: checks.negatives_silent, dev_regression: checks.dev_regression, near_duplicate: checks.near_duplicate }, heldoutReports.map((f) => f.id))
+      : { status: 'pending', judged_runs: acc.judged, reviewed: 0 },
     burn_rule: { one_shot_read: true, skill_edit_burns_set: true },
   }
 }
@@ -1185,6 +1191,30 @@ const cellShape = (): Schema =>
     fire_basis: obj({ skill_tool: INT, direct_read: INT, none: INT }),
     load_rate: loadRateShape,
   })
+
+const RUN_ID = /^\d{3}-[A-Za-z0-9._-]+$/
+const agreementShape = (): Schema => ({ t: 'rec', keys: /^[A-Z]{2}\d+$/, of: obj({ n: INT, agree: INT, rate: NUM, kappa: { t: 'opt', of: NUM }, demoted: BOOL }) })
+/** Pending reviews carry the three counts; reconciled ones add agreement, flips, and the recomputed verdict (all optional so earlier reports validate). */
+function humanReviewShape(): Schema {
+  return obj({
+    status: str(/^(pending|partial|complete)$/),
+    judged_runs: INT,
+    reviewed: INT,
+    agreement: { t: 'opt', of: agreementShape() },
+    flipped_runs: { t: 'opt', of: arr(str(RUN_ID)) },
+    demoted_criteria: { t: 'opt', of: arr(str(/^[A-Z]{2}\d+$/)) },
+    recomputed: {
+      t: 'opt',
+      of: obj({
+        skill_pooled_pass: INT,
+        baseline_pooled_pass: INT,
+        per_fixture_skill_pass: { t: 'rec', keys: ID, of: INT },
+        checks: obj({ skill_pooled: BOOL, per_fixture_floor: BOOL, baseline_ceiling: BOOL }),
+        verdict: str(/^(green|green-miss)$/),
+      }),
+    },
+  })
+}
 
 export const GREEN_REPORT_SCHEMA: Schema = obj({
   schema_version: { t: 'lit', v: REPORT_SCHEMA_VERSION },
@@ -1242,7 +1272,7 @@ export const GREEN_REPORT_SCHEMA: Schema = obj({
   checks: obj({ skill_pooled: BOOL, per_fixture_floor: BOOL, baseline_ceiling: BOOL, negatives_silent: BOOL, dev_regression: BOOL, near_duplicate: BOOL }),
   verdict: str(/^(green|green-miss)$/),
   held_out_too_easy: BOOL,
-  human_review: obj({ status: str(/^pending$/), judged_runs: INT, reviewed: INT }),
+  human_review: humanReviewShape(),
   burn_rule: obj({ one_shot_read: BOOL, skill_edit_burns_set: BOOL }),
 })
 

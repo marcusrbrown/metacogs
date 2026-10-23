@@ -5,7 +5,7 @@
  * `red`/`green` run, check, judge (live mode only), and write manifests.
  * `report` projects a finished RED campaign into `evals/reports/<m>/red.json`.
  */
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { join, resolve } from 'node:path'
 
@@ -13,13 +13,14 @@ import { AuthPassthroughError, DEFAULT_PASSTHROUGH, needlesOf, type PassthroughA
 import { CliproxyAuthError, cliproxyModelMismatch, type ResolvedCliproxy, resolveCliproxy } from './cliproxy'
 import { Git } from './git'
 import { findNearDuplicates, NEAR_DUPLICATE_THRESHOLD } from './neardup'
-import { loadCampaignRuns, rejudgeCampaign, writeReview } from './review'
+import { HUMAN_REVIEW_FILE, loadCampaignRuns, reconcileCampaign, rejudgeCampaign, writeReview } from './review'
+import { type HumanReview, humanReviewBlock, summarize } from './human-review'
 import { createJudge } from './judge'
 import { findStaleManifests } from './manifest'
 import { opencodeAvailability } from './opencode'
 import { isLiveModel } from './scripted-provider'
-import { enforcePrereg, PreregRefusal } from './prereg'
-import { buildDevReport, buildGreenReport, buildRedReport, type DevReport, greenReportPath, loadCampaignManifests, writeDevReport, writeGreenReport, writeReport } from './report'
+import { enforcePrereg, parsePrereg, PreregRefusal } from './prereg'
+import { buildDevReport, buildGreenReport, buildRedReport, type DevReport, type GreenReport, greenReportPath, loadCampaignManifests, validateGreenReport, writeDevReport, writeGreenReport, writeReport } from './report'
 import { planRuns, type ProviderMode, runCampaign } from './run'
 import { CustodyError, hashSkillDir, heldoutDir, resolveOutputDir, stateRoot } from './workspace'
 
@@ -27,7 +28,10 @@ export const EXIT = { OK: 0, ERROR: 1, USAGE: 64, REFUSED: 3, CREDENTIAL_LEAK: 4
 
 const USAGE = `usage: bun run eval <red|green> --method <name> [options]
        bun run eval report --method <name> [--campaign <dir>]
-       bun run eval review --campaign <id|dir>                     write review.md (human sheet) into the campaign dir
+       bun run eval review --campaign <id|dir>                     write the blind review.md (fixture prompt, expected-answer notes, answer, record, an unmarked
+                                                                   scoring table) and review-key.md (judge verdicts and quotes) into the campaign dir
+       bun run eval review --campaign <id|dir> --reconcile         read the marked-up review.md against review-key.md: per-criterion agreement, run-outcome
+                                                                   flips, human-review.json; updates a matching GREEN report's human_review block
        bun run eval rejudge --campaign <id|dir> [--auth-passthrough opencode-go]
                                                                    judge calls over retained answers, then review.md; manifests untouched
 
@@ -93,7 +97,7 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
   const { method, runs, provider, fixture, repo, out: outRoot } = parsed.values
   const devOnly = parsed.values['dev-only'] === true
   if ((mode === 'review' || mode === 'rejudge') && !extra.length) {
-    return campaignToolMain({ mode, campaign: parsed.values.campaign, repo, authFlag: parsed.values['auth-passthrough'], cliproxyFlag: parsed.values['auth-cliproxy'], cwd, env, out, err })
+    return campaignToolMain({ mode, campaign: parsed.values.campaign, repo, reconcile: parsed.values.reconcile === true, authFlag: parsed.values['auth-passthrough'], cliproxyFlag: parsed.values['auth-cliproxy'], cwd, env, out, err })
   }
   if (mode === 'report' && !extra.length && method) return reportMain({ method, repo, campaign: parsed.values.campaign, devOnly, green: parsed.values.green === true, cliproxyFlag: parsed.values['auth-cliproxy'], cwd, env, out, err })
   if ((mode !== 'red' && mode !== 'green') || extra.length || !method) {
@@ -264,6 +268,7 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
 interface CampaignToolArgs {
   mode: 'review' | 'rejudge'
   campaign?: string
+  reconcile?: boolean
   repo?: string
   authFlag?: string
   cliproxyFlag?: string
@@ -297,6 +302,13 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
     return EXIT.ERROR
   }
   const method = runs[0]!.manifest.method
+  if (a.reconcile) {
+    if (a.mode !== 'review') {
+      a.err(`--reconcile applies to review only\n${USAGE}`)
+      return EXIT.USAGE
+    }
+    return reconcileMain({ a, repoRoot, campaignDir, method })
+  }
   if (a.mode === 'rejudge') {
     let auth: PassthroughAuth = {}
     let cliproxyOn = false
@@ -347,8 +359,44 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
     const count = (v: string) => rows.filter((r) => r.verdict === v).length
     a.out(`rejudged ${rows.length - count('skipped')} of ${rows.length} runs: pass ${count('pass')} · fail ${count('fail')} · judge_error ${count('judge_error')} · skipped ${count('skipped')} (manifests unchanged)`)
   }
-  const path = writeReview(campaignDir, repoRoot)
-  a.out(`wrote ${path}`)
+  const paths = writeReview(campaignDir, repoRoot, { heldoutDir: heldoutDir(method, a.env) })
+  a.out(`wrote ${paths.review}`)
+  a.out(`wrote ${paths.key} (judge verdicts; open after marking)`)
+  return EXIT.OK
+}
+
+/** `review --reconcile`: agreement and flips from the marked sheet; refreshes only the `human_review` block of a matching GREEN report. */
+function reconcileMain(c: { a: CampaignToolArgs; repoRoot: string; campaignDir: string; method: string }): number {
+  const { a, repoRoot, campaignDir, method } = c
+  const preregPath = join(repoRoot, 'evals', method, 'prereg.json')
+  const parsed = existsSync(preregPath) ? parsePrereg(readFileSync(preregPath, 'utf8')) : undefined
+  if (!parsed?.ok) {
+    a.err(`cannot read a valid prereg for ${method}`)
+    return EXIT.ERROR
+  }
+  let review: HumanReview
+  try {
+    review = reconcileCampaign(campaignDir, parsed.prereg.agreement_floor)
+  } catch (e) {
+    a.err((e as Error).message)
+    return EXIT.ERROR
+  }
+  for (const line of summarize(review)) a.out(line)
+  a.out(`wrote ${join(campaignDir, HUMAN_REVIEW_FILE)}`)
+  const greenPath = greenReportPath(repoRoot, method)
+  if (existsSync(greenPath)) {
+    const green = JSON.parse(readFileSync(greenPath, 'utf8')) as GreenReport
+    if (green.campaign.id === review.campaign_id) {
+      green.human_review = humanReviewBlock(review, parsed.prereg.green_bar, green.checks, green.heldout.map((f) => f.id))
+      const errors = validateGreenReport(green)
+      if (errors.length) {
+        a.err(`refusing to update ${greenPath.slice(repoRoot.length + 1)}: not an allowlist projection: ${errors.join('; ')}`)
+        return EXIT.ERROR
+      }
+      writeFileSync(greenPath, `${JSON.stringify(green, null, 2)}\n`)
+      a.out(`updated human_review in ${greenPath.slice(repoRoot.length + 1)} (status ${green.human_review.status}${green.human_review.recomputed ? `; recomputed verdict ${green.human_review.recomputed.verdict}` : ''}); the machine verdict field is unchanged`)
+    }
+  }
   return EXIT.OK
 }
 
@@ -427,7 +475,7 @@ function reportMain(a: ReportArgs): number {
     }
     throw e
   }
-  if (a.green) return greenReportMain(a, { repoRoot, verification, headSha, runs, plannedRuns, needles })
+  if (a.green) return greenReportMain(a, { repoRoot, verification, headSha, runs, plannedRuns, needles, campaignDir })
   if (a.devOnly) return devReportMain(a, { repoRoot, git, verification, headSha, runs, plannedRuns, needles })
   const report = buildRedReport({ prereg: verification.prereg, shas: verification.shas, headSha, runs, plannedRuns })
   const serialized = JSON.stringify(report)
@@ -452,6 +500,7 @@ function greenReportMain(
     runs: ReturnType<typeof loadCampaignManifests>
     plannedRuns: number
     needles: ReturnType<typeof needlesOf>
+    campaignDir: string
   },
 ): number {
   if (existsSync(greenReportPath(c.repoRoot, a.method))) {
@@ -473,6 +522,7 @@ function greenReportMain(
       skillSha256: hashSkillDir(join(c.repoRoot, 'skills', a.method)).sha256,
       devReport,
       nearDuplicate,
+      humanReview: existsSync(join(c.campaignDir, HUMAN_REVIEW_FILE)) ? (JSON.parse(readFileSync(join(c.campaignDir, HUMAN_REVIEW_FILE), 'utf8')) as HumanReview) : null,
     })
   } catch (e) {
     a.err(`REFUSED: ${(e as Error).message}`)
@@ -546,6 +596,7 @@ const OPTIONS = {
   'auth-passthrough': { type: 'string' },
   'auth-cliproxy': { type: 'string' },
   'include-dev': { type: 'boolean' },
+  reconcile: { type: 'boolean' },
   'dev-only': { type: 'boolean' },
   green: { type: 'boolean' },
 } as const

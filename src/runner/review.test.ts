@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 import { judgeRecordOf, quoteFragments } from './judge-record'
 import { type JudgeEvidence, type RunManifest, writeManifest } from './manifest'
-import { finalAnswerOf, HUMAN_LINE, rejudgeCampaign, renderReview, rubricAnchors, skipReason } from './review'
+import { finalAnswerOf, reconcileCampaign, rejudgeCampaign, renderReviewSheets, rubricAnchors, skipReason, writeReview } from './review'
 import { parseRubric } from './judge'
 import type { JudgeInput } from './run'
 import { sha256 } from './workspace'
@@ -139,7 +139,7 @@ describe('rubricAnchors', () => {
   })
 })
 
-describe('renderReview', () => {
+describe('renderReviewSheets (blind sheet + key)', () => {
   const judgeJson = {
     redacted_input_sha256: 'c'.repeat(64),
     model_pinned: 'opencode-go/judge-x',
@@ -150,36 +150,111 @@ describe('renderReview', () => {
     ],
     attempts: 1,
   }
+  const LONG = `${'A long fixture prompt. '.repeat(40)}\n`
 
-  test('one block per run: ids, answer, per-criterion table with quotes and anchors, and the human line', () => {
+  function campaignWithFixtures() {
+    const repo = repoWithRubric()
+    writeFileSync(join(repo, 'evals', 'demo', 'rubric.md'), `${RUBRIC}\n## Fixture annex\n\n#### d1\n- family: shared-premise\n- probes: the runtime pin\n- expected pass:\n  - names node20\n\n#### d2\n- family: other\n`)
+    mkdirSync(join(repo, 'evals', 'demo', 'fixtures', 'dev'), { recursive: true })
+    writeFileSync(join(repo, 'evals', 'demo', 'fixtures', 'dev', 'd1.md'), 'Short fixture prompt for d1.\n')
+    writeFileSync(join(repo, 'evals', 'demo', 'fixtures', 'dev', 'd2.md'), LONG)
     const campaign = tmp()
     plant(campaign, '001-dev-d1-baseline-r1', 'NO-GO: node20 only.', {}, judgeJson)
-    plant(campaign, '002-dev-d1-baseline-r2', 'Second answer.', { outcome: 'pass', reasons: [] })
-    const text = renderReview(campaign, repoWithRubric())
-    expect(text.match(/^## /gm)).toHaveLength(2)
-    expect(text).toContain('## 001-dev-d1-baseline-r1')
-    expect(text).toContain('- fixture: d1 (dev)')
-    expect(text).toContain('- condition: baseline')
-    expect(text).toContain('NO-GO: node20 only.')
-    expect(text).toContain('| CF1 | pass | "the platform runtime pins node20" | Names one specific claim \\| with a pipe. | Lists generic risks. |')
-    expect(text).toContain('| CF2 | fail | "absent" |')
-    expect(text).not.toContain('CF3m')
-    expect(text.match(new RegExp(`^${HUMAN_LINE.replace(/[[\]]/g, '\\$&')}$`, 'gm'))).toHaveLength(2)
-    expect(text).toContain('no verdict stored for this run')
+    plant(campaign, '002-dev-d1-baseline-r2', 'Second answer.', { outcome: 'pass', reasons: [] }, { ...judgeJson, criteria: judgeJson.criteria.map((c) => ({ ...c, verdict: 'pass' })) })
+    plant(campaign, '003-dev-d2-baseline-r1', 'Third answer.', { fixture: { id: 'd2', kind: 'dev', hash: sha256('d2') } }, judgeJson)
+    plant(campaign, '004-dev-d1-baseline-r3', 'Never judged.', { check_failures: [{ code: 'unrecognized_events', message: 'm' }] })
+    return { repo, campaign }
+  }
+
+  test('review.md has no judge verdicts, quotes, models, or recorded outcomes; one block per judged run', () => {
+    const { repo, campaign } = campaignWithFixtures()
+    const { review, shown, omitted } = renderReviewSheets(campaign, repo)
+    expect(shown).toBe(3)
+    expect(omitted).toBe(1)
+    expect(review.match(/^## 0\d\d-/gm)).toHaveLength(3)
+    expect(review).not.toContain('004-dev-d1-baseline-r3')
+    expect(review).toContain('1 runs never reached the judge')
+    for (const leak of ['the platform runtime pins node20', 'judge_fail', 'recorded outcome', 'judge-x', 'opencode-go/judge-x', 'attempt']) expect(review).not.toContain(leak)
+    expect(review).not.toMatch(/\| CF[12] \| (pass|fail) \|/)
   })
 
-  test('an answer containing a code fence cannot close the review fence early', () => {
-    const campaign = tmp()
-    plant(campaign, '001-dev-d1-baseline-r1', 'before\n```js\nx\n```\nafter')
-    const text = renderReview(campaign, repoWithRubric())
-    expect(text).toContain('````text\nbefore\n```js\nx\n```\nafter\n````')
+  test('each block: ids, fixture prompt verbatim (long ones collapsed), answer, and a scoring table with only criterion, anchors, and the blank human cell', () => {
+    const { repo, campaign } = campaignWithFixtures()
+    const { review } = renderReviewSheets(campaign, repo)
+    expect(review).toContain('- fixture: d1 (dev)')
+    expect(review).toContain('- condition: baseline')
+    expect(review).toContain('**Fixture prompt**\n\n```text\nShort fixture prompt for d1.\n```')
+    expect(review).toContain('<details><summary>Fixture prompt (')
+    expect(review).toContain(LONG.trimEnd())
+    expect(review).toContain('NO-GO: node20 only.')
+    expect(review).toContain('| criterion | pass anchor | fail anchor | human |')
+    expect(review).toContain('| CF1 | Names one specific claim \\| with a pipe. | Lists generic risks. | human: pass/fail |')
+    expect(review).not.toContain('CF3m')
+    expect(review.match(/^note:$/gm)).toHaveLength(3)
   })
 
-  test('missing stdout is stated, not skipped; an empty campaign is an error', () => {
+  test('expected-answer notes appear once per fixture, at its first block (annex for dev fixtures)', () => {
+    const { repo, campaign } = campaignWithFixtures()
+    const { review } = renderReviewSheets(campaign, repo)
+    expect(review.match(/Expected-answer notes \(first block of this fixture\)/g)).toHaveLength(2) // d1 once, d2 once
+    expect(review.match(/- family: shared-premise/g)).toHaveLength(1)
+    expect(review.match(/premise|names node20/g)?.length).toBeGreaterThan(0)
+  })
+
+  test('held-out fixtures read their prompt and *.expected.txt sidecar from the held-out dir', () => {
+    const repo = repoWithRubric()
+    const held = tmp()
+    writeFileSync(join(held, 'h1.md'), 'Held-out prompt text.\n')
+    writeFileSync(join(held, 'h1.expected.txt'), 'family: x\nprobes: y\npass:\n- z\n')
     const campaign = tmp()
-    plant(campaign, '001-dev-d1-baseline-r1', undefined, { status: 'infra_error', outcome: 'infra_error', reasons: ['host_exit_before_skill_load'] })
-    expect(renderReview(campaign, repoWithRubric())).toContain('_no stdout captured_')
-    expect(() => renderReview(tmp(), repoWithRubric())).toThrow('no run manifests')
+    plant(campaign, '001-heldout-h1-skill-r1', 'ans', { fixture: { id: 'h1', kind: 'heldout', hash: sha256('h1') }, condition: 'skill' }, judgeJson)
+    const { review } = renderReviewSheets(campaign, repo, { heldoutDir: held })
+    expect(review).toContain('Held-out prompt text.')
+    expect(review).toContain('family: x')
+    const missing = renderReviewSheets(campaign, repo, { heldoutDir: join(held, 'nowhere') }).review
+    expect(missing).toContain('**Fixture prompt**: _not available_')
+    expect(missing).toContain('_none for this fixture_')
+  })
+
+  test('the legend explains the record, what the judge saw, what is scored, and the pass rule', () => {
+    const { repo, campaign } = campaignWithFixtures()
+    const { review } = renderReviewSheets(campaign, repo)
+    const head = review.slice(0, review.indexOf('## 001-'))
+    for (const field of ['objective', 'evidence', 'assumptions', 'alternatives', 'findings', 'next_action', 'reopen_condition', 'execution_mode']) expect(head).toContain(`\`${field}\``)
+    expect(head).toContain('read the fixture prompt, the final answer, and the record')
+    expect(head).toContain('Only the 2 judge criteria (CF1, CF2)')
+    expect(head).toContain('passes if and only if all 2 criteria pass')
+    expect(head).toContain('review-key.md')
+  })
+
+  test('review-key.md carries verdicts, quotes, attempts, and recorded outcomes under the same block ids', () => {
+    const { repo, campaign } = campaignWithFixtures()
+    const { review, key } = renderReviewSheets(campaign, repo)
+    const ids = (text: string) => [...text.matchAll(/^## (0\d\d-\S+)$/gm)].map((m) => m[1])
+    expect(ids(key)).toEqual(ids(review))
+    expect(key).toContain('| CF1 | pass | "the platform runtime pins node20" |')
+    expect(key).toContain('| CF2 | fail | "absent" |')
+    expect(key).toContain('- recorded outcome: fail (judge_fail)')
+    expect(key).toContain('1 attempt')
+  })
+
+  test('an answer containing a code fence cannot close the review fence early; a missing stdout is stated', () => {
+    const repo = repoWithRubric()
+    const campaign = tmp()
+    plant(campaign, '001-dev-d1-baseline-r1', 'before\n```js\nx\n```\nafter', {}, judgeJson)
+    plant(campaign, '002-dev-d1-baseline-r2', undefined, { status: 'completed' }, judgeJson)
+    const { review } = renderReviewSheets(campaign, repo)
+    expect(review).toContain('````text\nbefore\n```js\nx\n```\nafter\n````')
+    expect(review).toContain('_no stdout captured_')
+    expect(() => renderReviewSheets(tmp(), repo)).toThrow('no run manifests')
+  })
+
+  test('a skill run shows its record, fenced', () => {
+    const campaign = tmp()
+    const dir = plant(campaign, '001-dev-d1-skill-r1', 'answer', { condition: 'skill' }, judgeJson)
+    writeFileSync(join(dir, 'records.json'), JSON.stringify([{ name: 'demo-1.json', content: '{"method":"demo"}' }]))
+    const { review } = renderReviewSheets(campaign, repoWithRubric())
+    expect(review).toContain('**Record**\n\n```text\n{"method":"demo"}\n```')
   })
 
   test('finalAnswerOf joins the assistant text parts', () => {
@@ -187,6 +262,23 @@ describe('renderReview', () => {
     const dir = plant(campaign, '001-dev-d1-baseline-r1', 'hello')
     expect(finalAnswerOf(dir)).toBe('hello')
     expect(finalAnswerOf(join(campaign, 'absent'))).toBeUndefined()
+  })
+
+  test('writeReview writes both files; reconcileCampaign reads a marked sheet and writes human-review.json', () => {
+    const { repo, campaign } = campaignWithFixtures()
+    const paths = writeReview(campaign, repo)
+    expect(paths.review.endsWith('review.md')).toBe(true)
+    expect(() => reconcileCampaign(tmp(), 0.8)).toThrow('review-key.md')
+    // mark every judged block: agree with the judge everywhere except CF2 in run 001
+    const marked = readFileSync(paths.review, 'utf8')
+      .replace(/(\| CF1 [^\n]*\| )human: pass\/fail( \|)/g, '$1human: pass$2')
+      .replace(/(\| CF2 [^\n]*\| )human: pass\/fail( \|)/g, '$1human: fail$2')
+    writeFileSync(paths.review, marked)
+    const review = reconcileCampaign(campaign, 0.8)
+    expect(review.judged_runs).toBe(3)
+    expect(review.reviewed_runs).toBe(3)
+    expect(JSON.parse(readFileSync(join(campaign, 'human-review.json'), 'utf8')).campaign_id).toBe('demo-red-2026-10-22T16-00-00-000Z')
+    expect(review.flipped_runs).toEqual(['002-dev-d1-baseline-r2']) // judge passed CF2, human failed it
   })
 })
 
@@ -261,16 +353,5 @@ describe('rejudgeCampaign (mocked judge)', () => {
     expect(skipReason(manifest('x', { fixture: { id: 'h1', kind: 'heldout', hash: 'h' } }), true)).toContain('held-out')
     expect(skipReason(manifest('x'), false)).toContain('no stdout')
     expect(skipReason(manifest('x'), true)).toBeUndefined()
-  })
-})
-
-describe('records in the review sheet', () => {
-  test('a skill run shows the record the judge saw, fenced', () => {
-    const campaign = tmp()
-    const dir = plant(campaign, '001-dev-d1-skill-r1', 'answer', { condition: 'skill' })
-    writeFileSync(join(dir, 'records.json'), JSON.stringify([{ name: 'demo-1.json', content: '{"method":"demo"}' }]))
-    const text = renderReview(campaign, repoWithRubric())
-    expect(text).toContain('**Record** (the judge saw this too)')
-    expect(text).toContain('```text\n{"method":"demo"}\n```')
   })
 })

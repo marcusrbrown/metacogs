@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -80,11 +80,17 @@ describe('review and rejudge', () => {
     const runDir = join(repo.dir, 'evals', 'runs', 'demo-red-1', '001-dev-d1-baseline-r1')
     require('node:fs').mkdirSync(runDir, { recursive: true })
     writeManifest(runDir, { schema_version: 1, run_id: '001-dev-d1-baseline-r1', campaign_id: 'demo-red-1', status: 'completed', outcome: 'fail', reasons: [], method: 'demo', condition: 'baseline', fixture: { id: 'd1', kind: 'dev', hash: 'h' } } as never)
+    require('node:fs').writeFileSync(join(runDir, 'judge.json'), JSON.stringify({ redacted_input_sha256: null, model_pinned: 'm', model_returned: ['m'], criteria: [{ id: 'CF1', verdict: 'fail', quotes: ['q'] }], attempts: 1 }))
     const t = io()
     expect(await main(['review', '--campaign', 'demo-red-1', '--repo', repo.dir], t.io)).toBe(EXIT.OK)
-    const sheet = require('node:fs').readFileSync(join(repo.dir, 'evals', 'runs', 'demo-red-1', 'review.md'), 'utf8') as string
+    const dir = join(repo.dir, 'evals', 'runs', 'demo-red-1')
+    const sheet = require('node:fs').readFileSync(join(dir, 'review.md'), 'utf8') as string
+    const key = require('node:fs').readFileSync(join(dir, 'review-key.md'), 'utf8') as string
     expect(sheet).toContain('## 001-dev-d1-baseline-r1')
-    expect(sheet).toContain('human: [ ] agree [ ] disagree')
+    expect(sheet).toContain('| CF1 | p | f | human: pass/fail |')
+    expect(sheet).not.toContain('"q"')
+    expect(key).toContain('| CF1 | fail | "q" |')
+    expect(t.lines.out.join('\n')).toContain('review-key.md')
   })
 })
 
@@ -300,4 +306,54 @@ describe.skipIf(!opencodeAvailability().available)('scripted end-to-end', () => 
     await main(['red', '--runs', '1', '--fixture', 'n1', '--method', 'demo', '--repo', repo.dir, '--out', out], t.io)
     expect(t.lines.err.join('\n')).toContain('stale "running" manifest')
   }, 180_000)
+})
+
+describe('review --reconcile', () => {
+  const REAL = join(import.meta.dir, '..', '..')
+  const greenPath = join(REAL, 'evals', 'reports', 'synthesis', 'green.json')
+
+  test.skipIf(!existsSync(greenPath))('writes human-review.json and refreshes only the human_review block of the matching GREEN report', async () => {
+    const repo = new TestRepo('metacogs-clitest-')
+    cleanup.push(() => repo.destroy())
+    const green = JSON.parse(readFileSync(greenPath, 'utf8')) as { campaign: { id: string }; verdict: string; heldout: { id: string }[]; checks: Record<string, boolean> }
+    repo.write('evals/synthesis/prereg.json', readFileSync(join(REAL, 'evals', 'synthesis', 'prereg.json'), 'utf8'))
+    repo.write('evals/reports/synthesis/green.json', readFileSync(greenPath, 'utf8'))
+    repo.commit('init', ['evals'])
+
+    const campaignId = green.campaign.id
+    const campaign = join(repo.dir, 'evals', 'runs', campaignId)
+    const runs = [
+      ['001-heldout-sy-h5-skill-r1', 'sy-h5', 'skill'],
+      ['002-heldout-sy-h5-baseline-r1', 'sy-h5', 'baseline'],
+    ] as const
+    const criteria = ['SY1', 'SY2', 'SY3', 'SY4', 'SY5']
+    const { writeManifest } = await import('./manifest')
+    for (const [id, fixture, condition] of runs) {
+      mkdirSync(join(campaign, id), { recursive: true })
+      writeManifest(join(campaign, id), { schema_version: 1, run_id: id, campaign_id: campaignId, status: 'completed', reasons: [], method: 'synthesis', condition, fixture: { id: fixture, kind: 'heldout', hash: 'h' } } as never)
+    }
+    const keyRows = (verdict: (i: number) => string) => criteria.map((c, i) => `| ${c} | ${verdict(i)} | "q" |`).join('\n')
+    const header = (id: string, condition: string) => `## ${id}\n\n- fixture: sy-h5 (heldout)\n- condition: ${condition}\n- recorded outcome: pass\n\n| criterion | judge | quotes |\n| --- | --- | --- |\n`
+    writeFileSync(join(campaign, 'review-key.md'), `# key\n\n${header(runs[0][0], 'skill')}${keyRows(() => 'pass')}\n\n${header(runs[1][0], 'baseline')}${keyRows((i) => (i === 0 ? 'fail' : 'pass'))}\n`)
+    const markRows = (mark: (i: number) => string) => criteria.map((c, i) => `| ${c} | a | b | human: ${mark(i)} |`).join('\n')
+    // the human agrees on the skill run and fails SY2 on the baseline run the judge failed only on SY1
+    writeFileSync(join(campaign, 'review.md'), `# sheet\n\n## ${runs[0][0]}\n\n${markRows(() => 'pass')}\n\nnote:\n\n## ${runs[1][0]}\n\n${markRows((i) => (i === 0 || i === 1 ? 'fail' : 'pass'))}\n\nnote:\n`)
+
+    const t = io()
+    expect(await main(['review', '--campaign', campaignId, '--reconcile', '--repo', repo.dir], t.io)).toBe(EXIT.OK)
+    expect(t.lines.out.join('\n')).toContain('reviewed 2 of 2 judged runs')
+    expect(t.lines.out.join('\n')).toContain('SY1: agree 2/2')
+    const review = JSON.parse(readFileSync(join(campaign, 'human-review.json'), 'utf8')) as { flipped_runs: string[]; criteria: Record<string, { rate: number }> }
+    expect(review.flipped_runs).toEqual([]) // judge failed the baseline run and so did the human
+    expect(review.criteria.SY2!.rate).toBe(0.5)
+
+    const updated = JSON.parse(readFileSync(join(repo.dir, 'evals', 'reports', 'synthesis', 'green.json'), 'utf8')) as typeof green & { human_review: { status: string; reviewed: number; demoted_criteria: string[]; recomputed?: { verdict: string } } }
+    expect(updated.verdict).toBe(green.verdict) // the machine verdict is never rewritten
+    expect(updated.human_review).toMatchObject({ status: 'complete', reviewed: 2, demoted_criteria: ['SY2'] })
+    expect(updated.human_review.recomputed?.verdict).toBeDefined()
+
+    // a campaign with no marked sheet is an error that says what to run
+    const t2 = io()
+    expect(await main(['review', '--campaign', join(repo.dir, 'evals', 'runs'), '--reconcile', '--repo', repo.dir], t2.io)).toBe(EXIT.ERROR)
+  })
 })

@@ -530,6 +530,45 @@ describe('buildGreenReport (held-out, both conditions)', () => {
     expect(JSON.stringify(report)).not.toContain('secret')
   })
 
+  test('human review: pending without human-review.json; with it the block carries agreement, flips, and a recomputed verdict, still allowlist-valid', () => {
+    const pending = build(good)
+    expect(pending.human_review).toMatchObject({ status: 'pending', reviewed: 0 })
+    expect(pending.human_review.agreement).toBeUndefined()
+
+    const runs = runsFor(good)
+    const heldoutRuns = runs.filter((r) => r.manifest.fixture.kind === 'heldout')
+    const humanReview = {
+      schema_version: 1 as const,
+      campaign_id: 'demo-green-2026-10-22T16-00-00-000Z',
+      method: 'demo',
+      agreement_floor: 0.8,
+      judged_runs: heldoutRuns.length,
+      reviewed_runs: heldoutRuns.length,
+      criteria: { CF1: { n: 20, agree: 17, rate: 0.85, kappa: 0.6, demoted: false }, CF2: { n: 20, agree: 12, rate: 0.6, demoted: true } },
+      demoted_criteria: ['CF2'],
+      runs: heldoutRuns.map((r) => ({
+        run_id: r.manifest.run_id,
+        fixture_id: r.manifest.fixture.id,
+        fixture_kind: r.manifest.fixture.kind,
+        condition: r.manifest.condition,
+        judge_outcome: r.manifest.outcome === 'pass' ? ('pass' as const) : ('fail' as const),
+        human_outcome: 'pass' as const,
+        disagreements: [],
+        effective_outcome: 'pass' as const,
+      })),
+      flipped_runs: [heldoutRuns[1]!.manifest.run_id],
+    }
+    const report = build(good, { humanReview })
+    expect(validateGreenReport(report)).toEqual([])
+    expect(report.verdict).toBe('green') // the machine verdict field is never rewritten by review
+    expect(report.human_review).toMatchObject({ status: 'complete', reviewed: heldoutRuns.length, demoted_criteria: ['CF2'], flipped_runs: [heldoutRuns[1]!.manifest.run_id] })
+    expect(report.human_review.agreement?.CF1).toEqual({ n: 20, agree: 17, rate: 0.85, kappa: 0.6, demoted: false })
+    // every human outcome is effective-pass: 10 skill runs and 10 baseline runs → baseline ceiling (4) is now exceeded
+    expect(report.human_review.recomputed).toMatchObject({ skill_pooled_pass: 10, baseline_pooled_pass: 10, verdict: 'green-miss', checks: { skill_pooled: true, baseline_ceiling: false } })
+    expect(validateGreenReport({ ...report, human_review: { ...report.human_review, extra: 1 } }).length).toBeGreaterThan(0)
+  })
+
+
   test('a baseline above the ceiling means the held-out set was too easy, even when the skill clears its bars', () => {
     const report = build(good.map((g) => (g[1] === 'h2' && g[2] === 'baseline' ? ([g[0], g[1], g[2], P(5)] as Plan[number]) : g)))
     expect(report.checks.baseline_ceiling).toBe(false)
