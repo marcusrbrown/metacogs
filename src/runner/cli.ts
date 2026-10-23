@@ -9,7 +9,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { join, resolve } from 'node:path'
 
-import { AuthPassthroughError, needlesOf, type PassthroughAuth, parseAuthPassthrough, PASSTHROUGH_PROVIDERS, readPassthroughAuth } from './auth'
+import { AuthPassthroughError, DEFAULT_PASSTHROUGH, needlesOf, type PassthroughAuth, parseAuthPassthrough, PASSTHROUGH_PROVIDERS, readPassthroughAuth } from './auth'
 import { Git } from './git'
 import { loadCampaignRuns, rejudgeCampaign, writeReview } from './review'
 import { createJudge } from './judge'
@@ -26,22 +26,24 @@ export const EXIT = { OK: 0, ERROR: 1, USAGE: 64, REFUSED: 3, CREDENTIAL_LEAK: 4
 const USAGE = `usage: bun run eval <red|green> --method <name> [options]
        bun run eval report --method <name> [--campaign <dir>]
        bun run eval review --campaign <id|dir>                     write review.md (human sheet) into the campaign dir
-       bun run eval rejudge --campaign <id|dir> [--auth-passthrough opencode,opencode-go]
+       bun run eval rejudge --campaign <id|dir> [--auth-passthrough opencode-go]
                                                                    judge calls over retained answers, then review.md; manifests untouched
 
   --runs <n>              runs per condition per fixture (default: prereg runs_per_condition)
-  --provider scripted|live   scripted = local stub (default), live = the opencode/* or opencode-go/* model pinned in the prereg
+  --provider scripted|live   scripted = local stub (default), live = the model pinned in the prereg through OpenCode's gateway:
+                          opencode-go/* (Go subscription, the default and preferred) or opencode/* (Zen, bills credits)
   --fixture <id>          only this fixture (single-run debugging; marks the campaign as deviating from prereg)
   --include-dev           green only: also run dev fixtures under the skill condition
   --dev-only              green: authoring iteration. Skill condition on dev + negative fixtures only; never reads or plans held-out,
                           needs no committed skill. report: project the newest dev campaign into evals/reports/<m>/green-dev.json
   --repo <dir>            repository to enforce prereg against (default: current git toplevel)
   --out <dir>             campaign output root (default: evals/runs, or the state root for held-out runs)
-  --auth-passthrough <p,..>  copy these provider entries (opencode, opencode-go) from the real auth.json into each run's isolated
-                          auth.json; or set METACOGS_AUTH_PASSTHROUGH. Values are never logged or recorded; names go in the manifest
+  --auth-passthrough <p,..>  copy these provider entries (opencode-go, opencode) from the real auth.json into each run's isolated
+                          auth.json; or set METACOGS_AUTH_PASSTHROUGH. Live runs default to opencode-go only; opencode (Zen, credit-billed)
+                          is copied only when listed; 'none' copies nothing. Values are never logged or recorded; names go in the manifest
   --campaign <dir>        report only: the RED campaign directory (default: newest evals/runs/<name>-red-*)
 
-Live runs are judged by the prereg's judge model through the isolated OpenCode free gateway; scripted runs are not judged.
+Live runs are judged by the prereg's judge model through the isolated OpenCode gateway (Go by default); scripted runs are not judged.
 `
 
 export interface MainIO {
@@ -103,7 +105,7 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
   const providerMode: ProviderMode = provider === 'live' ? 'live' : 'scripted'
   let auth: PassthroughAuth = {}
   try {
-    const providers = parseAuthPassthrough(parsed.values['auth-passthrough'], env)
+    const providers = parseAuthPassthrough(parsed.values['auth-passthrough'], env, providerMode === 'live' ? DEFAULT_PASSTHROUGH : [])
     auth = readPassthroughAuth(providers)
   } catch (e) {
     if (e instanceof AuthPassthroughError) {
@@ -262,7 +264,7 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
   if (a.mode === 'rejudge') {
     let auth: PassthroughAuth = {}
     try {
-      auth = readPassthroughAuth(parseAuthPassthrough(a.authFlag, a.env))
+      auth = readPassthroughAuth(parseAuthPassthrough(a.authFlag, a.env, DEFAULT_PASSTHROUGH))
     } catch (e) {
       if (e instanceof AuthPassthroughError) {
         a.err(`${e.message}\n${USAGE}`)

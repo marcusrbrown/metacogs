@@ -29,6 +29,7 @@ import {
 import { debugConfig, OPENCODE_PIN, runArgv, type SpawnResult, spawnCapture } from './opencode'
 import { type LoadedFixture, type PreregVerification } from './prereg'
 import {
+  gatewayOf,
   isLiveModel,
   PLACEHOLDER_API_KEY,
   providerOf,
@@ -485,6 +486,7 @@ async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, at
     manifest.tool_call_count = events.toolUses.length
     manifest.host_errors = events.hostErrors
     manifest.records = records.map((r) => ({ name: r.name, sha256: sha256(r.content) }))
+    if (c.providerMode === 'live') manifest.gateway = gatewayOf(server.requests.map((r) => r.upstream))
     if (run.condition === 'skill') manifest.fire_basis = fireEvidence(c.method, events, records, skillText).fireBasis
     manifest.model.returned = [...new Set(server.requests.filter((r) => r.hasTools).map((r) => r.returnedModel).filter((m): m is string => Boolean(m)))]
 

@@ -227,7 +227,7 @@ describe('buildRedReport', () => {
   })
 
   test('judge and model identity are recorded', () => {
-    expect(report.models).toEqual({ agent_pinned: 'opencode/big-pickle', agent_returned: ['big-pickle'], judge_pinned: 'opencode/judge-model-x', judge_returned: ['judge-model-x'] })
+    expect(report.models).toEqual({ agent_pinned: 'opencode/big-pickle', agent_returned: ['big-pickle'], judge_pinned: 'opencode/judge-model-x', judge_returned: ['judge-model-x'], gateways: [] })
     expect(report.judge).toMatchObject({ judge_error_runs: 1, temperature_observed: [0] })
     expect(report.judge.system_prompt_sha256).toEqual([sha256('prompt')])
     expect(report.prereg).toMatchObject({ tag: 'prereg/demo/2', epoch: 2 })

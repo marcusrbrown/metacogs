@@ -108,7 +108,8 @@ export interface RedReport {
   }
   repo: { head_sha: string }
   opencode: { package: string; version: string }
-  models: { agent_pinned: string; agent_returned: string[]; judge_pinned: string; judge_returned: string[] }
+  /** `gateways`: which OpenCode gateway answered (Go is the default and preferred; Zen bills credits). A recorded fact. */
+  models: { agent_pinned: string; agent_returned: string[]; judge_pinned: string; judge_returned: string[]; gateways?: string[] }
   judge: { system_prompt_sha256: string[]; judged_runs: number; judge_error_runs: number; temperature_observed: number[] }
   campaign: { id: string; started_at: string; finished_at: string; planned_runs: number; executed_manifests: number; incomplete_manifests: number }
   totals: { attempted: number; taxonomy: Taxonomy; wall_clock_ms: number; tokens: { input: number; output: number; reasoning: number } }
@@ -305,6 +306,7 @@ export function buildRedReport(input: RedReportInput): RedReport {
       agent_returned: sorted(manifests.flatMap((m) => m.model.returned)),
       judge_pinned: prereg.judge_model_id,
       judge_returned: sorted(manifests.flatMap((m) => m.judge?.model.returned ?? [])),
+      gateways: sorted(manifests.flatMap((m) => [m.gateway, m.judge?.gateway].filter((g): g is NonNullable<typeof g> => Boolean(g)))),
     },
     judge: {
       system_prompt_sha256: sorted(manifests.flatMap((m) => (m.judge ? [m.judge.system_prompt_sha256] : []))),
@@ -354,6 +356,7 @@ type Schema =
   | { t: 'bool' }
   | { t: 'arr'; of: Schema }
   | { t: 'tuple2num' }
+  | { t: 'opt'; of: Schema }
   | { t: 'obj'; shape: Record<string, Schema> }
   | { t: 'rec'; keys: RegExp; of: Schema }
 
@@ -363,6 +366,9 @@ const NUM: Schema = { t: 'num' }
 const BOOL: Schema = { t: 'bool' }
 const obj = (shape: Record<string, Schema>): Schema => ({ t: 'obj', shape })
 const arr = (of: Schema): Schema => ({ t: 'arr', of })
+
+/** Reports from before the gateway was recorded omit `gateways`; new ones always carry it. */
+const gatewaysShape: Schema = { t: 'opt', of: { t: 'arr', of: { t: 'str', re: /^(go|zen|mixed)$/ } } }
 
 const outcomesShape = (): Schema =>
   obj(Object.fromEntries(Object.keys(emptyOutcomes()).map((k) => [k, INT])))
@@ -391,6 +397,7 @@ export const RED_REPORT_SCHEMA: Schema = obj({
     agent_returned: arr(str(RETURNED_MODEL)),
     judge_pinned: str(PINNED_MODEL),
     judge_returned: arr(str(RETURNED_MODEL)),
+    gateways: gatewaysShape,
   }),
   judge: obj({ system_prompt_sha256: arr(str(HEX64)), judged_runs: INT, judge_error_runs: INT, temperature_observed: arr(NUM) }),
   campaign: obj({
@@ -464,11 +471,17 @@ function check(value: unknown, schema: Schema, path: string, errors: string[]): 
       const record = value as Record<string, unknown>
       for (const key of Object.keys(record)) if (!(key in schema.shape)) errors.push(`${path ? `${path}.` : ''}${key}: key is not in the allowlist`)
       for (const [key, sub] of Object.entries(schema.shape)) {
-        if (!(key in record)) errors.push(`${path ? `${path}.` : ''}${key}: missing`)
-        else check(record[key], sub, path ? `${path}.${key}` : key, errors)
+        if (!(key in record)) {
+          if (sub.t !== 'opt') errors.push(`${path ? `${path}.` : ''}${key}: missing`)
+        } else {
+          check(record[key], sub, path ? `${path}.${key}` : key, errors)
+        }
       }
       return
     }
+    case 'opt':
+      check(value, schema.of, path, errors)
+      return
     case 'rec': {
       if (typeof value !== 'object' || value === null || Array.isArray(value)) {
         fail('expected an object')
@@ -559,7 +572,8 @@ export interface DevReport {
   repo: { head_sha: string }
   skill: { sha256: string }
   opencode: { package: string; version: string }
-  models: { agent_pinned: string; agent_returned: string[]; judge_pinned: string; judge_returned: string[] }
+  /** `gateways`: which OpenCode gateway answered (Go is the default and preferred; Zen bills credits). A recorded fact. */
+  models: { agent_pinned: string; agent_returned: string[]; judge_pinned: string; judge_returned: string[]; gateways?: string[] }
   judge: { system_prompt_sha256: string[]; judged_runs: number; judge_error_runs: number; temperature_observed: number[] }
   campaign: { id: string; started_at: string; finished_at: string; planned_runs: number; executed_manifests: number; incomplete_manifests: number }
   totals: { attempted: number; taxonomy: Taxonomy; wall_clock_ms: number; tokens: { input: number; output: number; reasoning: number } }
@@ -698,6 +712,7 @@ export function buildDevReport(input: DevReportInput): DevReport {
       agent_returned: sorted(manifests.flatMap((m) => m.model.returned)),
       judge_pinned: prereg.judge_model_id,
       judge_returned: sorted(manifests.flatMap((m) => m.judge?.model.returned ?? [])),
+      gateways: sorted(manifests.flatMap((m) => [m.gateway, m.judge?.gateway].filter((g): g is NonNullable<typeof g> => Boolean(g)))),
     },
     judge: {
       system_prompt_sha256: sorted(manifests.flatMap((m) => (m.judge ? [m.judge.system_prompt_sha256] : []))),
@@ -755,6 +770,7 @@ export const DEV_REPORT_SCHEMA: Schema = obj({
     agent_returned: arr(str(RETURNED_MODEL)),
     judge_pinned: str(PINNED_MODEL),
     judge_returned: arr(str(RETURNED_MODEL)),
+    gateways: gatewaysShape,
   }),
   judge: obj({ system_prompt_sha256: arr(str(HEX64)), judged_runs: INT, judge_error_runs: INT, temperature_observed: arr(NUM) }),
   campaign: obj({

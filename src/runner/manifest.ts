@@ -11,6 +11,7 @@ import { join } from 'node:path'
 
 import type { HostError, Usage } from './events'
 import type { IsolationEvidence } from './isolation'
+import type { Gateway } from './scripted-provider'
 import type { CheckFailure, FireBasis } from './checks'
 import type { Condition, FixtureKind } from './workspace'
 
@@ -45,6 +46,8 @@ export interface JudgeEvidence {
   input_sha256: string
   /** Hash of the redacted task, answer, and record, independent of the per-request nonce; `null` when redaction failed. */
   redacted_input_sha256?: string | null
+  /** Which OpenCode gateway answered the judge request(s); a recorded fact, not a gate. */
+  gateway?: Gateway | null
   attempts: number
   /** Temperature observed in the request the provider received; `null` if no request was seen. */
   temperature: number | null
@@ -86,6 +89,8 @@ export interface RunManifest {
   auth_passthrough?: string[]
   opencode: { package: string; version: string }
   model: { pinned: string; returned: string[] }
+  /** Live runs: which OpenCode gateway the agent's requests went to (Go is the default; Zen bills credits). Absent for scripted runs. */
+  gateway?: Gateway | null
   isolation: IsolationEvidence | null
   config: { path: string; sha256: string }
   usage: Usage | null

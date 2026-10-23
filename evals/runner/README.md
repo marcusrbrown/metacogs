@@ -267,14 +267,16 @@ A denied `bash` call returns the matching rules, including `node *scripts/record
 
 Per run: `debug config` (≈3.3 s warm) + the run (≈2 to 5 s scripted, ≈17 s for the live smoke). The prereg per-run timeout covers the run, not `debug config`.
 
-## Auth passthrough (opt-in, Unit 6)
+## Auth passthrough (Unit 6)
 
-The unauthenticated free tier stopped serving requests on 2026-10-22 ("Free usage limit reached", surfaced as a multi-minute hang because OpenCode retries `APIError` internally). The owner authorized one exception to "no key anywhere": copying the `opencode` and `opencode-go` entries of the real `auth.json` into each run's throwaway data dir.
+**Gateway policy.** OpenCode Go (`opencode-go/*`, a subscription) is the default and preferred gateway. OpenCode Zen (`opencode/*`) bills credits; live mode still accepts `opencode/*` ids and `--auth-passthrough opencode`, but nothing copies the Zen credential unless it is listed. A live run with no flag and no `METACOGS_AUTH_PASSTHROUGH` copies the `opencode-go` entry only; `--auth-passthrough none` copies nothing. Each manifest records `gateway` (`go`, `zen`, or `mixed`), derived from where the recording proxy forwarded the requests (`/inference/go/` versus `/zen/`); judge evidence carries the same field and the reports list the gateways seen. It is a recorded fact, not a gate. Runs made before this field existed (the epoch-2 RED, rejudge, and dev campaigns) used `opencode-go/*` agent and judge ids, which the proxy forwards to the Go endpoint; the prereg `metadata.notes` text that says the `opencode` credential was copied describes the original authorization and cannot be edited without voiding the prereg.
 
-`--auth-passthrough opencode,opencode-go` (or `METACOGS_AUTH_PASSTHROUGH`) on `bun run eval`:
+The unauthenticated free tier stopped serving requests on 2026-10-22 ("Free usage limit reached", surfaced as a multi-minute hang because OpenCode retries `APIError` internally). The owner authorized one exception to "no key anywhere": copying the `opencode-go` entry (and, if named, the `opencode` entry) of the real `auth.json` into each run's throwaway data dir.
+
+`--auth-passthrough opencode-go` (the live default; or `METACOGS_AUTH_PASSTHROUGH`, or `opencode-go,opencode` to add Zen) on `bun run eval`:
 
 - `src/runner/auth.ts` reads the real `auth.json` programmatically at spawn time and writes only the named entries to `<fixture>/xdg/data/opencode/auth.json` (0600). The fixture, including that file, is deleted with the workspace. No other provider is ever copied; any other name is refused.
-- Values are never logged, put in an error, or written to a manifest. The manifest records `auth_passthrough: ["opencode","opencode-go"]` (names only).
+- Values are never logged, put in an error, or written to a manifest. The manifest records `auth_passthrough` (names only, for example `["opencode-go"]`).
 - The credential-leak scan gains one needle per secret-length string value of each copied entry. It covers the manifest, `stdout.jsonl`, `stderr.txt`, `requests.json` (request bodies), and the workspace. A hit purges the artifacts, writes a sanitized `credential_leak` manifest, and stops the campaign. The judge transport scans its own stdout, stderr, and request bodies the same way. `report` refuses to write a report that contains a value.
 - Isolation checks are unchanged. The author-home `auth.json` canary is still planted beside the fixture and still must not be quotable (tested with the passthrough on): copying two named entries does not widen what a run can reach.
 - A provider 429 before skill content loads is an `infra_error` with reason `provider_429`; the retry waits 30 s, then 90 s. The judge transport retries a 429 after 20 s, then 60 s, before the judge's own single retry.
@@ -313,7 +315,7 @@ The probe ran while the free tier was degrading, so the failures are availabilit
 
 ### Selected judge
 
-`opencode-go/deepseek-v4.1-flash` (catalogue `family: deepseek-flash`, released 2026-09-10, list price 0.15 / 0.6 per M tokens input / output, billed under the OpenCode Go credential). Judge probe on 2026-10-22, authenticated, one run each (`METACOGS_AUTH_PASSTHROUGH=opencode,opencode-go bun src/runner/judge-probe.ts opencode-go/deepseek-v4.1-flash`):
+`opencode-go/deepseek-v4.1-flash` (catalogue `family: deepseek-flash`, released 2026-09-10, list price 0.15 / 0.6 per M tokens input / output, billed under the OpenCode Go credential). Judge probe on 2026-10-22, authenticated, one run each (`METACOGS_AUTH_PASSTHROUGH=opencode-go bun src/runner/judge-probe.ts opencode-go/deepseek-v4.1-flash`; the probe ran with both entries copied):
 
 | Check | Result |
 | --- | --- |

@@ -63,7 +63,7 @@ async function main() {
   const method = methodAt === -1 ? 'counterfactual' : (args[methodAt + 1] ?? 'counterfactual')
   const requested = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--method')
   const models = requested.length ? requested : await listFreeModels()
-  // METACOGS_AUTH_PASSTHROUGH=opencode,opencode-go opts in; values are copied by the transport, never printed.
+  // METACOGS_AUTH_PASSTHROUGH=opencode-go opts in (Go is the preferred gateway; add opencode only for Zen, which bills credits); values are copied by the transport, never printed.
   const auth = readPassthroughAuth(parseAuthPassthrough(undefined, process.env))
   const transport = opencodeTransport({}, auth)
   const repoRoot = join(import.meta.dir, '..', '..')

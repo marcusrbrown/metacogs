@@ -1,10 +1,11 @@
 /**
- * Opt-in credential passthrough for the free `opencode/*` gateway.
+ * Credential passthrough for live runs.
  *
  * The unauthenticated free tier rate-limits and stalls under sustained use, so
- * the owner authorizes copying exactly two provider entries (`opencode`,
- * `opencode-go`) from the real `auth.json` into each run's throwaway
- * `$XDG_DATA_HOME/opencode/auth.json`. Everything else about isolation is
+ * the owner authorizes copying provider entries from the real `auth.json` into
+ * each run's throwaway `$XDG_DATA_HOME/opencode/auth.json`. `opencode-go` (the Go
+ * subscription) is the default and preferred gateway. `opencode` (Zen) bills
+ * credits and is copied only when it is named explicitly. Everything else about isolation is
  * unchanged: `HOME` and `XDG_*` stay fixture-local, no other provider entry is
  * ever copied, and the file dies with the fixture.
  *
@@ -36,10 +37,21 @@ export class AuthPassthroughError extends Error {
   }
 }
 
-/** `--auth-passthrough a,b` or `METACOGS_AUTH_PASSTHROUGH=a,b`; the flag wins. Unknown names are refused. */
-export function parseAuthPassthrough(flag: string | undefined, env: Record<string, string | undefined> = process.env): PassthroughProvider[] {
+/** What a live run copies when neither the flag nor the env var says otherwise: Go only, never Zen. */
+export const DEFAULT_PASSTHROUGH: readonly PassthroughProvider[] = ['opencode-go']
+
+/**
+ * `--auth-passthrough a,b` or `METACOGS_AUTH_PASSTHROUGH=a,b`; the flag wins. Unknown names are refused.
+ * `none` copies nothing. When neither is set the result is `fallback` (default: nothing).
+ */
+export function parseAuthPassthrough(
+  flag: string | undefined,
+  env: Record<string, string | undefined> = process.env,
+  fallback: readonly PassthroughProvider[] = [],
+): PassthroughProvider[] {
   const raw = flag ?? env.METACOGS_AUTH_PASSTHROUGH
-  if (!raw || raw.trim() === '') return []
+  if (raw === undefined || raw.trim() === '') return [...fallback]
+  if (raw.trim() === 'none') return []
   const names = [...new Set(raw.split(',').map((s) => s.trim()).filter(Boolean))]
   const unknown = names.filter((n) => !(PASSTHROUGH_PROVIDERS as readonly string[]).includes(n))
   if (unknown.length) {

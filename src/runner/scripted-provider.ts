@@ -35,6 +35,8 @@ export interface RecordedRequest {
   body: unknown
   /** Model id the provider reported in its response; filled in once the response is seen. */
   returnedModel?: string
+  /** Where the recording proxy forwarded this request (base URL and path, no query, no headers). Absent for the scripted stub. */
+  upstream?: string
 }
 
 export interface ScriptedProviderServer {
@@ -246,11 +248,28 @@ export const ZEN_UPSTREAM = 'https://opencode.ai/zen/v1'
 /** OpenCode Go's OpenAI-compatible endpoint (`api.url` of the `opencode-go` provider in the 1.19.4 catalogue). */
 export const GO_UPSTREAM = 'https://opencode.ai/inference/go/openai/v1'
 
-/** Live runs reach OpenCode's gateway only: `opencode/*` (free tier) or `opencode-go/*` (authenticated). */
+/**
+ * Live runs reach OpenCode's gateway only. `opencode-go/*` (the Go subscription) is the default and preferred gateway;
+ * `opencode/*` is Zen, which bills credits, and stays accepted when a prereg or flag names it.
+ */
 export const LIVE_PROVIDERS = ['opencode', 'opencode-go'] as const
 export const isLiveModel = (model: string): boolean => LIVE_PROVIDERS.some((p) => model.startsWith(`${p}/`))
 export const providerOf = (model: string): string => model.slice(0, model.indexOf('/'))
 export const upstreamFor = (providerId: string): string => (providerId === 'opencode-go' ? GO_UPSTREAM : ZEN_UPSTREAM)
+
+/** Which OpenCode gateway answered: `go` (subscription), `zen` (credit-billed), or `mixed` if a run used both. */
+export type Gateway = 'go' | 'zen' | 'mixed'
+
+/** A recorded fact, not a gate: derived from where the recording proxy forwarded. `null` when nothing was forwarded. */
+export function gatewayOf(upstreams: readonly (string | undefined)[]): Gateway | null {
+  const kinds = new Set<'go' | 'zen'>()
+  for (const u of upstreams) {
+    if (u?.includes('/inference/go/')) kinds.add('go')
+    else if (u?.includes('/zen/')) kinds.add('zen')
+  }
+  if (kinds.size === 0) return null
+  return kinds.size === 2 ? 'mixed' : [...kinds][0]!
+}
 
 /**
  * Recording pass-through for live mode: the `opencode` provider's `baseURL`
@@ -273,17 +292,19 @@ export function startRecordingProxy(upstream = ZEN_UPSTREAM): ScriptedProviderSe
         // non-JSON body: record nothing useful
       }
       const rec = isRecord(body) ? body : {}
+      const target = `${upstream}${url.pathname.replace(/^\/v1/, '')}`
       const recorded: RecordedRequest = {
         hasTools: Array.isArray(rec.tools) && rec.tools.length > 0,
         round: countToolRounds(rec.messages),
         body,
+        upstream: target,
       }
       requests.push(recorded)
       // Forward the client's own headers untouched (the free tier checks the
       // OpenCode client headers). They are never recorded.
       const headers = new Headers(request.headers)
       for (const h of ['host', 'content-length', 'connection', 'accept-encoding']) headers.delete(h)
-      const res = await fetch(`${upstream}${url.pathname.replace(/^\/v1/, '')}`, {
+      const res = await fetch(target, {
         method: request.method,
         headers,
         body: text,

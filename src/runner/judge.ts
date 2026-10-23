@@ -2,8 +2,8 @@
  * The judge: one model-graded verdict per run on the rubric's `judge`
  * criteria. Deterministic checks have already passed by the time it runs.
  *
- * Transport. Owner decision: no paid keys anywhere, so the judge is a free
- * `opencode/*` model reached through the same isolated `opencode run` env the
+ * Transport. The judge is the prereg's pinned `opencode-go/*` (or, if named, `opencode/*`)
+ * model reached through the same isolated `opencode run` env the
  * agent runs use (generated config, fixture-local HOME, recording proxy). The
  * plan asks for a direct tool-less request. Two measured departures, both in
  * `evals/runner/README.md` §Judge:
@@ -32,7 +32,7 @@ import type { JudgeEvidence } from './manifest'
 import { opencodeArgv, type SpawnOptions, type SpawnResult, spawnCapture } from './opencode'
 import { loadRedactTokens, redactOrThrow, RedactionFailed } from './redact'
 import type { JudgeHook, JudgeInput, JudgeVerdict } from './run'
-import { providerOf, type ScriptedProviderServer, startRecordingProxy, upstreamFor } from './scripted-provider'
+import { type Gateway, gatewayOf, providerOf, type ScriptedProviderServer, startRecordingProxy, upstreamFor } from './scripted-provider'
 import { buildConfig, gitInit, sha256 } from './workspace'
 
 // ── rubric → system prompt ─────────────────────────────────────────────────
@@ -307,6 +307,8 @@ export interface JudgeTransportResponse {
   text: string
   /** Model ids the provider reported on the tool-capable request(s). */
   returnedModels: string[]
+  /** Which OpenCode gateway the request(s) were forwarded to; a recorded fact. */
+  gateway?: Gateway | null
   /** Temperature in the request the provider received. */
   temperature: number | null
   /** The fixed system prompt reached the provider intact (prefix of the system message). */
@@ -381,6 +383,7 @@ export function opencodeTransport(overrides: Partial<TransportDeps> = {}, auth: 
         error: failure,
         text: leaked ? '' : events.assistantText,
         returnedModels: [...new Set(main.map((r) => r.returnedModel).filter((m): m is string => Boolean(m)))],
+        gateway: gatewayOf(server.requests.map((r) => r.upstream)),
         temperature: temperature ?? null,
         systemPromptSeen: typeof firstMessage?.content === 'string' && firstMessage.content.startsWith(request.system),
         toolCalls: events.toolUses.length,
@@ -495,6 +498,7 @@ export function createJudge(options: CreateJudgeOptions): Judge {
 
       const response = await transport({ model, system: spec.systemPrompt, user, timeoutMs, signal: options.signal })
       evidence.model.returned = response.returnedModels
+      evidence.gateway = response.gateway ?? null
       evidence.temperature = response.temperature
       evidence.tool_calls += response.toolCalls
       evidence.wall_ms += response.wallMs

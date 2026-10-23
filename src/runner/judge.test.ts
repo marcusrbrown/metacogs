@@ -16,7 +16,7 @@ import {
   verifyQuote,
 } from './judge'
 import { RedactionFailed } from './redact'
-import { GO_UPSTREAM, isLiveModel, providerOf, upstreamFor, ZEN_UPSTREAM } from './scripted-provider'
+import { gatewayOf, GO_UPSTREAM, isLiveModel, providerOf, upstreamFor, ZEN_UPSTREAM } from './scripted-provider'
 import type { RecordedRequest } from './scripted-provider'
 import type { SpawnOptions, SpawnResult } from './opencode'
 import { sha256 } from './workspace'
@@ -494,5 +494,34 @@ describe('prompt injection inside the delimiters', () => {
     const verdict = await judge.hook(inputFor(poisoned))
     expect(verdict.verdict).toBe('fail')
     expect(verdict.evidence!.criteria.every((c) => c.quote_verified)).toBe(true)
+  })
+})
+
+describe('gateway is a recorded fact', () => {
+  test('gatewayOf classifies by where the proxy forwarded: Go, Zen, mixed, or nothing', () => {
+    const go = `${GO_UPSTREAM}/chat/completions`
+    const zen = `${ZEN_UPSTREAM}/chat/completions`
+    expect(gatewayOf([go, go])).toBe('go')
+    expect(gatewayOf([zen])).toBe('zen')
+    expect(gatewayOf([go, zen])).toBe('mixed')
+    expect(gatewayOf([undefined])).toBeNull()
+    expect(gatewayOf([])).toBeNull()
+  })
+
+  test('the judge transport reports the gateway its requests went to, and the hook puts it in the evidence', async () => {
+    const transportFor = (upstream: string | undefined) =>
+      opencodeTransport({
+        sleep: async () => {},
+        startProxy: () => ({
+          url: 'http://127.0.0.1:1/v1',
+          requests: [{ hasTools: true, round: 0, body: { temperature: 0, messages: [{ role: 'system', content: 'S' }] }, returnedModel: 'judge-model-x', ...(upstream ? { upstream } : {}) }],
+          stop: () => {},
+        }),
+        spawn: async (): Promise<SpawnResult> => ({ stdout: textEvents('x'), stderr: '', exitCode: 0, timedOut: false, aborted: false, wallMs: 1, startedAtMs: 0 }),
+      })
+    const request = { model: PINNED, system: 'S', user: 'u', timeoutMs: 1000 }
+    expect((await transportFor(`${GO_UPSTREAM}/chat/completions`)(request)).gateway).toBe('go')
+    expect((await transportFor(`${ZEN_UPSTREAM}/chat/completions`)(request)).gateway).toBe('zen')
+    expect((await transportFor(undefined)(request)).gateway).toBeNull()
   })
 })

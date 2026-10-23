@@ -5,6 +5,7 @@ import { join } from 'node:path'
 
 import {
   AuthPassthroughError,
+  DEFAULT_PASSTHROUGH,
   needlesOf,
   parseAuthPassthrough,
   passthroughNames,
@@ -49,6 +50,16 @@ describe('parseAuthPassthrough', () => {
   })
   test('any other provider is refused', () => {
     expect(() => parseAuthPassthrough('opencode,anthropic', {})).toThrow('refused: anthropic')
+  })
+})
+
+describe('live default', () => {
+  test('with neither flag nor env, the fallback applies: Go only, never Zen; `none` copies nothing; naming opencode still works', () => {
+    expect(parseAuthPassthrough(undefined, {}, DEFAULT_PASSTHROUGH)).toEqual(['opencode-go'])
+    expect(parseAuthPassthrough(undefined, {})).toEqual([])
+    expect(parseAuthPassthrough('none', {}, DEFAULT_PASSTHROUGH)).toEqual([])
+    expect(parseAuthPassthrough('opencode-go,opencode', {}, DEFAULT_PASSTHROUGH)).toEqual(['opencode-go', 'opencode'])
+    expect(parseAuthPassthrough(undefined, { METACOGS_AUTH_PASSTHROUGH: 'opencode' }, DEFAULT_PASSTHROUGH)).toEqual(['opencode'])
   })
 })
 
