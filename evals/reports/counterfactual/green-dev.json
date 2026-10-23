@@ -6,7 +6,7 @@
   "prereg": {
     "tag": "prereg/counterfactual/2",
     "tag_object_sha": "cfa2cd741b83a235911f58ae94a7fd839e7ff1ae",
-    "commit_sha": "ee795b6ed8dc82faaae7d5eae1e1b754f67855f3",
+    "commit_sha": "146346f8fdb67492351a27296b2368919c86425d",
     "blob_sha": "f7bac508c44e579bb5d51f1392678ac8190165f4",
     "epoch": 2,
     "rubric_hash": "4dbd235645f66aba120e5b87c151188ae3b90e6ce4d0f6e23ff7bd60a48a367b",
@@ -14,7 +14,7 @@
     "per_run_timeout_ms": 180000
   },
   "repo": {
-    "head_sha": "1ec8c368eef093980cdd0eeb2d367cc8249e6e94"
+    "head_sha": "e239ba3ecd263d990dece02ff779fabd9ef9e367"
   },
   "skill": {
     "sha256": "2d14a07f3956ab68ee6bccbb5db9996ce093ac40c9d8546e41bcd9454b76e809"

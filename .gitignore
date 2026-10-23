@@ -3,3 +3,6 @@ node_modules/
 .context/
 evals/runs/
 .agents/skills/
+
+# Local handoffs and session context
+.context/

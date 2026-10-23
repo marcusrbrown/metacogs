@@ -5,7 +5,7 @@
   "prereg": {
     "tag": "prereg/synthesis/2",
     "tag_object_sha": "2a996353134e8a7be22baeec4871840894f600c4",
-    "commit_sha": "c2ff01c8dbe0653c18d3f9c07cf24b2b6c1d2c90",
+    "commit_sha": "5e3cc06110aaf41524be100816c12848f4ad79fd",
     "blob_sha": "58eb0ec072facc2cea6e01365ed93e9d929e9e23",
     "epoch": 2,
     "rubric_hash": "2701141a85847fe1ca78a32bc3fbcc359ef8c196d6f15538963ba76ad8b0180c",
@@ -13,7 +13,7 @@
     "per_run_timeout_ms": 180000
   },
   "repo": {
-    "head_sha": "a0d24d758b89aaa9f6e50d879edf26fe926216ac"
+    "head_sha": "2a1728e0218de27d3077fd61d89a2e53f157d9ca"
   },
   "skill": {
     "sha256": "f2b7dd054161481db88181c70b85828d2b6bf7014bf4f4d166efffc89dd40173",
