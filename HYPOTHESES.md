@@ -1,6 +1,6 @@
 # Hypotheses
 
-Upstream concepts and their current status. A concept is a `hypothesis` until it has a retained baseline failure and a held-out pass; `red-candidate` marks concepts entering the first RED cycle; `red-retained` marks concepts whose baseline failures met the RED bar and are retained (see `evals/reports/<concept>/red.json`), making them eligible for a skill and a GREEN run; `green-miss` marks a concept whose one-shot GREEN read missed a bar (see `evals/reports/<concept>/green.json`): the held-out set is burned for that epoch and a retry needs a new epoch and a new held-out set; `green` marks a read that met every bar.
+Upstream concepts and their current status. A concept is a `hypothesis` until it has a retained baseline failure and a held-out pass; `red-candidate` marks concepts entering the first RED cycle; `red-retained` marks concepts whose baseline failures met the RED bar and are retained (see `evals/reports/<concept>/red.json`), making them eligible for a skill and a GREEN run; `green-miss` marks a concept whose one-shot GREEN read missed a bar (see `evals/reports/<concept>/green.json`, or `green.epoch<N>.json` for a superseded epoch): the held-out set is burned for that epoch and a retry needs a new epoch and a new held-out set; `green` marks a read that met every bar.
 
 | Concept | Interpretation | Status |
 | --- | --- | --- |
@@ -15,3 +15,5 @@ Upstream concepts and their current status. A concept is a `hypothesis` until it
 | fork | Explore alternatives, optionally using real isolated delegates; report actual execution mode and provenance, with explicit serial fallback | hypothesis |
 | measure | Assess observable uncertainty or constraint tension using stated criteria; make no claims about inaccessible layers or gradients | hypothesis |
 | tether | Set scope, budget, and stopping conditions; make enforcement claims match host capabilities | hypothesis |
+
+Epoch 3 (paid round, agent `openai/gpt-6-luna`, judge `anthropic/claude-haiku-5-5`, skills unchanged): neither method met the dev bar (counterfactual 5 of 6 dev fixtures, synthesis 5 of 6; skill load rate 1.0 for both), so no GREEN read was made and both held-out sets are unread. Statuses are unchanged: counterfactual stays `red-retained`, synthesis stays `green-miss` (its epoch-2 read is `evals/reports/synthesis/green.epoch2.json`; epoch 3 has a fresh held-out set awaiting a dev pass). See `evals/reports/README.md`.

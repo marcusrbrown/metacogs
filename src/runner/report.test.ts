@@ -301,8 +301,11 @@ describe('committed reports', () => {
       expect(validateReport(report)).toEqual([])
       expect(report.method).toBe(method)
       expect(report.prereg.tag).toBe(`prereg/${method}/2`)
-      const prereg = parsePrereg(readFileSync(join(REPO_ROOT, 'evals', method, 'prereg.json'), 'utf8'))
-      expect(prereg.ok && prereg.prereg.judge_model_id).toBe(`${report.models.judge_pinned}`)
+      // red.json is the epoch-2 RED read; the committed prereg has since moved to epoch 3 with other model pins.
+      expect(report.prereg.epoch).toBe(2)
+      expect(report.models.agent_pinned).toBe('opencode-go/beam-free')
+      expect(report.models.judge_pinned).toBe('opencode-go/deepseek-v4.1-flash')
+      expect(parsePrereg(readFileSync(join(REPO_ROOT, 'evals', method, 'prereg.json'), 'utf8')).ok).toBe(true)
     })
   }
 })

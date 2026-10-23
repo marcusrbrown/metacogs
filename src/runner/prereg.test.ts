@@ -392,15 +392,15 @@ describe('committed preregs', () => {
         if (!parsed.ok) throw new Error(parsed.errors.join('; '))
         const { prereg } = parsed
         expect(prereg.method).toBe(method)
-        // Epoch 2 supersedes epoch 1 (whose judge needed a paid key); it closes at the epoch-1 prereg commit.
-        expect(prereg.epoch).toBe(2)
-        expect(prereg.prev_epoch_closing_commit).toBe(method === 'counterfactual' ? '0aee5ff5d2c828a0121a7e88171abe0c7e68fe92' : 'e8ab1e839dbf47ae6ff8b18f10746c6ac5aa6e8d')
+        // Epoch 3 is the paid CLIProxyAPI round; it closes at the epoch-2 closing commit (counterfactual: dev iteration 9; synthesis: the epoch-2 GREEN read).
+        expect(prereg.epoch).toBe(3)
+        expect(prereg.prev_epoch_closing_commit).toBe(method === 'counterfactual' ? '444976e6779f02452e1d19c3eb120aca700ff041' : 'de6319c4febaea2a83f1d47943eb62f02d7c0efd')
         expect(prereg.runs_per_condition).toBe(5)
         expect(prereg.red_bar).toEqual({ min_baseline_fails_per_fixture: 4, min_fixtures: 2 })
         expect(prereg.green_bar).toEqual({ skill_pooled_pass_min: 17, skill_per_fixture_pass_min: 3, baseline_pooled_pass_max: 10 })
         expect(prereg.false_fire_max).toBe(0)
-        expect(prereg.agent_model_id).toBe('opencode-go/beam-free')
-        expect(prereg.judge_model_id).toBe('opencode-go/deepseek-v4.1-flash')
+        expect(prereg.agent_model_id).toBe('openai/gpt-6-luna')
+        expect(prereg.judge_model_id).toBe('anthropic/claude-haiku-5-5')
         expect(Object.keys(prereg.fixture_hashes.dev)).toHaveLength(6)
         expect(Object.keys(prereg.fixture_hashes.negative)).toHaveLength(3)
         expect(Object.keys(prereg.fixture_hashes.heldout)).toHaveLength(4)

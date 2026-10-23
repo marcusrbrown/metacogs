@@ -38,3 +38,18 @@ All baseline negatives passed 5/5 for both methods (no skill exists in the basel
 5. **`cf-d3-vendor-idempotency` does not discriminate.** Four of five baselines passed it, so it contributes nothing to RED. It stays in the set (the dev set is fixed by the prereg) and is a candidate regression case.
 6. **Throughput.** Both campaigns completed with no infra errors and no rate limit: about 25 s per run end to end (2292 s for 90 runs) (isolation check, agent run, judge call). The earlier unauthenticated free tier was unusable on this date ("Free usage limit reached"); see `evals/runner/README.md`.
 7. **Cost note.** `deepseek-v4.1-flash` is listed at 0.15 / 0.6 per million input / output tokens, billed under the OpenCode Go credential. This is not the "no paid key" free tier; the owner authorized it for this epoch.
+
+## Epoch 3 dev reads (2026-10-23)
+
+Paid round, owner-authorized: agent `openai/gpt-6-luna`, judge `anthropic/claude-haiku-5-5`, both through the owner's CLIProxyAPI (`gateways: ["cliproxy"]`), opencode-ai 1.19.4, prereg tags `prereg/counterfactual/3` and `prereg/synthesis/3` (bars, dev and negative fixtures, and rubric unchanged from epoch 2; skills unchanged). Skill condition on dev and negative fixtures, N=5, sequential. `green-dev.json` carries the new `load_rate` metric (not a bar): the share of attempted runs in which the skill text reached the model.
+
+| Method | Dev fixtures at the bar (≥4/5) | Dev passes | Load rate (dev) | Negative false fires | `judge_error` | `infra_error` | Campaign wall-clock | `passes_dev_bar` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| counterfactual | 5 of 6 (`cf-d2-ci-reach` 3/5) | 26 of 30 | 1.0 (30 of 30, all via the skill tool) | 0 of 15 | 0 | 0 | 19.1 min | no |
+| synthesis | 5 of 6 (`sy-d6-log-redaction` 1/5) | 26 of 30 | 1.0 (30 of 30, all via the skill tool) | 0 of 15 | 0 | 0 | 24.1 min | no |
+
+What changed against epoch 2: the load rate is no longer the problem (1.0 for both methods). What fails now is different per method. Counterfactual: all four failing runs loaded the skill and produced a judged-passable answer but never wrote the record (`helper_not_invoked` or `record_missing`; in one the helper call errored), so these are mechanical-check fails, not judge fails. Synthesis: `sy-d6-log-redaction` fails SY3 (a concrete dependence path) in 4 of 5 runs while SY1, SY2, SY4, and SY5 pass; the answers call the two reviewers' claims independent arguments. Both reflect the same skill text that was in place in epoch 2, so this is a model comparison on an unchanged skill, not an iteration.
+
+The dev bar is not met by either method, so no one-shot GREEN read was made: the synthesis epoch-3 held-out set (`sy-h5` to `sy-h8`) and the counterfactual held-out set are unread. Human review of the judge verdicts has not been done. Agent cost reported by the provider (not the judge): about $0.048 (counterfactual) and $0.054 (synthesis) for 45 runs each; the judge's cost is not recorded.
+
+The epoch-2 synthesis GREEN read is preserved as `synthesis/green.epoch2.json` (its held-out set is burned).

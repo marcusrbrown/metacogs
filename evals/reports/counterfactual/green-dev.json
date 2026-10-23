@@ -4,17 +4,17 @@
   "method": "counterfactual",
   "held_out": "untouched",
   "prereg": {
-    "tag": "prereg/counterfactual/2",
-    "tag_object_sha": "cfa2cd741b83a235911f58ae94a7fd839e7ff1ae",
-    "commit_sha": "146346f8fdb67492351a27296b2368919c86425d",
-    "blob_sha": "f7bac508c44e579bb5d51f1392678ac8190165f4",
-    "epoch": 2,
+    "tag": "prereg/counterfactual/3",
+    "tag_object_sha": "ef293d8c563deb45c72f59298c0b17c6b10c16a8",
+    "commit_sha": "70b9a4da4a7924ee59e9b1dd46ed767321bfab42",
+    "blob_sha": "a075f7e95988cfbb7d7e2d9be71743119ac3cbc1",
+    "epoch": 3,
     "rubric_hash": "4dbd235645f66aba120e5b87c151188ae3b90e6ce4d0f6e23ff7bd60a48a367b",
     "runs_per_condition": 5,
     "per_run_timeout_ms": 180000
   },
   "repo": {
-    "head_sha": "e239ba3ecd263d990dece02ff779fabd9ef9e367"
+    "head_sha": "70b9a4da4a7924ee59e9b1dd46ed767321bfab42"
   },
   "skill": {
     "sha256": "2d14a07f3956ab68ee6bccbb5db9996ce093ac40c9d8546e41bcd9454b76e809"
@@ -24,32 +24,30 @@
     "version": "1.19.4"
   },
   "models": {
-    "agent_pinned": "opencode-go/beam-free",
+    "agent_pinned": "openai/gpt-6-luna",
     "agent_returned": [
-      "beam-free"
+      "gpt-6-luna"
     ],
-    "judge_pinned": "opencode-go/deepseek-v4.1-flash",
+    "judge_pinned": "anthropic/claude-haiku-5-5",
     "judge_returned": [
-      "deepseek-v4.1-flash"
+      "claude-haiku-5-5"
     ],
     "gateways": [
-      "go"
+      "cliproxy"
     ]
   },
   "judge": {
     "system_prompt_sha256": [
       "ea7ea92f0677e4ef05320618a215b3d5ad0b209409428f6a64392935394492c9"
     ],
-    "judged_runs": 27,
+    "judged_runs": 26,
     "judge_error_runs": 0,
-    "temperature_observed": [
-      0
-    ]
+    "temperature_observed": []
   },
   "campaign": {
-    "id": "counterfactual-dev-2026-10-23T01-21-13-292Z",
-    "started_at": "2026-10-23T01:21:13.728Z",
-    "finished_at": "2026-10-23T01:34:22.047Z",
+    "id": "counterfactual-dev-2026-10-23T02-28-29-821Z",
+    "started_at": "2026-10-23T02:28:30.293Z",
+    "finished_at": "2026-10-23T02:47:32.126Z",
     "planned_runs": 45,
     "executed_manifests": 45,
     "incomplete_manifests": 0
@@ -57,19 +55,19 @@
   "totals": {
     "attempted": 45,
     "taxonomy": {
-      "pass": 40,
-      "fail": 5,
+      "pass": 41,
+      "fail": 4,
       "timeout->fail": 0,
       "budget->fail": 0,
       "judge_error->fail": 0,
       "infra_error": 0,
       "non_isolated": 0
     },
-    "wall_clock_ms": 526290,
+    "wall_clock_ms": 819440,
     "tokens": {
-      "input": 394138,
-      "output": 22798,
-      "reasoning": 37127
+      "input": 328422,
+      "output": 21960,
+      "reasoning": 3243
     }
   },
   "dev_bar": {
@@ -138,14 +136,14 @@
       },
       "check_codes": {
         "helper_not_invoked": 1,
-        "record_missing": 1,
-        "skill_not_loaded": 1
+        "record_missing": 1
       },
       "fire_basis": {
-        "skill_tool": 3,
-        "direct_read": 1,
-        "none": 1
+        "skill_tool": 5,
+        "direct_read": 0,
+        "none": 0
       },
+      "load_rate": 1,
       "meets_dev_bar": true
     },
     {
@@ -153,17 +151,17 @@
       "kind": "dev",
       "fixture_hash": "4bcabd82176519b1b5f6a970070e8fc56369afd32b573bd6b55426b5ac8e2813",
       "attempted": 5,
-      "pass": 5,
-      "fail": 0,
-      "pass_over_total": "5/5",
+      "pass": 3,
+      "fail": 2,
+      "pass_over_total": "3/5",
       "pass_rate_wilson95": [
-        0.5655,
-        1
+        0.2307,
+        0.8824
       ],
       "outcomes": {
-        "pass": 5,
+        "pass": 3,
         "fail_judge_verdict": 0,
-        "fail_check": 0,
+        "fail_check": 2,
         "fail_timeout": 0,
         "fail_budget": 0,
         "fail_host_crash": 0,
@@ -172,8 +170,8 @@
         "non_isolated": 0
       },
       "taxonomy": {
-        "pass": 5,
-        "fail": 0,
+        "pass": 3,
+        "fail": 2,
         "timeout->fail": 0,
         "budget->fail": 0,
         "judge_error->fail": 0,
@@ -182,38 +180,42 @@
       },
       "criteria": {
         "CF1": {
-          "pass": 5,
+          "pass": 3,
           "fail_quoted": 0,
           "fail_absent": 0
         },
         "CF2": {
-          "pass": 5,
+          "pass": 3,
           "fail_quoted": 0,
           "fail_absent": 0
         },
         "CF3": {
-          "pass": 5,
+          "pass": 3,
           "fail_quoted": 0,
           "fail_absent": 0
         },
         "CF4": {
-          "pass": 5,
+          "pass": 3,
           "fail_quoted": 0,
           "fail_absent": 0
         },
         "CF5": {
-          "pass": 5,
+          "pass": 3,
           "fail_quoted": 0,
           "fail_absent": 0
         }
       },
-      "check_codes": {},
+      "check_codes": {
+        "helper_not_invoked": 1,
+        "record_missing": 2
+      },
       "fire_basis": {
         "skill_tool": 5,
         "direct_read": 0,
         "none": 0
       },
-      "meets_dev_bar": true
+      "load_rate": 1,
+      "meets_dev_bar": false
     },
     {
       "id": "cf-d3-vendor-idempotency",
@@ -280,6 +282,7 @@
         "direct_read": 0,
         "none": 0
       },
+      "load_rate": 1,
       "meets_dev_bar": true
     },
     {
@@ -287,17 +290,17 @@
       "kind": "dev",
       "fixture_hash": "ee1263364b4be1ddac843a644e11e35059aa98161c6a69ea716d4fad286a8eea",
       "attempted": 5,
-      "pass": 3,
-      "fail": 2,
-      "pass_over_total": "3/5",
+      "pass": 5,
+      "fail": 0,
+      "pass_over_total": "5/5",
       "pass_rate_wilson95": [
-        0.2307,
-        0.8824
+        0.5655,
+        1
       ],
       "outcomes": {
-        "pass": 3,
-        "fail_judge_verdict": 1,
-        "fail_check": 1,
+        "pass": 5,
+        "fail_judge_verdict": 0,
+        "fail_check": 0,
         "fail_timeout": 0,
         "fail_budget": 0,
         "fail_host_crash": 0,
@@ -306,8 +309,8 @@
         "non_isolated": 0
       },
       "taxonomy": {
-        "pass": 3,
-        "fail": 2,
+        "pass": 5,
+        "fail": 0,
         "timeout->fail": 0,
         "budget->fail": 0,
         "judge_error->fail": 0,
@@ -316,42 +319,39 @@
       },
       "criteria": {
         "CF1": {
-          "pass": 4,
+          "pass": 5,
           "fail_quoted": 0,
           "fail_absent": 0
         },
         "CF2": {
-          "pass": 4,
+          "pass": 5,
           "fail_quoted": 0,
           "fail_absent": 0
         },
         "CF3": {
-          "pass": 4,
+          "pass": 5,
           "fail_quoted": 0,
           "fail_absent": 0
         },
         "CF4": {
-          "pass": 4,
+          "pass": 5,
           "fail_quoted": 0,
           "fail_absent": 0
         },
         "CF5": {
-          "pass": 3,
-          "fail_quoted": 1,
+          "pass": 5,
+          "fail_quoted": 0,
           "fail_absent": 0
         }
       },
-      "check_codes": {
-        "helper_not_invoked": 1,
-        "record_missing": 1,
-        "skill_not_loaded": 1
-      },
+      "check_codes": {},
       "fire_basis": {
-        "skill_tool": 4,
+        "skill_tool": 5,
         "direct_read": 0,
-        "none": 1
+        "none": 0
       },
-      "meets_dev_bar": false
+      "load_rate": 1,
+      "meets_dev_bar": true
     },
     {
       "id": "cf-d5-edge-limits",
@@ -414,14 +414,14 @@
       },
       "check_codes": {
         "helper_not_invoked": 1,
-        "record_missing": 1,
-        "skill_not_loaded": 1
+        "record_missing": 1
       },
       "fire_basis": {
-        "skill_tool": 4,
+        "skill_tool": 5,
         "direct_read": 0,
-        "none": 1
+        "none": 0
       },
+      "load_rate": 1,
       "meets_dev_bar": true
     },
     {
@@ -489,6 +489,7 @@
         "direct_read": 0,
         "none": 0
       },
+      "load_rate": 1,
       "meets_dev_bar": true
     },
     {
@@ -530,6 +531,7 @@
         "direct_read": 0,
         "none": 5
       },
+      "load_rate": 0,
       "meets_dev_bar": true
     },
     {
@@ -571,6 +573,7 @@
         "direct_read": 0,
         "none": 5
       },
+      "load_rate": 0,
       "meets_dev_bar": true
     },
     {
@@ -578,17 +581,17 @@
       "kind": "negative",
       "fixture_hash": "6be8f30db9b75d9b132ad31e66f2d04badaa170e0424b359edb1a05618b94df0",
       "attempted": 5,
-      "pass": 4,
-      "fail": 1,
-      "pass_over_total": "4/5",
+      "pass": 5,
+      "fail": 0,
+      "pass_over_total": "5/5",
       "pass_rate_wilson95": [
-        0.3755,
-        0.9638
+        0.5655,
+        1
       ],
       "outcomes": {
-        "pass": 4,
+        "pass": 5,
         "fail_judge_verdict": 0,
-        "fail_check": 1,
+        "fail_check": 0,
         "fail_timeout": 0,
         "fail_budget": 0,
         "fail_host_crash": 0,
@@ -597,8 +600,8 @@
         "non_isolated": 0
       },
       "taxonomy": {
-        "pass": 4,
-        "fail": 1,
+        "pass": 5,
+        "fail": 0,
         "timeout->fail": 0,
         "budget->fail": 0,
         "judge_error->fail": 0,
@@ -606,27 +609,27 @@
         "non_isolated": 0
       },
       "criteria": {},
-      "check_codes": {
-        "false_fire_direct_read": 1
-      },
+      "check_codes": {},
       "fire_basis": {
         "skill_tool": 0,
-        "direct_read": 1,
-        "none": 4
+        "direct_read": 0,
+        "none": 5
       },
-      "meets_dev_bar": false
+      "load_rate": 0,
+      "meets_dev_bar": true
     }
   ],
   "dev": {
     "dev_fixtures": 6,
     "dev_fixtures_meeting_bar": 5,
     "negative_fixtures": 3,
-    "negative_false_fires": 1,
+    "negative_false_fires": 0,
     "fire_basis": {
-      "skill_tool": 26,
-      "direct_read": 1,
-      "none": 3
+      "skill_tool": 30,
+      "direct_read": 0,
+      "none": 0
     },
+    "load_rate": 1,
     "passes_dev_bar": false
   }
 }
