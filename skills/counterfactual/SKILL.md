@@ -1,6 +1,6 @@
 ---
 name: counterfactual
-description: Required before answering a request to approve, plan, implement, or give a go/no-go on a consequential change (migration, removal, adoption, dependency swap, merge), because such cases often rest on a claim the input only asserts, a result from a non-representative environment, a newly surfaced fact, or a hard constraint the preferred option may violate. Not for mechanical edits, renames, wording changes, or routine fixes.
+description: Required before answering a go/no-go, approval, or migration or implementation-plan request for a consequential change (dependency swap, removal, adoption, merge), because such cases often rest on a claim the input only asserts, a result from a non-representative environment, a newly surfaced fact, or a hard constraint the preferred option may violate. Not for mechanical edits, renames, wording changes, or bug fixes whose expected result is given.
 license: MIT
 compatibility: The record helper needs Node 22 or newer. Without it the method still runs and the run is marked unrecorded.
 ---
