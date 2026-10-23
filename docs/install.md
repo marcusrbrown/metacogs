@@ -61,7 +61,7 @@ Install: copy to `.agents/skills/synthesis/`.
 
 Verify: `opencode debug skill` lists `synthesis` next to OpenCode's built-in `customize-opencode`. A permission rule such as `skill: {"*": "deny", "synthesis": "allow"}` limits what the agent may load.
 
-Status: `content-compatible-untested`, pending human review. This is the one host with a live eval, and the eval is machine-green. The cell becomes `verified` when the human review of the judge verdicts is complete. See [Evidence](../README.md#evidence).
+Status: `verified`. This is the one host with a live eval. Human review: 39/39 held-out judgments reviewed; SY1 above the 0.8 agreement floor; SY2–SY5 below floor and demoted to advisory; recomputed verdict green. See [Evidence](../README.md#evidence).
 
 Evidence:
 

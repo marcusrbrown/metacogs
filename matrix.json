@@ -9,13 +9,13 @@
   "methods": {
     "synthesis": {
       "opencode": {
-        "status": "content-compatible-untested",
-        "pending_verification": true,
+        "status": "verified",
         "evidence_ref": "evals/reports/synthesis/green.json",
         "date": "2026-10-23",
         "host_version": "1.19.4",
         "model": "openai/gpt-6-luna",
         "judge_model": "anthropic/claude-haiku-5-5",
+        "note": "Human review: 39/39 held-out judgments reviewed; SY1 above the 0.8 agreement floor; SY2–SY5 below floor and demoted to advisory; recomputed verdict green.",
         "history": []
       },
       "pi": {

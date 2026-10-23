@@ -40,7 +40,7 @@ The other nine upstream concepts are listed in [HYPOTHESES.md](HYPOTHESES.md) wi
 <!-- matrix:start -->
 | Host | Project skills path | synthesis |
 | --- | --- | --- |
-| [OpenCode](docs/install.md#opencode) | `.agents/skills/` | `content-compatible-untested` (pending human review)<br>OpenCode 1.19.4 · model `openai/gpt-6-luna` · judge `anthropic/claude-haiku-5-5` · 2026-10-23 · [evidence](evals/reports/synthesis/green.json) |
+| [OpenCode](docs/install.md#opencode) | `.agents/skills/` | `verified`<br>OpenCode 1.19.4 · model `openai/gpt-6-luna` · judge `anthropic/claude-haiku-5-5` · 2026-10-23 · [evidence](evals/reports/synthesis/green.json)<br>Human review: 39/39 held-out judgments reviewed; SY1 above the 0.8 agreement floor; SY2–SY5 below floor and demoted to advisory; recomputed verdict green. |
 | [Pi](docs/install.md#pi) | `.agents/skills/` | `content-compatible-untested`<br>Pi 1.3.0 · 2026-10-23 · [evidence](docs/install.md#pi)<br>Listing smoke only. Project skills load after trusting the project (`--approve`). |
 | [Codex](docs/install.md#codex) | `.agents/skills/` | `content-compatible-untested`<br>Codex 0.162.1 · 2026-10-23 · [evidence](docs/install.md#codex)<br>Listing smoke only. |
 | [Claude Code](docs/install.md#claude-code) | `.claude/skills/` | `content-compatible-untested`<br>Claude Code 2.1.270 · 2026-10-23 · [evidence](docs/install.md#claude-code)<br>Listing smoke only. Reads `.claude/skills/`, not `.agents/skills/`. |
@@ -52,7 +52,7 @@ The other nine upstream concepts are listed in [HYPOTHESES.md](HYPOTHESES.md) wi
 
 Reports are under [`evals/reports/`](evals/reports/README.md); how to read them is in that README.
 
-- **synthesis, epoch 3** ([`green.json`](evals/reports/synthesis/green.json)): agent `openai/gpt-6-luna`, judge `anthropic/claude-haiku-5-5`, OpenCode 1.19.4. One preregistered read on four held-out fixtures, five runs per condition: skill 19/20, baseline 3/20, delta +0.80 (95% interval 0.52 to 0.91), 0 of 15 false fires on negative fixtures. Machine verdict `green`. **Human review is pending**, so the OpenCode cell is not `verified` yet.
+- **synthesis, epoch 3** ([`green.json`](evals/reports/synthesis/green.json)): agent `openai/gpt-6-luna`, judge `anthropic/claude-haiku-5-5`, OpenCode 1.19.4. One preregistered read on four held-out fixtures, five runs per condition: skill 19/20, baseline 3/20, delta +0.80 (95% interval 0.52 to 0.91), 0 of 15 false fires on negative fixtures. Machine verdict `green`. Human review: 39/39 held-out judgments reviewed; SY1 above the 0.8 agreement floor; SY2–SY5 below floor and demoted to advisory; recomputed verdict green.
 - **synthesis, epoch 2** ([`green.epoch2.json`](evals/reports/synthesis/green.epoch2.json)): free-tier and Go-gateway models. `green-miss`: skill 15/20 against a bar of 17/20, traced to the skill not always being loaded. Kept as recorded.
 - **counterfactual** ([`red.json`](evals/reports/counterfactual/red.json), [`green-dev.json`](evals/reports/counterfactual/green-dev.json)): `red-retained`, as described under Methods. Held-out unread.
 
