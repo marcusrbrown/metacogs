@@ -66,3 +66,13 @@ Evidence, from the full final answers of all cf-d6 skill runs in three campaigns
 Conclusion: variance in the CF5 judgment, not displacement by the record step. No skill edit this round. `skills/counterfactual/` is unchanged from `7a3bf22`.
 
 Dev re-run (iteration 12, no edit), N=5: d1 to d5 5/5, **d6 3/5** (runs 2 and 3 failed CF5), skill load 30 of 30, a record written in 30 of 30, negatives 0 of 15. `passes_dev_bar` is false, so no GREEN read was made and the counterfactual held-out set is still unread. The second verdicts above are reported here as evidence about the judge; the preregistered bar is read from the first verdict of each run and they do not replace it.
+
+## Epoch 4 (prereg `prereg/counterfactual/4`, pooled dev bar)
+
+Same models (`openai/gpt-6-luna` agent, `anthropic/claude-haiku-5-5` judge, `gateways: ["cliproxy"]`), same fixtures, rubric, held-out hashes, and GREEN bars as epoch 3. Skill text unchanged since `7a3bf22` (no edit, no fixture or rubric edit). Only the predeclared dev bar changed: at least 24 of 30 skill-condition passes across the 6 dev fixtures, a per-fixture floor of 2 of 5, and 0 negative false fires (rationale in the prereg `metadata.notes`).
+
+| # | What the previous run showed | The one change | Dev result |
+| --- | --- | --- | --- |
+| 13 | Four dev campaigns (iterations 9 to 12) each pooled at least 26 of 30 with exactly one fixture at 3/5. | none (skill unchanged; the bar changed in the prereg, not the skill) | N=5: d1 to d5 5/5, **d6 3/5** (run 1 `judge_error` `invalid_ungrounded_quote` after 2 attempts; run 4 CF5 judge fail). Pooled **27 of 30**. Skill load 30 of 30 through the skill tool; helper called and record written in all 30; negatives 0 of 15 false fires. |
+
+Pooled bar (24 of 30, floor 2 of 5, negatives 0): **met** (27 of 30, minimum fixture 3 of 5, 0 of 15). The runner's own `passes_dev_bar` flag in `green-dev.json` is still the per-fixture 4/5 rule and reads `false` (5 of 6 fixtures at the bar). The two d6 failures are judge-side: neither is a check failure or a missing record. Campaign `counterfactual-dev-2026-10-23T21-09-00-330Z`, 45 runs, 19.1 min of campaign time (12.7 min summed run time), agent cost about $0.047 (judge cost not recorded).

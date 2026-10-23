@@ -4,17 +4,17 @@
   "method": "counterfactual",
   "held_out": "untouched",
   "prereg": {
-    "tag": "prereg/counterfactual/3",
-    "tag_object_sha": "ef293d8c563deb45c72f59298c0b17c6b10c16a8",
-    "commit_sha": "70b9a4da4a7924ee59e9b1dd46ed767321bfab42",
-    "blob_sha": "a075f7e95988cfbb7d7e2d9be71743119ac3cbc1",
-    "epoch": 3,
+    "tag": "prereg/counterfactual/4",
+    "tag_object_sha": "b75beb509ef0c4f9a541dcff28215532e0df3a7c",
+    "commit_sha": "47145e73cd624b75c5cd1d18b8ff5e6be2b85a3c",
+    "blob_sha": "886d7fb6bae7cac8887094b73eeab1ee9dcc8f6a",
+    "epoch": 4,
     "rubric_hash": "4dbd235645f66aba120e5b87c151188ae3b90e6ce4d0f6e23ff7bd60a48a367b",
     "runs_per_condition": 5,
     "per_run_timeout_ms": 180000
   },
   "repo": {
-    "head_sha": "6f5bf8a671deda12a9b021169c3bc4ce8fa0bd05"
+    "head_sha": "2a8d702aa5b6f0ab80d5c14e1014dd8fd4417d3c"
   },
   "skill": {
     "sha256": "44b9c08c3ca650a81631fd9f83f05147208812e326c12c54afb53d010e9e4c97"
@@ -41,13 +41,13 @@
       "ea7ea92f0677e4ef05320618a215b3d5ad0b209409428f6a64392935394492c9"
     ],
     "judged_runs": 30,
-    "judge_error_runs": 0,
+    "judge_error_runs": 1,
     "temperature_observed": []
   },
   "campaign": {
-    "id": "counterfactual-dev-2026-10-23T05-58-37-936Z",
-    "started_at": "2026-10-23T05:58:38.454Z",
-    "finished_at": "2026-10-23T06:19:29.851Z",
+    "id": "counterfactual-dev-2026-10-23T21-09-00-330Z",
+    "started_at": "2026-10-23T21:09:01.493Z",
+    "finished_at": "2026-10-23T21:28:07.706Z",
     "planned_runs": 45,
     "executed_manifests": 45,
     "incomplete_manifests": 0
@@ -56,18 +56,18 @@
     "attempted": 45,
     "taxonomy": {
       "pass": 43,
-      "fail": 2,
+      "fail": 1,
       "timeout->fail": 0,
       "budget->fail": 0,
-      "judge_error->fail": 0,
+      "judge_error->fail": 1,
       "infra_error": 0,
       "non_isolated": 0
     },
-    "wall_clock_ms": 868953,
+    "wall_clock_ms": 762593,
     "tokens": {
-      "input": 353806,
-      "output": 23246,
-      "reasoning": 1855
+      "input": 312636,
+      "output": 22864,
+      "reasoning": 1524
     }
   },
   "dev_bar": {
@@ -429,48 +429,48 @@
       ],
       "outcomes": {
         "pass": 3,
-        "fail_judge_verdict": 2,
+        "fail_judge_verdict": 1,
         "fail_check": 0,
         "fail_timeout": 0,
         "fail_budget": 0,
         "fail_host_crash": 0,
-        "fail_judge_error": 0,
+        "fail_judge_error": 1,
         "infra_error": 0,
         "non_isolated": 0
       },
       "taxonomy": {
         "pass": 3,
-        "fail": 2,
+        "fail": 1,
         "timeout->fail": 0,
         "budget->fail": 0,
-        "judge_error->fail": 0,
+        "judge_error->fail": 1,
         "infra_error": 0,
         "non_isolated": 0
       },
       "criteria": {
         "CF1": {
-          "pass": 5,
+          "pass": 4,
           "fail_quoted": 0,
           "fail_absent": 0
         },
         "CF2": {
-          "pass": 5,
+          "pass": 4,
           "fail_quoted": 0,
           "fail_absent": 0
         },
         "CF3": {
-          "pass": 5,
+          "pass": 4,
           "fail_quoted": 0,
           "fail_absent": 0
         },
         "CF4": {
-          "pass": 5,
+          "pass": 4,
           "fail_quoted": 0,
           "fail_absent": 0
         },
         "CF5": {
           "pass": 3,
-          "fail_quoted": 2,
+          "fail_quoted": 1,
           "fail_absent": 0
         }
       },
