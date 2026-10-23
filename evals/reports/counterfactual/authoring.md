@@ -15,6 +15,20 @@ RED recap (from `red.json`): baseline answers were one to three sentences. They 
 | 6 | d4 (new fact undermines an approved plan) and d5 (implement a library under a hard limit) did not trigger. | Description adds "implement, or confirm" and "a plan that a newly surfaced fact may undermine" | N=5: 4, 3, 4, 5, 1, 5. d5 still 1/5, loading. Negatives 15/15. |
 | 7 | d5 still not loading. | Description rewritten as a reason: "Required before answering a request to approve, plan, implement, or give a go/no-go on a consequential change ..., because such cases often rest on ..." | N=5: 2, 5, 4, 4, 1, 4. Negatives 15/15. **Final text.** |
 
+| 8 | Many `skill_not_loaded` runs had read the skill file and applied it; the old check counted only the skill tool. | **No skill text change.** Runner fix (`6e6eb8b`): on positive fixtures a complete read of the installed SKILL.md also counts as a fire (`fire_basis: direct_read`) when a valid record exists; negatives stay strict, so any read of SKILL.md is now a false fire. | N=5, same skill text as iteration 7: 3, 5, 5, 4, 3, 4. Negatives: 1 false fire in 15 (`cf-n3-off-by-one`, a direct read of SKILL.md). **Final result.** |
+
+Final dev status at N=5 (iteration 8, corrected fire check): d1 3/5, d2 5/5, d3 5/5, d4 4/5, d5 3/5, d6 4/5. Fire basis over the 30 dev runs: skill tool 22, direct read 2, none 6. Negatives: 1 false fire in 15. Dev bar (every dev fixture at least 4/5, no negative false fire) **not met**: d1 and d5 at 3/5, and one negative false fire.
+
+Every one of the 7 failing runs in iteration 8 is a load failure: 6 positives where the agent never opened the skill (no tool call, no read; it answered directly) and 1 negative where it opened the skill on a plain bug fix. **No loaded positive run failed the judge in this campaign**: all 24 runs with a skill load or complete read passed CF1 to CF5, CF3m and CF5m. The judge and the reply format are not what limits this skill on the dev set.
+
+Previous final status (iteration 7, old check, kept for the record): d1 2/5, d2 5/5, d3 4/5, d4 4/5, d5 1/5, d6 4/5.
+
+## Deviation: imperative description
+
+The description opens "Required before answering a request to ..." instead of the "Use when ..." form the writing-skills guidance and the plan's trigger-only wording prescribe. Owner decision, taken on measured load rate: with "Use when ..." phrasings (iterations 0 to 2) the pinned agent opened the skill through the skill tool in roughly one run of four (iterations 0 to 2, N=1 to 2); with "Required before answering ..." (iteration 3 onward) it rose to about three of four (9 of 12 at iteration 3) and held near two of three at N=5. The description still states the activation boundary as conditions (the kind of request, why it is risky, what it excludes) and names no tool or model. The cost is a second-person-style imperative in a field the guidance reserves for triggers; it was kept because the fire rate is the binding failure and no other lever (name, body, frontmatter) affects it.
+
+Previous final status text follows, from the pre-fix check:
+
 Final dev status at N=5 (iteration 7): d1 2/5, d2 5/5, d3 4/5, d4 4/5, d5 1/5, d6 4/5. Negatives 0 false fires in 15. Dev bar (every dev fixture at least 4/5) **not met**: d1 and d5.
 
 Where the misses are: of the 10 failing positive runs in the final iteration, 9 are `skill_not_loaded`. In four of those nine the agent read the skill file directly and still ran the helper, so the method was applied but the harness check (a completed skill-tool call) fails it. The one other miss is a judge verdict. Loading is a property of the pinned agent's tool-use habits, and iterations 1 to 7 moved it from roughly 1/3 to roughly 2/3 without a stable gain on d5.
