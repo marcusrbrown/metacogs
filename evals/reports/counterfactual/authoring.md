@@ -86,3 +86,19 @@ Epoch 4 is superseded: its pooled dev bar lived in the prereg notes only, and th
 | 14 | Iteration 13 (epoch 4): 27 of 30, d6 3/5, two judge-side misses. | none (skill unchanged; the bar became a prereg field the runner enforces) | N=5: d1 to d4 5/5, **d5 4/5** (one `host_crash` after the skill loaded), d6 5/5. Pooled **29 of 30**. Skill load 30 of 30 through the skill tool; negatives 0 of 15 false fires; 0 `judge_error`; 0 `infra_error`. |
 
 Pooled bar (24 of 30, floor 2 of 5, negatives 0): **met** and read by the runner (`dev_bar.kind: "pooled"` in `green-dev.json`, `passes_dev_bar: true`). Campaign `counterfactual-dev-2026-10-23T21-37-19-012Z`, 45 runs, 22.0 min campaign time, agent cost about $0.049 (judge cost not recorded). Unlike epoch 4, the one miss is a host crash, not a judge verdict; `cf-d6` passed 5/5 this time, which is consistent with the epoch-3 finding that its earlier 3/5 reads were judge variance.
+
+### Epoch 5 GREEN read (one shot, `prereg/counterfactual/5`)
+
+Made once after the dev bar passed (iteration 14). Both conditions on the four held-out fixtures plus the three negatives under the skill condition, N=5, live, same models and gateway; 55 runs, campaign `counterfactual-green-2026-10-23T22-00-03-968Z` under the state root (artifacts, blind sheets `review.md` and `review-key.md` never enter the repo). Prereg ordering, the held-out hash check (4 of 4, unchanged from epoch 3), and the near-duplicate gate ran before launch; the read marker `heldout/counterfactual/5.read.json` was claimed before the set loaded. No skill, fixture, or rubric edit.
+
+| Held-out fixture | Skill | Baseline | Delta (Newcombe 95%) |
+| --- | --- | --- | --- |
+| cf-h1 | 5/5 | 1/5 | 0.8 [0.193, 0.964] |
+| cf-h2 | 3/5 | 0/5 | 0.6 [0.030, 0.882] |
+| cf-h3 | 5/5 | 0/5 | 1.0 [0.386, 1.0] |
+| cf-h4 | 5/5 | 0/5 | 1.0 [0.386, 1.0] |
+| **Pooled** | **18/20** (Wilson [0.699, 0.972]) | **1/20** ([0.009, 0.236]) | **0.85 [0.576, 0.933]** |
+
+Bars: skill pooled at least 17 of 20 yes (18), per-fixture floor 3 of 5 yes (minimum 3), baseline at most 10 of 20 yes (1; `held_out_too_easy: false`), negatives silent yes (0 of 15), dev regression yes (recomputed from the dev campaign's manifests under the pooled `dev_bar`; `skill_matches` true), near-duplicate yes. **Machine verdict: `green`.** Taxonomy over 55 runs: 34 pass, 19 fail, 2 of them `judge_error`, 0 timeout, 0 budget, 0 `infra_error`, 0 `non_isolated`. Skill load rate 1.0 (20 of 20 through the skill tool).
+
+Both skill-condition misses are on cf-h2 (runs 1 and 5) and both are `judge_error` (`invalid_ungrounded_quote`, after the judge's retry), not judge fail verdicts and not check failures; the other three cf-h2 skill runs passed all five criteria. `judge_error` counts as FAIL by the prereg, so it pushes the result against the skill; excluding those two runs the skill is 18 of 18. Baseline failures spread over CF1 to CF5 (most often CF4 and CF5, as in RED). Human review of the 40 judged runs is pending (`human_review.status: pending`). The epoch-5 held-out set is burned: a `skills/counterfactual/` edit voids this read and a retry needs a new epoch and a new set.

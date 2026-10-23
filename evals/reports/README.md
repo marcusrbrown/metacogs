@@ -84,3 +84,18 @@ What this does not show. Human review: 39/39 held-out judgments reviewed; SY1 ab
 ### Counterfactual dev re-run without an edit (2026-10-23)
 
 Same skill text as `7a3bf22`, N=5 on dev, skill condition: d1–d5 5/5, **d6 3/5** (CF5 judge fails on runs 2 and 3), fire basis 30 / 0 / 0, load rate 1.0, a record in 30 of 30 positive runs, 0 of 15 negative false fires; `passes_dev_bar` is false. No GREEN read was made. Reading the full answers and re-judging them (judge calls only) showed the two failures are judge variance rather than the record step displacing the flip test; details in `counterfactual/authoring.md`. The counterfactual held-out set is unread.
+
+## Epoch 5 counterfactual: dev bar as a prereg field, dev run, and GREEN read (2026-10-23)
+
+Same paid round as epoch 3 (agent `openai/gpt-6-luna`, judge `anthropic/claude-haiku-5-5`, `gateways: ["cliproxy"]`, opencode-ai 1.19.4), tag `prereg/counterfactual/5`. Epoch 4 (`prereg/counterfactual/4`) is superseded without a held-out read: it declared a pooled dev bar in the prereg notes only, so the runner still scored the dev campaign per fixture (27 of 30 pooled with `cf-d6-autoscaler-removal` at 3/5 read `passes_dev_bar: false`) and the GREEN report's `dev_regression` check could not have been true. Epoch 5 adds an optional `dev_bar` prereg field (`{pooled_min_passes, per_fixture_min_passes}`); the runner reads it from the tagged prereg, and `green-dev.json` and `green.json` (`dev_regression.dev_bar`) record the bar they used (`kind: "pooled"` or `"per_fixture"`; reports from before the field carry no `kind`). Skill text, fixtures, rubric, GREEN bars, and the held-out hashes are unchanged.
+
+| Stage | Result |
+| --- | --- |
+| Dev (pooled bar 24 of 30, floor 2 of 5, negatives 0) | **29 of 30** (d1 to d4 and d6 5/5, d5 4/5 with one `host_crash`); load rate 1.0 (30 of 30 via the skill tool); 0 of 15 negative false fires; `passes_dev_bar` true. 22.0 min. |
+| GREEN, held-out cf-h1 to cf-h4 | skill 18/20 (Wilson [0.699, 0.972]), baseline 1/20 ([0.009, 0.236]); delta 0.85, Newcombe 95% [0.576, 0.933]; per-fixture skill 5, 3, 5, 5 (floor 3). 0 of 15 negative false fires; dev regression, near-duplicate gate, and baseline ceiling pass. 55 runs, 24.0 min. |
+| Machine verdict | `green` |
+
+Taxonomy over the 55 GREEN runs: 34 pass, 19 fail (2 `judge_error`), 0 timeout, 0 budget, 0 `infra_error`, 0 `non_isolated`. Both skill-condition misses (cf-h2, runs 1 and 5) are `judge_error` (`invalid_ungrounded_quote`), which counts as FAIL; they are not judge fail verdicts. Agent cost reported by the provider: about $0.049 (dev) and $0.050 (GREEN); the judge's cost is not recorded.
+
+What this does not show. Human review of the 40 judged runs is pending (`human_review.status: pending`, 0 reviewed), so the status is `green (human review pending)`. The judge is one model with no temperature parameter sent, so determinism is unproven; the earlier `cf-d6` dev reads flipped on identical answers (see `counterfactual/authoring.md`). The baseline-versus-skill gap is again process visibility: the baseline failed most often on CF4 and CF5 (a stated hypothetical and a flip test with a source), which the rubric rewards as preregistered. The dev bar changed between epochs 3 and 5 (per-fixture 4/5 to pooled 24 of 30) after the dev results of epochs 2 and 3 were seen; it is declared in the epoch-5 prereg before any epoch-5 run, but it was chosen with that data in view. The epoch-5 held-out set is **burned**; any `skills/counterfactual/` edit voids this read, and a retry needs a new epoch and a new set. The claim is limited to this (host version, models) pair on this fixture family.
+
