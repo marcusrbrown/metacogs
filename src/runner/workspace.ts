@@ -59,9 +59,32 @@ export function basePermission(skill: Record<string, string>): Record<string, un
   }
 }
 
+/**
+ * The shell allowlist for a run: deny everything, then allow only the method's own helper, named by its installed path.
+ * Each pattern starts with the helper path itself, so the first argument to `node` is the script and `node -e`,
+ * `--eval`, `-p`, and another script ahead of the helper are all refused (probed against OpenCode 1.19.4; the looser
+ * `node *scripts/record.mjs*` admitted every one of them). The path may be written relative (`.agents/skills/…`, `./…`)
+ * or absolute under this run's workspace (both its spelling and its realpath), bare or in single or double quotes,
+ * which covers the forms the models used. OpenCode splits `;`, `&&`, pipes and `$()` into separate commands before matching.
+ */
+export function helperBashRules(method: string, workspaceRoots: readonly string[]): Record<string, string> {
+  const helper = `.agents/skills/${method}/scripts/record.mjs`
+  const rules: Record<string, string> = { '*': 'deny' }
+  const starts = [helper, `./${helper}`, ...workspaceRoots.map((root) => `${root}/${helper}`)]
+  for (const quote of ['', '"', "'"]) {
+    for (const start of starts) rules[`node ${quote}${start}*`] = 'allow'
+  }
+  return rules
+}
+
 /** Baseline sees no skill; the skill condition sees exactly the method under test. */
-export function permissionFor(condition: Condition, method: string): Record<string, unknown> {
-  return basePermission(condition === 'skill' ? { '*': 'deny', [method]: 'allow' } : { '*': 'deny' })
+export function permissionFor(condition: Condition, method: string, workspaceRoots: readonly string[] = []): Record<string, unknown> {
+  return {
+    edit: 'deny',
+    external_directory: 'deny',
+    bash: helperBashRules(method, workspaceRoots),
+    skill: condition === 'skill' ? { '*': 'deny', [method]: 'allow' } : { '*': 'deny' },
+  }
 }
 
 export function buildConfig(input: {
@@ -87,14 +110,23 @@ export function stateRoot(env: Record<string, string | undefined> = process.env,
   return join(xdg && isAbsolute(xdg) ? xdg : join(home, '.local', 'state'), 'metacogs')
 }
 
-/** Held-out fixtures live here, never in the working tree. */
+/**
+ * Held-out fixtures live here, never in the working tree. With `repoRoot` given, a directory that resolves inside it (an
+ * override pointing there, or a state root that does) is refused: the custody rule is about where the files are, not
+ * how the path was spelled.
+ */
 export function heldoutDir(
   method: string,
   env: Record<string, string | undefined> = process.env,
   home = homedir(),
+  repoRoot?: string,
 ): string {
   const override = env.METACOGS_HELDOUT_DIR
-  return override && isAbsolute(override) ? override : join(stateRoot(env, home), 'heldout', method)
+  const dir = override && isAbsolute(override) ? override : join(stateRoot(env, home), 'heldout', method)
+  if (repoRoot !== undefined && isInside(dir, repoRoot)) {
+    throw new CustodyError(`refusing the held-out directory ${dir}: it resolves inside the repository ${repoRoot}; held-out fixtures must live outside the working tree`)
+  }
+  return dir
 }
 
 export interface HeldoutReadMarker {
@@ -306,7 +338,7 @@ function populateRunWorkspace(input: RunWorkspaceInput, fixture: Fixture): RunWo
         ? cliproxyProviderConfig(provider.recordingProxyUrl)
         : { [providerOf(input.model)]: { options: { baseURL: provider.recordingProxyUrl } } }
   const config = buildConfig({
-    permission: permissionFor(condition, method),
+    permission: permissionFor(condition, method, [...new Set([fixture.workspace, realpathSync(fixture.workspace)])]),
     provider: providerConfig,
   })
   const env = buildChildEnv({ fixture, config, withRecordsDir: true })

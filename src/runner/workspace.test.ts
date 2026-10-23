@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { destroyFixture } from './env'
+import { createFixture, destroyFixture } from './env'
+import { toolUses } from './events'
+import { opencodeAvailability } from './opencode'
+import { plantSkill, runOpencode } from './spike/isolation'
 import {
   assertInstalledSkills,
   copySkillDir,
@@ -61,12 +64,70 @@ describe('permissions', () => {
   })
 
   test('edit/external_directory denied, bash allowlist is the helper only, no ask rules anywhere', () => {
-    const p = permissionFor('skill', 'demo')
+    const p = permissionFor('skill', 'demo', ['/ws'])
     expect(p.edit).toBe('deny')
     expect(p.external_directory).toBe('deny')
-    expect(p.bash).toEqual({ '*': 'deny', 'node *scripts/record.mjs*': 'allow' })
+    const bash = p.bash as Record<string, string>
+    expect(bash['*']).toBe('deny')
+    const allowed = Object.entries(bash).filter(([, v]) => v === 'allow').map(([k]) => k)
+    expect(allowed).toContain('node .agents/skills/demo/scripts/record.mjs*')
+    expect(allowed).toContain('node "/ws/.agents/skills/demo/scripts/record.mjs*')
+    expect(allowed).toContain("node './.agents/skills/demo/scripts/record.mjs*")
+    // every allow rule starts with the helper path, so no flag or other script can come first
+    expect(allowed.every((k) => /^node ["']?(\.\/|\.agents\/|\/ws\/\.agents\/)/.test(k))).toBe(true)
+    expect(allowed.every((k) => k.includes('/demo/scripts/record.mjs'))).toBe(true)
     expect(JSON.stringify(p)).not.toContain('"ask"')
   })
+})
+
+describe.skipIf(!opencodeAvailability().available)('the shell allowlist against OpenCode 1.19.4', () => {
+  test(
+    'the helper runs in every spelling the models used; `node -e`, `--eval`, another script first, other workspaces, and chains are denied',
+    async () => {
+      const fixture = createFixture('metacogs-permtest-')
+      cleanup.push(() => destroyFixture(fixture))
+      const real = realpathSync(fixture.workspace)
+      const rel = '.agents/skills/demo/scripts/record.mjs'
+      const heredoc = (p: string) => `node "${p}" <<'EOF'\n{"a":1}\nEOF`
+      const cases: [name: string, command: string, allowed: boolean][] = [
+        ['rel', `node ${rel} --file x`, true],
+        ['rel dquoted', `node "${rel}"`, true],
+        ['rel squoted', `node '${rel}' --file x`, true],
+        ['rel ./', `node ./${rel}`, true],
+        ['abs', `node ${fixture.workspace}/${rel}`, true],
+        ['abs realpath dquoted', `node "${real}/${rel}"`, true],
+        ['abs heredoc', heredoc(`${real}/${rel}`), true],
+        ['rel heredoc', heredoc(rel), true],
+        ['node -e', `node -e "console.log('EVAL_RAN')" ${rel}`, false],
+        ['node --eval abs', `node --eval "console.log('EVAL_RAN')" ${real}/${rel}`, false],
+        ['node -p', `node -p 1 scripts/record.mjs`, false],
+        ['other script then the helper path', `node /tmp/other.js ${real}/${rel}`, false],
+        ['same path in another workspace', `node /tmp/elsewhere/${rel}`, false],
+        ['chain', `node ${rel}; echo CHAINED`, false],
+        ['command substitution', `node ${rel} $(echo SUBST)`, false],
+        ['cat of the helper', `cat ${rel}`, false],
+      ]
+      const outcome = await runOpencode({
+        fixture,
+        prompt: 'go',
+        permission: permissionFor('skill', 'demo', [fixture.workspace, real]),
+        prepare: (fx) => {
+          const dir = plantSkill(fx.workspace, 'demo', 'body')
+          mkdirSync(join(dir, 'scripts'), { recursive: true })
+          writeFileSync(join(dir, 'scripts', 'record.mjs'), "console.log('HELPER_RAN')\n")
+        },
+        steps: [{ toolCalls: cases.map(([name, command], i) => ({ id: `c${i}`, name: 'bash', arguments: { command, description: name } })) }],
+      })
+      const byCall = new Map(toolUses(outcome.parsed.events).map((t) => [t.callID, t]))
+      for (const [i, [name, , allowed]] of cases.entries()) {
+        const call = byCall.get(`c${i}`)
+        expect(`${name}: ${call?.status === 'completed' ? 'allowed' : 'denied'}`).toBe(`${name}: ${allowed ? 'allowed' : 'denied'}`)
+        if (allowed) expect(call?.output).toContain('HELPER_RAN')
+        else expect(call?.output ?? '').not.toMatch(/EVAL_RAN|HELPER_RAN|CHAINED|SUBST/)
+      }
+    },
+    300_000,
+  )
 })
 
 describe('run workspace', () => {
@@ -150,6 +211,19 @@ describe('custody', () => {
   test('held-out dir: override, else state root', () => {
     expect(heldoutDir('m', { METACOGS_HELDOUT_DIR: '/h' }, '/home/u')).toBe('/h')
     expect(heldoutDir('m', {}, '/home/u')).toBe('/home/u/.local/state/metacogs/heldout/m')
+  })
+
+  test('a held-out dir inside the repo is refused, however it is spelled; one outside is fine', () => {
+    const root = tmp('metacogs-r-')
+    const outside = tmp()
+    expect(() => heldoutDir('m', { METACOGS_HELDOUT_DIR: join(root, 'evals', 'm', 'heldout') }, '/home/u', root)).toThrow(CustodyError)
+    expect(() => heldoutDir('m', { METACOGS_HELDOUT_DIR: root }, '/home/u', root)).toThrow(/inside the repository/)
+    expect(() => heldoutDir('m', { XDG_STATE_HOME: join(root, 'state') }, '/home/u', root)).toThrow(CustodyError)
+    symlinkSync(root, join(outside, 'looks-outside'))
+    expect(() => heldoutDir('m', { METACOGS_HELDOUT_DIR: join(outside, 'looks-outside', 'h') }, '/home/u', root)).toThrow(CustodyError)
+    expect(heldoutDir('m', { METACOGS_HELDOUT_DIR: join(outside, 'h') }, '/home/u', root)).toBe(join(outside, 'h'))
+    // without a repo root there is nothing to compare against
+    expect(heldoutDir('m', { METACOGS_HELDOUT_DIR: join(root, 'h') }, '/home/u')).toBe(join(root, 'h'))
   })
 
   test('held-out output defaults under the state root', () => {

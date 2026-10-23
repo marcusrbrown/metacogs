@@ -236,6 +236,20 @@ describe('refusals happen before anything launches', () => {
     expect(t.lines.out).toEqual([])
   })
 
+  test('a METACOGS_HELDOUT_DIR inside the repo → refused before the marker is claimed or anything launches', async () => {
+    const { repo, scaffold } = chainRepo()
+    buildHappyChain(repo, scaffold)
+    const t = io()
+    t.io.env.METACOGS_HELDOUT_DIR = join(repo.dir, 'evals', 'demo', 'heldout')
+    expect(await main(['green', '--method', 'demo', '--repo', repo.dir, ...LIVE], t.io)).toBe(EXIT.REFUSED)
+    expect(t.lines.err.join('\n')).toContain('inside the repository')
+    expect(t.lines.out).toEqual([])
+    expect(existsSync(join(t.stateHome, 'metacogs', 'heldout'))).toBe(false)
+    const report = io()
+    report.io.env.METACOGS_HELDOUT_DIR = t.io.env.METACOGS_HELDOUT_DIR
+    expect(await main(['report', '--green', '--method', 'demo', '--repo', repo.dir], report.io)).toBe(EXIT.REFUSED)
+  })
+
   test('held-out output dir inside the repo → refused (nothing written there)', async () => {
     const { repo, heldout, scaffold } = chainRepo()
     buildHappyChain(repo, scaffold)

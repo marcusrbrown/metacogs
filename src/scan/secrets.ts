@@ -7,24 +7,44 @@ import { fileURLToPath } from 'node:url'
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 /** Roots scanned, relative to the repo root. Missing entries are skipped. */
-export const SCAN_TARGETS = ['evals', 'skills', 'README.md', 'HYPOTHESES.md'] as const
+export const SCAN_TARGETS = ['evals', 'skills', 'src', 'docs', 'README.md', 'HYPOTHESES.md', 'AGENTS.md', '.github'] as const
 
 /** Never descended into: gitignored run artifacts, dependencies, VCS data. */
 const SKIPPED_DIRS = new Set(['node_modules', '.git', 'runs'])
 const MAX_FILE_BYTES = 2_000_000
 
-export type RuleName = 'openai-style-key' | 'aws-access-key-id' | 'github-token' | 'generic-credential' | 'email' | 'heldout-path'
+export type RuleName =
+  | 'openai-style-key'
+  | 'hyphenated-sk-key'
+  | 'aws-access-key-id'
+  | 'github-token'
+  | 'generic-credential'
+  | 'json-key-field'
+  | 'email'
+  | 'heldout-path'
 
 interface Rule {
   name: RuleName
   pattern: RegExp
+  /** A match that cannot be a secret: a placeholder, a reserved address. */
+  skip?: (match: string) => boolean
 }
+
+/** A run of ten identical characters (`0000…`, `aaaa…`): a placeholder, never the tail of a random key. */
+const REPEATED_RUN = /(.)\1{9,}/s
+/** Values that say what they are. */
+const DECLARED_PLACEHOLDER = /placeholder|not-a-secret/i
 
 const RULES: readonly Rule[] = [
   { name: 'openai-style-key', pattern: /sk-[A-Za-z0-9]{20,}/g },
+  // Gateway and project keys carry hyphens (`sk-proj-…`, `sk-<name>-…`), which the rule above stops at. A random tail has a
+  // digit and ends on a letter or digit; `sk-<key-name>-`, the prefix a key name derives, does neither, so it is not a key.
+  { name: 'hyphenated-sk-key', pattern: /sk-(?=[A-Za-z0-9-]*\d)[A-Za-z0-9-]{15,}[A-Za-z0-9](?![A-Za-z0-9-])/g, skip: (m) => REPEATED_RUN.test(m) },
   { name: 'aws-access-key-id', pattern: /AKIA[0-9A-Z]{16}/g },
   { name: 'github-token', pattern: /ghp_[A-Za-z0-9]{36}/g },
-  { name: 'generic-credential', pattern: /(api[_-]?key|secret|token)\s*[:=]\s*['"][^'"\n]{16,}/gi },
+  { name: 'generic-credential', pattern: /(api[_-]?key|secret|token)\s*[:=]\s*['"][^'"\n]{16,}/gi, skip: (m) => DECLARED_PLACEHOLDER.test(m) },
+  // A quoted JSON field, as in an `auth.json` entry: `"key": "…"` or `"apiKey": "…"`.
+  { name: 'json-key-field', pattern: /["'](?:api[_-]?key|key)["']\s*:\s*["'][^"'\n]{20,}["']/gi, skip: (m) => DECLARED_PLACEHOLDER.test(m) },
   { name: 'email', pattern: /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g },
 ]
 
@@ -44,10 +64,14 @@ export function scanText(path: string, text: string): Finding[] {
   const findings: Finding[] = []
   const lines = text.split(/\r\n|\r|\n/)
   lines.forEach((content, index) => {
-    for (const { name, pattern } of RULES) {
+    const flaggedSk = new Set<number>() // where an `sk-` key was already reported on this line
+    for (const { name, pattern, skip } of RULES) {
       pattern.lastIndex = 0
       for (const match of content.matchAll(pattern)) {
+        if (skip?.(match[0])) continue
         if (name === 'email' && RESERVED_EMAIL_DOMAIN.test(match[0].slice(match[0].lastIndexOf('@') + 1))) continue
+        if (name === 'hyphenated-sk-key' && flaggedSk.has(match.index)) continue
+        if (name === 'openai-style-key') flaggedSk.add(match.index)
         findings.push({ path, line: index + 1, rule: name })
       }
     }

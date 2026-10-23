@@ -186,11 +186,11 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
       repoRoot,
       method,
       mode: runMode,
-      heldoutDir: heldoutDir(method, env),
+      heldoutDir: heldoutDir(method, env, undefined, repoRoot),
       // The marker is claimed after the ordering checks pass and before the set is loaded, so any later outcome (a hash
       // mismatch, a crash, an interrupt) still leaves the read on record. A directory that does not exist has nothing to burn.
       beforeHeldoutRead: ({ prereg: p, shas }) => {
-        if (!existsSync(heldoutDir(method, env))) return
+        if (!existsSync(heldoutDir(method, env, undefined, repoRoot))) return
         claimHeldoutRead(heldoutReadMarkerPath(method, p.epoch, env), { campaign_id: campaignId, started_at: new Date().toISOString(), prereg_tag: shas.tag })
       },
     })
@@ -369,9 +369,9 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
     }
     let verification: ReturnType<typeof enforcePrereg>
     try {
-      verification = enforcePrereg({ git: new Git(repoRoot), repoRoot, method, mode: 'red', heldoutDir: heldoutDir(method, a.env) })
+      verification = enforcePrereg({ git: new Git(repoRoot), repoRoot, method, mode: 'red', heldoutDir: heldoutDir(method, a.env, undefined, repoRoot) })
     } catch (e) {
-      if (e instanceof PreregRefusal) {
+      if (e instanceof PreregRefusal || e instanceof CustodyError) {
         a.err(`REFUSED: ${e.message}`)
         return EXIT.REFUSED
       }
@@ -403,7 +403,16 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
     const count = (v: string) => rows.filter((r) => r.verdict === v).length
     a.out(`rejudged ${rows.length - count('skipped')} of ${rows.length} runs: pass ${count('pass')} · fail ${count('fail')} · judge_error ${count('judge_error')} · skipped ${count('skipped')} (manifests unchanged)`)
   }
-  const paths = writeReview(campaignDir, repoRoot, { heldoutDir: heldoutDir(method, a.env) })
+  let paths: ReturnType<typeof writeReview>
+  try {
+    paths = writeReview(campaignDir, repoRoot, { heldoutDir: heldoutDir(method, a.env, undefined, repoRoot) })
+  } catch (e) {
+    if (e instanceof CustodyError) {
+      a.err(`REFUSED: ${e.message}`)
+      return EXIT.REFUSED
+    }
+    throw e
+  }
   a.out(`wrote ${paths.review}`)
   a.out(`wrote ${paths.key} (judge verdicts; open after marking)`)
   return EXIT.OK
@@ -472,9 +481,9 @@ function reportMain(a: ReportArgs): number {
   const git = new Git(repoRoot)
   let verification: ReturnType<typeof enforcePrereg>
   try {
-    verification = enforcePrereg({ git, repoRoot, method: a.method, mode: a.green ? 'green' : a.devOnly ? 'dev' : 'red', heldoutDir: heldoutDir(a.method, a.env) })
+    verification = enforcePrereg({ git, repoRoot, method: a.method, mode: a.green ? 'green' : a.devOnly ? 'dev' : 'red', heldoutDir: heldoutDir(a.method, a.env, undefined, repoRoot) })
   } catch (e) {
-    if (e instanceof PreregRefusal) {
+    if (e instanceof PreregRefusal || e instanceof CustodyError) {
       a.err(`REFUSED: ${e.message}`)
       return EXIT.REFUSED
     }
