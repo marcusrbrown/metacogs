@@ -865,11 +865,21 @@ export function recomputeDevRegression(input: DevRegressionInput): DevRegression
     if (wrong.length) throw new Error(`the dev campaign's ${kind} fixtures do not match the prereg (${[...new Set(wrong)].sort().join(', ')})`)
   }
   const { skill, dev, dev_bar } = buildDevReport({ ...input, skillSha256 })
-  return { skill, dev, dev_bar }
+  // A shortened campaign (--runs, --fixture, an aborted run) can clear a bar the full plan would not. A slot is a first launch;
+  // infra retries re-run a slot and add manifests without adding slots.
+  const slots = new Map<string, number>()
+  for (const { manifest } of runs) if (manifest.attempt === 1) slots.set(`${manifest.fixture.kind}/${manifest.fixture.id}`, (slots.get(`${manifest.fixture.kind}/${manifest.fixture.id}`) ?? 0) + 1)
+  const source_complete =
+    runs.every((r) => bucketOf(r.manifest) !== 'incomplete') &&
+    (['dev', 'negative'] as const).every((kind) => Object.keys(prereg.fixture_hashes[kind]).every((id) => slots.get(`${kind}/${id}`) === prereg.runs_per_condition))
+  return { skill, dev, dev_bar, source_complete }
 }
 
-/** What the GREEN report takes from a dev campaign: its skill, the dev outcome, and the bar that outcome was judged against. */
-export type DevRegressionSource = Pick<DevReport, 'skill' | 'dev'> & { dev_bar?: DevBar }
+/**
+ * What the GREEN report takes from a dev campaign: its skill, the dev outcome, and the bar that outcome was judged against.
+ * `source_complete`: the campaign ran the prereg's full plan with no unfinished manifest; `false` fails the dev regression check.
+ */
+export type DevRegressionSource = Pick<DevReport, 'skill' | 'dev'> & { dev_bar?: DevBar; source_complete?: boolean }
 
 export const DEV_REPORT_SCHEMA: Schema = obj({
   schema_version: { t: 'lit', v: REPORT_SCHEMA_VERSION },
@@ -1057,7 +1067,7 @@ export interface GreenReport {
   /** Skill-condition load rate pooled over the held-out fixtures (`loadRateOf` of the summed `fire_basis`). Its own metric, not a bar. */
   skill_load_rate: number
   /** `dev_bar`: the bar the (recomputed) dev campaign was judged against; absent when no dev report was present. */
-  dev_regression: { source_report_present: boolean; passes_dev_bar: boolean; skill_matches: boolean; dev_bar?: DevBar }
+  dev_regression: { source_report_present: boolean; passes_dev_bar: boolean; skill_matches: boolean; dev_bar?: DevBar; source_complete?: boolean }
   near_duplicate_check: 'pass' | 'fail'
   checks: {
     skill_pooled: boolean
@@ -1210,13 +1220,14 @@ export function buildGreenReport(input: GreenReportInput): GreenReport {
     passes_dev_bar: dev?.dev.passes_dev_bar === true,
     skill_matches: dev?.skill.sha256 === input.skillSha256,
     ...(dev?.dev_bar ? { dev_bar: dev.dev_bar } : {}),
+    ...(dev?.source_complete === undefined ? {} : { source_complete: dev.source_complete }),
   }
   const checks = {
     skill_pooled: skillPooled.pass >= bar.skill_pooled_pass_min,
     per_fixture_floor: heldoutReports.every((f) => f.meets_floor),
     baseline_ceiling: baselinePooled.pass <= bar.baseline_pooled_pass_max,
     negatives_silent: falseFires <= prereg.false_fire_max,
-    dev_regression: devRegression.source_report_present && devRegression.passes_dev_bar && devRegression.skill_matches,
+    dev_regression: devRegression.source_report_present && devRegression.passes_dev_bar && devRegression.skill_matches && dev?.source_complete !== false,
     near_duplicate: input.nearDuplicate === 'pass',
   }
   const manifests = runs.map((r) => r.manifest)
@@ -1384,7 +1395,7 @@ export const GREEN_REPORT_SCHEMA: Schema = obj({
   ),
   pooled: obj({ skill: poolShape(), baseline: poolShape(), delta: deltaShape() }),
   skill_load_rate: loadRateShape,
-  dev_regression: obj({ source_report_present: BOOL, passes_dev_bar: BOOL, skill_matches: BOOL, dev_bar: { t: 'opt', of: devBarShape } }),
+  dev_regression: obj({ source_report_present: BOOL, passes_dev_bar: BOOL, skill_matches: BOOL, dev_bar: { t: 'opt', of: devBarShape }, source_complete: { t: 'opt', of: BOOL } }),
   near_duplicate_check: str(/^(pass|fail)$/),
   checks: obj({ skill_pooled: BOOL, per_fixture_floor: BOOL, baseline_ceiling: BOOL, negatives_silent: BOOL, dev_regression: BOOL, near_duplicate: BOOL }),
   verdict: str(/^(green|green-miss)$/),

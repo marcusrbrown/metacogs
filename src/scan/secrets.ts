@@ -26,25 +26,27 @@ export type RuleName =
 interface Rule {
   name: RuleName
   pattern: RegExp
-  /** A match that cannot be a secret: a placeholder, a reserved address. */
-  skip?: (match: string) => boolean
+  /** A match that cannot be a secret: a placeholder, a reserved address. `line` is the text the match was found in. */
+  skip?: (match: RegExpMatchArray, line: string) => boolean
 }
 
 /** A run of ten identical characters (`0000…`, `aaaa…`): a placeholder, never the tail of a random key. */
 const REPEATED_RUN = /(.)\1{9,}/s
-/** Values that say what they are. */
+/** Labels that say what they hold. Only ever tested against the key's name, never its value: a real key can contain any word. */
 const DECLARED_PLACEHOLDER = /placeholder|not-a-secret/i
+/** The identifier a credential key name sits in (`placeholder_` in `placeholder_token`) plus the key name itself. */
+const labelOf = (match: RegExpMatchArray, line: string) => `${/[\w-]*$/.exec(line.slice(0, match.index))![0]}${match[1]}`
 
 const RULES: readonly Rule[] = [
   { name: 'openai-style-key', pattern: /sk-[A-Za-z0-9]{20,}/g },
   // Gateway and project keys carry hyphens (`sk-proj-…`, `sk-<name>-…`), which the rule above stops at. A random tail has a
   // digit and ends on a letter or digit; `sk-<key-name>-`, the prefix a key name derives, does neither, so it is not a key.
-  { name: 'hyphenated-sk-key', pattern: /sk-(?=[A-Za-z0-9-]*\d)[A-Za-z0-9-]{15,}[A-Za-z0-9](?![A-Za-z0-9-])/g, skip: (m) => REPEATED_RUN.test(m) },
+  { name: 'hyphenated-sk-key', pattern: /sk-(?=[A-Za-z0-9-]*\d)[A-Za-z0-9-]{15,}[A-Za-z0-9](?![A-Za-z0-9-])/g, skip: (m) => REPEATED_RUN.test(m[0]) },
   { name: 'aws-access-key-id', pattern: /AKIA[0-9A-Z]{16}/g },
   { name: 'github-token', pattern: /ghp_[A-Za-z0-9]{36}/g },
-  { name: 'generic-credential', pattern: /(api[_-]?key|secret|token)\s*[:=]\s*['"][^'"\n]{16,}/gi, skip: (m) => DECLARED_PLACEHOLDER.test(m) },
+  { name: 'generic-credential', pattern: /(api[_-]?key|secret|token)\s*[:=]\s*['"][^'"\n]{16,}/gi, skip: (m, line) => DECLARED_PLACEHOLDER.test(labelOf(m, line)) },
   // A quoted JSON field, as in an `auth.json` entry: `"key": "…"` or `"apiKey": "…"`.
-  { name: 'json-key-field', pattern: /["'](?:api[_-]?key|key)["']\s*:\s*["'][^"'\n]{20,}["']/gi, skip: (m) => DECLARED_PLACEHOLDER.test(m) },
+  { name: 'json-key-field', pattern: /["'](?:api[_-]?key|key)["']\s*:\s*["'][^"'\n]{20,}["']/gi },
   { name: 'email', pattern: /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g },
 ]
 
@@ -68,7 +70,7 @@ export function scanText(path: string, text: string): Finding[] {
     for (const { name, pattern, skip } of RULES) {
       pattern.lastIndex = 0
       for (const match of content.matchAll(pattern)) {
-        if (skip?.(match[0])) continue
+        if (skip?.(match, content)) continue
         if (name === 'email' && RESERVED_EMAIL_DOMAIN.test(match[0].slice(match[0].lastIndexOf('@') + 1))) continue
         if (name === 'hyphenated-sk-key' && flaggedSk.has(match.index)) continue
         if (name === 'openai-style-key') flaggedSk.add(match.index)

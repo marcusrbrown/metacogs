@@ -327,6 +327,7 @@ export type ViolationCode =
   | 'epoch_base_before_prior_tag'
   | 'epoch_base_before_prior_read'
   | 'heldout_reused_after_skill_edit'
+  | 'heldout_salt_changed_after_read'
   | 'fixtures_after_prereg'
   | 'tag_equals_skill_commit'
   | 'skill_commit_not_after_tag'
@@ -466,6 +467,10 @@ export function checkPreregOrdering(git: Git, prereg: Prereg, mode: 'red' | 'gre
             add('heldout_reused_after_skill_edit', `skills/${method} changed since ${priorName} (latest ${short(edits.at(-1)!)}), the epoch ${epoch - 1} read is on record, and the ${priorName} prereg could not be read to prove the held-out set is new`)
           } else if (reused.length) {
             add('heldout_reused_after_skill_edit', `skills/${method} changed since ${priorName} (latest ${short(edits.at(-1)!)}) and the epoch ${epoch - 1} read is on record, but epoch ${epoch} reuses held-out fixture(s) ${reused.join(', ')}; a read set is burned once the skill is edited`)
+          }
+          // Hashes are salted: a new salt would hide a reused set from the comparison above.
+          if (earlier.ok && earlier.prereg.salt !== prereg.salt) {
+            add('heldout_salt_changed_after_read', `skills/${method} changed since ${priorName} (latest ${short(edits.at(-1)!)}) and the epoch ${epoch - 1} read is on record, but epoch ${epoch} changes the salt; keep the epoch ${epoch - 1} salt so reuse of a read held-out fixture stays detectable`)
           }
         }
       }

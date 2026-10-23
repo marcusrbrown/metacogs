@@ -593,6 +593,27 @@ describe('buildDevReport (skill condition, dev + negative fixtures)', () => {
       expect(() => recomputeDevRegression(input(runs))).toThrow(message)
     })
 
+    test('source_complete: the full plan with every manifest finished', () => {
+      const wire = (runs: ReturnType<typeof runsFor>) => runs.map((r) => ({ ...r, manifest: { ...r.manifest, fixture: { ...r.manifest.fixture, hash: sha256(r.manifest.fixture.id) }, prereg: { ...r.manifest.prereg, commit_sha: SHAS.commitSha } } }))
+      expect(recomputeDevRegression(input(wire(all()))).source_complete).toBe(true)
+      // a retried infra error re-runs a slot; it adds a manifest, not a slot
+      const retried = wire(runsFor([['dev', 'd1-x', ['pass', 'pass', 'pass', 'pass', 'pass']], ['dev', 'd2-y', ['pass', 'pass', 'pass', 'pass', 'infra']], ['negative', 'n1-z', ['pass', 'pass', 'pass', 'pass', 'pass']]]))
+      retried.push({ ...retried[9]!, manifest: { ...retried[9]!.manifest, run_id: `${retried[9]!.manifest.run_id}-a2`, attempt: 2, status: 'completed', outcome: 'pass', reasons: [] } })
+      expect(recomputeDevRegression(input(retried)).source_complete).toBe(true)
+    })
+
+    test('source_complete is false for a 1-run campaign, a short fixture, or an unfinished manifest, and the GREEN dev check fails with it', () => {
+      const wire = (runs: ReturnType<typeof runsFor>) => runs.map((r) => ({ ...r, manifest: { ...r.manifest, fixture: { ...r.manifest.fixture, hash: sha256(r.manifest.fixture.id) }, prereg: { ...r.manifest.prereg, commit_sha: SHAS.commitSha } } }))
+      const oneRun = recomputeDevRegression(input(wire(runsFor([['dev', 'd1-x', ['pass']], ['dev', 'd2-y', ['pass']], ['negative', 'n1-z', ['pass']]]))))
+      expect(oneRun.dev.passes_dev_bar).toBe(true) // the outcome alone clears the bar; the completeness check is what refuses it
+      expect(oneRun.source_complete).toBe(false)
+      const short = wire(all()).filter((r) => !(r.manifest.fixture.id === 'n1-z' && r.manifest.run_id.endsWith('r5')))
+      expect(recomputeDevRegression(input(short)).source_complete).toBe(false)
+      const unfinished = wire(all())
+      unfinished[0] = { ...unfinished[0]!, manifest: { ...unfinished[0]!.manifest, status: 'running', outcome: undefined } }
+      expect(recomputeDevRegression(input(unfinished)).source_complete).toBe(false)
+    })
+
     test('a partial campaign (a dev fixture missing) is refused', () => {
       const runs = all()
         .filter((r) => r.manifest.fixture.id !== 'd2-y')
@@ -767,6 +788,16 @@ describe('buildGreenReport (held-out, both conditions)', () => {
     expect(validateGreenReport(report)).toEqual([])
     expect(validateGreenReport({ ...report, dev_regression: { ...report.dev_regression, dev_bar: { kind: 'pooled', max_negative_false_fires: 0 } } }).length).toBeGreaterThan(0)
     expect(build(good, { devReport: null }).dev_regression).toEqual({ source_report_present: false, passes_dev_bar: false, skill_matches: false })
+  })
+
+  test('dev regression fails, and the report says why, when the dev campaign was not the full plan', () => {
+    const source = { skill: { sha256: SKILL }, dev: { passes_dev_bar: true }, source_complete: false } as never
+    const report = build(good, { devReport: source })
+    expect(report.checks.dev_regression).toBe(false)
+    expect(report.verdict).toBe('green-miss')
+    expect(report.dev_regression).toEqual({ source_report_present: true, passes_dev_bar: true, skill_matches: true, source_complete: false })
+    expect(validateGreenReport(report)).toEqual([])
+    expect(build(good, { devReport: { ...(source as object), source_complete: true } as never }).checks.dev_regression).toBe(true)
   })
 
   test('an unjudged positive-fixture pass is refused', () => {

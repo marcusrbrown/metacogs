@@ -30,6 +30,8 @@ function io() {
       out: (l: string) => lines.out.push(l),
       err: (l: string) => lines.err.push(l),
       installSignalHandlers: () => () => {},
+      // Refusal tests never launch; they must not depend on the pinned OpenCode being installed.
+      opencodeAvailability: () => ({ available: true as const, reason: 'stub' }),
       env: { XDG_STATE_HOME: stateHome } as Record<string, string>,
     },
   }
@@ -41,7 +43,8 @@ function chainRepo() {
   const repo = new TestRepo('metacogs-clitest-')
   cleanup.push(() => repo.destroy())
   const heldout = tmp('metacogs-clitest-held-')
-  const scaffold = scaffoldMethod(repo, 'demo', { heldoutDir: heldout })
+  // A judge this runner can reach: the live GREEN preflight refuses anything else before the git-ordering checks run.
+  const scaffold = scaffoldMethod(repo, 'demo', { heldoutDir: heldout, overrides: { judge_model_id: 'opencode-go/judge-model-x' } })
   return { repo, heldout, scaffold }
 }
 
@@ -59,6 +62,8 @@ describe('usage', () => {
       ['green', '--method', 'demo', '--rehearsal', '--dev-only'],
       ['green', '--method', 'demo', '--rehearsal', '--provider', 'live'],
       ['green', '--method', 'demo', '--include-dev', ...LIVE],
+      ['green', '--method', 'demo', '--dev-only', '--runs', '1'],
+      ['green', '--method', 'demo', '--dev-only', '--fixture', 'd1'],
     ]) {
       const t = io()
       expect(await main(argv, t.io)).toBe(EXIT.USAGE)
@@ -150,7 +155,33 @@ describe('refusals happen before anything launches', () => {
     }
   })
 
-  test('the first GREEN attempt claims a read marker even when it is refused afterwards; the next attempt names the marker and is refused', async () => {
+  test('a preflight refusal (model routing, unavailable OpenCode, output dir) does not claim the read marker', async () => {
+    const repo = new TestRepo('metacogs-clitest-')
+    cleanup.push(() => repo.destroy())
+    const heldout = tmp('metacogs-clitest-held-')
+    const scaffold = scaffoldMethod(repo, 'demo', { heldoutDir: heldout, overrides: { agent_model_id: 'openai/gpt-6-luna', judge_model_id: 'anthropic/claude-haiku-5-5' } })
+    buildHappyChain(repo, scaffold)
+    const routing = io()
+    routing.io.env.METACOGS_HELDOUT_DIR = heldout
+    expect(await main(['green', '--method', 'demo', '--repo', repo.dir, ...LIVE], routing.io)).toBe(EXIT.REFUSED)
+    expect(routing.lines.err.join('\n')).toContain('--auth-cliproxy')
+    expect(existsSync(join(routing.stateHome, 'metacogs', 'heldout'))).toBe(false)
+
+    const sound = chainRepo()
+    buildHappyChain(sound.repo, sound.scaffold)
+    const missing = io()
+    missing.io.env.METACOGS_HELDOUT_DIR = sound.heldout
+    expect(await main(['green', '--method', 'demo', '--repo', sound.repo.dir, ...LIVE], { ...missing.io, opencodeAvailability: () => ({ available: false, reason: 'not installed' }) })).toBe(EXIT.ERROR)
+    expect(missing.lines.err.join('\n')).toContain('cannot launch the pinned OpenCode')
+    expect(existsSync(join(missing.stateHome, 'metacogs', 'heldout'))).toBe(false)
+
+    const outside = io()
+    outside.io.env.METACOGS_HELDOUT_DIR = sound.heldout
+    expect(await main(['green', '--method', 'demo', '--repo', sound.repo.dir, '--out', join(sound.repo.dir, 'evals', 'runs'), ...LIVE], outside.io)).toBe(EXIT.REFUSED)
+    expect(existsSync(join(outside.stateHome, 'metacogs', 'heldout'))).toBe(false)
+  })
+
+  test('once the marker is claimed (here: a hash mismatch after the claim), the next attempt names it and is refused', async () => {
     const { repo, heldout, scaffold } = chainRepo()
     buildHappyChain(repo, scaffold)
     rmSync(join(heldout, 'h1.md')) // the first attempt loads the set, finds a hash mismatch, and stops
@@ -342,6 +373,16 @@ describe('report', () => {
       return { code, err: t.lines.err.join('\n') }
     }
 
+    test('no green-dev.json: refused, nothing written, and the message names the steps that produce it', async () => {
+      const r = await greenRepo()
+      const { code, err } = await run(r)
+      expect(code).toBe(EXIT.REFUSED)
+      expect(err).toContain('green-dev.json does not exist')
+      expect(err).toContain('green --dev-only')
+      expect(err).toContain('report --dev-only')
+      expect(existsSync(join(r.repo.dir, 'evals', 'reports', 'demo', 'green.json'))).toBe(false)
+    })
+
     test('a green-dev.json that is not a valid dev report is refused', async () => {
       const r = await greenRepo()
       r.repo.write('evals/reports/demo/green-dev.json', '{"dev":{"passes_dev_bar":true},"skill":{"sha256":"x"}}\n')
@@ -411,11 +452,11 @@ describe.skipIf(!opencodeAvailability().available)('scripted end-to-end', () => 
       const out = tmp('metacogs-cliout-')
       const t = io()
       t.io.env.METACOGS_HELDOUT_DIR = join(tmp('metacogs-clitest-nohold-'), 'absent')
-      const code = await main(['green', '--dev-only', '--provider', 'scripted', '--runs', '1', '--fixture', 'n1', '--method', 'demo', '--repo', repo.dir, '--out', out], t.io)
+      const code = await main(['green', '--dev-only', '--provider', 'scripted', '--method', 'demo', '--repo', repo.dir, '--out', out], t.io)
       expect(code).toBe(EXIT.OK)
       const [campaign] = readdirSync(out)
       expect(campaign).toStartWith('demo-dev-')
-      expect(readdirSync(join(out, campaign!)).filter((d) => d !== 'summary.json')).toEqual(['001-negative-n1-skill-r1'])
+      expect(readdirSync(join(out, campaign!)).filter((d) => d !== 'summary.json').sort()).toEqual(['001-dev-d1-skill-r1', '002-negative-n1-skill-r1', '003-dev-d1-skill-r2', '004-negative-n1-skill-r2'])
       expect(t.lines.err.join('\n')).not.toContain('REFUSED')
     },
     180_000,

@@ -20,7 +20,7 @@ import { findStaleManifests } from './manifest'
 import { removeLiveFixtures } from './env'
 import { killLiveGroups, opencodeAvailability } from './opencode'
 import { isLiveModel } from './scripted-provider'
-import { enforcePrereg, parsePrereg, PreregRefusal } from './prereg'
+import { enforcePrereg, parsePrereg, type Prereg, preregRelPath, PreregRefusal } from './prereg'
 import { buildDevReport, buildGreenReport, buildRedReport, type DevReport, type DevRegressionSource, type GreenReport, greenReportPath, loadCampaignManifests, recomputeDevRegression, validateDevReport, validateGreenReport, writeDevReport, writeGreenReport, writeReport } from './report'
 import { planRuns, type ProviderMode, runCampaign } from './run'
 import { claimHeldoutRead, CustodyError, hashSkillDir, heldoutDir, heldoutReadMarkerPath, resolveOutputDir, stateRoot } from './workspace'
@@ -65,6 +65,8 @@ export interface MainIO {
   out: (line: string) => void
   err: (line: string) => void
   env: Record<string, string | undefined>
+  /** Hook for tests, so a refusal test does not depend on the pinned OpenCode being installed. */
+  opencodeAvailability?: typeof opencodeAvailability
   /** Hook for tests; production installs SIGINT/SIGTERM handlers. */
   installSignalHandlers?: (abort: () => void) => () => void
   cwd: string
@@ -129,6 +131,10 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
     err(`--include-dev is not accepted for green: the dev regression comes from evals/reports/<method>/green-dev.json (run green --dev-only, then report --dev-only)\n${USAGE}`)
     return EXIT.USAGE
   }
+  if (devOnly && (runs !== undefined || fixture !== undefined)) {
+    err(`--runs and --fixture are not accepted for green --dev-only: its campaign is the dev regression of the GREEN read and must follow the prereg plan\n${USAGE}`)
+    return EXIT.USAGE
+  }
   if (provider !== undefined && provider !== 'scripted' && provider !== 'live') {
     err(`--provider must be scripted or live\n${USAGE}`)
     return EXIT.USAGE
@@ -178,6 +184,60 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
 
   const campaignId = `${method}-${rehearsal ? 'rehearsal' : runMode}-${new Date().toISOString().replace(/[:.]/g, '-')}`
 
+  const controller = new AbortController()
+  const runsPerConditionOf = (p: Prereg) => runsOverride ?? p.runs_per_condition
+  /**
+   * Everything that can refuse a run without held-out content. Returns the campaign dir, or the exit code once the refusal is
+   * printed. It plans from the prereg's fixture ids (same ids the content check then proves), so no fixture text is needed.
+   */
+  const preflight = (p: Prereg): number | string => {
+    const ids = (set: Record<string, string>) => Object.entries(set).map(([id, hash]) => ({ id, text: '', hash }))
+    const shape = planRuns({
+      mode: runMode,
+      fixtures: { dev: ids(p.fixture_hashes.dev), negative: ids(p.fixture_hashes.negative), heldout: ids(p.fixture_hashes.heldout) },
+      runsPerCondition: runsPerConditionOf(p),
+      onlyFixture: fixture,
+    })
+    if (shape.length === 0) {
+      err(`nothing to run: the ${mode} plan for ${method} is empty (no fixtures?)`)
+      return EXIT.ERROR
+    }
+    if (providerMode === 'live') {
+      if (!isLiveModel(p.judge_model_id)) {
+        err(`prereg pins judge ${p.judge_model_id}; this runner only reaches opencode/*, opencode-go/*, openai/* and anthropic/* judges`)
+        return EXIT.ERROR
+      }
+      const mismatch = cliproxyModelMismatch([p.agent_model_id, p.judge_model_id], cliproxy !== undefined)
+      if (mismatch) {
+        err(`REFUSED: ${mismatch}`)
+        return EXIT.REFUSED
+      }
+    }
+    const availability = (io.opencodeAvailability ?? opencodeAvailability)()
+    if (!availability.available) {
+      err(`cannot launch the pinned OpenCode: ${availability.reason}`)
+      return EXIT.ERROR
+    }
+    try {
+      return resolveOutputDir({ repoRoot, campaignId, heldout: shape.some((r) => r.fixture.kind === 'heldout'), outRoot, env })
+    } catch (e) {
+      if (e instanceof CustodyError) {
+        err(`REFUSED: ${e.message}`)
+        return EXIT.REFUSED
+      }
+      throw e
+    }
+  }
+  // The one-shot read runs its preflight before the marker is claimed, so a refusal that has nothing to do with the held-out
+  // set cannot burn it. Other modes claim nothing and keep the order: enforcement, then preflight.
+  let preflighted: number | string | undefined
+  if (isGreenRead) {
+    const preregFile = join(repoRoot, preregRelPath(method))
+    const early = existsSync(preregFile) ? parsePrereg(readFileSync(preregFile, 'utf8')) : undefined
+    if (early?.ok) preflighted = preflight(early.prereg)
+    if (typeof preflighted === 'number') return preflighted
+  }
+
   // Enforcement happens before anything launches.
   let verification: ReturnType<typeof enforcePrereg>
   try {
@@ -212,55 +272,18 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
     }
   }
 
-  const runsPerCondition = runsOverride ?? prereg.runs_per_condition
+  preflighted ??= preflight(prereg)
+  if (typeof preflighted === 'number') return preflighted
+  const campaignDir = preflighted
+  const runsPerCondition = runsPerConditionOf(prereg)
   const plan = planRuns({
     mode: runMode,
     fixtures: verification.content.fixtures,
     runsPerCondition,
     onlyFixture: fixture,
   })
-  if (plan.length === 0) {
-    err(`nothing to run: the ${mode} plan for ${method} is empty (no fixtures?)`)
-    return EXIT.ERROR
-  }
 
-  let campaignDir: string
-  try {
-    campaignDir = resolveOutputDir({
-      repoRoot,
-      campaignId,
-      heldout: plan.some((r) => r.fixture.kind === 'heldout'),
-      outRoot,
-      env,
-    })
-  } catch (e) {
-    if (e instanceof CustodyError) {
-      err(`REFUSED: ${e.message}`)
-      return EXIT.REFUSED
-    }
-    throw e
-  }
-
-  const controller = new AbortController()
-  let judge: ReturnType<typeof createJudge> | undefined
-  if (providerMode === 'live') {
-    if (!isLiveModel(prereg.judge_model_id)) {
-      err(`prereg pins judge ${prereg.judge_model_id}; this runner only reaches opencode/*, opencode-go/*, openai/* and anthropic/* judges`)
-      return EXIT.ERROR
-    }
-    const mismatch = cliproxyModelMismatch([prereg.agent_model_id, prereg.judge_model_id], cliproxy !== undefined)
-    if (mismatch) {
-      err(`REFUSED: ${mismatch}`)
-      return EXIT.REFUSED
-    }
-    judge = createJudge({ repoRoot, method, model: prereg.judge_model_id, auth, signal: controller.signal })
-  }
-
-  const availability = opencodeAvailability()
-  if (!availability.available) {
-    err(`cannot launch the pinned OpenCode: ${availability.reason}`)
-    return EXIT.ERROR
-  }
+  const judge = providerMode === 'live' ? createJudge({ repoRoot, method, model: prereg.judge_model_id, auth, signal: controller.signal }) : undefined
 
   const deviates = runsPerCondition !== prereg.runs_per_condition || fixture !== undefined
   if (deviates) err('note: --runs/--fixture deviate from the prereg plan; this campaign is a debugging run, not evidence.')
@@ -556,9 +579,11 @@ function reportMain(a: ReportArgs): number {
 function rebuildDevRegression(
   a: ReportArgs,
   c: { repoRoot: string; verification: ReturnType<typeof enforcePrereg>; headSha: string },
-): DevRegressionSource | null {
+): DevRegressionSource {
   const devPath = join(c.repoRoot, 'evals', 'reports', a.method, 'green-dev.json')
-  if (!existsSync(devPath)) return null
+  if (!existsSync(devPath)) {
+    throw new Error(`${devPath.slice(c.repoRoot.length + 1)} does not exist, so the dev regression has no campaign to rebuild from; run \`green --dev-only\`, then \`report --dev-only\`, then \`report --green\` again`)
+  }
   const committed = JSON.parse(readFileSync(devPath, 'utf8')) as DevReport
   const problems = validateDevReport(committed)
   const id = committed.campaign?.id
@@ -596,7 +621,7 @@ function greenReportMain(
     a.err(`REFUSED: ${greenReportPath(c.repoRoot, a.method).slice(c.repoRoot.length + 1)} already exists; GREEN is a one-shot read`)
     return EXIT.REFUSED
   }
-  let devReport: DevRegressionSource | null
+  let devReport: DevRegressionSource
   try {
     devReport = rebuildDevRegression(a, c)
   } catch (e) {

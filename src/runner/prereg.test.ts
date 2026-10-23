@@ -471,6 +471,26 @@ describe('prereg ordering (temp git repo)', () => {
         expect(checkPreregOrdering(repo.git, s2.prereg, 'red').violations).toEqual([])
       })
 
+      test('heldout_salt_changed_after_read: a new salt hides the reuse from the hash comparison; the salt change itself is refused', () => {
+        const { repo, s1, s2 } = twoEpochs({ read: 'green.json', edit: true, closing: 'edit' })
+        const resalted = { ...s2.prereg, salt: `${s1.prereg.salt}-new`, fixture_hashes: { ...s2.prereg.fixture_hashes, heldout: NEW_HELDOUT } }
+        const { violations } = checkPreregOrdering(repo.git, resalted, 'red')
+        expect(codes(violations)).toEqual(['heldout_salt_changed_after_read'])
+      })
+
+      test('a post-read epoch with a skill edit must keep the salt even for a genuinely new held-out set', () => {
+        const { repo, s1, s2 } = twoEpochs({ read: 'green.json', edit: true, closing: 'edit', newHeldout: true })
+        expect(checkPreregOrdering(repo.git, s2.prereg, 'red').violations).toEqual([])
+        const resalted = { ...s2.prereg, salt: `${s1.prereg.salt}-new` }
+        expect(codes(checkPreregOrdering(repo.git, resalted, 'red').violations)).toEqual(['heldout_salt_changed_after_read'])
+      })
+
+      test('a new salt is fine when the previous epoch never read (a red-retained method)', () => {
+        const unread = twoEpochs({ edit: true, closing: 'edit', newHeldout: true })
+        const a = { ...unread.s2.prereg, salt: `${unread.s1.prereg.salt}-new` }
+        expect(checkPreregOrdering(unread.repo.git, a, 'red').violations).toEqual([])
+      })
+
       test('the same held-out set is fine when the previous epoch never read it (a red-retained method)', () => {
         const { repo, s2 } = twoEpochs({ edit: true, closing: 'edit' })
         expect(checkPreregOrdering(repo.git, s2.prereg, 'red').violations).toEqual([])

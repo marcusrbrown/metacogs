@@ -60,11 +60,18 @@ describe('scanText', () => {
     expect(scanText('f', 'sk-someone-else-deadbeef')).toEqual([])
   })
 
-  test('a quoted JSON key field with a long value is flagged; short values and declared placeholders are not', () => {
+  test('a placeholder is declared by the key label, never by the value', () => {
+    expect(scanText('f', "PLACEHOLDER_API_KEY = 'Zq7Rt2Lm9Xa4Vb8Nc3Kd5Pw'")).toEqual([])
+    expect(scanText('f', ['placeholder_to', 'ken: "Zq7Rt2Lm9Xa4Vb8Nc3Kd5Pw"'].join(''))).toEqual([])
+    expect(scanText('f', ['api', '_key: "Zq7Rt2Lm9Xa4Vb8Nc3Kd-placeholder-5Pw"'].join(''))).toEqual([{ path: 'f', line: 1, rule: 'generic-credential' }])
+    expect(scanText('f', ['{"ke', 'y": "Zq7Rt2Lm9Xa4Vb8Nc3Kd-placeholder-5Pw"}'].join(''))).toEqual([{ path: 'f', line: 1, rule: 'json-key-field' }])
+    expect(scanText('f', `real = '${['sk', 'A1b2C3d4E5f6G7h8I9j0K1l2'].join('-')}' # not-a-secret`).map((f) => f.rule)).toEqual(['openai-style-key'])
+  })
+
+  test('a quoted JSON key field with a long value is flagged; short values are not', () => {
     expect(scanText('f', `{"openai": {"type": "api", ${JSON_KEY_FIELD}}}`)).toEqual([{ path: 'f', line: 1, rule: 'json-key-field' }])
     expect(scanText('f', ['{"ap', 'iKey": "Zq7Rt2Lm9Xa4Vb8Nc3Kd5Pw"}'].join(''))).toEqual([{ path: 'f', line: 1, rule: 'json-key-field' }])
     expect(scanText('f', '{"key": "short"}')).toEqual([])
-    expect(scanText('f', '{"key": "placeholder-not-a-secret-value"}')).toEqual([])
     expect(scanText('f', "PLACEHOLDER_API_KEY = 'placeholder-not-a-secret'")).toEqual([])
   })
 
