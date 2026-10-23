@@ -7,6 +7,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { EXECUTION_MODES, type ExecutionMode } from '../record/contract'
 import { type Git } from './git'
 import { sha256 } from './workspace'
 
@@ -54,14 +55,14 @@ export interface Prereg {
   budget: { max_tool_calls: number; max_total_tokens: number }
   /** Prose definition; the runner's implementation is fixed (see `classifyHostOutcome`). */
   infra_error_definition: string
-  run_outcome_taxonomy: string[]
+  run_outcome_taxonomy: typeof RUN_OUTCOME_TAXONOMY
   agreement_floor: number
   /** `provider/model`; live runs require an `opencode/*` free-tier id. */
   agent_model_id: string
   judge_model_id: string
   accepted_error_rates: { false_red: number; false_green: number }
   /** `execution_mode` values accepted on a skill-condition record. Default: every mode but `unrecorded`. */
-  expected_execution_modes?: string[]
+  expected_execution_modes?: readonly ExecutionMode[]
   metadata: { source_url: string; licence: string; notes?: string }
 }
 
@@ -181,8 +182,10 @@ export function parsePrereg(text: string): PreregParse {
   need(isRecord(rates) && isRate(rates.false_red) && isRate(rates.false_green), 'accepted_error_rates: needs false_red and false_green in [0, 1]')
   if (raw.expected_execution_modes !== undefined) {
     need(
-      Array.isArray(raw.expected_execution_modes) && raw.expected_execution_modes.length > 0 && raw.expected_execution_modes.every(isNonEmptyString),
-      'expected_execution_modes: must be a non-empty array of strings when present',
+      Array.isArray(raw.expected_execution_modes) &&
+        raw.expected_execution_modes.length > 0 &&
+        raw.expected_execution_modes.every((m) => (EXECUTION_MODES as readonly unknown[]).includes(m)),
+      `expected_execution_modes: must be a non-empty array drawn from ${EXECUTION_MODES.join(', ')} when present`,
     )
   }
   const meta = raw.metadata
@@ -296,6 +299,7 @@ export type ViolationCode =
   | 'prereg_commit_not_alone'
   | 'prereg_blob_mismatch'
   | 'epoch_base_invalid'
+  | 'epoch_base_before_prior_tag'
   | 'fixtures_after_prereg'
   | 'tag_equals_skill_commit'
   | 'skill_commit_not_after_tag'
@@ -338,7 +342,8 @@ const short = (sha: string) => sha.slice(0, 12)
 export function checkPreregOrdering(git: Git, prereg: Prereg, mode: 'red' | 'green'): OrderingResult {
   const { method, epoch } = prereg
   const violations: Violation[] = []
-  const shas: Partial<PreregShas> = {}
+  // Only a GREEN run has a skill tree to pin; RED and DEV say so explicitly rather than leaving it unset.
+  const shas: Partial<PreregShas> = { skillTreeSha: null }
   const add = (code: ViolationCode, message: string) => violations.push({ code, message })
 
   const tagName = preregTagName(method, epoch)
@@ -385,6 +390,15 @@ export function checkPreregOrdering(git: Git, prereg: Prereg, mode: 'red' | 'gre
       add('epoch_base_invalid', `epoch ${epoch} prereg ${short(tag.commitSha)} does not strictly follow the epoch ${epoch - 1} closing commit ${short(closingCommit)}`)
     } else {
       base = closingCommit
+      // The base is where the previous epoch closed. A base before that epoch's own prereg tag would let this epoch
+      // claim history the previous epoch never covered (its fixtures, its reads, its skill edits).
+      const priorName = preregTagName(method, epoch - 1)
+      const prior = git.tag(priorName)
+      if (!prior) {
+        add('epoch_base_before_prior_tag', `tag ${priorName} does not exist, so the epoch ${epoch} base ${short(closingCommit)} cannot be tied to the previous epoch`)
+      } else if (!git.isAncestorOrEqual(prior.commitSha, closingCommit)) {
+        add('epoch_base_before_prior_tag', `epoch ${epoch} base ${short(closingCommit)} is not at or after the ${priorName} commit ${short(prior.commitSha)}`)
+      }
     }
     if (!base) return { violations, shas }
   }
@@ -496,5 +510,9 @@ export function enforcePrereg(input: EnforceInput): PreregVerification {
       `prereg content for ${method}`,
     )
   }
-  return { prereg, shas: ordering.shas as PreregShas, content }
+  const { tag, tagObjectSha, commitSha, blobSha, firstSkillCommit, skillTreeSha } = ordering.shas
+  if (tag === undefined || tagObjectSha === undefined || commitSha === undefined || blobSha === undefined) {
+    throw new Error(`prereg ordering for ${method} passed without establishing the tag, commit, and blob SHAs`)
+  }
+  return { prereg, shas: { tag, tagObjectSha, commitSha, blobSha, firstSkillCommit: firstSkillCommit ?? null, skillTreeSha: skillTreeSha ?? null }, content }
 }

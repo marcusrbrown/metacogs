@@ -72,6 +72,23 @@ describe('parsePrereg', () => {
     }
   })
 
+  test('expected_execution_modes must name real modes', () => {
+    expect(parsePrereg(JSON.stringify({ ...prereg, expected_execution_modes: ['sequential', 'delegated'] })).ok).toBe(true)
+    const bad = parsePrereg(JSON.stringify({ ...prereg, expected_execution_modes: ['sequential', 'telepathy'] }))
+    expect(bad.ok).toBe(false)
+    if (!bad.ok) expect(bad.errors.join('\n')).toContain('expected_execution_modes')
+  })
+
+  test('RED and DEV pin no skill tree: the field is null, not absent', () => {
+    const { repo, heldout } = setup()
+    const scaffold = scaffoldMethod(repo, 'demo', { heldoutDir: heldout })
+    buildHappyChain(repo, scaffold)
+    for (const mode of ['red', 'dev'] as const) {
+      expect(enforcePrereg({ git: repo.git, repoRoot: repo.dir, method: 'demo', mode, heldoutDir: heldout }).shas.skillTreeSha).toBeNull()
+    }
+    expect(enforcePrereg({ git: repo.git, repoRoot: repo.dir, method: 'demo', mode: 'green', heldoutDir: heldout }).shas.skillTreeSha).toMatch(/^[0-9a-f]{40}$/)
+  })
+
   test('epoch > 1 needs a closing commit SHA; epoch 1 needs null', () => {
     const e1 = parsePrereg(JSON.stringify({ ...prereg, prev_epoch_closing_commit: 'a'.repeat(40) }))
     expect(e1.ok).toBe(false)
@@ -181,6 +198,43 @@ describe('prereg ordering (temp git repo)', () => {
     expect(codes(checkPreregOrdering(repo.git, scaffold.prereg, 'red').violations)).toEqual(['tag_missing'])
     repo.tag('prereg/demo/1', false)
     expect(codes(checkPreregOrdering(repo.git, scaffold.prereg, 'red').violations)).toEqual(['tag_not_annotated'])
+  })
+
+  describe('a tag on an unmerged side branch', () => {
+    // Epoch 1 closes on main. Epoch 2's skill edit, prereg commit and tag live on a side branch that main never merges;
+    // main then carries a byte-identical copy of the prereg file, so the working-tree blob check passes.
+    function unmergedSideTag() {
+      const { repo, heldout } = setup()
+      const s1 = scaffoldMethod(repo, 'demo', { heldoutDir: heldout })
+      const chain1 = buildHappyChain(repo, s1)
+      repo.write('evals/demo/report.txt', 'epoch 1 read\n')
+      const closing = repo.commit('epoch 1 close', ['evals/demo/report.txt'])
+      const s2 = scaffoldMethod(repo, 'demo', { epoch: 2, prevClosing: closing, heldoutDir: heldout })
+      repo.sh(['checkout', '-q', '-b', 'side'])
+      repo.write('skills/demo/SKILL.md', 'edited on the side branch\n')
+      repo.commit('side skill edit', ['skills/demo'])
+      writePrereg(repo, s2)
+      repo.commit('epoch 2 prereg (side)', [s2.preregPath])
+      repo.tag('prereg/demo/2')
+      repo.sh(['checkout', '-q', 'main'])
+      writePrereg(repo, s2)
+      repo.commit('copy of the prereg on main', [s2.preregPath])
+      return { repo, s2, chain1 }
+    }
+
+    test('tag_not_in_history: the tagged commit is not an ancestor of HEAD', () => {
+      const { repo, s2 } = unmergedSideTag()
+      const { violations } = checkPreregOrdering(repo.git, s2.prereg, 'red')
+      expect(codes(violations)).toContain('tag_not_in_history')
+      expect(violations.find((v) => v.code === 'tag_not_in_history')?.message).toContain(repo.git.tag('prereg/demo/2')!.commitSha.slice(0, 12))
+    })
+
+    test('skill_changed_since_tag: HEAD carries a different skill tree than the tag, with no skill commit in the epoch to explain it', () => {
+      const { repo, s2 } = unmergedSideTag()
+      const { violations } = checkPreregOrdering(repo.git, s2.prereg, 'green')
+      expect(codes(violations)).toContain('skill_changed_since_tag')
+      expect(codes(violations)).toContain('tag_not_in_history')
+    })
   })
 
   test('a skill commit that is not a descendant of the tag is refused', () => {
@@ -299,6 +353,34 @@ describe('prereg ordering (temp git repo)', () => {
         expect(r.violations).toEqual([])
         expect(r.shas.firstSkillCommit).toBe(edit)
       })
+    })
+
+    test('epoch_base_before_prior_tag: the base may not precede the previous epoch\'s own prereg tag', () => {
+      const { repo, heldout } = setup()
+      const s1 = scaffoldMethod(repo, 'demo', { heldoutDir: heldout })
+      const chain1 = buildHappyChain(repo, s1)
+      // The epoch 1 fixtures commit is an ancestor of the epoch 1 prereg tag, so epoch 2 would reach back into epoch 1.
+      const s2 = scaffoldMethod(repo, 'demo', { epoch: 2, prevClosing: chain1.fixturesCommit, heldoutDir: heldout })
+      writePrereg(repo, s2)
+      repo.commit('epoch 2 prereg', [s2.preregPath])
+      repo.tag('prereg/demo/2')
+      const { violations } = checkPreregOrdering(repo.git, s2.prereg, 'red')
+      expect(codes(violations)).toContain('epoch_base_before_prior_tag')
+      expect(violations.find((v) => v.code === 'epoch_base_before_prior_tag')?.message).toContain(chain1.preregCommit.slice(0, 12))
+    })
+
+    test('epoch_base_before_prior_tag: the previous epoch\'s tag must exist', () => {
+      const { repo, heldout } = setup()
+      const s1 = scaffoldMethod(repo, 'demo', { heldoutDir: heldout })
+      buildHappyChain(repo, s1)
+      repo.sh(['tag', '-d', 'prereg/demo/1'])
+      repo.write('evals/demo/report.txt', 'x\n')
+      const closing = repo.commit('close', ['evals/demo/report.txt'])
+      const s2 = scaffoldMethod(repo, 'demo', { epoch: 2, prevClosing: closing, heldoutDir: heldout })
+      writePrereg(repo, s2)
+      repo.commit('epoch 2 prereg', [s2.preregPath])
+      repo.tag('prereg/demo/2')
+      expect(codes(checkPreregOrdering(repo.git, s2.prereg, 'red').violations)).toContain('epoch_base_before_prior_tag')
     })
 
     test('epoch 2 prereg whose closing commit is unknown or not before the tag: refused', () => {
