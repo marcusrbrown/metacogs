@@ -87,6 +87,10 @@ export interface RunManifest {
   provider_mode: 'scripted' | 'live'
   /** Provider names whose real credentials were copied into this run's isolated auth.json. Never values. */
   auth_passthrough?: string[]
+  /** CLIProxyAPI mode: the name of the key (never its value) injected into this run's isolated auth.json for `openai` and `anthropic`. */
+  auth_cliproxy?: string
+  /** CLIProxyAPI mode: `["cliproxy"]`, the gateway every request of this run was configured to reach. */
+  gateways?: string[]
   opencode: { package: string; version: string }
   model: { pinned: string; returned: string[] }
   /** Live runs: which OpenCode gateway the agent's requests went to (Go is the default; Zen bills credits). Absent for scripted runs. */

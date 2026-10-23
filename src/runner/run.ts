@@ -173,6 +173,13 @@ export interface CampaignInput {
   maxInfraRetries?: number
   /** Opt-in: real provider credentials copied into each run's isolated auth.json (names go in the manifest, values never). */
   auth?: PassthroughAuth
+  /**
+   * Opt-in CLIProxyAPI mode: `auth` then holds the gateway key for `openai` and `anthropic`, the workspace gets the wizard's provider
+   * blocks, and the manifest records this key *name* (`auth_cliproxy`) and `gateways: ["cliproxy"]` instead of `auth_passthrough`.
+   */
+  cliproxyKeyName?: string
+  /** Extra strings the credential-leak scan must never find (the key's prefix, a management key held in the runner's env). */
+  leakNeedles?: readonly Needle[]
   /** Wait before retrying an `infra_error` caused by a provider 429; attempt is 1-based. Default 30 s, then 90 s. */
   backoffMs?: (attempt: number) => number
   /** Test seam. */
@@ -344,7 +351,7 @@ async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, at
   } else {
     model = prereg.agent_model_id
     if (!isLiveModel(model)) {
-      throw new Error(`live mode only supports opencode/* and opencode-go/* models (prereg pins ${model})`)
+      throw new Error(`live mode only supports opencode/*, opencode-go/*, openai/* and anthropic/* models (prereg pins ${model})`)
     }
   }
 
@@ -368,7 +375,11 @@ async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, at
       epoch: prereg.epoch,
     },
     provider_mode: c.providerMode,
-    ...(c.auth && Object.keys(c.auth).length ? { auth_passthrough: passthroughNames(c.auth) } : {}),
+    ...(c.cliproxyKeyName
+      ? { auth_cliproxy: c.cliproxyKeyName, gateways: ['cliproxy'] }
+      : c.auth && Object.keys(c.auth).length
+        ? { auth_passthrough: passthroughNames(c.auth) }
+        : {}),
     opencode: { package: 'opencode-ai', version: OPENCODE_PIN },
     model: { pinned: model, returned: [] },
     isolation: null,
@@ -428,6 +439,7 @@ async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, at
       provider: c.providerMode === 'scripted' ? { kind: 'scripted', url: server.url } : { kind: 'live', recordingProxyUrl: server.url },
       model,
       auth: c.auth,
+      cliproxy: Boolean(c.cliproxyKeyName),
     })
   } catch (e) {
     server.stop()
@@ -574,7 +586,7 @@ async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, at
       artifactTexts[file] = readFileSync(join(runDir, file), 'utf8')
     }
     const findings = scanForLeaks({
-      needles: [...LEAK_NEEDLES, ...needlesOf(c.auth ?? {})],
+      needles: [...LEAK_NEEDLES, ...needlesOf(c.auth ?? {}), ...(c.leakNeedles ?? [])],
       manifestJson: JSON.stringify(manifest),
       artifacts: artifactTexts,
       dirs: [workspace.fixture.workspace],

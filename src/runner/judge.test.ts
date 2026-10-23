@@ -16,6 +16,7 @@ import {
   verifyQuote,
 } from './judge'
 import { RedactionFailed } from './redact'
+import { CLIPROXY_UPSTREAM } from './cliproxy'
 import { gatewayOf, GO_UPSTREAM, isLiveModel, providerOf, upstreamFor, ZEN_UPSTREAM } from './scripted-provider'
 import type { RecordedRequest } from './scripted-provider'
 import type { SpawnOptions, SpawnResult } from './opencode'
@@ -244,15 +245,16 @@ describe('opencodeTransport (fake spawn)', () => {
 })
 
 describe('live providers', () => {
-  test('opencode/ and opencode-go/ ids are live models; anything else is refused', () => {
-    expect(isLiveModel('opencode/big-pickle')).toBe(true)
-    expect(isLiveModel('opencode-go/deepseek-v4.1-flash')).toBe(true)
-    for (const m of ['anthropic/claude-haiku-4-5', 'openai/gpt-5', 'opencode-gox/x', 'opencode', '']) expect(isLiveModel(m)).toBe(false)
+  test('opencode/, opencode-go/, openai/ and anthropic/ ids are live models; anything else is refused', () => {
+    for (const m of ['opencode/big-pickle', 'opencode-go/deepseek-v4.1-flash', 'openai/gpt-6-luna', 'anthropic/claude-haiku-5-5']) expect(isLiveModel(m)).toBe(true)
+    for (const m of ['google/gemini-3', 'openaix/x', 'opencode-gox/x', 'opencode', '']) expect(isLiveModel(m)).toBe(false)
   })
   test('provider and upstream follow the model id', () => {
     expect(providerOf('opencode-go/beam-free')).toBe('opencode-go')
     expect(upstreamFor('opencode-go')).toBe(GO_UPSTREAM)
     expect(upstreamFor('opencode')).toBe(ZEN_UPSTREAM)
+    expect(upstreamFor('openai')).toBe(CLIPROXY_UPSTREAM)
+    expect(upstreamFor('anthropic')).toBe(CLIPROXY_UPSTREAM)
   })
   test('the judge config routes the pinned model\'s own provider through the proxy', async () => {
     const cfg = judgeConfig('S', 'http://127.0.0.1:1/v1', 'opencode-go') as { provider: Record<string, unknown> }
@@ -504,6 +506,8 @@ describe('gateway is a recorded fact', () => {
     expect(gatewayOf([go, go])).toBe('go')
     expect(gatewayOf([zen])).toBe('zen')
     expect(gatewayOf([go, zen])).toBe('mixed')
+    expect(gatewayOf([`${CLIPROXY_UPSTREAM}/responses`, `${CLIPROXY_UPSTREAM}/messages`])).toBe('cliproxy')
+    expect(gatewayOf([`${CLIPROXY_UPSTREAM}/responses`, go])).toBe('mixed')
     expect(gatewayOf([undefined])).toBeNull()
     expect(gatewayOf([])).toBeNull()
   })

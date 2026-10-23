@@ -23,14 +23,44 @@ function requestBodies(requests: readonly RecordedRequest[]): Record<string, unk
   return requests.map((r) => (isRecord(r.body) ? r.body : {}))
 }
 
+/** Plain text of a message `content`: a string, or an array of `{text}` blocks (Anthropic `system`, Responses `input_text`). */
+function plainText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) return content.map((b) => (typeof b === 'string' ? b : isRecord(b) && typeof b.text === 'string' ? b.text : '')).join('')
+  return ''
+}
+
+/**
+ * System-level text of one request body, one entry per system message, in order. Three wire formats reach the
+ * recording proxy: chat completions (`messages[role=system]`, the free gateways), Anthropic messages (top-level
+ * `system`), and OpenAI Responses (`instructions`, plus `input[]` items with role `system`/`developer`), the last two
+ * only through the CLIProxyAPI gateway.
+ */
+export function systemTexts(body: Record<string, unknown>): string[] {
+  const parts: string[] = []
+  const isSystem = (m: unknown): m is Record<string, unknown> => isRecord(m) && (m.role === 'system' || m.role === 'developer')
+  for (const key of ['messages', 'input'] as const) {
+    const items = body[key]
+    if (Array.isArray(items)) for (const m of items) if (isSystem(m)) parts.push(plainText(m.content))
+  }
+  const system = body.system
+  if (typeof system === 'string') parts.push(system)
+  else if (Array.isArray(system)) parts.push(...system.map((b) => plainText([b])))
+  if (typeof body.instructions === 'string') parts.push(body.instructions)
+  return parts
+}
+
+/** The fixed system prompt reached the provider intact: some system message, or all of them joined, starts with it. */
+export function systemPromptSent(body: Record<string, unknown>, expected: string): boolean {
+  const texts = systemTexts(body)
+  return texts.some((t) => t.startsWith(expected)) || texts.join('\n').startsWith(expected) || texts.join('').startsWith(expected)
+}
+
 /** Concatenated system-prompt text actually sent to the model (all requests). */
 export function systemPromptText(requests: readonly RecordedRequest[]): string {
   const parts: string[] = []
   for (const body of requestBodies(requests)) {
-    const messages = Array.isArray(body.messages) ? body.messages : []
-    for (const m of messages) {
-      if (isRecord(m) && m.role === 'system') parts.push(JSON.stringify(m.content))
-    }
+    for (const text of systemTexts(body)) parts.push(JSON.stringify(text))
   }
   return parts.join('\n')
 }

@@ -28,6 +28,7 @@ import { join } from 'node:path'
 import { needlesOf, type PassthroughAuth, writeIsolatedAuth } from './auth'
 import { createFixture, buildChildEnv, destroyFixture } from './env'
 import { analyzeEvents } from './events'
+import { systemPromptSent } from './isolation'
 import type { JudgeEvidence } from './manifest'
 import { opencodeArgv, type SpawnOptions, type SpawnResult, spawnCapture } from './opencode'
 import { loadRedactTokens, redactOrThrow, RedactionFailed } from './redact'
@@ -363,7 +364,6 @@ export function opencodeTransport(overrides: Partial<TransportDeps> = {}, auth: 
       const events = analyzeEvents(spawn.stdout)
       const main = server.requests.filter((r) => r.hasTools)
       const bodies = main.map((r) => (isRecord(r.body) ? r.body : {}))
-      const firstMessage = bodies.map((b) => (Array.isArray(b.messages) ? b.messages[0] : undefined)).find(isRecord)
       const temperature = bodies.map((b) => b.temperature).find((t): t is number => typeof t === 'number')
       // Nothing the judge produced or saw may contain a passthrough credential.
       const haystack = `${spawn.stdout}\n${spawn.stderr}\n${JSON.stringify(server.requests.map((r) => r.body))}`
@@ -385,7 +385,7 @@ export function opencodeTransport(overrides: Partial<TransportDeps> = {}, auth: 
         returnedModels: [...new Set(main.map((r) => r.returnedModel).filter((m): m is string => Boolean(m)))],
         gateway: gatewayOf(server.requests.map((r) => r.upstream)),
         temperature: temperature ?? null,
-        systemPromptSeen: typeof firstMessage?.content === 'string' && firstMessage.content.startsWith(request.system),
+        systemPromptSeen: bodies.length > 0 && systemPromptSent(bodies[0]!, request.system),
         toolCalls: events.toolUses.length,
         wallMs: spawn.wallMs,
         rateLimited,

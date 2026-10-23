@@ -19,6 +19,7 @@ import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import { type PassthroughAuth, writeIsolatedAuth } from './auth'
+import { cliproxyProviderConfig } from './cliproxy'
 import {
   AUTH_CANARY,
   AUTHOR_SKILL_BODY,
@@ -203,6 +204,8 @@ export interface RunWorkspaceInput {
   model: string
   /** Opt-in: provider entries copied into this run's isolated `auth.json` (never the author's other providers). */
   auth?: PassthroughAuth
+  /** CLIProxyAPI mode: the wizard's provider blocks (`openai` and `anthropic`, both on one base URL) instead of the single model provider. */
+  cliproxy?: boolean
 }
 
 /** Strings that must never be quotable from inside the run. */
@@ -262,7 +265,9 @@ function populateRunWorkspace(input: RunWorkspaceInput, fixture: Fixture): RunWo
   const providerConfig =
     provider.kind === 'scripted'
       ? scriptedProviderConfig(provider.url)
-      : { [providerOf(input.model)]: { options: { baseURL: provider.recordingProxyUrl } } }
+      : input.cliproxy
+        ? cliproxyProviderConfig(provider.recordingProxyUrl)
+        : { [providerOf(input.model)]: { options: { baseURL: provider.recordingProxyUrl } } }
   const config = buildConfig({
     permission: permissionFor(condition, method),
     provider: providerConfig,

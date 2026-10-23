@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { type JudgeEvidence, MANIFEST_SCHEMA_VERSION, type RunManifest, writeManifest } from './manifest'
 import {
@@ -346,6 +346,7 @@ describe('buildDevReport (skill condition, dev + negative fixtures)', () => {
       negative_fixtures: 1,
       negative_false_fires: 0,
       fire_basis: { skill_tool: 0, direct_read: 0, none: 10 },
+      load_rate: 0,
       passes_dev_bar: true,
     })
   })
@@ -368,6 +369,28 @@ describe('buildDevReport (skill condition, dev + negative fixtures)', () => {
       { skill_tool: 0, direct_read: 0, none: 1 },
     ])
     expect(report.dev.fire_basis).toEqual({ skill_tool: 2, direct_read: 2, none: 2 })
+  })
+
+  test('load_rate is its own metric: loaded runs (skill tool or direct read) over attempted, per fixture and pooled over dev; not part of the bar', () => {
+    const runs = runsFor([
+      ['dev', 'd1-x', ['pass', 'pass', 'pass', 'pass', 'judge_fail']],
+      ['dev', 'd2-y', ['pass', 'pass', 'pass', 'pass', 'pass', 'infra']],
+      ['negative', 'n1-z', ['pass']],
+    ])
+    const bases = ['skill_tool', 'direct_read', 'skill_tool', null, null, 'direct_read', null, null, null, null, 'skill_tool', null] as const
+    runs.forEach((r, i) => {
+      r.manifest.fire_basis = bases[i]
+    })
+    const report = buildDevReport({ prereg: prereg(), shas: SHAS, headSha: HEAD, runs, plannedRuns: 12, skillSha256: SKILL })
+    expect(validateDevReport(report)).toEqual([])
+    expect(report.fixtures.map((f) => [f.id, f.load_rate])).toEqual([
+      ['d1-x', 0.6], // 3 of 5 loaded
+      ['d2-y', 0.2], // the infra_error attempt is in no denominator: 1 of 5
+      ['n1-z', 0],
+    ])
+    expect(report.dev.load_rate).toBe(0.4) // 4 of 10
+    // The bar looks at pass rates only: a 0.2 load rate with 5/5 passes still meets it.
+    expect(report.fixtures.find((f) => f.id === 'd2-y')!.meets_dev_bar).toBe(true)
   })
 
   test('3/5 on a dev fixture, or one false fire on a negative, fails the dev bar', () => {
@@ -425,7 +448,7 @@ describe('committed dev reports', () => {
       const report = JSON.parse(readFileSync(path, 'utf8')) as DevReport
       expect(validateDevReport(report)).toEqual([])
       expect(report.method).toBe(method)
-      expect(report.prereg.tag).toBe(`prereg/${method}/2`)
+      expect(report.prereg.tag).toMatch(new RegExp(`^prereg/${method}/[23]$`))
       expect(report.held_out).toBe('untouched')
       expect(report.fixtures.every((f) => f.kind === 'dev' || f.kind === 'negative')).toBe(true)
     })
@@ -496,6 +519,10 @@ describe('buildGreenReport (held-out, both conditions)', () => {
     expect(report.pooled.delta.value).toBe(0.6)
     expect(report.pooled.delta.newcombe95[0]).toBeGreaterThan(0)
     expect(report.heldout[0]!.skill.fire_basis).toEqual({ skill_tool: 5, direct_read: 0, none: 0 })
+    // load_rate: h1 loaded 5/5, h2 loaded 4/5 (a judge_fail run has no fire_basis in this fixture); pooled 9/10; baseline never loads.
+    expect(report.heldout.map((f) => [f.skill.load_rate, f.baseline.load_rate])).toEqual([[1, 0], [0.8, 0]])
+    expect(report.skill_load_rate).toBe(0.9)
+    expect(report.negatives[0]!.load_rate).toBe(1)
     expect(report.human_review).toEqual({ status: 'pending', judged_runs: expect.any(Number), reviewed: 0 })
     expect(JSON.stringify(report)).not.toContain('secret')
   })
@@ -553,14 +580,18 @@ describe('buildGreenReport (held-out, both conditions)', () => {
 
 describe('committed green reports', () => {
   const REPO_ROOT = join(import.meta.dir, '..', '..')
+  // `green.epoch2.json` is the preserved epoch-2 read (its held-out set is burned); `green.json` is the current epoch's.
   for (const method of ['counterfactual', 'synthesis']) {
-    const path = greenReportPath(REPO_ROOT, method)
-    test.skipIf(!existsSync(path))(`evals/reports/${method}/green.json is allowlist-only and names the epoch-2 tag`, () => {
-      const report = JSON.parse(readFileSync(path, 'utf8')) as ReturnType<typeof buildGreenReport>
-      expect(validateGreenReport(report)).toEqual([])
-      expect(report.method).toBe(method)
-      expect(report.prereg.tag).toBe(`prereg/${method}/2`)
-      expect(report.burn_rule).toEqual({ one_shot_read: true, skill_edit_burns_set: true })
-    })
+    for (const [file, epoch] of [['green.epoch2.json', 2], ['green.json', null]] as const) {
+      const path = join(dirname(greenReportPath(REPO_ROOT, method)), file)
+      test.skipIf(!existsSync(path))(`evals/reports/${method}/${file} is allowlist-only and names a prereg tag of its epoch`, () => {
+        const report = JSON.parse(readFileSync(path, 'utf8')) as ReturnType<typeof buildGreenReport>
+        expect(validateGreenReport(report)).toEqual([])
+        expect(report.method).toBe(method)
+        expect(report.prereg.tag).toBe(`prereg/${method}/${epoch ?? report.prereg.epoch}`)
+        expect(report.prereg.epoch).toBeGreaterThanOrEqual(2)
+        expect(report.burn_rule).toEqual({ one_shot_read: true, skill_edit_burns_set: true })
+      })
+    }
   }
 })

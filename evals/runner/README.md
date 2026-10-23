@@ -285,6 +285,18 @@ The unauthenticated free tier stopped serving requests on 2026-10-22 ("Free usag
 
 With the passthrough on, `opencode/big-pickle` and six of the seven other `-free` ids probed still fail with `Free usage limit reached. Subscribe to OpenCode Go to keep going` (`nemotron-3.5-lightning-free` and `nemotron-3.5-super-vl-free` were not re-probed; `minimax-m3.1-flash-free` reports itself deprecated). The `opencode-go/*` ids answer with the same credential (`opencode-go/beam-free` and `opencode-go/deepseek-v4.1-flash` each completed one probe turn). The prereg pins `opencode/big-pickle` as the agent, and the runner refuses non-`opencode/` ids in live mode, so RED could not run on free-tier ids at the time of writing. Owner decision: pin `opencode-go/*` ids in epoch 2. Live mode now accepts `opencode/` and `opencode-go/` model ids (nothing else); the recording proxy forwards `opencode-go` traffic to `https://opencode.ai/inference/go/openai/v1` (the catalogue's `api.url`).
 
+## CLIProxyAPI auth (epoch 3)
+
+Owner-authorized paid round: agent `openai/gpt-6-luna`, judge `anthropic/claude-haiku-5-5`, both through the owner's CLIProxyAPI (`https://cliproxy.fro.bot`, OpenAI-compatible `/v1`, providers `openai` and `anthropic`) with a per-repo key named `fro-bot-marcusrbrown-metacogs`. Opt-in: `--auth-cliproxy <key-name>` or `METACOGS_AUTH_CLIPROXY` (live runs, `review`/`rejudge`, `report`). Code: `src/runner/cliproxy.ts`.
+
+- **Where the key comes from.** The runner never calls the management API and never reads the infra repository's `.env`. At spawn time it runs `infra cliproxy keys list --json` with the infra checkout as cwd (`METACOGS_INFRA_DIR`, default `~/src/github.com/marcusrbrown/infra`; the CLI finds its own management credentials from there), parses stdout in-process, and keeps the single key that starts with the prefix the setup wizard derives from the key name (`sk-` + the name's slug cut to 24 characters + `-`; `fro-bot-marcusrbrown-metacogs` → `sk-fro-bot-marcusrbrown-met-`). Zero or several matches are refused with counts only. The listing, which holds every key on the gateway, is dropped after the selection. A failing CLI is reported by exit code; stdout is never quoted, and `sk-` tokens in stderr are scrubbed.
+- **Where it goes.** Only `<fixture>/xdg/data/opencode/auth.json` (0600) as `{"openai": {"type": "api", "key": …}, "anthropic": {…}}`. No Go or Zen entry is written in this mode, and `--auth-cliproxy` with `--auth-passthrough` is refused. The generated config gets the wizard's provider blocks, `{"provider": {"openai": {"options": {"baseURL"}}, "anthropic": {…}}}`, with `baseURL` pointing at the local recording proxy, which forwards to `https://cliproxy.fro.bot/v1` (`upstreamFor('openai' | 'anthropic')`). Because the proxy is still in the path, the model-visible `<available_skills>` check keeps working. No wire-format change was needed on the proxy side; `isolation.ts` learned to read the system prompt from Anthropic `system` and OpenAI Responses `instructions`/`input` (the chat-completions path the free gateways use is unchanged).
+- **What is recorded.** Each manifest has `auth_cliproxy: "<key-name>"` and `gateways: ["cliproxy"]` (and `gateway: "cliproxy"` from where the proxy forwarded), never a value. Reports list `cliproxy` under `models.gateways`.
+- **Leak scan.** Needles: the key, its distinctive prefix (`sk-fro-bot-marcusrbrown-met-`, so a different key of the same family is caught too), and `CLIPROXY_MANAGEMENT_KEY` when the runner's own environment exports it. The infra CLI usually reads the management key from its own `.env`, which the runner does not touch, so that third needle is best-effort. The runner never holds the management key in the usual setup, which is the point. The scan covers the manifest, `stdout.jsonl`, `stderr.txt`, `requests.json`, and the workspace tree; the judge transport scans its own stdout, stderr, and request bodies for the key; `report` aborts if a report contains any needle. A hit purges the run's artifacts and stops the campaign.
+- **Agreement checks.** `openai/*` and `anthropic/*` ids are live models, but a prereg that pins one is refused unless `--auth-cliproxy` is on, and in that mode a prereg that pins anything else is refused (the isolated `auth.json` holds nothing else). Scripted mode never takes the flag.
+- **Wire formats seen through the proxy.** `openai/gpt-6-luna` uses the OpenAI Responses API; `anthropic/claude-haiku-5-5` uses the Anthropic Messages API. Both catalogue entries say `temperature: false` (reasoning models), so OpenCode sends no `temperature` even when the agent config says 0. The judge evidence records `temperature: null`, and `temperature_observed` in reports is empty for this epoch. Determinism is therefore not enforced by a parameter; it is only observed (identical probe output twice).
+- **Reasoning-model latency.** The recording proxy's `Bun.serve` default idle timeout (10 s) cut at least one probe request warning (`Bun.serve() timed out a request after 10 seconds`). The proxy now sets `idleTimeout: 0`; the per-run timeout in the prereg is the only limit.
+
 ## Judge (Unit 6)
 
 Status: implemented and covered by mock tests. **Selected (owner decision, epoch 2): agent `opencode-go/beam-free`, judge `opencode-go/deepseek-v4.1-flash`**, both through the authenticated `opencode-go` provider (see [Selected judge](#selected-judge)). Code: `src/runner/judge.ts`, `src/runner/redact.ts`, probe `src/runner/judge-probe.ts`.
@@ -326,6 +338,21 @@ The probe ran while the free tier was degrading, so the failures are availabilit
 
 This is one probe each, not a calibration: it shows the contract is followable, the judge discriminates a crude pair, and one injection did not work. It says nothing about agreement with a human on borderline answers; human spot-check of RED verdicts has not been done.
 
+### Epoch 3 judge probe (paid models via CLIProxyAPI, 2026-10-23)
+
+`METACOGS_AUTH_CLIPROXY=fro-bot-marcusrbrown-metacogs bun src/runner/judge-probe.ts <model>`; opencode-ai 1.19.4; the same probe shape as above (two identical single-turn requests, then the real judge on three canned answers). Both model ids are in the 1.19.4 catalogue snapshot (no model entry had to be added to the generated config).
+
+| Check | `openai/gpt-6-luna` | `anthropic/claude-haiku-5-5` |
+| --- | --- | --- |
+| Two identical single-turn probes (`{"sum": 42, "word": "ready"}`) | identical text; 8.1 s then 5.0 s | identical text; 7.1 s then 7.6 s |
+| Returned model id | `gpt-6-luna` (equals the pinned name) | `claude-haiku-5-5` (equals the pinned name) |
+| Temperature the provider received | none (`temperature: false` in the catalogue; the request carries no field) | none (same) |
+| Tool calls made | 0 | 0 |
+| Fixed system prompt seen as a prefix | yes | yes |
+| Judge, weak answer / strong answer / weak + injection | `fail` CF1–CF5 / `pass` CF1–CF5 / `fail` CF1–CF5, 1 attempt each | same |
+
+**Tool allowance on this gateway.** The judge transport offers `read` only (empty workspace, `external_directory: deny`), as on the free gateways. A separate one-off run with `read` denied too (no tool offered at all) was also answered by both models (`ok`, correct JSON), so CLIProxyAPI, unlike the free tier, does not require a tool. The transport keeps `read` anyway: with no tool-capable request the proxy records nothing the transport can use to confirm the returned model id or that the fixed system prompt arrived (`returned: []`, `prompt_seen: false` in that run), and both are judge-contract checks. This is a probe, not a calibration, and it says nothing about agreement with a human on borderline answers. Family: `gpt-luna` (OpenAI) versus `claude-haiku` (Anthropic), per the catalogue and the vendors' own naming, so the judge-differs-from-agent requirement holds here without a stealth-id caveat.
+
 ### Family
 
 `opencode/big-pickle` is a stealth id: OpenCode's catalogue says `family: big-pickle` and nothing else, and the epoch-1 prereg records only a community guess (GLM/DeepSeek). `opencode/beam-free` is likewise a stealth id (`family: beam`, released 2026-10-05). **Neither family can be established from available evidence**, so "different family from the agent" is unverified for any free id.
@@ -346,3 +373,12 @@ Measured on the first dev campaigns (opencode-ai 1.19.4, `opencode-go/beam-free`
 - **Not a fire.** A read of the wrong or a look-alike path, a truncated or failed read, or a read when the runner has no skill text to compare with. A direct read with no record fails on `helper_not_invoked` and `record_missing`. A record with no skill text ever loaded fails as `skill_not_loaded` plus `record_without_load`: the model guessed the contract.
 - **Negative fixtures stay strict.** Any skill-tool call, denied `invalid` skill call, read of `SKILL.md` (whatever it returned or whether it succeeded), helper invocation, or file in the records dir is a false fire (`false_fire_direct_read` is new).
 - **Host exit.** A non-zero exit after a complete direct read is `host_crash` (a FAIL), not `infra_error`, the same as after a skill-tool load.
+
+## Load rate (epoch 3)
+
+`load_rate` is reported as its own metric next to the pass rate and is **not a bar**: the share of attempted skill-condition runs in which the skill text reached the model (`fire_basis` `skill_tool` or `direct_read`), whatever the answer was. Denominator: runs in `attempted` (infra_error and non_isolated attempts excluded), the same one `fire_basis` already uses. It exists because the epoch-2 misses were dominated by runs where the skill never loaded; a low pass rate with a low load rate and a low pass rate with a high load rate are different findings. Where it appears:
+
+- `green-dev.json`: `fixtures[].load_rate` (negatives included, where a nonzero value is a false load) and `dev.load_rate` (pooled over dev fixtures).
+- `green.json`: `heldout[].skill.load_rate` and `heldout[].baseline.load_rate` (always 0, since the baseline has no skill), `negatives[].load_rate`, and `skill_load_rate` (skill condition pooled over the held-out fixtures).
+
+The field is optional in the report schemas so that the committed epoch-2 reports, written before it existed, still validate; new reports always carry it.

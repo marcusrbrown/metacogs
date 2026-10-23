@@ -582,6 +582,61 @@ describe('auth passthrough', () => {
   })
 })
 
+describe('CLIProxyAPI auth', () => {
+  // Synthetic value shaped like a gateway key, issued to nobody.
+  const KEY = 'sk-fro-bot-marcusrbrown-met-00000000000000000000000000000000'
+  const AUTH = { openai: { type: 'api', key: KEY }, anthropic: { type: 'api', key: KEY } } as const
+  const NEEDLES = [
+    { label: 'auth_cliproxy:key', value: KEY },
+    { label: 'auth_cliproxy:key_prefix', value: 'sk-fro-bot-marcusrbrown-met-' },
+  ]
+
+  test('the key lands only in the isolated auth.json for openai and anthropic; the manifest names the key, not the value, and says cliproxy', async () => {
+    let seen: { mode: number; providers: string[]; types: string[] } | undefined
+    const host = fakeHost({
+      during: (req) => {
+        const path = join(req.env.XDG_DATA_HOME!, 'opencode', 'auth.json')
+        const parsed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, { type: string }>
+        seen = { mode: statSync(path).mode & 0o777, providers: Object.keys(parsed).sort(), types: Object.values(parsed).map((e) => e.type) }
+      },
+    })
+    const c = campaign([planOne('dev', 'baseline')], host, { auth: AUTH, cliproxyKeyName: 'fro-bot-marcusrbrown-metacogs', leakNeedles: NEEDLES })
+    const res = await runCampaign(c)
+    expect(res.aborted).toBeUndefined()
+    expect(seen).toEqual({ mode: 0o600, providers: ['anthropic', 'openai'], types: ['api', 'api'] })
+    const m = manifestOf(c.campaignDir, res.results[0]!.runId)
+    expect(m.auth_cliproxy).toBe('fro-bot-marcusrbrown-metacogs')
+    expect(m.gateways).toEqual(['cliproxy'])
+    expect(m.auth_passthrough).toBeUndefined()
+    const raw = readFileSync(join(c.campaignDir, res.results[0]!.runId, 'manifest.json'), 'utf8')
+    expect(raw).not.toContain(KEY)
+    expect(raw).not.toContain('sk-fro-bot-marcusrbrown-met-')
+  })
+
+  test('the key in a transcript, or just its distinctive prefix, is a credential_leak that purges artifacts and stops the campaign', async () => {
+    for (const leaked of [KEY, 'sk-fro-bot-marcusrbrown-met-deadbeef']) {
+      const host = fakeHost({ stdout: ev({ type: 'text', timestamp: 2, part: { type: 'text', text: `oops ${leaked}` } }) })
+      const c = campaign([planOne('dev', 'baseline', 'a'), planOne('dev', 'baseline', 'b')], host, { auth: AUTH, cliproxyKeyName: 'fro-bot-marcusrbrown-metacogs', leakNeedles: NEEDLES })
+      const res = await runCampaign(c)
+      expect(res.aborted).toBe('credential_leak')
+      expect(host.runCalls).toBe(1)
+      const runId = readdirSync(c.campaignDir).find((d) => d !== 'summary.json')!
+      expect(readdirSync(join(c.campaignDir, runId))).toEqual(['manifest.json'])
+      const raw = readFileSync(join(c.campaignDir, runId, 'manifest.json'), 'utf8')
+      expect(raw).not.toContain(leaked)
+      expect((JSON.parse(raw) as RunManifest).auth_cliproxy).toBe('fro-bot-marcusrbrown-metacogs')
+    }
+  })
+
+  test('a management key held by the runner is scanned for too', async () => {
+    const MANAGEMENT = 'synthetic-management-key-9f8e7d6c5b4a'
+    const host = fakeHost({ during: (req) => writeFileSync(join(req.cwd, 'oops.txt'), MANAGEMENT) })
+    const needles = [...NEEDLES, { label: 'auth_cliproxy:management_key', value: MANAGEMENT }]
+    const res = await runCampaign(campaign([planOne('dev', 'baseline')], host, { auth: AUTH, cliproxyKeyName: 'k', leakNeedles: needles }))
+    expect(res.aborted).toBe('credential_leak')
+  })
+})
+
 describe('provider 429', () => {
   const rateLimited = ev({ type: 'error', timestamp: 1, error: { name: 'APIError', data: { message: 'Rate limit exceeded', statusCode: 429 } } })
 

@@ -141,6 +141,32 @@ describe('refusals happen before anything launches', () => {
     expect(t.lines.err.join('\n')).toContain('must follow the prereg plan')
   })
 
+  test('--auth-cliproxy is live-only and excludes --auth-passthrough; both are usage errors raised before the infra CLI is called', async () => {
+    for (const argv of [
+      ['red', '--method', 'demo', '--auth-cliproxy', 'fro-bot-marcusrbrown-metacogs'],
+      ['red', '--method', 'demo', '--provider', 'live', '--auth-cliproxy', 'fro-bot-marcusrbrown-metacogs', '--auth-passthrough', 'opencode-go'],
+      ['red', '--method', 'demo', '--provider', 'live', '--auth-cliproxy', '../etc'],
+    ]) {
+      const t = io()
+      expect(await main(argv, t.io)).toBe(EXIT.USAGE)
+      expect(t.lines.err.join('\n')).toMatch(/--provider live|mutually exclusive|key name/)
+    }
+  })
+
+  test('a prereg that pins openai/* or anthropic/* is refused without --auth-cliproxy, before anything launches', async () => {
+    const repo = new TestRepo('metacogs-clitest-')
+    cleanup.push(() => repo.destroy())
+    const scaffold = scaffoldMethod(repo, 'demo', { heldoutDir: tmp('metacogs-clitest-held-'), overrides: { agent_model_id: 'openai/gpt-6-luna', judge_model_id: 'anthropic/claude-haiku-5-5' } })
+    repo.commit('fixtures', scaffold.fixturePaths)
+    writePrereg(repo, scaffold)
+    repo.commit('prereg', [scaffold.preregPath])
+    repo.tag('prereg/demo/1')
+    const t = io()
+    expect(await main(['red', '--method', 'demo', '--repo', repo.dir, '--provider', 'live', '--auth-passthrough', 'none'], t.io)).toBe(EXIT.REFUSED)
+    expect(t.lines.err.join('\n')).toContain('--auth-cliproxy')
+    expect(t.lines.out).toEqual([])
+  })
+
   test('held-out output dir inside the repo → refused (nothing written there)', async () => {
     const { repo, heldout, scaffold } = chainRepo()
     buildHappyChain(repo, scaffold)

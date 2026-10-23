@@ -13,6 +13,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { parseAuthPassthrough, readPassthroughAuth } from './auth'
+import { cliproxyAuth, fetchCliproxyKey, parseAuthCliproxy } from './cliproxy'
 import { buildChildEnv, createFixture, destroyFixture } from './env'
 import { createJudge, type JudgeTransportResponse, opencodeTransport, parseRubric } from './judge'
 import { opencodeArgv, spawnCapture } from './opencode'
@@ -64,7 +65,9 @@ async function main() {
   const requested = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--method')
   const models = requested.length ? requested : await listFreeModels()
   // METACOGS_AUTH_PASSTHROUGH=opencode-go opts in (Go is the preferred gateway; add opencode only for Zen, which bills credits); values are copied by the transport, never printed.
-  const auth = readPassthroughAuth(parseAuthPassthrough(undefined, process.env))
+  // METACOGS_AUTH_CLIPROXY=<key-name> uses the owner's CLIProxyAPI key instead (fetched through the infra CLI, never printed).
+  const cliproxyName = parseAuthCliproxy(undefined, process.env)
+  const auth = cliproxyName ? cliproxyAuth(fetchCliproxyKey(cliproxyName)) : readPassthroughAuth(parseAuthPassthrough(undefined, process.env))
   const transport = opencodeTransport({}, auth)
   const repoRoot = join(import.meta.dir, '..', '..')
   const spec = parseRubric(readFileSync(join(repoRoot, 'evals', method, 'rubric.md'), 'utf8'))

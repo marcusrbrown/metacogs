@@ -369,7 +369,10 @@ const obj = (shape: Record<string, Schema>): Schema => ({ t: 'obj', shape })
 const arr = (of: Schema): Schema => ({ t: 'arr', of })
 
 /** Reports from before the gateway was recorded omit `gateways`; new ones always carry it. */
-const gatewaysShape: Schema = { t: 'opt', of: { t: 'arr', of: { t: 'str', re: /^(go|zen|mixed)$/ } } }
+const gatewaysShape: Schema = { t: 'opt', of: { t: 'arr', of: { t: 'str', re: /^(go|zen|cliproxy|mixed)$/ } } }
+
+/** `load_rate` arrived with the epoch-3 reads; the committed epoch-2 reports omit it. New reports always carry it. */
+const loadRateShape: Schema = { t: 'opt', of: { t: 'num' } }
 
 const outcomesShape = (): Schema =>
   obj(Object.fromEntries(Object.keys(emptyOutcomes()).map((k) => [k, INT])))
@@ -538,6 +541,15 @@ export interface FireBasisTally {
 
 const emptyFireBasis = (): FireBasisTally => ({ skill_tool: 0, direct_read: 0, none: 0 })
 
+/**
+ * Share of attempted skill-condition runs in which the skill text reached the model (`skill_tool` + `direct_read`), whatever
+ * the answer was. Reported next to the pass rate as its own metric; it is not a bar. `0` when nothing was attempted.
+ */
+export const loadRateOf = (tally: FireBasisTally): number => {
+  const total = tally.skill_tool + tally.direct_read + tally.none
+  return total === 0 ? 0 : round4((tally.skill_tool + tally.direct_read) / total)
+}
+
 export interface DevFixtureReport {
   id: string
   kind: 'dev' | 'negative'
@@ -555,6 +567,8 @@ export interface DevFixtureReport {
   check_codes: Record<string, number>
   /** How the skill fired in the runs counted above (infra_error and non_isolated attempts excluded). */
   fire_basis: FireBasisTally
+  /** `loadRateOf(fire_basis)`: how often the skill loaded in this fixture's runs. */
+  load_rate: number
   meets_dev_bar: boolean
 }
 
@@ -590,6 +604,8 @@ export interface DevReport {
     negative_false_fires: number
     /** Summed over the dev (positive) fixtures. */
     fire_basis: FireBasisTally
+    /** `loadRateOf` over the summed `fire_basis`: the pooled skill-load rate on dev fixtures. Its own metric, not a bar. */
+    load_rate: number
     passes_dev_bar: boolean
   }
 }
@@ -683,6 +699,7 @@ export function buildDevReport(input: DevReportInput): DevReport {
         criteria,
         check_codes: Object.fromEntries(Object.entries(checkCodes).sort(([a], [b]) => (a < b ? -1 : 1))),
         fire_basis: fireBasis,
+        load_rate: loadRateOf(fireBasis),
         meets_dev_bar: meets,
       }
     })
@@ -692,6 +709,7 @@ export function buildDevReport(input: DevReportInput): DevReport {
   const devMeeting = dev.filter((f) => f.meets_dev_bar).length
   const falseFires = negatives.reduce((n, f) => n + f.fail, 0)
   const manifests = runs.map((r) => r.manifest)
+  const devFireBasis = dev.reduce((t, f) => ({ skill_tool: t.skill_tool + f.fire_basis.skill_tool, direct_read: t.direct_read + f.fire_basis.direct_read, none: t.none + f.fire_basis.none }), emptyFireBasis())
 
   return {
     schema_version: REPORT_SCHEMA_VERSION,
@@ -745,7 +763,8 @@ export function buildDevReport(input: DevReportInput): DevReport {
       dev_fixtures_meeting_bar: devMeeting,
       negative_fixtures: negatives.length,
       negative_false_fires: falseFires,
-      fire_basis: dev.reduce((t, f) => ({ skill_tool: t.skill_tool + f.fire_basis.skill_tool, direct_read: t.direct_read + f.fire_basis.direct_read, none: t.none + f.fire_basis.none }), emptyFireBasis()),
+      fire_basis: devFireBasis,
+      load_rate: loadRateOf(devFireBasis),
       passes_dev_bar: dev.length > 0 && negatives.length > 0 && devMeeting === dev.length && negatives.every((f) => f.meets_dev_bar),
     },
   }
@@ -802,6 +821,7 @@ export const DEV_REPORT_SCHEMA: Schema = obj({
       criteria: { t: 'rec', keys: /^[A-Z]{2}\d+$/, of: obj({ pass: INT, fail_quoted: INT, fail_absent: INT }) },
       check_codes: { t: 'rec', keys: /^[a-z][a-z_]*$/, of: INT },
       fire_basis: obj({ skill_tool: INT, direct_read: INT, none: INT }),
+      load_rate: loadRateShape,
       meets_dev_bar: BOOL,
     }),
   ),
@@ -811,6 +831,7 @@ export const DEV_REPORT_SCHEMA: Schema = obj({
     negative_fixtures: INT,
     negative_false_fires: INT,
     fire_basis: obj({ skill_tool: INT, direct_read: INT, none: INT }),
+    load_rate: loadRateShape,
     passes_dev_bar: BOOL,
   }),
 })
@@ -865,6 +886,7 @@ export interface GreenCell {
   criteria: Record<string, CriterionTally>
   check_codes: Record<string, number>
   fire_basis: FireBasisTally
+  load_rate: number
 }
 
 export interface GreenDelta {
@@ -892,6 +914,7 @@ export interface GreenNegativeReport {
   taxonomy: Taxonomy
   check_codes: Record<string, number>
   fire_basis: FireBasisTally
+  load_rate: number
 }
 
 export interface GreenPooled {
@@ -916,6 +939,8 @@ export interface GreenReport {
   heldout: GreenFixtureReport[]
   negatives: GreenNegativeReport[]
   pooled: { skill: GreenPooled; baseline: GreenPooled; delta: GreenDelta }
+  /** Skill-condition load rate pooled over the held-out fixtures (`loadRateOf` of the summed `fire_basis`). Its own metric, not a bar. */
+  skill_load_rate: number
   dev_regression: { source_report_present: boolean; passes_dev_bar: boolean; skill_matches: boolean }
   near_duplicate_check: 'pass' | 'fail'
   checks: {
@@ -1001,6 +1026,7 @@ function cellOf(runs: readonly LoadedRun[], acc: Accumulator): GreenCell {
     criteria,
     check_codes: Object.fromEntries(Object.entries(checkCodes).sort(([a], [b]) => (a < b ? -1 : 1))),
     fire_basis: fireBasis,
+    load_rate: loadRateOf(fireBasis),
   }
 }
 
@@ -1048,7 +1074,7 @@ export function buildGreenReport(input: GreenReportInput): GreenReport {
     .sort((a, b) => (a.id < b.id ? -1 : 1))
     .map((g) => {
       const cell = cellOf(g.skill, acc)
-      return { id: g.id, fixture_hash: g.hash, attempted: cell.attempted, false_fires: cell.fail, outcomes: cell.outcomes, taxonomy: cell.taxonomy, check_codes: cell.check_codes, fire_basis: cell.fire_basis }
+      return { id: g.id, fixture_hash: g.hash, attempted: cell.attempted, false_fires: cell.fail, outcomes: cell.outcomes, taxonomy: cell.taxonomy, check_codes: cell.check_codes, fire_basis: cell.fire_basis, load_rate: cell.load_rate }
     })
   if (acc.incomplete > 0) throw new Error(`${acc.incomplete} manifest(s) never finished; refusing to report an unfinished campaign`)
 
@@ -1130,6 +1156,9 @@ export function buildGreenReport(input: GreenReportInput): GreenReport {
       baseline: { ...baselinePooled, pass_rate_wilson95: wilson95(baselinePooled.pass, baselinePooled.attempted) },
       delta: deltaOf(skillPooled, baselinePooled),
     },
+    skill_load_rate: loadRateOf(
+      heldoutReports.reduce((t, f) => ({ skill_tool: t.skill_tool + f.skill.fire_basis.skill_tool, direct_read: t.direct_read + f.skill.fire_basis.direct_read, none: t.none + f.skill.fire_basis.none }), emptyFireBasis()),
+    ),
     dev_regression: devRegression,
     near_duplicate_check: input.nearDuplicate,
     checks,
@@ -1154,6 +1183,7 @@ const cellShape = (): Schema =>
     criteria: { t: 'rec', keys: /^[A-Z]{2}\d+$/, of: obj({ pass: INT, fail_quoted: INT, fail_absent: INT }) },
     check_codes: { t: 'rec', keys: /^[a-z][a-z_]*$/, of: INT },
     fire_basis: obj({ skill_tool: INT, direct_read: INT, none: INT }),
+    load_rate: loadRateShape,
   })
 
 export const GREEN_REPORT_SCHEMA: Schema = obj({
@@ -1202,9 +1232,11 @@ export const GREEN_REPORT_SCHEMA: Schema = obj({
       taxonomy: taxonomyShape(),
       check_codes: { t: 'rec', keys: /^[a-z][a-z_]*$/, of: INT },
       fire_basis: obj({ skill_tool: INT, direct_read: INT, none: INT }),
+      load_rate: loadRateShape,
     }),
   ),
   pooled: obj({ skill: poolShape(), baseline: poolShape(), delta: deltaShape() }),
+  skill_load_rate: loadRateShape,
   dev_regression: obj({ source_report_present: BOOL, passes_dev_bar: BOOL, skill_matches: BOOL }),
   near_duplicate_check: str(/^(pass|fail)$/),
   checks: obj({ skill_pooled: BOOL, per_fixture_floor: BOOL, baseline_ceiling: BOOL, negatives_silent: BOOL, dev_regression: BOOL, near_duplicate: BOOL }),

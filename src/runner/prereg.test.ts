@@ -261,6 +261,46 @@ describe('prereg ordering (temp git repo)', () => {
       expect(r.shas.commitSha).toBe(pre2)
     })
 
+    describe('carry-over: the skill already exists and no skill commit follows the new tag', () => {
+      function epoch2WithoutSkillEdit() {
+        const { repo, heldout } = setup()
+        const s1 = scaffoldMethod(repo, 'demo', { heldoutDir: heldout })
+        buildHappyChain(repo, s1)
+        repo.write('evals/demo/report.txt', 'epoch 1 read\n')
+        const closing = repo.commit('epoch 1 close (reports only)', ['evals/demo/report.txt'])
+        const s2 = scaffoldMethod(repo, 'demo', { epoch: 2, prevClosing: closing, heldoutDir: heldout })
+        writePrereg(repo, s2)
+        const pre2 = repo.commit('epoch 2 prereg', [s2.preregPath])
+        repo.tag('prereg/demo/2')
+        return { repo, s2, pre2 }
+      }
+
+      test('tag strictly before HEAD, skill unchanged: GREEN permitted, no first skill commit reported', () => {
+        const { repo, s2, pre2 } = epoch2WithoutSkillEdit()
+        repo.write('evals/demo/dev-report.txt', 'dev read\n')
+        repo.commit('dev reads', ['evals/demo/dev-report.txt'])
+        const r = checkPreregOrdering(repo.git, s2.prereg, 'green')
+        expect(r.violations).toEqual([])
+        expect(r.shas.commitSha).toBe(pre2)
+        expect(r.shas.firstSkillCommit).toBeNull()
+        expect(r.shas.skillTreeSha).toBe(repo.git.treeAt('HEAD', 'skills/demo') ?? undefined)
+      })
+
+      test('HEAD is the tagged commit itself: refused until something is committed after the tag', () => {
+        const { repo, s2 } = epoch2WithoutSkillEdit()
+        expect(codes(checkPreregOrdering(repo.git, s2.prereg, 'green').violations)).toEqual(['tag_equals_head'])
+      })
+
+      test('a skill edit before the new tag does not count as this epoch; one after it follows the normal rule', () => {
+        const { repo, s2 } = epoch2WithoutSkillEdit()
+        repo.write('skills/demo/SKILL.md', 'edited after the epoch 2 tag\n')
+        const edit = repo.commit('skill edit', ['skills/demo'])
+        const r = checkPreregOrdering(repo.git, s2.prereg, 'green')
+        expect(r.violations).toEqual([])
+        expect(r.shas.firstSkillCommit).toBe(edit)
+      })
+    })
+
     test('epoch 2 prereg whose closing commit is unknown or not before the tag: refused', () => {
       const { repo, heldout } = setup()
       const s1 = scaffoldMethod(repo, 'demo', { heldoutDir: heldout })

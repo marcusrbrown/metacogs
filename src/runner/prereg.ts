@@ -300,6 +300,8 @@ export type ViolationCode =
   | 'tag_equals_skill_commit'
   | 'skill_commit_not_after_tag'
   | 'no_skill_commit'
+  | 'skill_changed_since_tag'
+  | 'tag_equals_head'
   | 'skill_dirty'
 
 export interface Violation {
@@ -406,7 +408,21 @@ export function checkPreregOrdering(git: Git, prereg: Prereg, mode: 'red' | 'gre
   const first = skillCommits[0] ?? null
   shas.firstSkillCommit = first
   if (first === null) {
-    if (mode === 'green') add('no_skill_commit', `no commit under skills/${method} in this epoch; commit the skill before a GREEN run`)
+    // No skill commit since the previous epoch closed. For an epoch > 1 that is legitimate when the skill
+    // already exists and was not touched: the read then runs on a skill that predates the tag. The ordering
+    // evidence is the same in spirit (prereg strictly before the read, zero skill changes in between), so
+    // require exactly that: the tag is a strict ancestor of HEAD and `skills/<m>` is byte-identical at both.
+    if (mode === 'green') {
+      const atTag = git.treeAt(tag.commitSha, `skills/${method}`)
+      const atHead = git.treeAt('HEAD', `skills/${method}`)
+      if (!atTag || !atHead) {
+        add('no_skill_commit', `no commit under skills/${method} in this epoch and no committed skill to carry over; commit the skill before a GREEN run`)
+      } else if (atTag !== atHead) {
+        add('skill_changed_since_tag', `skills/${method} at HEAD (${short(atHead)}) differs from the tree at tag ${tagName} (${short(atTag)}) without a skill commit in this epoch`)
+      } else if (!git.isStrictAncestor(tag.commitSha, 'HEAD')) {
+        add('tag_equals_head', `carry-over GREEN needs tag ${tagName} (${short(tag.commitSha)}) to be a strict ancestor of HEAD; commit something after the tag first`)
+      }
+    }
   } else {
     for (const c of skillCommits) {
       if (c === tag.commitSha) {

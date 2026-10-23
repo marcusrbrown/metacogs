@@ -10,6 +10,7 @@ import { parseArgs } from 'node:util'
 import { join, resolve } from 'node:path'
 
 import { AuthPassthroughError, DEFAULT_PASSTHROUGH, needlesOf, type PassthroughAuth, parseAuthPassthrough, PASSTHROUGH_PROVIDERS, readPassthroughAuth } from './auth'
+import { CliproxyAuthError, cliproxyModelMismatch, type ResolvedCliproxy, resolveCliproxy } from './cliproxy'
 import { Git } from './git'
 import { findNearDuplicates, NEAR_DUPLICATE_THRESHOLD } from './neardup'
 import { loadCampaignRuns, rejudgeCampaign, writeReview } from './review'
@@ -42,6 +43,10 @@ const USAGE = `usage: bun run eval <red|green> --method <name> [options]
   --auth-passthrough <p,..>  copy these provider entries (opencode-go, opencode) from the real auth.json into each run's isolated
                           auth.json; or set METACOGS_AUTH_PASSTHROUGH. Live runs default to opencode-go only; opencode (Zen, credit-billed)
                           is copied only when listed; 'none' copies nothing. Values are never logged or recorded; names go in the manifest
+  --auth-cliproxy <name>  live runs only: use the owner's CLIProxyAPI key <name> (e.g. fro-bot-marcusrbrown-metacogs) for openai/* and anthropic/*
+                          models; or set METACOGS_AUTH_CLIPROXY. The value is fetched at spawn time with 'infra cliproxy keys list --json'
+                          (run from METACOGS_INFRA_DIR, default ~/src/github.com/marcusrbrown/infra) and written only to the run's isolated
+                          auth.json. Replaces the opencode-go passthrough; cannot be combined with --auth-passthrough. Never logged or recorded
   --green                 report: project the one-shot GREEN campaign (default: newest <state root>/runs/<name>-green-*) into
                           evals/reports/<m>/green.json. Refuses if green.json exists.
   --campaign <dir>        report only: the RED campaign directory (default: newest evals/runs/<name>-red-*)
@@ -88,9 +93,9 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
   const { method, runs, provider, fixture, repo, out: outRoot } = parsed.values
   const devOnly = parsed.values['dev-only'] === true
   if ((mode === 'review' || mode === 'rejudge') && !extra.length) {
-    return campaignToolMain({ mode, campaign: parsed.values.campaign, repo, authFlag: parsed.values['auth-passthrough'], cwd, env, out, err })
+    return campaignToolMain({ mode, campaign: parsed.values.campaign, repo, authFlag: parsed.values['auth-passthrough'], cliproxyFlag: parsed.values['auth-cliproxy'], cwd, env, out, err })
   }
-  if (mode === 'report' && !extra.length && method) return reportMain({ method, repo, campaign: parsed.values.campaign, devOnly, green: parsed.values.green === true, cwd, env, out, err })
+  if (mode === 'report' && !extra.length && method) return reportMain({ method, repo, campaign: parsed.values.campaign, devOnly, green: parsed.values.green === true, cliproxyFlag: parsed.values['auth-cliproxy'], cwd, env, out, err })
   if ((mode !== 'red' && mode !== 'green') || extra.length || !method) {
     err(USAGE)
     return EXIT.USAGE
@@ -107,11 +112,12 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
   }
   const providerMode: ProviderMode = provider === 'live' ? 'live' : 'scripted'
   let auth: PassthroughAuth = {}
+  let cliproxy: ResolvedCliproxy | undefined
   try {
-    const providers = parseAuthPassthrough(parsed.values['auth-passthrough'], env, providerMode === 'live' ? DEFAULT_PASSTHROUGH : [])
-    auth = readPassthroughAuth(providers)
+    cliproxy = resolveCliproxy(parsed.values['auth-cliproxy'], env, { live: providerMode === 'live', passthroughFlag: parsed.values['auth-passthrough'] })
+    auth = cliproxy ? cliproxy.auth : readPassthroughAuth(parseAuthPassthrough(parsed.values['auth-passthrough'], env, providerMode === 'live' ? DEFAULT_PASSTHROUGH : []))
   } catch (e) {
-    if (e instanceof AuthPassthroughError) {
+    if (e instanceof AuthPassthroughError || e instanceof CliproxyAuthError) {
       err(`${e.message}\n${USAGE}`)
       return EXIT.USAGE
     }
@@ -196,8 +202,13 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
   let judge: ReturnType<typeof createJudge> | undefined
   if (providerMode === 'live') {
     if (!isLiveModel(prereg.judge_model_id)) {
-      err(`prereg pins judge ${prereg.judge_model_id}; this runner only reaches opencode/* and opencode-go/* judges`)
+      err(`prereg pins judge ${prereg.judge_model_id}; this runner only reaches opencode/*, opencode-go/*, openai/* and anthropic/* judges`)
       return EXIT.ERROR
+    }
+    const mismatch = cliproxyModelMismatch([prereg.agent_model_id, prereg.judge_model_id], cliproxy !== undefined)
+    if (mismatch) {
+      err(`REFUSED: ${mismatch}`)
+      return EXIT.REFUSED
     }
     judge = createJudge({ repoRoot, method, model: prereg.judge_model_id, auth })
   }
@@ -227,6 +238,7 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
       runs: plan,
       judge: judge?.hook,
       auth,
+      ...(cliproxy ? { cliproxyKeyName: cliproxy.keyName, leakNeedles: cliproxy.needles } : {}),
       signal: controller.signal,
       log: out,
     })
@@ -254,6 +266,7 @@ interface CampaignToolArgs {
   campaign?: string
   repo?: string
   authFlag?: string
+  cliproxyFlag?: string
   cwd: string
   env: Record<string, string | undefined>
   out: (line: string) => void
@@ -286,10 +299,13 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
   const method = runs[0]!.manifest.method
   if (a.mode === 'rejudge') {
     let auth: PassthroughAuth = {}
+    let cliproxyOn = false
     try {
-      auth = readPassthroughAuth(parseAuthPassthrough(a.authFlag, a.env, DEFAULT_PASSTHROUGH))
+      const cliproxy = resolveCliproxy(a.cliproxyFlag, a.env, { live: true, passthroughFlag: a.authFlag })
+      cliproxyOn = cliproxy !== undefined
+      auth = cliproxy ? cliproxy.auth : readPassthroughAuth(parseAuthPassthrough(a.authFlag, a.env, DEFAULT_PASSTHROUGH))
     } catch (e) {
-      if (e instanceof AuthPassthroughError) {
+      if (e instanceof AuthPassthroughError || e instanceof CliproxyAuthError) {
         a.err(`${e.message}\n${USAGE}`)
         return EXIT.USAGE
       }
@@ -307,8 +323,13 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
     }
     const model = verification.prereg.judge_model_id
     if (!isLiveModel(model)) {
-      a.err(`prereg pins judge ${model}; this runner only reaches opencode/* and opencode-go/* judges`)
+      a.err(`prereg pins judge ${model}; this runner only reaches opencode/*, opencode-go/*, openai/* and anthropic/* judges`)
       return EXIT.ERROR
+    }
+    const mismatch = cliproxyModelMismatch([model], cliproxyOn)
+    if (mismatch) {
+      a.err(`REFUSED: ${mismatch}`)
+      return EXIT.REFUSED
     }
     const availability = opencodeAvailability()
     if (!availability.available) {
@@ -337,6 +358,7 @@ interface ReportArgs {
   campaign?: string
   devOnly: boolean
   green: boolean
+  cliproxyFlag?: string | undefined
   cwd: string
   env: Record<string, string | undefined>
   out: (line: string) => void
@@ -393,6 +415,17 @@ function reportMain(a: ReportArgs): number {
     needles = needlesOf(readPassthroughAuth(PASSTHROUGH_PROVIDERS))
   } catch {
     // no real auth.json (CI, other machines): nothing to compare against
+  }
+  // The CLIProxyAPI key is not in auth.json. When the campaign used it (flag or env names it), compare against it too, or refuse.
+  try {
+    const cliproxy = resolveCliproxy(a.cliproxyFlag, a.env, { live: true })
+    if (cliproxy) needles = [...needles, ...cliproxy.needles]
+  } catch (e) {
+    if (e instanceof CliproxyAuthError) {
+      a.err(`ABORTED: cannot check the report for the CLIProxyAPI key: ${e.message}`)
+      return EXIT.CREDENTIAL_LEAK
+    }
+    throw e
   }
   if (a.green) return greenReportMain(a, { repoRoot, verification, headSha, runs, plannedRuns, needles })
   if (a.devOnly) return devReportMain(a, { repoRoot, git, verification, headSha, runs, plannedRuns, needles })
@@ -511,6 +544,7 @@ const OPTIONS = {
   out: { type: 'string' },
   campaign: { type: 'string' },
   'auth-passthrough': { type: 'string' },
+  'auth-cliproxy': { type: 'string' },
   'include-dev': { type: 'boolean' },
   'dev-only': { type: 'boolean' },
   green: { type: 'boolean' },

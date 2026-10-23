@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { availableSkillsFromRequests, checkDebugConfig, checkIsolation, failedChecks, type IsolationInput } from './isolation'
+import { availableSkillsFromRequests, checkDebugConfig, checkIsolation, failedChecks, type IsolationInput, systemPromptSent, systemTexts } from './isolation'
 import type { RecordedRequest } from './scripted-provider'
 
 const skillsBlock = (names: string[]) =>
@@ -45,6 +45,34 @@ describe('available skills instrument', () => {
     expect(availableSkillsFromRequests([r])).toEqual(['demo'])
     expect(availableSkillsFromRequests([request('no block')])).toBeNull()
     expect(availableSkillsFromRequests([{ hasTools: false, round: 0, body: {} }])).toBeNull()
+  })
+})
+
+describe('wire formats reaching the recording proxy (CLIProxyAPI gateway)', () => {
+  const prompt = `You are an agent.\n${skillsBlock(['demo'])}`
+  const tools = [{ name: 'bash' }]
+  // chat completions (free gateways), Anthropic messages, OpenAI Responses (instructions, and a developer item in `input`)
+  const bodies: [string, Record<string, unknown>][] = [
+    ['chat completions', { messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'hi' }], tools }],
+    ['anthropic string system', { system: prompt, messages: [{ role: 'user', content: 'hi' }], tools }],
+    ['anthropic block system', { system: [{ type: 'text', text: 'You are an agent.\n' }, { type: 'text', text: skillsBlock(['demo']) }], messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }], tools }],
+    ['responses instructions', { instructions: prompt, input: [{ role: 'user', content: [{ type: 'input_text', text: 'hi' }] }], tools }],
+    ['responses developer item', { input: [{ role: 'developer', content: prompt }, { role: 'user', content: 'hi' }], tools }],
+  ]
+  test.each(bodies)('%s: system text and the skill list are read', (_name, body) => {
+    const req: RecordedRequest = { hasTools: true, round: 0, body }
+    expect(systemTexts(body).join('')).toContain('<available_skills>')
+    expect(availableSkillsFromRequests([req])).toEqual(['demo'])
+  })
+
+  test.each(bodies)('%s: the fixed judge prompt is recognised as a prefix of the system message', (_name, body) => {
+    expect(systemPromptSent(body, 'You are an agent.')).toBe(true)
+    expect(systemPromptSent(body, 'You are a different agent.')).toBe(false)
+  })
+
+  test('a user message that merely quotes the prompt is not a system message', () => {
+    expect(systemPromptSent({ messages: [{ role: 'user', content: 'You are an agent.' }] }, 'You are an agent.')).toBe(false)
+    expect(availableSkillsFromRequests([{ hasTools: true, round: 0, body: { messages: [{ role: 'user', content: skillsBlock(['demo']) }], tools } }])).toBeNull()
   })
 })
 

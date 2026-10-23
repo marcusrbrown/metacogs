@@ -12,6 +12,8 @@
  * OpenCode's own reporting.
  */
 
+import { CLIPROXY_UPSTREAM } from './cliproxy'
+
 export const SPIKE_PROVIDER_ID = 'metacogs-spike-provider'
 export const SPIKE_MODEL_ID = 'metacogs-spike-model'
 /** The only key string the runner ever writes to a config. A copy anywhere else is a leak. */
@@ -249,26 +251,29 @@ export const ZEN_UPSTREAM = 'https://opencode.ai/zen/v1'
 export const GO_UPSTREAM = 'https://opencode.ai/inference/go/openai/v1'
 
 /**
- * Live runs reach OpenCode's gateway only. `opencode-go/*` (the Go subscription) is the default and preferred gateway;
- * `opencode/*` is Zen, which bills credits, and stays accepted when a prereg or flag names it.
+ * Live runs reach OpenCode's gateway (`opencode-go/*` is the default and preferred; `opencode/*` is Zen, which bills credits,
+ * and stays accepted when a prereg or flag names it) or, only with `--auth-cliproxy`, the owner's CLIProxyAPI
+ * (`openai/*` and `anthropic/*`). The runner CLI refuses a CLIProxyAPI id without that flag.
  */
-export const LIVE_PROVIDERS = ['opencode', 'opencode-go'] as const
+export const LIVE_PROVIDERS = ['opencode', 'opencode-go', 'openai', 'anthropic'] as const
 export const isLiveModel = (model: string): boolean => LIVE_PROVIDERS.some((p) => model.startsWith(`${p}/`))
 export const providerOf = (model: string): string => model.slice(0, model.indexOf('/'))
-export const upstreamFor = (providerId: string): string => (providerId === 'opencode-go' ? GO_UPSTREAM : ZEN_UPSTREAM)
+export const upstreamFor = (providerId: string): string =>
+  providerId === 'opencode-go' ? GO_UPSTREAM : providerId === 'openai' || providerId === 'anthropic' ? CLIPROXY_UPSTREAM : ZEN_UPSTREAM
 
-/** Which OpenCode gateway answered: `go` (subscription), `zen` (credit-billed), or `mixed` if a run used both. */
-export type Gateway = 'go' | 'zen' | 'mixed'
+/** Which gateway answered: `go` (subscription), `zen` (credit-billed), `cliproxy` (the owner's CLIProxyAPI), or `mixed` if a run used more than one. */
+export type Gateway = 'go' | 'zen' | 'cliproxy' | 'mixed'
 
 /** A recorded fact, not a gate: derived from where the recording proxy forwarded. `null` when nothing was forwarded. */
 export function gatewayOf(upstreams: readonly (string | undefined)[]): Gateway | null {
-  const kinds = new Set<'go' | 'zen'>()
+  const kinds = new Set<'go' | 'zen' | 'cliproxy'>()
   for (const u of upstreams) {
-    if (u?.includes('/inference/go/')) kinds.add('go')
+    if (u?.startsWith(CLIPROXY_UPSTREAM)) kinds.add('cliproxy')
+    else if (u?.includes('/inference/go/')) kinds.add('go')
     else if (u?.includes('/zen/')) kinds.add('zen')
   }
   if (kinds.size === 0) return null
-  return kinds.size === 2 ? 'mixed' : [...kinds][0]!
+  return kinds.size >= 2 ? 'mixed' : [...kinds][0]!
 }
 
 /**
@@ -282,6 +287,8 @@ export function startRecordingProxy(upstream = ZEN_UPSTREAM): ScriptedProviderSe
   const requests: RecordedRequest[] = []
   const server = Bun.serve({
     port: 0,
+    // Reasoning models stay silent for well over Bun's default 10 s idle limit before the first token.
+    idleTimeout: 0,
     async fetch(request) {
       const url = new URL(request.url)
       const text = await request.text()
