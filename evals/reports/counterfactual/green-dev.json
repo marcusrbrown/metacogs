@@ -14,7 +14,7 @@
     "per_run_timeout_ms": 180000
   },
   "repo": {
-    "head_sha": "8079747abe263d8d4570c5a774147b1bbe0c30a6"
+    "head_sha": "6f5bf8a671deda12a9b021169c3bc4ce8fa0bd05"
   },
   "skill": {
     "sha256": "44b9c08c3ca650a81631fd9f83f05147208812e326c12c54afb53d010e9e4c97"
@@ -45,9 +45,9 @@
     "temperature_observed": []
   },
   "campaign": {
-    "id": "counterfactual-dev-2026-10-23T03-26-00-130Z",
-    "started_at": "2026-10-23T03:26:01.097Z",
-    "finished_at": "2026-10-23T03:46:56.960Z",
+    "id": "counterfactual-dev-2026-10-23T05-58-37-936Z",
+    "started_at": "2026-10-23T05:58:38.454Z",
+    "finished_at": "2026-10-23T06:19:29.851Z",
     "planned_runs": 45,
     "executed_manifests": 45,
     "incomplete_manifests": 0
@@ -63,11 +63,11 @@
       "infra_error": 0,
       "non_isolated": 0
     },
-    "wall_clock_ms": 836071,
+    "wall_clock_ms": 868953,
     "tokens": {
-      "input": 330048,
-      "output": 22320,
-      "reasoning": 1789
+      "input": 353806,
+      "output": 23246,
+      "reasoning": 1855
     }
   },
   "dev_bar": {
