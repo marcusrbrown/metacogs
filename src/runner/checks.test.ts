@@ -10,6 +10,7 @@ import {
   classifyHostOutcome,
   fireEvidence,
   hasFired,
+  helperVersionOf,
   isDeniedSkillCall,
   listRecordFiles,
   type RecordFile,
@@ -229,6 +230,113 @@ describe('direct SKILL.md reads', () => {
     const exit = { exitCode: 1, timedOut: false, aborted: false }
     expect(classifyHostOutcome(exit, events, 'counterfactual', SKILL_TEXT)).toBe('host_crash')
     expect(classifyHostOutcome(exit, events, 'counterfactual')).toBe('infra_error')
+  })
+})
+
+describe('shell reads of SKILL.md', () => {
+  const SKILL_TEXT = '---\nname: counterfactual\ndescription: d\n---\n\n# Counterfactual\n\n1. Gate.\n2. Objective: state the decision.\n'
+  const bash = (command: string, status = 'completed', output?: string) => toolUse('bash', { status, input: { command }, ...(output === undefined ? {} : { output }) })
+  const negative = (events: ReturnType<typeof stream>) => runChecks({ ...base, condition: 'skill', kind: 'negative', events, records: [], skillText: SKILL_TEXT })
+  const positive = (events: ReturnType<typeof stream>, records: RecordFile[]) => runChecks({ ...base, condition: 'skill', kind: 'dev', events, records, skillText: SKILL_TEXT })
+
+  test.each([
+    'cat .agents/skills/counterfactual/SKILL.md',
+    'sed -n 1,40p ./skills/counterfactual/SKILL.md',
+    'head -n 5 "/ws/.agents/skills/counterfactual/SKILL.md"',
+    'FOO=1 tail /ws/.agents/skills/x/../counterfactual/SKILL.md',
+    'cat < .agents/skills/counterfactual/SKILL.md',
+    'echo start && less .agents/skills/counterfactual/SKILL.md | wc -l',
+  ])('on a negative, `%s` is a false fire even when the host denied it', (command) => {
+    expect(negative(stream(bash(command, 'error'))).failures.map((f) => f.code)).toEqual(['false_fire_direct_read'])
+  })
+
+  test('a shell command that merely mentions the path, or reads another file, is not a read', () => {
+    for (const command of ['echo .agents/skills/counterfactual/SKILL.md', 'cat .agents/skills/synthesis/SKILL.md', 'cat fixture.md', 'grep -n Gate fixture.md']) {
+      expect(negative(stream(bash(command))).ok).toBe(true)
+    }
+  })
+
+  test('on a positive fixture a denied shell read credits nothing, but it is still evidence that the file was opened', () => {
+    const events = stream(bash('cat .agents/skills/counterfactual/SKILL.md', 'error'), helperCall())
+    const r = positive(events, [recordFile()])
+    expect(r.fire.fireBasis).toBeNull()
+    expect(r.fire.skillFileRead).toBe(true)
+    expect(r.failures.map((f) => f.code)).toContain('skill_not_loaded')
+  })
+
+  test('a completed shell read that returned the whole body fires with basis bash-read; the read tool outranks it', () => {
+    const events = stream(bash('cat .agents/skills/counterfactual/SKILL.md', 'completed', SKILL_TEXT), helperCall())
+    expect(positive(events, [recordFile()]).fire.fireBasis).toBe('bash-read')
+    const partial = stream(bash('head -n 3 .agents/skills/counterfactual/SKILL.md', 'completed', '---\nname: counterfactual\ndescription: d'), helperCall())
+    expect(positive(partial, [recordFile()]).fire.fireBasis).toBeNull()
+    const viaRead = toolUse('read', { status: 'completed', input: { filePath: '.agents/skills/counterfactual/SKILL.md' }, output: SKILL_TEXT.split('\n').map((l, i) => `${i + 1}: ${l}`).join('\n') })
+    expect(positive(stream(bash('cat .agents/skills/counterfactual/SKILL.md', 'completed', SKILL_TEXT), viaRead, helperCall()), [recordFile()]).fire.fireBasis).toBe('direct_read')
+  })
+
+  test('any spelling of the path to the read tool resolves: dot segments, doubled slashes, letter case', () => {
+    const read = (filePath: string) => toolUse('read', { status: 'error', input: { filePath } })
+    for (const path of ['./skills/counterfactual/SKILL.md', '/ws//.agents/skills/counterfactual/SKILL.md', '/ws/.agents/skills/counterfactual/./SKILL.md', '/ws/.agents/skills/counterfactual/skill.MD', '.agents\\skills\\counterfactual\\SKILL.md']) {
+      expect(negative(stream(read(path))).failures.map((f) => f.code)).toEqual(['false_fire_direct_read'])
+    }
+  })
+})
+
+describe('helper invocation is the command itself', () => {
+  const bash = (command: string) => toolUse('bash', { status: 'completed', input: { command }, output: '' })
+  const called = (command: string) => fireEvidence('counterfactual', stream(bash(command)), []).helperInvoked
+
+  test.each([
+    'node .agents/skills/counterfactual/scripts/record.mjs --file r.json',
+    'node scripts/record.mjs',
+    'node ./scripts/record.mjs <<\'EOF\'\n{"a": "cat; echo node x"}\nEOF',
+    'FOO=1 BAR=2 node "/ws/.agents/skills/counterfactual/scripts/record.mjs" --out-dir r',
+  ])('`%s` is a helper call', (command) => {
+    expect(called(command)).toBe(true)
+  })
+
+  test.each([
+    'echo node scripts/record.mjs',
+    'cat .agents/skills/counterfactual/scripts/record.mjs',
+    'node -e "process.exit(0)" scripts/record.mjs',
+    'node scripts/other.mjs scripts/record.mjs',
+    'sed -n 1,5p scripts/record.mjs',
+    'cd .agents/skills/counterfactual && node scripts/record.mjs',
+    'nodejs scripts/record.mjs',
+  ])('`%s` is not a helper call', (command) => {
+    expect(called(command)).toBe(false)
+  })
+
+  test('a negative fixture is not failed for catting or echoing the helper path', () => {
+    const events = stream(bash('cat scripts/record.mjs'), bash('echo scripts/record.mjs'))
+    expect(runChecks({ ...base, condition: 'skill', kind: 'negative', events, records: [] }).ok).toBe(true)
+  })
+})
+
+describe('record provenance: helper_version', () => {
+  const VERSION = '1.2.3'
+  const run = (records: RecordFile[], helperVersion: string | null | undefined = VERSION) =>
+    runChecks({ ...base, condition: 'skill', kind: 'heldout', events: stream(skillLoad(), helperCall()), records, helperVersion })
+
+  test('a record stamped with the installed helper\'s version passes', () => {
+    expect(run([recordFile({ helper_version: VERSION })]).failures).toEqual([])
+  })
+
+  test('a hand-written record (no stamp, a spoofed stamp, or an unknowable helper version) fails record_without_helper', () => {
+    expect(run([recordFile()]).failures.map((f) => f.code)).toEqual(['record_without_helper'])
+    expect(run([recordFile({ helper_version: '9.9.9' })]).failures.map((f) => f.code)).toEqual(['record_without_helper'])
+    expect(run([recordFile({ helper_version: VERSION })], null).failures.map((f) => f.code)).toEqual(['record_without_helper'])
+    expect(run([recordFile({ helper_version: VERSION })], null).validRecords).toEqual([])
+  })
+
+  test('the stamp is not checked when the caller gives no helper version', () => {
+    const r = runChecks({ ...base, condition: 'skill', kind: 'heldout', events: stream(skillLoad(), helperCall()), records: [recordFile()] })
+    expect(r.failures).toEqual([])
+  })
+
+  test('helperVersionOf reads the constant from a bundled helper and refuses anything else', async () => {
+    const { buildHelper } = await import('../generate/bundle-helpers')
+    expect(helperVersionOf(await buildHelper({ methods: ['counterfactual'], helperVersion: '4.5.6-test' }))).toBe('4.5.6-test')
+    expect(helperVersionOf('console.log(1)')).toBeNull()
   })
 })
 

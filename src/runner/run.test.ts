@@ -32,6 +32,8 @@ let verification: PreregVerification
 const scratch: string[] = []
 
 const SAMPLE_RECORD = validRecord({ method: 'demo' })
+/** What the bundled helper writes: the same record stamped with the version baked into `scripts/record.mjs` below. */
+const STAMPED_RECORD = { ...SAMPLE_RECORD, helper_version: '0.0.0-test' }
 
 beforeAll(async () => {
   repo = new TestRepo('metacogs-runtest-')
@@ -276,7 +278,7 @@ describe('run outcomes (fake host)', () => {
       during: (req) => {
         const dir = req.env.METACOGS_RECORDS_DIR!
         mkdirSync(dir, { recursive: true })
-        writeFileSync(join(dir, recordFilename(SAMPLE_RECORD)), JSON.stringify(SAMPLE_RECORD))
+        writeFileSync(join(dir, recordFilename(SAMPLE_RECORD)), JSON.stringify(STAMPED_RECORD))
       },
     }))
     const res = await runCampaign(c)
@@ -288,6 +290,19 @@ describe('run outcomes (fake host)', () => {
     expect(m.isolation?.expectedSkills).toEqual(['demo'])
   })
 
+  test('a record the installed helper did not stamp fails the run as record_without_helper', async () => {
+    const c = campaign([planOne('heldout', 'skill', 'h1')], fakeHost({
+      stdout: [skillLoadEvent, helperEvent, textEvents].join('\n'),
+      during: (req) => {
+        const dir = req.env.METACOGS_RECORDS_DIR!
+        mkdirSync(dir, { recursive: true })
+        writeFileSync(join(dir, recordFilename(SAMPLE_RECORD)), JSON.stringify(SAMPLE_RECORD))
+      },
+    }))
+    const res = await runCampaign(c)
+    expect(res.results[0]).toMatchObject({ status: 'completed', outcome: 'fail', reasons: ['record_without_helper'] })
+  })
+
   test('a complete direct read of the installed SKILL.md fires with fire_basis direct_read; the skill tool records skill_tool', async () => {
     const skillText = readFileSync(join(repo.dir, 'skills', 'demo', 'SKILL.md'), 'utf8')
     const numbered = skillText.split('\n').map((l, i) => `${i + 1}: ${l}`).join('\n')
@@ -295,7 +310,7 @@ describe('run outcomes (fake host)', () => {
     const during = (req: HostRunRequest) => {
       const dir = req.env.METACOGS_RECORDS_DIR!
       mkdirSync(dir, { recursive: true })
-      writeFileSync(join(dir, recordFilename(SAMPLE_RECORD)), JSON.stringify(SAMPLE_RECORD))
+      writeFileSync(join(dir, recordFilename(SAMPLE_RECORD)), JSON.stringify(STAMPED_RECORD))
     }
     const direct = campaign([planOne('dev', 'skill', 'd1')], fakeHost({ stdout: [directRead, helperEvent, textEvents].join('\n'), during }))
     const res = await runCampaign(direct)
@@ -468,7 +483,7 @@ describe('run outcomes (fake host)', () => {
       during: (req) => {
         const dir = req.env.METACOGS_RECORDS_DIR!
         mkdirSync(dir, { recursive: true })
-        writeFileSync(join(dir, recordFilename(SAMPLE_RECORD)), JSON.stringify(SAMPLE_RECORD))
+        writeFileSync(join(dir, recordFilename(SAMPLE_RECORD)), JSON.stringify(STAMPED_RECORD))
       },
     }))
     const res = await runCampaign(c)

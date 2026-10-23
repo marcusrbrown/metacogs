@@ -565,6 +565,9 @@ export interface FireBasisTally {
 
 const emptyFireBasis = (): FireBasisTally => ({ skill_tool: 0, direct_read: 0, none: 0 })
 
+/** The tally key of a manifest's `fire_basis`. A read of the skill file through a shell reader is pooled with `direct_read`. */
+const tallyKeyOf = (basis: RunManifest['fire_basis']): keyof FireBasisTally => (basis === undefined || basis === null ? 'none' : basis === 'bash-read' ? 'direct_read' : basis)
+
 /**
  * Share of attempted skill-condition runs in which the skill text reached the model (`skill_tool` + `direct_read`), whatever
  * the answer was. Reported next to the pass rate as its own metric; it is not a bar. `0` when nothing was attempted.
@@ -685,7 +688,7 @@ export function buildDevReport(input: DevReportInput): DevReport {
           continue
         }
         outcomes[bucket] += 1
-        if (bucket !== 'infra_error' && bucket !== 'non_isolated') fireBasis[manifest.fire_basis ?? 'none'] += 1
+        if (bucket !== 'infra_error' && bucket !== 'non_isolated') fireBasis[tallyKeyOf(manifest.fire_basis)] += 1
         addToTaxonomy(taxonomy, bucket)
         addToTaxonomy(totalsTaxonomy, bucket)
         wall += manifest.wall_clock_ms ?? 0
@@ -1060,7 +1063,7 @@ function cellOf(runs: readonly LoadedRun[], acc: Accumulator): GreenCell {
     acc.tokens.input += manifest.usage?.input ?? 0
     acc.tokens.output += manifest.usage?.output ?? 0
     acc.tokens.reasoning += manifest.usage?.reasoning ?? 0
-    if (bucket !== 'infra_error' && bucket !== 'non_isolated') fireBasis[manifest.fire_basis ?? 'none'] += 1
+    if (bucket !== 'infra_error' && bucket !== 'non_isolated') fireBasis[tallyKeyOf(manifest.fire_basis)] += 1
     for (const f of manifest.check_failures) checkCodes[f.code] = (checkCodes[f.code] ?? 0) + 1
     if (manifest.judge) {
       acc.judged += 1

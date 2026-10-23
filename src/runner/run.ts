@@ -10,7 +10,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { needlesOf, type PassthroughAuth, passthroughNames } from './auth'
-import { checkBudget, classifyHostOutcome, type CheckFailure, fireEvidence, listRecordFiles, runChecks } from './checks'
+import { checkBudget, classifyHostOutcome, type CheckFailure, fireEvidence, helperVersionOf, listRecordFiles, runChecks } from './checks'
 import { destroyFixture } from './env'
 import { analyzeEvents, type EventSummary, isRateLimited } from './events'
 import { checkDebugConfig, checkIsolation, type IsolationEvidence } from './isolation'
@@ -344,6 +344,15 @@ function writeSummary(c: CampaignInput, results: readonly RunResult[], infraErro
   return { tallies, summaryPath }
 }
 
+/** The version the skill's bundled helper stamps on its records; `null` when there is no helper or its version cannot be read. */
+function installedHelperVersion(repoRoot: string, method: string): string | null {
+  try {
+    return helperVersionOf(readFileSync(join(repoRoot, 'skills', method, 'scripts', 'record.mjs'), 'utf8'))
+  } catch {
+    return null
+  }
+}
+
 // ── credential scan ───────────────────────────────────────────────────
 
 function leakScanInput(c: CampaignInput, runDir: string, manifest: RunManifest) {
@@ -633,6 +642,7 @@ async function runAttempt(c: CampaignInput, run: PlannedRun, state: AttemptState
           records,
           expectedExecutionModes: prereg.expected_execution_modes,
           skillText,
+          ...(run.condition === 'skill' ? { helperVersion: installedHelperVersion(c.repoRoot, c.method) } : {}),
         })
         manifest.check_failures = checks.failures
         const reasons = checks.failures.map((f: CheckFailure) => f.code)

@@ -37,7 +37,33 @@ export function listRecordFiles(dir: string): RecordFile[] {
 // ── fire evidence ──────────────────────────────────────────────────────────
 
 const UNAVAILABLE_SKILL_TOOL = /unavailable tool\s*['"`]?skill['"`]?/i
-const HELPER_PATH = /scripts\/record\.mjs/
+const HELPER_PATH = /(?:^|\/)scripts\/record\.mjs$/
+const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/
+
+/** The command string of a `bash` tool call. */
+function bashCommandOf(call: ToolUse): string | undefined {
+  if (call.tool !== 'bash') return undefined
+  const command = typeof call.input === 'object' && call.input !== null ? (call.input as Record<string, unknown>).command : undefined
+  return typeof command === 'string' ? command : undefined
+}
+
+const unquote = (token: string): string => token.replace(/^["']+|["']+$/g, '')
+
+/** Simple commands of a shell line as token lists (separators `;`, `&&`, `||`, `|`, newline); a heredoc body is not part of the line. */
+function simpleCommands(command: string): string[][] {
+  const line = command.split(/<<-?\s*['"]?\w+/)[0] ?? ''
+  return line
+    .split(/&&|\|\||[;|\n]/)
+    .map((segment) => segment.trim().split(/\s+/).filter(Boolean).map(unquote))
+    .filter((tokens) => tokens.length > 0)
+}
+
+/** The command name and its arguments, past any leading `VAR=value` assignments. */
+function headOf(tokens: readonly string[]): { name: string; args: string[] } | undefined {
+  const at = tokens.findIndex((t) => !ENV_ASSIGNMENT.test(t))
+  const name = at === -1 ? undefined : tokens[at]
+  return name === undefined ? undefined : { name, args: tokens.slice(at + 1) }
+}
 
 /** A denied skill call: the `skill` tool was removed, so the host reports an `invalid` pseudo-tool. */
 export function isDeniedSkillCall(call: ToolUse): boolean {
@@ -46,28 +72,61 @@ export function isDeniedSkillCall(call: ToolUse): boolean {
   return UNAVAILABLE_SKILL_TOOL.test(haystack)
 }
 
+/**
+ * The helper ran: the command itself is `node <path>scripts/record.mjs`. Naming the file elsewhere on the line (an `echo`,
+ * a `cat`, `node -e` with the path as a later argument) is not a call.
+ */
 export function isHelperInvocation(call: ToolUse): boolean {
-  if (call.tool !== 'bash') return false
-  const command = typeof call.input === 'object' && call.input !== null ? (call.input as Record<string, unknown>).command : undefined
-  return typeof command === 'string' && HELPER_PATH.test(command)
+  const command = bashCommandOf(call)
+  const first = command === undefined ? undefined : simpleCommands(command)[0]
+  const head = first === undefined ? undefined : headOf(first)
+  return head?.name === 'node' && head.args[0] !== undefined && HELPER_PATH.test(head.args[0])
 }
 
 // ── direct SKILL.md reads ──────────────────────────────────────────────────
 
-/**
- * A `read` of the skill file (any workspace path ending in `skills/<method>/SKILL.md`, which covers
- * `.agents/skills/<method>/SKILL.md`). Relative and `..` paths are normalized first.
- */
-export function isSkillFileRead(call: ToolUse, method: string): boolean {
-  if (call.tool !== 'read') return false
-  const path = typeof call.input === 'object' && call.input !== null ? (call.input as Record<string, unknown>).filePath : undefined
-  if (typeof path !== 'string') return false
-  const normalized = posix.normalize(path.replace(/\\/g, '/'))
-  const suffix = `skills/${method}/SKILL.md`
+/** Whether a path, however spelled (`./`, `..`, doubled slashes, backslashes, letter case), names `skills/<method>/SKILL.md`. */
+function namesSkillFile(path: string, method: string): boolean {
+  const normalized = posix.normalize(path.replace(/\\/g, '/')).toLowerCase()
+  const suffix = `skills/${method}/SKILL.md`.toLowerCase()
   return normalized === suffix || normalized.endsWith(`/${suffix}`)
 }
 
+const SHELL_READERS = new Set(['cat', 'head', 'tail', 'sed', 'less', 'more', 'bat'])
+
+/** How the skill file was opened: the `read` tool, or a shell reader (`cat`, `head`, …) given the path as an argument. */
+export function skillFileAccess(call: ToolUse, method: string): 'read' | 'bash' | null {
+  if (call.tool === 'read') {
+    const path = typeof call.input === 'object' && call.input !== null ? (call.input as Record<string, unknown>).filePath : undefined
+    return typeof path === 'string' && namesSkillFile(path, method) ? 'read' : null
+  }
+  const command = bashCommandOf(call)
+  if (command === undefined) return null
+  const reads = simpleCommands(command).some((tokens) => {
+    const head = headOf(tokens)
+    return head !== undefined && SHELL_READERS.has(head.name) && head.args.some((a) => namesSkillFile(a, method))
+  })
+  return reads ? 'bash' : null
+}
+
+/** The skill file was opened, by the `read` tool or a shell reader, whatever came back. */
+export function isSkillFileRead(call: ToolUse, method: string): boolean {
+  return skillFileAccess(call, method) !== null
+}
+
 const collapse = (text: string): string => text.replace(/\s+/g, ' ').trim()
+
+/** The version baked into a bundled `scripts/record.mjs` (`function buildHelperVersion() { return "x" }`), or `null` if the bundle has no such constant. */
+export function helperVersionOf(bundle: string): string | null {
+  const match = /function buildHelperVersion\(\)\s*\{\s*return\s*("(?:[^"\\]|\\.)*")/.exec(bundle)
+  if (!match) return null
+  try {
+    const value: unknown = JSON.parse(match[1]!)
+    return typeof value === 'string' ? value : null
+  } catch {
+    return null
+  }
+}
 
 /** SKILL.md without its YAML frontmatter. */
 export function skillBodyOf(skillText: string): string {
@@ -90,7 +149,7 @@ export function isSkillBodyRead(call: ToolUse, method: string, skillText: string
   return body.length > 0 && collapse(readContent(call.output)).includes(body)
 }
 
-export type FireBasis = 'skill_tool' | 'direct_read'
+export type FireBasis = 'skill_tool' | 'direct_read' | 'bash-read'
 
 export interface FireEvidence {
   /** `skill` tool call naming the method (any status). */
@@ -101,7 +160,7 @@ export interface FireEvidence {
   skillFileRead: boolean
   /** The skill body reached the model through a direct read. Needs the skill text; absent text never credits. */
   skillBodyRead: boolean
-  /** How the method fired on a positive fixture; `null` when the skill text never reached the model. The skill tool wins when both happened. */
+  /** How the method fired on a positive fixture; `null` when the skill text never reached the model. Precedence: skill tool, `read` tool, shell reader. */
   fireBasis: FireBasis | null
   /** `invalid` tool_use for the unavailable `skill` tool: an attempted fire, not silence. */
   deniedSkillCall: boolean
@@ -111,13 +170,15 @@ export interface FireEvidence {
 
 export function fireEvidence(method: string, events: EventSummary, records: readonly RecordFile[], skillText?: string): FireEvidence {
   const skillLoaded = events.skillCalls.some((c) => isSkillContentLoad(c, method))
-  const skillBodyRead = events.toolUses.some((c) => isSkillBodyRead(c, method, skillText))
+  const bodyReads = events.toolUses.filter((c) => isSkillBodyRead(c, method, skillText))
+  const skillBodyRead = bodyReads.length > 0
+  const readTool = bodyReads.some((c) => skillFileAccess(c, method) === 'read')
   return {
     skillCalled: events.skillCalls.some((c) => skillCallName(c) === method),
     skillLoaded,
     skillFileRead: events.toolUses.some((c) => isSkillFileRead(c, method)),
     skillBodyRead,
-    fireBasis: skillLoaded ? 'skill_tool' : skillBodyRead ? 'direct_read' : null,
+    fireBasis: skillLoaded ? 'skill_tool' : readTool ? 'direct_read' : skillBodyRead ? 'bash-read' : null,
     deniedSkillCall: events.toolUses.some(isDeniedSkillCall),
     helperInvoked: events.toolUses.some(isHelperInvocation),
     recordFiles: records.length,
@@ -144,6 +205,7 @@ export type CheckCode =
   | 'record_method_mismatch'
   | 'execution_mode_unexpected'
   | 'helper_not_invoked'
+  | 'record_without_helper'
 
 export interface CheckFailure {
   code: CheckCode
@@ -160,6 +222,12 @@ export interface CheckInput {
   expectedExecutionModes?: readonly string[]
   /** The installed SKILL.md. Without it a direct read cannot be verified and never credits a fire. */
   skillText?: string
+  /**
+   * The version the installed helper stamps on every record it writes. A record stamped with anything else (or not stamped)
+   * did not come from that helper. `null`: the version could not be determined, so no record can be vouched for.
+   * Omitted: the stamp is not checked.
+   */
+  helperVersion?: string | null
 }
 
 export interface CheckResult {
@@ -227,6 +295,10 @@ export function runChecks(input: CheckInput): CheckResult {
       continue
     }
     const { record } = result
+    if (input.helperVersion !== undefined && record.helper_version !== input.helperVersion) {
+      fail('record_without_helper', `${file.name}: ${record.helper_version === undefined ? 'no helper_version stamp' : 'helper_version differs from the installed helper'}; the record was not written by it`)
+      continue
+    }
     if (record.method !== method) fail('record_method_mismatch', `${file.name}: method ${record.method}, expected ${method}`)
     if (file.name !== recordFilename(record)) fail('record_filename_mismatch', `${file.name}: name does not match the record's canonical hash`)
     if (!allowedModes.includes(record.execution_mode)) {
