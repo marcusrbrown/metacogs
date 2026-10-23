@@ -786,9 +786,80 @@
   "verdict": "green",
   "held_out_too_easy": false,
   "human_review": {
-    "status": "pending",
+    "status": "complete",
     "judged_runs": 39,
-    "reviewed": 0
+    "reviewed": 39,
+    "agreement": {
+      "SY1": {
+        "n": 39,
+        "agree": 34,
+        "rate": 0.8718,
+        "kappa": 0.7424,
+        "demoted": false
+      },
+      "SY2": {
+        "n": 39,
+        "agree": 24,
+        "rate": 0.6154,
+        "kappa": 0.0299,
+        "demoted": true
+      },
+      "SY3": {
+        "n": 39,
+        "agree": 30,
+        "rate": 0.7692,
+        "kappa": 0.2419,
+        "demoted": true
+      },
+      "SY4": {
+        "n": 39,
+        "agree": 28,
+        "rate": 0.7179,
+        "kappa": 0.3092,
+        "demoted": true
+      },
+      "SY5": {
+        "n": 39,
+        "agree": 24,
+        "rate": 0.6154,
+        "kappa": 0.2892,
+        "demoted": true
+      }
+    },
+    "flipped_runs": [
+      "008-heldout-sy-h8-skill-r1",
+      "025-heldout-sy-h6-baseline-r3",
+      "026-heldout-sy-h6-skill-r3",
+      "034-heldout-sy-h5-baseline-r4",
+      "035-heldout-sy-h5-skill-r4",
+      "036-heldout-sy-h6-skill-r4",
+      "039-heldout-sy-h7-skill-r4",
+      "040-heldout-sy-h8-skill-r4",
+      "046-heldout-sy-h5-baseline-r5",
+      "048-heldout-sy-h6-skill-r5"
+    ],
+    "demoted_criteria": [
+      "SY2",
+      "SY3",
+      "SY4",
+      "SY5"
+    ],
+    "recomputed": {
+      "skill_pooled_pass": 19,
+      "baseline_pooled_pass": 1,
+      "per_fixture_skill_pass": {
+        "sy-h5": 5,
+        "sy-h6": 4,
+        "sy-h7": 5,
+        "sy-h8": 5
+      },
+      "checks": {
+        "skill_pooled": true,
+        "per_fixture_floor": true,
+        "baseline_ceiling": true
+      },
+      "verdict": "green"
+    }
   },
   "burn_rule": {
     "one_shot_read": true,
