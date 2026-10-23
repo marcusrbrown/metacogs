@@ -1,5 +1,5 @@
 /**
- * Judge selection probe (Unit 6, Step A). For each free `opencode/*` model:
+ * Judge selection probe. For each free `opencode/*` model:
  * two identical single-turn probes through the judge transport (isolated env,
  * recording proxy, no key anywhere), then one probe with the real judge
  * prompt for a method to check the strict-JSON contract is followable.

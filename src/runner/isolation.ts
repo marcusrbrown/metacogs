@@ -17,7 +17,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-// ── instruments over recorded requests (promoted from the spike) ───────────
+// ── instruments over recorded requests ─────────────────────────────────────
 
 function requestBodies(requests: readonly RecordedRequest[]): Record<string, unknown>[] {
   return requests.map((r) => (isRecord(r.body) ? r.body : {}))
@@ -97,18 +97,6 @@ export function offeredTools(requests: readonly RecordedRequest[]): string[] {
   return tools
     .map((t) => (isRecord(t) && isRecord(t.function) ? String(t.function.name) : ''))
     .filter(Boolean)
-}
-
-export function skillToolDescription(requests: readonly RecordedRequest[]): string | undefined {
-  const main = requests.find((r) => r.hasTools)
-  const body = isRecord(main?.body) ? main.body : {}
-  const tools = Array.isArray(body.tools) ? body.tools : []
-  for (const t of tools) {
-    if (isRecord(t) && isRecord(t.function) && t.function.name === 'skill') {
-      return String(t.function.description)
-    }
-  }
-  return undefined
 }
 
 // ── debug config ───────────────────────────────────────────────────────────

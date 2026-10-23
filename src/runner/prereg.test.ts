@@ -420,13 +420,9 @@ describe('committed preregs', () => {
         expect(new Set(tokens as string[]).size).toBe((tokens as string[]).length)
       })
 
-      test('held-out hashes match the custody directory when it exists', () => {
+      test.skipIf(!existsSync(heldoutDir(method)))('held-out hashes match the custody directory when it exists', () => {
         if (!parsed.ok) throw new Error(parsed.errors.join('; '))
         const dir = heldoutDir(method)
-        if (!existsSync(dir)) {
-          console.log(`held-out hashes for ${method} not verified: ${dir} does not exist on this machine`)
-          return
-        }
         const { problems, fixtures } = verifyPreregContent(parsed.prereg, { evalDir, heldoutDir: dir }, { includeHeldout: true })
         expect(problems).toEqual([])
         expect(fixtures.heldout).toHaveLength(4)

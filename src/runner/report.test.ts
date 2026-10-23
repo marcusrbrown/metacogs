@@ -602,9 +602,10 @@ describe('buildGreenReport (held-out, both conditions)', () => {
   })
 
   test('newcombe95: no difference straddles zero; a clean 5/5 versus 0/5 does not', () => {
-    const [lo, hi] = newcombe95(5, 5, 0, 5)
-    expect(lo).toBeGreaterThan(0.3)
-    expect(hi).toBeLessThanOrEqual(1)
+    expect(newcombe95(5, 5, 0, 5)).toEqual([0.3855, 1])
+    // 8/10 versus 2/10, unclamped: d = 0.6; Wilson 0.4902..0.9433 and 0.0567..0.5098;
+    // lo = 0.6 - sqrt(0.3098^2 + 0.3098^2) = 0.1619; hi = 0.6 + sqrt(0.1433^2 + 0.1433^2) = 0.8027
+    expect(newcombe95(8, 10, 2, 10)).toEqual([0.1619, 0.8027])
     const same = newcombe95(3, 5, 3, 5)
     expect(same[0]).toBeLessThan(0)
     expect(same[1]).toBeGreaterThan(0)
@@ -623,10 +624,29 @@ describe('buildGreenReport (held-out, both conditions)', () => {
 describe('committed green reports', () => {
   const REPO_ROOT = join(import.meta.dir, '..', '..')
   // `green.epoch2.json` is the preserved epoch-2 read (its held-out set is burned); `green.json` is the current epoch's.
+  // A method that HYPOTHESES.md calls green, or that matrix.json cites `green.json` for, has been read: its report must exist.
+  const readMethods = new Set<string>()
+  for (const line of readFileSync(join(REPO_ROOT, 'HYPOTHESES.md'), 'utf8').split('\n')) {
+    const cells = line.split('|').map((c) => c.trim())
+    if (cells.length >= 4 && /^green/.test(cells[3] ?? '')) readMethods.add(cells[1] ?? '')
+  }
+  const matrix = JSON.parse(readFileSync(join(REPO_ROOT, 'matrix.json'), 'utf8')) as { methods: Record<string, Record<string, { evidence_ref?: string }>> }
+  for (const [method, hosts] of Object.entries(matrix.methods)) {
+    if (Object.values(hosts).some((cell) => cell.evidence_ref === `evals/reports/${method}/green.json`)) readMethods.add(method)
+  }
+  test('at least one method is marked as having a GREEN read', () => {
+    expect(readMethods.size).toBeGreaterThan(0)
+  })
   for (const method of ['counterfactual', 'synthesis']) {
     for (const [file, epoch] of [['green.epoch2.json', 2], ['green.json', null]] as const) {
       const path = join(dirname(greenReportPath(REPO_ROOT, method)), file)
-      test.skipIf(!existsSync(path))(`evals/reports/${method}/${file} is allowlist-only and names a prereg tag of its epoch`, () => {
+      const required = file === 'green.json' && readMethods.has(method)
+      if (required) {
+        test(`evals/reports/${method}/${file} exists`, () => {
+          expect(existsSync(path)).toBe(true)
+        })
+      }
+      test.skipIf(!required && !existsSync(path))(`evals/reports/${method}/${file} is allowlist-only and names a prereg tag of its epoch`, () => {
         const report = JSON.parse(readFileSync(path, 'utf8')) as ReturnType<typeof buildGreenReport>
         expect(validateGreenReport(report)).toEqual([])
         expect(report.method).toBe(method)

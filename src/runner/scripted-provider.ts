@@ -137,10 +137,6 @@ export function skillCallStep(name: string, id = 'spike-skill-call'): ScriptedSt
   return { toolCalls: [{ id, name: 'skill', arguments: { name } }] }
 }
 
-export function readCallStep(filePath: string, id = 'spike-read-call'): ScriptedStep {
-  return { toolCalls: [{ id, name: 'read', arguments: { filePath } }] }
-}
-
 export function bashCallStep(command: string, id = 'spike-bash-call'): ScriptedStep {
   return {
     toolCalls: [

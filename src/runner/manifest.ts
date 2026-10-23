@@ -3,8 +3,7 @@
  * and rewritten with a final status when the run settles.
  *
  * Manifests are local run artifacts (gitignored or under the state root). They
- * are not report material; `evals/reports/` gets an allowlist projection in
- * Unit 6.
+ * are not report material; `evals/reports/` gets an allowlist projection.
  */
 import { existsSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -38,7 +37,7 @@ export interface ArtifactRef {
   bytes: number
 }
 
-/** What the judge saw and said for one run (Unit 6). Quotes come from the (redacted) agent answer; manifests are local artifacts. */
+/** What the judge saw and said for one run. Quotes come from the (redacted) agent answer; manifests are local artifacts. */
 export interface JudgeEvidence {
   model: { pinned: string; returned: string[] }
   system_prompt_sha256: string
@@ -69,7 +68,7 @@ export interface RunManifest {
   outcome?: RunOutcomeName
   /** Why the outcome is what it is; check codes, never transcript text. */
   reasons: string[]
-  /** `deterministic`: checks only. `judge`: Unit 6 verdict applied. `pending-judge`: still needs the judge. */
+  /** `deterministic`: checks only. `judge`: the judge's verdict applied. `pending-judge`: still needs the judge. */
   verdict_basis: 'deterministic' | 'judge' | 'pending-judge'
   method: string
   condition: Condition

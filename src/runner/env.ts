@@ -6,7 +6,7 @@
  * `METACOGS_*`, no inherited `HOME`/`XDG_*`.
  */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 /** Hard pin. Discovered once with `bunx opencode-ai@latest --version` on 2026-10-22. */
@@ -208,9 +208,4 @@ export function plantAuthorHome(rootDir: string): AuthorHome {
     JSON.stringify({ small_model: AUTHOR_CONFIG_MARKER }),
   )
   return { home, agentsMdPath, authJsonPath }
-}
-
-/** Real HOME is referenced only for the managed-config presence report. */
-export function realHomeForReport(): string {
-  return homedir()
 }

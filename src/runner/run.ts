@@ -134,7 +134,7 @@ export const realHost: Host = {
   debugConfig: async (r) => (await debugConfig({ cwd: r.cwd, env: r.env, timeoutMs: 120_000 })).json,
 }
 
-// ── judge hook (Unit 6) ────────────────────────────────────────────────────
+// ── judge hook ────────────────────────────────────────────────────
 
 export interface JudgeInput {
   method: string

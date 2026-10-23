@@ -1,7 +1,7 @@
 /**
  * Deterministic checks and host-outcome classification. Everything here is a
  * pure function of the event stream, the records directory, and the run's
- * expectations; model-judged criteria are Unit 6.
+ * expectations; model-judged criteria live in judge.ts.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, posix } from 'node:path'

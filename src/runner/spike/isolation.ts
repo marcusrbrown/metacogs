@@ -31,7 +31,7 @@ export const SPIKE_MODEL = `${SPIKE_PROVIDER_ID}/${SPIKE_MODEL_ID}`
 /** Free-tier live model. Recorded in the README; id availability is probed, not assumed. */
 export const LIVE_MODEL = 'opencode/big-pickle'
 
-// Promoted to the runner proper; re-exported so the spike suite keeps its imports.
+// Re-exported from the runner modules so the spike suite keeps its imports.
 export {
   type Availability,
   opencodeArgv,
@@ -189,7 +189,6 @@ export {
   availableSkillsFromRequests,
   modelSeenText,
   offeredTools,
-  skillToolDescription,
   systemPromptText,
 } from '../isolation'
 

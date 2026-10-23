@@ -9,7 +9,7 @@ Evidence is reproducible: `bun test src/runner/spike` (scripted provider, 25 tes
 | Item | Value |
 | --- | --- |
 | Version | `opencode-ai@1.19.4` (`bunx opencode-ai@latest --version` on 2026-10-22) |
-| Launcher | `bunx opencode-ai@1.19.4 …`, constant `OPENCODE_PIN` in `src/runner/spike/env.ts` |
+| Launcher | `bunx opencode-ai@1.19.4 …`, constant `OPENCODE_PIN` in `src/runner/env.ts` |
 | Availability probe | memoized `bunx opencode-ai@1.19.4 --version`; last stdout line must equal the pin. If not, the suite is skipped with a `!!! OPENCODE SPIKE TESTS WILL BE SKIPPED` warning |
 | Live model | `opencode/big-pickle` (available; no fallback needed) |
 
@@ -25,7 +25,7 @@ Quirk: the prompt reaches the model JSON-quoted (`"Reply with exactly the word: 
 
 ## Child env allowlist
 
-Built from scratch in `buildChildEnv` (`src/runner/spike/env.ts`); nothing is filtered out of `process.env`.
+Built from scratch in `buildChildEnv` (`src/runner/env.ts`); nothing is filtered out of `process.env`.
 
 | Variable | Value |
 | --- | --- |
@@ -134,7 +134,7 @@ Live smoke (`opencode/big-pickle`, exit 0):
 
 ## Provider modes
 
-**Scripted** (`src/runner/spike/scripted-provider.ts`): `Bun.serve` on a random port speaking OpenAI `/chat/completions` SSE. Registered as provider `metacogs-spike-provider`, model `metacogs-spike-model`, placeholder key, zero cost, `npm: @ai-sdk/openai-compatible`. The reply is a pure function of the number of completed tool-call rounds in the request history, so the concurrent title-generation request (no `tools`) cannot desynchronise it. The stub can call `skill`, `read` or `bash` by name. It emits a fixed usage chunk (11 prompt / 7 completion tokens), observed as `tokens.input = 11`, `output = 7`.
+**Scripted** (`src/runner/scripted-provider.ts`): `Bun.serve` on a random port speaking OpenAI `/chat/completions` SSE. Registered as provider `metacogs-spike-provider`, model `metacogs-spike-model`, placeholder key, zero cost, `npm: @ai-sdk/openai-compatible`. The reply is a pure function of the number of completed tool-call rounds in the request history, so the concurrent title-generation request (no `tools`) cannot desynchronise it. The stub can call `skill`, `read` or `bash` by name. It emits a fixed usage chunk (11 prompt / 7 completion tokens), observed as `tokens.input = 11`, `output = 7`.
 
 **Live**: `opencode/big-pickle`, no key anywhere. Free tier works with `OPENCODE_DISABLE_MODELS_FETCH=1` and an empty `auth.json` / data dir. **No auth.json fallback is needed.** The live run is exactly one request pair (title + chat), gated behind `METACOGS_LIVE=1`.
 

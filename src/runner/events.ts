@@ -5,8 +5,8 @@
  * `evals/runner/README.md`. Two layers:
  *
  * - `parseEvents` and the small projections (`toolUses`, `skillLoads`,
- *   `assistantText`, `totalUsage`) are loose: promoted unchanged from the
- *   Unit 1 spike, which re-exports them.
+ *   `assistantText`, `totalUsage`) are loose: they skip what they cannot read
+ *   and never throw.
  * - `analyzeEvents` is the runner's view. It fails closed: anything it cannot
  *   place (non-JSON lines, unknown event types, a known type with the wrong
  *   shape) is listed in `unrecognized`, and the caller must not trust a
