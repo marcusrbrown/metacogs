@@ -4,17 +4,17 @@
   "method": "counterfactual",
   "held_out": "untouched",
   "prereg": {
-    "tag": "prereg/counterfactual/4",
-    "tag_object_sha": "b75beb509ef0c4f9a541dcff28215532e0df3a7c",
-    "commit_sha": "47145e73cd624b75c5cd1d18b8ff5e6be2b85a3c",
-    "blob_sha": "886d7fb6bae7cac8887094b73eeab1ee9dcc8f6a",
-    "epoch": 4,
+    "tag": "prereg/counterfactual/5",
+    "tag_object_sha": "d607d508e3c8954ce9dd4768a41ee75b7ff2dacc",
+    "commit_sha": "f120783582251890a2ec9439fa769cbdfd72241a",
+    "blob_sha": "2f00f0f18e941c25b2b23e6fa8ca54801ffbfe67",
+    "epoch": 5,
     "rubric_hash": "4dbd235645f66aba120e5b87c151188ae3b90e6ce4d0f6e23ff7bd60a48a367b",
     "runs_per_condition": 5,
     "per_run_timeout_ms": 180000
   },
   "repo": {
-    "head_sha": "2a8d702aa5b6f0ab80d5c14e1014dd8fd4417d3c"
+    "head_sha": "f120783582251890a2ec9439fa769cbdfd72241a"
   },
   "skill": {
     "sha256": "44b9c08c3ca650a81631fd9f83f05147208812e326c12c54afb53d010e9e4c97"
@@ -40,14 +40,14 @@
     "system_prompt_sha256": [
       "ea7ea92f0677e4ef05320618a215b3d5ad0b209409428f6a64392935394492c9"
     ],
-    "judged_runs": 30,
-    "judge_error_runs": 1,
+    "judged_runs": 29,
+    "judge_error_runs": 0,
     "temperature_observed": []
   },
   "campaign": {
-    "id": "counterfactual-dev-2026-10-23T21-09-00-330Z",
-    "started_at": "2026-10-23T21:09:01.493Z",
-    "finished_at": "2026-10-23T21:28:07.706Z",
+    "id": "counterfactual-dev-2026-10-23T21-37-19-012Z",
+    "started_at": "2026-10-23T21:37:20.046Z",
+    "finished_at": "2026-10-23T21:59:21.182Z",
     "planned_runs": 45,
     "executed_manifests": 45,
     "incomplete_manifests": 0
@@ -55,23 +55,25 @@
   "totals": {
     "attempted": 45,
     "taxonomy": {
-      "pass": 43,
+      "pass": 44,
       "fail": 1,
       "timeout->fail": 0,
       "budget->fail": 0,
-      "judge_error->fail": 1,
+      "judge_error->fail": 0,
       "infra_error": 0,
       "non_isolated": 0
     },
-    "wall_clock_ms": 762593,
+    "wall_clock_ms": 843041,
     "tokens": {
-      "input": 312636,
-      "output": 22864,
-      "reasoning": 1524
+      "input": 346819,
+      "output": 21746,
+      "reasoning": 1155
     }
   },
   "dev_bar": {
-    "min_pass_fraction": 0.8,
+    "kind": "pooled",
+    "pooled_min_passes": 24,
+    "per_fixture_min_passes": 2,
     "max_negative_false_fires": 0
   },
   "fixtures": [
@@ -352,6 +354,74 @@
       "kind": "dev",
       "fixture_hash": "3328b3a4f3ccaa78e8726c5e3d5470afdfcae76178d0db055298263accb6beda",
       "attempted": 5,
+      "pass": 4,
+      "fail": 1,
+      "pass_over_total": "4/5",
+      "pass_rate_wilson95": [
+        0.3755,
+        0.9638
+      ],
+      "outcomes": {
+        "pass": 4,
+        "fail_judge_verdict": 0,
+        "fail_check": 0,
+        "fail_timeout": 0,
+        "fail_budget": 0,
+        "fail_host_crash": 1,
+        "fail_judge_error": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "taxonomy": {
+        "pass": 4,
+        "fail": 1,
+        "timeout->fail": 0,
+        "budget->fail": 0,
+        "judge_error->fail": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "criteria": {
+        "CF1": {
+          "pass": 4,
+          "fail_quoted": 0,
+          "fail_absent": 0
+        },
+        "CF2": {
+          "pass": 4,
+          "fail_quoted": 0,
+          "fail_absent": 0
+        },
+        "CF3": {
+          "pass": 4,
+          "fail_quoted": 0,
+          "fail_absent": 0
+        },
+        "CF4": {
+          "pass": 4,
+          "fail_quoted": 0,
+          "fail_absent": 0
+        },
+        "CF5": {
+          "pass": 4,
+          "fail_quoted": 0,
+          "fail_absent": 0
+        }
+      },
+      "check_codes": {},
+      "fire_basis": {
+        "skill_tool": 5,
+        "direct_read": 0,
+        "none": 0
+      },
+      "load_rate": 1,
+      "meets_dev_bar": true
+    },
+    {
+      "id": "cf-d6-autoscaler-removal",
+      "kind": "dev",
+      "fixture_hash": "82b1fe408c1484ca379f40900ca03946c4bf59a7efe31f33bdcca9bbc2b7ffe6",
+      "attempted": 5,
       "pass": 5,
       "fail": 0,
       "pass_over_total": "5/5",
@@ -414,74 +484,6 @@
       },
       "load_rate": 1,
       "meets_dev_bar": true
-    },
-    {
-      "id": "cf-d6-autoscaler-removal",
-      "kind": "dev",
-      "fixture_hash": "82b1fe408c1484ca379f40900ca03946c4bf59a7efe31f33bdcca9bbc2b7ffe6",
-      "attempted": 5,
-      "pass": 3,
-      "fail": 2,
-      "pass_over_total": "3/5",
-      "pass_rate_wilson95": [
-        0.2307,
-        0.8824
-      ],
-      "outcomes": {
-        "pass": 3,
-        "fail_judge_verdict": 1,
-        "fail_check": 0,
-        "fail_timeout": 0,
-        "fail_budget": 0,
-        "fail_host_crash": 0,
-        "fail_judge_error": 1,
-        "infra_error": 0,
-        "non_isolated": 0
-      },
-      "taxonomy": {
-        "pass": 3,
-        "fail": 1,
-        "timeout->fail": 0,
-        "budget->fail": 0,
-        "judge_error->fail": 1,
-        "infra_error": 0,
-        "non_isolated": 0
-      },
-      "criteria": {
-        "CF1": {
-          "pass": 4,
-          "fail_quoted": 0,
-          "fail_absent": 0
-        },
-        "CF2": {
-          "pass": 4,
-          "fail_quoted": 0,
-          "fail_absent": 0
-        },
-        "CF3": {
-          "pass": 4,
-          "fail_quoted": 0,
-          "fail_absent": 0
-        },
-        "CF4": {
-          "pass": 4,
-          "fail_quoted": 0,
-          "fail_absent": 0
-        },
-        "CF5": {
-          "pass": 3,
-          "fail_quoted": 1,
-          "fail_absent": 0
-        }
-      },
-      "check_codes": {},
-      "fire_basis": {
-        "skill_tool": 5,
-        "direct_read": 0,
-        "none": 0
-      },
-      "load_rate": 1,
-      "meets_dev_bar": false
     },
     {
       "id": "cf-n1-rename",
@@ -612,7 +614,9 @@
   ],
   "dev": {
     "dev_fixtures": 6,
-    "dev_fixtures_meeting_bar": 5,
+    "dev_fixtures_meeting_bar": 6,
+    "pass": 29,
+    "attempted": 30,
     "negative_fixtures": 3,
     "negative_false_fires": 0,
     "fire_basis": {
@@ -621,6 +625,6 @@
       "none": 0
     },
     "load_rate": 1,
-    "passes_dev_bar": false
+    "passes_dev_bar": true
   }
 }

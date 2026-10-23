@@ -76,3 +76,13 @@ Same models (`openai/gpt-6-luna` agent, `anthropic/claude-haiku-5-5` judge, `gat
 | 13 | Four dev campaigns (iterations 9 to 12) each pooled at least 26 of 30 with exactly one fixture at 3/5. | none (skill unchanged; the bar changed in the prereg, not the skill) | N=5: d1 to d5 5/5, **d6 3/5** (run 1 `judge_error` `invalid_ungrounded_quote` after 2 attempts; run 4 CF5 judge fail). Pooled **27 of 30**. Skill load 30 of 30 through the skill tool; helper called and record written in all 30; negatives 0 of 15 false fires. |
 
 Pooled bar (24 of 30, floor 2 of 5, negatives 0): **met** (27 of 30, minimum fixture 3 of 5, 0 of 15). The runner's own `passes_dev_bar` flag in `green-dev.json` is still the per-fixture 4/5 rule and reads `false` (5 of 6 fixtures at the bar). The two d6 failures are judge-side: neither is a check failure or a missing record. Campaign `counterfactual-dev-2026-10-23T21-09-00-330Z`, 45 runs, 19.1 min of campaign time (12.7 min summed run time), agent cost about $0.047 (judge cost not recorded).
+
+## Epoch 5 (prereg `prereg/counterfactual/5`, `dev_bar` as a prereg field)
+
+Epoch 4 is superseded: its pooled dev bar lived in the prereg notes only, and the runner still scored the dev campaign against a hard-coded per-fixture 4/5 rule (`passes_dev_bar` false at 27 of 30 with `cf-d6` at 3/5), so the GREEN report's `dev_regression` check could not have been true. No held-out read was made under epoch 4. Commit `79a1442` makes the bar a prereg field (`dev_bar: {pooled_min_passes: 24, per_fixture_min_passes: 2}`; absent means the old rule); epoch 5 sets it. Everything else is unchanged from epoch 4: models, fixtures (dev, negative, held-out hashes), rubric, GREEN bars, and the skill text (`7a3bf22`).
+
+| # | What the previous run showed | The one change | Dev result |
+| --- | --- | --- | --- |
+| 14 | Iteration 13 (epoch 4): 27 of 30, d6 3/5, two judge-side misses. | none (skill unchanged; the bar became a prereg field the runner enforces) | N=5: d1 to d4 5/5, **d5 4/5** (one `host_crash` after the skill loaded), d6 5/5. Pooled **29 of 30**. Skill load 30 of 30 through the skill tool; negatives 0 of 15 false fires; 0 `judge_error`; 0 `infra_error`. |
+
+Pooled bar (24 of 30, floor 2 of 5, negatives 0): **met** and read by the runner (`dev_bar.kind: "pooled"` in `green-dev.json`, `passes_dev_bar: true`). Campaign `counterfactual-dev-2026-10-23T21-37-19-012Z`, 45 runs, 22.0 min campaign time, agent cost about $0.049 (judge cost not recorded). Unlike epoch 4, the one miss is a host crash, not a judge verdict; `cf-d6` passed 5/5 this time, which is consistent with the epoch-3 finding that its earlier 3/5 reads were judge variance.
