@@ -48,6 +48,11 @@ export interface Prereg {
     skill_per_fixture_pass_min: number
     baseline_pooled_pass_max: number
   }
+  /**
+   * Dev-campaign bar (the skill condition on dev + negative fixtures, before a GREEN read): pooled passes across the dev
+   * fixtures plus a per-fixture floor, both absolute counts. Absent: the runner's default (every dev fixture at least 80%).
+   */
+  dev_bar?: { pooled_min_passes: number; per_fixture_min_passes: number }
   /** Negatives: allowed false fires across the negative set. */
   false_fire_max: number
   per_run_timeout_ms: number
@@ -87,6 +92,7 @@ const TOP_LEVEL_KEYS = [
   'runs_per_condition',
   'red_bar',
   'green_bar',
+  'dev_bar',
   'false_fire_max',
   'per_run_timeout_ms',
   'budget',
@@ -164,6 +170,25 @@ export function parsePrereg(text: string): PreregParse {
       isNonNegativeInt(green.baseline_pooled_pass_max),
     'green_bar: needs integer skill_pooled_pass_min, skill_per_fixture_pass_min, baseline_pooled_pass_max',
   )
+  if (raw.dev_bar !== undefined) {
+    const bar = raw.dev_bar
+    if (!isRecord(bar)) {
+      errors.push('dev_bar: must be an object with pooled_min_passes and per_fixture_min_passes when present')
+    } else {
+      for (const key of Object.keys(bar)) {
+        if (key !== 'pooled_min_passes' && key !== 'per_fixture_min_passes') errors.push(`dev_bar.${key}: unknown field`)
+      }
+      const devCount = isRecord(hashes) && isRecord(hashes.dev) ? Object.keys(hashes.dev).length : 0
+      const runs = isPositiveInt(raw.runs_per_condition) ? raw.runs_per_condition : 0
+      if (!isNonNegativeInt(bar.pooled_min_passes) || !isNonNegativeInt(bar.per_fixture_min_passes)) {
+        errors.push('dev_bar: needs non-negative integer pooled_min_passes and per_fixture_min_passes')
+      } else {
+        need(bar.per_fixture_min_passes <= runs, `dev_bar.per_fixture_min_passes: ${bar.per_fixture_min_passes} exceeds runs_per_condition ${runs}`)
+        need(bar.pooled_min_passes <= runs * devCount, `dev_bar.pooled_min_passes: ${bar.pooled_min_passes} exceeds the ${runs * devCount} dev runs the prereg plans`)
+        need(bar.pooled_min_passes >= bar.per_fixture_min_passes, 'dev_bar.pooled_min_passes: must be at least per_fixture_min_passes')
+      }
+    }
+  }
   need(isNonNegativeInt(raw.false_fire_max), 'false_fire_max: must be a non-negative integer')
   need(isPositiveInt(raw.per_run_timeout_ms), 'per_run_timeout_ms: must be a positive integer')
   const budget = raw.budget

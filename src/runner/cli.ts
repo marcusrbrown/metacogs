@@ -21,7 +21,7 @@ import { removeLiveFixtures } from './env'
 import { killLiveGroups, opencodeAvailability } from './opencode'
 import { isLiveModel } from './scripted-provider'
 import { enforcePrereg, parsePrereg, PreregRefusal } from './prereg'
-import { buildDevReport, buildGreenReport, buildRedReport, type DevReport, type GreenReport, greenReportPath, loadCampaignManifests, recomputeDevRegression, validateDevReport, validateGreenReport, writeDevReport, writeGreenReport, writeReport } from './report'
+import { buildDevReport, buildGreenReport, buildRedReport, type DevReport, type DevRegressionSource, type GreenReport, greenReportPath, loadCampaignManifests, recomputeDevRegression, validateDevReport, validateGreenReport, writeDevReport, writeGreenReport, writeReport } from './report'
 import { planRuns, type ProviderMode, runCampaign } from './run'
 import { claimHeldoutRead, CustodyError, hashSkillDir, heldoutDir, heldoutReadMarkerPath, resolveOutputDir, stateRoot } from './workspace'
 
@@ -556,7 +556,7 @@ function reportMain(a: ReportArgs): number {
 function rebuildDevRegression(
   a: ReportArgs,
   c: { repoRoot: string; verification: ReturnType<typeof enforcePrereg>; headSha: string },
-): Pick<DevReport, 'skill' | 'dev'> | null {
+): DevRegressionSource | null {
   const devPath = join(c.repoRoot, 'evals', 'reports', a.method, 'green-dev.json')
   if (!existsSync(devPath)) return null
   const committed = JSON.parse(readFileSync(devPath, 'utf8')) as DevReport
@@ -596,7 +596,7 @@ function greenReportMain(
     a.err(`REFUSED: ${greenReportPath(c.repoRoot, a.method).slice(c.repoRoot.length + 1)} already exists; GREEN is a one-shot read`)
     return EXIT.REFUSED
   }
-  let devReport: Pick<DevReport, 'skill' | 'dev'> | null
+  let devReport: DevRegressionSource | null
   try {
     devReport = rebuildDevRegression(a, c)
   } catch (e) {
@@ -667,7 +667,9 @@ function devReportMain(
   const path = writeDevReport(c.repoRoot, report)
   a.out(`wrote ${path.slice(c.repoRoot.length + 1)}`)
   for (const f of report.fixtures) a.out(`  ${f.kind}/${f.id}: ${f.kind === 'dev' ? `pass ${f.pass_over_total} (skill tool ${f.fire_basis.skill_tool} · direct read ${f.fire_basis.direct_read} · none ${f.fire_basis.none})${f.meets_dev_bar ? ' · meets dev bar' : ''}` : `false fires ${f.fail}/${f.attempted}`}`)
-  a.out(`passes_dev_bar=${report.dev.passes_dev_bar} (${report.dev.dev_fixtures_meeting_bar}/${report.dev.dev_fixtures} dev fixtures; ${report.dev.negative_false_fires} negative false fires)`)
+  const bar = report.dev_bar
+  const barText = bar.kind === 'pooled' ? `pooled bar ${report.dev.pass}/${report.dev.attempted} (need ${bar.pooled_min_passes}), per-fixture floor ${bar.per_fixture_min_passes}` : 'per-fixture bar'
+  a.out(`passes_dev_bar=${report.dev.passes_dev_bar} (${barText}; ${report.dev.dev_fixtures_meeting_bar}/${report.dev.dev_fixtures} dev fixtures; ${report.dev.negative_false_fires} negative false fires)`)
   return EXIT.OK
 }
 

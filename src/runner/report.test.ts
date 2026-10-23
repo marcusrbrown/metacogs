@@ -393,9 +393,80 @@ describe('buildDevReport (skill condition, dev + negative fixtures)', () => {
       dev_fixtures_meeting_bar: 2,
       negative_fixtures: 1,
       negative_false_fires: 0,
+      pass: 9,
+      attempted: 10,
       fire_basis: { skill_tool: 0, direct_read: 0, none: 10 },
       load_rate: 0,
       passes_dev_bar: true,
+    })
+    expect(report.dev_bar).toEqual({ kind: 'per_fixture', min_pass_fraction: 0.8, max_negative_false_fires: 0 })
+  })
+
+  describe('a preregistered pooled dev bar (dev_bar in the prereg)', () => {
+    const pooledPrereg = (pooled: number, floor: number): Prereg => ({ ...prereg(), dev_bar: { pooled_min_passes: pooled, per_fixture_min_passes: floor } })
+    const buildPooled = (p: Prereg, plan: [kind: 'dev' | 'negative', fixture: string, outcomes: Outcome[]][]) =>
+      buildDevReport({ prereg: p, shas: SHAS, headSha: HEAD, runs: runsFor(plan), plannedRuns: 99, skillSha256: SKILL })
+    const NEG: [kind: 'dev' | 'negative', fixture: string, outcomes: Outcome[]] = ['negative', 'n1-z', ['pass', 'pass', 'pass', 'pass', 'pass']]
+
+    test('pooled passes at or above the bar with every fixture at the floor pass, though one fixture is under 4/5', () => {
+      const report = buildPooled(pooledPrereg(8, 2), [
+        ['dev', 'd1-x', ['pass', 'pass', 'pass', 'pass', 'pass']],
+        ['dev', 'd2-y', ['pass', 'pass', 'pass', 'judge_fail', 'judge_fail']],
+        NEG,
+      ])
+      expect(validateDevReport(report)).toEqual([])
+      expect(report.dev_bar).toEqual({ kind: 'pooled', pooled_min_passes: 8, per_fixture_min_passes: 2, max_negative_false_fires: 0 })
+      expect(report.fixtures.map((f) => [f.id, f.pass_over_total, f.meets_dev_bar])).toEqual([
+        ['d1-x', '5/5', true],
+        ['d2-y', '3/5', true],
+        ['n1-z', '5/5', true],
+      ])
+      expect(report.dev).toMatchObject({ pass: 8, attempted: 10, dev_fixtures_meeting_bar: 2, passes_dev_bar: true })
+      // the same campaign under the default rule misses on d2-y
+      const legacy = buildDevReport({ prereg: prereg(), shas: SHAS, headSha: HEAD, runs: runsFor([['dev', 'd1-x', ['pass', 'pass', 'pass', 'pass', 'pass']], ['dev', 'd2-y', ['pass', 'pass', 'pass', 'judge_fail', 'judge_fail']], NEG]), plannedRuns: 99, skillSha256: SKILL })
+      expect(legacy.dev.passes_dev_bar).toBe(false)
+    })
+
+    test('pooled passes one short of the bar miss even when every fixture clears the floor', () => {
+      const report = buildPooled(pooledPrereg(8, 2), [
+        ['dev', 'd1-x', ['pass', 'pass', 'pass', 'pass', 'judge_fail']],
+        ['dev', 'd2-y', ['pass', 'pass', 'pass', 'judge_fail', 'judge_fail']],
+        NEG,
+      ])
+      expect(report.dev.pass).toBe(7)
+      expect(report.fixtures.filter((f) => f.kind === 'dev').every((f) => f.meets_dev_bar)).toBe(true)
+      expect(report.dev.passes_dev_bar).toBe(false)
+    })
+
+    test('a fixture under the floor misses even when the pooled count clears the bar', () => {
+      const report = buildPooled(pooledPrereg(6, 2), [
+        ['dev', 'd1-x', ['pass', 'pass', 'pass', 'pass', 'pass']],
+        ['dev', 'd2-y', ['pass', 'judge_fail', 'judge_fail', 'judge_fail', 'judge_fail']],
+        NEG,
+      ])
+      expect(report.dev.pass).toBe(6)
+      expect(report.fixtures[1]!.meets_dev_bar).toBe(false)
+      expect(report.dev.passes_dev_bar).toBe(false)
+    })
+
+    test('a negative false fire misses a pooled bar too', () => {
+      const report = buildPooled(pooledPrereg(8, 2), [
+        ['dev', 'd1-x', ['pass', 'pass', 'pass', 'pass', 'pass']],
+        ['dev', 'd2-y', ['pass', 'pass', 'pass', 'pass', 'pass']],
+        ['negative', 'n1-z', ['pass', 'pass', 'check', 'pass', 'pass']],
+      ])
+      expect(report.dev.negative_false_fires).toBe(1)
+      expect(report.dev.passes_dev_bar).toBe(false)
+    })
+
+    test('the bar is part of the allowlist schema: a pooled report validates, a mixed one does not', () => {
+      const report = buildPooled(pooledPrereg(8, 2), [['dev', 'd1-x', ['pass', 'pass', 'pass', 'pass', 'pass']], NEG])
+      expect(validateDevReport(report)).toEqual([])
+      expect(validateDevReport({ ...report, dev_bar: { ...report.dev_bar, min_pass_fraction: 0.8 } }).length).toBeGreaterThan(0)
+      expect(validateDevReport({ ...report, dev_bar: { kind: 'pooled', max_negative_false_fires: 0 } }).length).toBeGreaterThan(0)
+      // reports from before the field (no kind, a fraction) still validate
+      expect(validateDevReport({ ...report, dev_bar: { min_pass_fraction: 0.8, max_negative_false_fires: 0 } })).toEqual([])
+      expect(validateDevReport({ ...report, dev_bar: { kind: 'median', max_negative_false_fires: 0 } }).length).toBeGreaterThan(0)
     })
   })
 
@@ -496,6 +567,21 @@ describe('buildDevReport (skill condition, dev + negative fixtures)', () => {
       expect(recomputeDevRegression(input(failing)).dev.passes_dev_bar).toBe(false)
     })
 
+    test('reads the pooled bar from the prereg it is given and returns it with the outcome', () => {
+      const runs = (): ReturnType<typeof runsFor> =>
+        runsFor([
+          ['dev', 'd1-x', ['pass', 'pass', 'pass', 'pass', 'pass']],
+          ['dev', 'd2-y', ['pass', 'pass', 'pass', 'judge_fail', 'judge_fail']],
+          ['negative', 'n1-z', ['pass', 'pass', 'pass', 'pass', 'pass']],
+        ]).map((r) => ({ ...r, manifest: { ...r.manifest, fixture: { ...r.manifest.fixture, hash: sha256(r.manifest.fixture.id) }, prereg: { ...r.manifest.prereg, commit_sha: SHAS.commitSha } } }))
+      const pooled = recomputeDevRegression({ ...input(runs()), prereg: { ...dr(), dev_bar: { pooled_min_passes: 8, per_fixture_min_passes: 2 } } })
+      expect(pooled.dev.passes_dev_bar).toBe(true)
+      expect(pooled.dev_bar).toEqual({ kind: 'pooled', pooled_min_passes: 8, per_fixture_min_passes: 2, max_negative_false_fires: 0 })
+      const strict = recomputeDevRegression({ ...input(runs()), prereg: dr() })
+      expect(strict.dev.passes_dev_bar).toBe(false)
+      expect(strict.dev_bar).toMatchObject({ kind: 'per_fixture' })
+    })
+
     test.each([
       ['a manifest from another prereg commit', (runs: ReturnType<typeof runsFor>) => (runs[0]!.manifest.prereg.commit_sha = 'e'.repeat(40)), 'were not produced under'],
       ['two different skills', (runs: ReturnType<typeof runsFor>) => (runs[0]!.manifest.skill = { sha256: sha256('other'), tree_sha: null }), 'exactly one skill'],
@@ -537,7 +623,7 @@ describe('committed dev reports', () => {
       const report = JSON.parse(readFileSync(path, 'utf8')) as DevReport
       expect(validateDevReport(report)).toEqual([])
       expect(report.method).toBe(method)
-      expect(report.prereg.tag).toMatch(new RegExp(`^prereg/${method}/[23]$`))
+      expect(report.prereg.tag).toMatch(new RegExp(`^prereg/${method}/\\d+$`))
       expect(report.held_out).toBe('untouched')
       expect(report.fixtures.every((f) => f.kind === 'dev' || f.kind === 'negative')).toBe(true)
     })
@@ -672,6 +758,15 @@ describe('buildGreenReport (held-out, both conditions)', () => {
     expect(build(good, { devReport: null }).checks.dev_regression).toBe(false)
     expect(build(good, { devReport: { skill: { sha256: SKILL }, dev: { passes_dev_bar: false } } as never }).verdict).toBe('green-miss')
     expect(build(good, { devReport: { skill: { sha256: sha256('older') }, dev: { passes_dev_bar: true } } as never }).dev_regression.skill_matches).toBe(false)
+  })
+
+  test('dev regression names the dev bar it was judged against, and the report stays allowlist-valid', () => {
+    const pooledBar = { kind: 'pooled', pooled_min_passes: 24, per_fixture_min_passes: 2, max_negative_false_fires: 0 } as const
+    const report = build(good, { devReport: { skill: { sha256: SKILL }, dev: { passes_dev_bar: true }, dev_bar: pooledBar } as never })
+    expect(report.dev_regression).toEqual({ source_report_present: true, passes_dev_bar: true, skill_matches: true, dev_bar: pooledBar })
+    expect(validateGreenReport(report)).toEqual([])
+    expect(validateGreenReport({ ...report, dev_regression: { ...report.dev_regression, dev_bar: { kind: 'pooled', max_negative_false_fires: 0 } } }).length).toBeGreaterThan(0)
+    expect(build(good, { devReport: null }).dev_regression).toEqual({ source_report_present: false, passes_dev_bar: false, skill_matches: false })
   })
 
   test('an unjudged positive-fixture pass is refused', () => {

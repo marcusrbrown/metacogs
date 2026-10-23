@@ -98,6 +98,27 @@ describe('parsePrereg', () => {
     expect(ok.ok).toBe(true)
   })
 
+  test('dev_bar is optional; when present it needs two in-range counts and no other keys', () => {
+    const runs = prereg.runs_per_condition
+    const devCount = Object.keys(prereg.fixture_hashes.dev).length
+    const parse = (dev_bar: unknown) => parsePrereg(JSON.stringify({ ...prereg, dev_bar }))
+    const errorsOf = (dev_bar: unknown) => {
+      const r = parse(dev_bar)
+      return r.ok ? [] : r.errors.join('\n')
+    }
+    expect(parsePrereg(JSON.stringify(prereg)).ok).toBe(true) // absent: the default rule
+    const ok = parse({ pooled_min_passes: runs * devCount, per_fixture_min_passes: runs })
+    expect(ok.ok).toBe(true)
+    if (ok.ok) expect(ok.prereg.dev_bar).toEqual({ pooled_min_passes: runs * devCount, per_fixture_min_passes: runs })
+    expect(errorsOf({ pooled_min_passes: 1 })).toContain('dev_bar: needs non-negative integer')
+    expect(errorsOf({ pooled_min_passes: 1.5, per_fixture_min_passes: 1 })).toContain('dev_bar: needs non-negative integer')
+    expect(errorsOf({ pooled_min_passes: runs * devCount, per_fixture_min_passes: 1, extra: 1 })).toContain('dev_bar.extra: unknown field')
+    expect(errorsOf({ pooled_min_passes: runs * devCount + 1, per_fixture_min_passes: 1 })).toContain('exceeds the')
+    expect(errorsOf({ pooled_min_passes: runs, per_fixture_min_passes: runs + 1 })).toContain('exceeds runs_per_condition')
+    expect(errorsOf({ pooled_min_passes: 1, per_fixture_min_passes: 2 })).toContain('at least per_fixture_min_passes')
+    expect(errorsOf('pooled')).toContain('dev_bar: must be an object')
+  })
+
   test('invalid JSON is reported, not thrown', () => {
     expect(parsePrereg('{nope')).toMatchObject({ ok: false })
   })
@@ -612,9 +633,10 @@ describe('committed preregs', () => {
         if (!parsed.ok) throw new Error(parsed.errors.join('; '))
         const { prereg } = parsed
         expect(prereg.method).toBe(method)
-        // Epoch 3 is the paid CLIProxyAPI round; it closes at the epoch-2 closing commit (counterfactual: dev iteration 9; synthesis: the epoch-2 GREEN read).
-        expect(prereg.epoch).toBe(3)
-        expect(prereg.prev_epoch_closing_commit).toBe(method === 'counterfactual' ? '444976e6779f02452e1d19c3eb120aca700ff041' : 'de6319c4febaea2a83f1d47943eb62f02d7c0efd')
+        // Epoch 3 was the first paid CLIProxyAPI round; later epochs keep its pins. Which epoch is current is the committed file's business:
+        // a literal here would break on every new epoch, so it is read from the file and only bounded.
+        expect(prereg.epoch).toBeGreaterThanOrEqual(3)
+        expect(prereg.prev_epoch_closing_commit).toMatch(/^[0-9a-f]{40}$/)
         expect(prereg.runs_per_condition).toBe(5)
         expect(prereg.red_bar).toEqual({ min_baseline_fails_per_fixture: 4, min_fixtures: 2 })
         expect(prereg.green_bar).toEqual({ skill_pooled_pass_min: 17, skill_per_fixture_pass_min: 3, baseline_pooled_pass_max: 10 })

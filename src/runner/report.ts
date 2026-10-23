@@ -398,6 +398,15 @@ const gatewaysShape: Schema = { t: 'opt', of: { t: 'arr', of: { t: 'str', re: /^
 /** `load_rate` arrived with the epoch-3 reads; the committed epoch-2 reports omit it. New reports always carry it. */
 const loadRateShape: Schema = { t: 'opt', of: { t: 'num' } }
 
+/** The dev bar a campaign was judged against. `kind` and the pooled counts arrived with the epoch-5 prereg; earlier reports carry only `min_pass_fraction`. See `devBarProblems` for the cross-field rule. */
+const devBarShape: Schema = obj({
+  kind: { t: 'opt', of: str(/^(pooled|per_fixture)$/) },
+  min_pass_fraction: { t: 'opt', of: NUM },
+  pooled_min_passes: { t: 'opt', of: INT },
+  per_fixture_min_passes: { t: 'opt', of: INT },
+  max_negative_false_fires: INT,
+})
+
 const outcomesShape = (): Schema =>
   obj(Object.fromEntries(Object.keys(emptyOutcomes()).map((k) => [k, INT])))
 const taxonomyShape = (): Schema =>
@@ -553,8 +562,24 @@ export function writeReport(repoRoot: string, report: RedReport): string {
 // fixtures only. It is not a GREEN read: it never touches held-out content, and the
 // dev bar below is an authoring margin, not a prereg bar.
 
-/** Dev fixtures: pass at least this fraction of attempted runs (4/5 at N=5). Negatives: no false fire. */
+/** Default dev bar, used when the prereg carries no `dev_bar`: dev fixtures pass at least this fraction of attempted runs (4/5 at N=5). Negatives: no false fire. */
 export const DEV_BAR = { min_pass_fraction: 0.8, max_negative_false_fires: 0 } as const
+
+/**
+ * The dev bar a campaign was judged against, as written into `green-dev.json` and the GREEN report's `dev_regression`.
+ * `per_fixture`: every dev fixture at `min_pass_fraction`. `pooled`: `pooled_min_passes` across the dev fixtures and a
+ * `per_fixture_min_passes` floor on each. Both: negatives stay at `max_negative_false_fires`.
+ */
+export type DevBar =
+  | { kind: 'per_fixture'; min_pass_fraction: number; max_negative_false_fires: number }
+  | { kind: 'pooled'; pooled_min_passes: number; per_fixture_min_passes: number; max_negative_false_fires: number }
+
+/** The dev bar of a prereg: its `dev_bar` field when present (read from the tagged blob, like the other bars), else the default rule. */
+export function devBarOf(prereg: Pick<Prereg, 'dev_bar'>): DevBar {
+  const bar = prereg.dev_bar
+  if (bar === undefined) return { kind: 'per_fixture', ...DEV_BAR }
+  return { kind: 'pooled', pooled_min_passes: bar.pooled_min_passes, per_fixture_min_passes: bar.per_fixture_min_passes, max_negative_false_fires: DEV_BAR.max_negative_false_fires }
+}
 
 /** Runs per way the skill text reached the model. Negatives and non-fires are `none`. */
 export interface FireBasisTally {
@@ -622,11 +647,16 @@ export interface DevReport {
   judge: { system_prompt_sha256: string[]; judged_runs: number; judge_error_runs: number; temperature_observed: number[] }
   campaign: { id: string; started_at: string; finished_at: string; planned_runs: number; executed_manifests: number; incomplete_manifests: number }
   totals: { attempted: number; taxonomy: Taxonomy; wall_clock_ms: number; tokens: { input: number; output: number; reasoning: number } }
-  dev_bar: { min_pass_fraction: number; max_negative_false_fires: number }
+  /** Reports written before the pooled bar existed carry no `kind` (the per-fixture rule). */
+  dev_bar: DevBar
   fixtures: DevFixtureReport[]
   dev: {
     dev_fixtures: number
+    /** Dev fixtures that meet the per-fixture rule (`per_fixture`) or the per-fixture floor (`pooled`). */
     dev_fixtures_meeting_bar: number
+    /** Pooled over the dev fixtures: passes and attempted runs. The pooled bar reads these. */
+    pass?: number
+    attempted?: number
     negative_fixtures: number
     negative_false_fires: number
     /** Summed over the dev (positive) fixtures. */
@@ -651,6 +681,7 @@ export function buildDevReport(input: DevReportInput): DevReport {
   const { prereg, shas, runs } = input
   if (runs.length === 0) throw new Error('no run manifests to report')
   assertAllJudged(runs)
+  const devBar = devBarOf(prereg)
 
   const byFixture = new Map<string, { id: string; kind: 'dev' | 'negative'; hash: string; runs: LoadedRun[] }>()
   for (const run of runs) {
@@ -709,10 +740,8 @@ export function buildDevReport(input: DevReportInput): DevReport {
       }
       const fail = outcomes.fail_judge_verdict + outcomes.fail_check + outcomes.fail_timeout + outcomes.fail_budget + outcomes.fail_host_crash + outcomes.fail_judge_error
       const attempted = outcomes.pass + fail
-      const meets =
-        entry.kind === 'dev'
-          ? attempted > 0 && outcomes.pass >= attempted * DEV_BAR.min_pass_fraction
-          : attempted > 0 && fail <= DEV_BAR.max_negative_false_fires
+      const meetsDev = devBar.kind === 'pooled' ? outcomes.pass >= devBar.per_fixture_min_passes : outcomes.pass >= attempted * devBar.min_pass_fraction
+      const meets = entry.kind === 'dev' ? attempted > 0 && meetsDev : attempted > 0 && fail <= devBar.max_negative_false_fires
       return {
         id: entry.id,
         kind: entry.kind,
@@ -735,6 +764,8 @@ export function buildDevReport(input: DevReportInput): DevReport {
   const dev = fixtures.filter((f) => f.kind === 'dev')
   const negatives = fixtures.filter((f) => f.kind === 'negative')
   const devMeeting = dev.filter((f) => f.meets_dev_bar).length
+  const devPass = dev.reduce((n, f) => n + f.pass, 0)
+  const devAttempted = dev.reduce((n, f) => n + f.attempted, 0)
   const falseFires = negatives.reduce((n, f) => n + f.fail, 0)
   const manifests = runs.map((r) => r.manifest)
   const devFireBasis = dev.reduce((t, f) => ({ skill_tool: t.skill_tool + f.fire_basis.skill_tool, direct_read: t.direct_read + f.fire_basis.direct_read, none: t.none + f.fire_basis.none }), emptyFireBasis())
@@ -784,16 +815,23 @@ export function buildDevReport(input: DevReportInput): DevReport {
       wall_clock_ms: wall,
       tokens,
     },
-    dev_bar: { ...DEV_BAR },
+    dev_bar: devBar,
     fixtures,
     dev: {
       dev_fixtures: dev.length,
       dev_fixtures_meeting_bar: devMeeting,
+      pass: devPass,
+      attempted: devAttempted,
       negative_fixtures: negatives.length,
       negative_false_fires: falseFires,
       fire_basis: devFireBasis,
       load_rate: loadRateOf(devFireBasis),
-      passes_dev_bar: dev.length > 0 && negatives.length > 0 && devMeeting === dev.length && negatives.every((f) => f.meets_dev_bar),
+      passes_dev_bar:
+        dev.length > 0 &&
+        negatives.length > 0 &&
+        devMeeting === dev.length &&
+        negatives.every((f) => f.meets_dev_bar) &&
+        (devBar.kind === 'pooled' ? devPass >= devBar.pooled_min_passes : true),
     },
   }
 }
@@ -812,7 +850,7 @@ export interface DevRegressionInput {
  * `green-dev.json`. Throws unless the campaign ran under this prereg, on one skill, over exactly the prereg's dev and
  * negative fixtures.
  */
-export function recomputeDevRegression(input: DevRegressionInput): Pick<DevReport, 'skill' | 'dev'> {
+export function recomputeDevRegression(input: DevRegressionInput): DevRegressionSource {
   const { prereg, shas, runs } = input
   if (runs.length === 0) throw new Error('the dev campaign has no run manifests')
   const foreign = runs.filter((r) => r.manifest.prereg.commit_sha !== shas.commitSha)
@@ -826,9 +864,12 @@ export function recomputeDevRegression(input: DevRegressionInput): Pick<DevRepor
     const wrong = [...Object.keys(want).filter((id) => !ran.some((f) => f.id === id)), ...ran.filter((f) => want[f.id] !== f.hash).map((f) => f.id)]
     if (wrong.length) throw new Error(`the dev campaign's ${kind} fixtures do not match the prereg (${[...new Set(wrong)].sort().join(', ')})`)
   }
-  const { skill, dev } = buildDevReport({ ...input, skillSha256 })
-  return { skill, dev }
+  const { skill, dev, dev_bar } = buildDevReport({ ...input, skillSha256 })
+  return { skill, dev, dev_bar }
 }
+
+/** What the GREEN report takes from a dev campaign: its skill, the dev outcome, and the bar that outcome was judged against. */
+export type DevRegressionSource = Pick<DevReport, 'skill' | 'dev'> & { dev_bar?: DevBar }
 
 export const DEV_REPORT_SCHEMA: Schema = obj({
   schema_version: { t: 'lit', v: REPORT_SCHEMA_VERSION },
@@ -865,7 +906,7 @@ export const DEV_REPORT_SCHEMA: Schema = obj({
     incomplete_manifests: INT,
   }),
   totals: obj({ attempted: INT, taxonomy: taxonomyShape(), wall_clock_ms: INT, tokens: obj({ input: INT, output: INT, reasoning: INT }) }),
-  dev_bar: obj({ min_pass_fraction: NUM, max_negative_false_fires: INT }),
+  dev_bar: devBarShape,
   fixtures: arr(
     obj({
       id: str(ID),
@@ -888,6 +929,8 @@ export const DEV_REPORT_SCHEMA: Schema = obj({
   dev: obj({
     dev_fixtures: INT,
     dev_fixtures_meeting_bar: INT,
+    pass: { t: 'opt', of: INT },
+    attempted: { t: 'opt', of: INT },
     negative_fixtures: INT,
     negative_false_fires: INT,
     fire_basis: obj({ skill_tool: INT, direct_read: INT, none: INT }),
@@ -896,10 +939,22 @@ export const DEV_REPORT_SCHEMA: Schema = obj({
   }),
 })
 
+/** A `kind` of `pooled` needs both pooled counts, `per_fixture` (or no `kind`, as in reports from before the field) needs the fraction. */
+function devBarProblems(bar: unknown, at: string): string[] {
+  if (typeof bar !== 'object' || bar === null) return []
+  const b = bar as Record<string, unknown>
+  const has = (k: string) => typeof b[k] === 'number'
+  if (b.kind === 'pooled') {
+    return has('pooled_min_passes') && has('per_fixture_min_passes') && !has('min_pass_fraction') ? [] : [`${at}: a pooled dev bar needs pooled_min_passes and per_fixture_min_passes and no min_pass_fraction`]
+  }
+  return has('min_pass_fraction') && !has('pooled_min_passes') && !has('per_fixture_min_passes') ? [] : [`${at}: a per-fixture dev bar needs min_pass_fraction and no pooled counts`]
+}
+
 /** Empty when `report` has exactly the allowlisted keys with allowlisted value shapes. */
 export function validateDevReport(report: unknown): string[] {
   const errors: string[] = []
   check(report, DEV_REPORT_SCHEMA, '', errors)
+  errors.push(...devBarProblems((report as { dev_bar?: unknown } | null)?.dev_bar, 'dev_bar'))
   return errors
 }
 
@@ -1001,7 +1056,8 @@ export interface GreenReport {
   pooled: { skill: GreenPooled; baseline: GreenPooled; delta: GreenDelta }
   /** Skill-condition load rate pooled over the held-out fixtures (`loadRateOf` of the summed `fire_basis`). Its own metric, not a bar. */
   skill_load_rate: number
-  dev_regression: { source_report_present: boolean; passes_dev_bar: boolean; skill_matches: boolean }
+  /** `dev_bar`: the bar the (recomputed) dev campaign was judged against; absent when no dev report was present. */
+  dev_regression: { source_report_present: boolean; passes_dev_bar: boolean; skill_matches: boolean; dev_bar?: DevBar }
   near_duplicate_check: 'pass' | 'fail'
   checks: {
     skill_pooled: boolean
@@ -1029,7 +1085,7 @@ export interface GreenReportInput {
   /** Hash of `skills/<method>/` as checked out now. */
   skillSha256: string
   /** The committed `green-dev.json`, parsed; `null` when absent. */
-  devReport: Pick<DevReport, 'skill' | 'dev'> | null
+  devReport: DevRegressionSource | null
   nearDuplicate: 'pass' | 'fail'
   /** The reconciled human review of this campaign, when `human-review.json` exists. */
   humanReview?: HumanReview | null
@@ -1153,6 +1209,7 @@ export function buildGreenReport(input: GreenReportInput): GreenReport {
     source_report_present: dev !== null,
     passes_dev_bar: dev?.dev.passes_dev_bar === true,
     skill_matches: dev?.skill.sha256 === input.skillSha256,
+    ...(dev?.dev_bar ? { dev_bar: dev.dev_bar } : {}),
   }
   const checks = {
     skill_pooled: skillPooled.pass >= bar.skill_pooled_pass_min,
@@ -1327,7 +1384,7 @@ export const GREEN_REPORT_SCHEMA: Schema = obj({
   ),
   pooled: obj({ skill: poolShape(), baseline: poolShape(), delta: deltaShape() }),
   skill_load_rate: loadRateShape,
-  dev_regression: obj({ source_report_present: BOOL, passes_dev_bar: BOOL, skill_matches: BOOL }),
+  dev_regression: obj({ source_report_present: BOOL, passes_dev_bar: BOOL, skill_matches: BOOL, dev_bar: { t: 'opt', of: devBarShape } }),
   near_duplicate_check: str(/^(pass|fail)$/),
   checks: obj({ skill_pooled: BOOL, per_fixture_floor: BOOL, baseline_ceiling: BOOL, negatives_silent: BOOL, dev_regression: BOOL, near_duplicate: BOOL }),
   verdict: str(/^(green|green-miss)$/),
@@ -1339,6 +1396,7 @@ export const GREEN_REPORT_SCHEMA: Schema = obj({
 export function validateGreenReport(report: unknown): string[] {
   const errors: string[] = []
   check(report, GREEN_REPORT_SCHEMA, '', errors)
+  errors.push(...devBarProblems((report as { dev_regression?: { dev_bar?: unknown } } | null)?.dev_regression?.dev_bar, 'dev_regression.dev_bar'))
   return errors
 }
 
