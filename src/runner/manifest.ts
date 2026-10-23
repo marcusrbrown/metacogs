@@ -164,6 +164,14 @@ export function findStaleManifests(roots: readonly string[]): StaleManifest[] {
   return stale
 }
 
+/** A secret value showed up where it must not. Carries labels and the run id, never the value; the campaign stops. */
+export class CredentialLeakError extends Error {
+  constructor(readonly runId: string, readonly labels: string[]) {
+    super(`credential_leak in run ${runId}: ${labels.join(', ')}`)
+    this.name = 'CredentialLeakError'
+  }
+}
+
 // ── credential scan ────────────────────────────────────────────────────────
 
 export interface Needle {

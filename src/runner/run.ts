@@ -12,11 +12,12 @@ import { join } from 'node:path'
 import { needlesOf, type PassthroughAuth, passthroughNames } from './auth'
 import { checkBudget, classifyHostOutcome, type CheckFailure, fireEvidence, listRecordFiles, runChecks } from './checks'
 import { destroyFixture } from './env'
-import { analyzeEvents, type EventSummary } from './events'
+import { analyzeEvents, type EventSummary, isRateLimited } from './events'
 import { checkDebugConfig, checkIsolation, type IsolationEvidence } from './isolation'
 import { writeJudgeRecord } from './judge-record'
 import {
   type ArtifactRef,
+  CredentialLeakError,
   type FinalStatus,
   type JudgeEvidence,
   MANIFEST_SCHEMA_VERSION,
@@ -43,6 +44,8 @@ import {
   upstreamFor,
 } from './scripted-provider'
 import { type Condition, createRunWorkspace, type FixtureKind, type RunWorkspace, sha256 } from './workspace'
+
+export { CredentialLeakError, isRateLimited }
 
 export type ProviderMode = 'scripted' | 'live'
 export const SCRIPTED_MODEL = `${SPIKE_PROVIDER_ID}/${SPIKE_MODEL_ID}`
@@ -144,11 +147,17 @@ export interface JudgeInput {
   recordJson: string[]
 }
 
+/** Transport-level reasons a judge call produced no verdict at all; none of them says anything about the answer. */
+export type JudgeInfraCode = 'rate_limit' | 'timeout' | 'host_exit' | 'aborted'
+
 export type JudgeVerdict =
   | { verdict: 'pass' | 'fail'; evidence?: JudgeEvidence }
+  /** The model's output was unusable (malformed, ungrounded, wrong model). A FAIL. */
   | { verdict: 'judge_error'; detail: string; evidence?: JudgeEvidence }
+  /** The judge could not be reached. Settled like a run-level `infra_error`: retried, and outside the denominator. */
+  | { verdict: 'infra_error'; kind: 'infra'; code: JudgeInfraCode; evidence?: undefined }
 
-/** `createJudge` in `judge.ts` implements this. Absent a judge, positive-fixture outcomes are deterministic-only and marked `pending-judge`. */
+/** `createJudge` in `judge.ts` implements this. Absent a judge, positive-fixture runs settle with no outcome and `pending-judge`. */
 export type JudgeHook = (input: JudgeInput) => Promise<JudgeVerdict>
 
 // ── campaign ───────────────────────────────────────────────────────────────
@@ -200,7 +209,7 @@ export interface RunResult {
   reasons: string[]
 }
 
-export type CampaignAbort = 'interrupted' | 'credential_leak'
+export type CampaignAbort = 'interrupted' | 'credential_leak' | 'provider_outage'
 
 export interface Tally {
   attempted: number
@@ -218,13 +227,6 @@ export interface CampaignResult {
   aborted?: CampaignAbort
   tallies: Record<string, Tally>
   summaryPath: string
-}
-
-export class CredentialLeakError extends Error {
-  constructor(readonly runId: string, readonly labels: string[]) {
-    super(`credential_leak in run ${runId}: ${labels.join(', ')}`)
-    this.name = 'CredentialLeakError'
-  }
 }
 
 const LEAK_NEEDLES: Needle[] = [{ label: 'scripted_placeholder_api_key', value: PLACEHOLDER_API_KEY }]
@@ -246,10 +248,14 @@ export function tallyResults(results: readonly RunResult[], infraErrors: readonl
 
 const defaultBackoffMs = (attempt: number): number => (attempt <= 1 ? 30_000 : 90_000)
 
-/** A provider rate limit: HTTP 429 from the host's error event, or its message. */
-export function isRateLimited(errors: readonly { message?: string | undefined; statusCode?: number }[]): boolean {
-  return errors.some((e) => e.statusCode === 429 || /rate.?limit|too many requests|\b429\b/i.test(e.message ?? ''))
-}
+/** Consecutive rate-limited attempts (agent or judge) after which the provider is treated as down and the campaign stops. */
+export const PROVIDER_OUTAGE_STREAK = 3
+
+const isProviderRateLimit = (reasons: readonly string[]): boolean => reasons.includes('provider_429') || reasons.includes('judge_infra:rate_limit')
+/** Worth waiting for: a throttled provider, or a judge that could not be reached. An interrupt is not. */
+const isBackoffWorthy = (reasons: readonly string[]): boolean => isProviderRateLimit(reasons) || reasons.some((r) => r.startsWith('judge_infra:') && r !== 'judge_infra:aborted')
+/** A bug in the runner repeats exactly; retrying it only burns requests. */
+const isRunnerException = (reasons: readonly string[]): boolean => reasons.some((r) => r.startsWith('runner_exception:'))
 
 export async function runCampaign(c: CampaignInput): Promise<CampaignResult> {
   mkdirSync(c.campaignDir, { recursive: true, mode: 0o700 })
@@ -257,43 +263,62 @@ export async function runCampaign(c: CampaignInput): Promise<CampaignResult> {
   const results: RunResult[] = []
   const infraErrors: RunResult[] = []
   let aborted: CampaignAbort | undefined
+  let rateLimitStreak = 0
+  let summary: { tallies: Record<string, Tally>; summaryPath: string } | undefined
 
-  outer: for (const [i, run] of c.runs.entries()) {
-    for (let attempt = 1; attempt <= 1 + retries; attempt += 1) {
-      let result: RunResult
-      try {
-        result = await executeAttempt(c, run, i + 1, attempt)
-      } catch (e) {
-        if (e instanceof CredentialLeakError) {
-          aborted = 'credential_leak'
-          c.log?.(`ABORT ${e.message}`)
+  // The summary is written whatever happens: a throw out of the loop still leaves a record of what ran.
+  try {
+    outer: for (const [i, run] of c.runs.entries()) {
+      for (let attempt = 1; attempt <= 1 + retries; attempt += 1) {
+        let result: RunResult
+        try {
+          result = await executeAttempt(c, run, i + 1, attempt)
+        } catch (e) {
+          if (e instanceof CredentialLeakError) {
+            aborted = 'credential_leak'
+            c.log?.(`ABORT ${e.message}`)
+            break outer
+          }
+          throw e
+        }
+        c.log?.(`${result.runId}: ${result.status}${result.outcome ? ` → ${result.outcome}` : ''}${result.reasons.length ? ` (${result.reasons.join(', ')})` : ''}`)
+        if (result.status === 'interrupted') {
+          results.push(result)
+          aborted = 'interrupted'
           break outer
         }
-        throw e
-      }
-      c.log?.(`${result.runId}: ${result.status}${result.outcome ? ` → ${result.outcome}` : ''}${result.reasons.length ? ` (${result.reasons.join(', ')})` : ''}`)
-      if (result.status === 'interrupted') {
-        results.push(result)
-        aborted = 'interrupted'
-        break outer
-      }
-      // Only the final attempt of a planned run counts; an infra_error is retried.
-      if (result.status === 'infra_error') {
-        infraErrors.push(result)
-        if (attempt <= retries) {
-          if (result.reasons.includes('provider_429')) {
-            const wait = (c.backoffMs ?? defaultBackoffMs)(attempt)
-            c.log?.(`${result.runId}: provider 429, backing off ${Math.round(wait / 1000)}s before retry`)
-            await (c.sleep ?? ((ms: number) => Bun.sleep(ms)))(wait)
+        // Only the final attempt of a planned run counts; an infra_error is retried.
+        if (result.status === 'infra_error') {
+          infraErrors.push(result)
+          rateLimitStreak = isProviderRateLimit(result.reasons) ? rateLimitStreak + 1 : 0
+          if (rateLimitStreak >= PROVIDER_OUTAGE_STREAK) {
+            results.push(result)
+            aborted = 'provider_outage'
+            c.log?.(`ABORT provider_outage: ${rateLimitStreak} rate-limited attempts in a row; no further runs launched`)
+            break outer
           }
-          continue
+          if (attempt <= retries && !isRunnerException(result.reasons)) {
+            if (isBackoffWorthy(result.reasons)) {
+              const wait = (c.backoffMs ?? defaultBackoffMs)(attempt)
+              c.log?.(`${result.runId}: ${result.reasons.join(', ')}, backing off ${Math.round(wait / 1000)}s before retry`)
+              await (c.sleep ?? ((ms: number) => Bun.sleep(ms)))(wait)
+            }
+            continue
+          }
+        } else {
+          rateLimitStreak = 0
         }
+        results.push(result)
+        break
       }
-      results.push(result)
-      break
     }
+  } finally {
+    summary = writeSummary(c, results, infraErrors, aborted)
   }
+  return { results, infraErrors, aborted, ...summary! }
+}
 
+function writeSummary(c: CampaignInput, results: readonly RunResult[], infraErrors: readonly RunResult[], aborted: CampaignAbort | undefined): { tallies: Record<string, Tally>; summaryPath: string } {
   const tallies = tallyResults(results, infraErrors)
   const summaryPath = join(c.campaignDir, 'summary.json')
   writeFileSync(
@@ -316,7 +341,47 @@ export async function runCampaign(c: CampaignInput): Promise<CampaignResult> {
     )}\n`,
     { mode: 0o600 },
   )
-  return { results, infraErrors, aborted, tallies, summaryPath }
+  return { tallies, summaryPath }
+}
+
+// ── credential scan ───────────────────────────────────────────────────
+
+function leakScanInput(c: CampaignInput, runDir: string, manifest: RunManifest) {
+  const artifacts: Record<string, string> = {}
+  for (const file of Object.keys(manifest.artifacts)) {
+    try {
+      artifacts[file] = readFileSync(join(runDir, file), 'utf8')
+    } catch {
+      // an artifact that was never written has nothing to leak
+    }
+  }
+  return {
+    needles: [...LEAK_NEEDLES, ...needlesOf(c.auth ?? {}), ...(c.leakNeedles ?? [])],
+    manifestJson: JSON.stringify(manifest),
+    artifacts,
+    dirs: [] as string[],
+  }
+}
+
+const leakReasons = (findings: readonly { label: string; where: string }[]): string[] => [
+  ...new Set(findings.map((f) => `credential_leak:${f.label}:${f.where.startsWith('manifest') ? 'manifest' : f.where.includes('::') ? 'workspace' : 'artifact'}`)),
+]
+
+/** Purge everything that could carry the key, keep only a sanitized manifest, and stop the campaign. */
+function quarantineRun(runDir: string, manifest: RunManifest, runId: string, reasons: string[], labels: string[]): never {
+  for (const file of Object.keys(manifest.artifacts)) rmSync(join(runDir, file), { force: true })
+  manifest.artifacts = {}
+  manifest.records = []
+  manifest.host_errors = []
+  manifest.check_failures = []
+  manifest.isolation = null
+  manifest.judge = undefined
+  manifest.status = 'credential_leak'
+  manifest.outcome = undefined
+  manifest.reasons = reasons
+  manifest.finished_at = new Date().toISOString()
+  writeManifest(runDir, manifest)
+  throw new CredentialLeakError(runId, labels)
 }
 
 // ── one attempt ────────────────────────────────────────────────────────────
@@ -340,7 +405,6 @@ function isolationViolated(evidence: IsolationEvidence, completed: boolean): boo
 async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, attempt: number): Promise<RunResult> {
   const { verification } = c
   const prereg = verification.prereg
-  const host = c.host ?? realHost
   const runId = `${pad(seq)}-${run.fixture.kind}-${run.fixture.id}-${run.condition}-r${run.index}${attempt > 1 ? `-a${attempt}` : ''}`
   const runDir = join(c.campaignDir, runId)
   mkdirSync(runDir, { recursive: true, mode: 0o700 })
@@ -422,6 +486,34 @@ async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, at
     return result('interrupted', undefined)
   }
 
+  try {
+    return await runAttempt(c, run, { runId, runDir, manifest, model, settle, interrupted })
+  } catch (e) {
+    if (e instanceof CredentialLeakError) throw e
+    // Whatever was written before the throw has not been through the credential scan yet.
+    const findings = scanForLeaks(leakScanInput(c, runDir, manifest))
+    if (findings.length) quarantineRun(runDir, manifest, runId, leakReasons(findings), findings.map((f) => f.label))
+    // A bug in the runner must not take the campaign down with it. Only the error's name is kept: its message may quote anything.
+    const final = settle('infra_error', 'infra_error', [`runner_exception:${e instanceof Error ? e.name : 'unknown'}`])
+    writeManifest(runDir, manifest)
+    return final
+  }
+}
+
+interface AttemptState {
+  runId: string
+  runDir: string
+  manifest: RunManifest
+  model: string
+  settle: (status: FinalStatus, outcome: RunOutcomeName | undefined, reasons: string[]) => RunResult
+  interrupted: () => RunResult
+}
+
+async function runAttempt(c: CampaignInput, run: PlannedRun, state: AttemptState): Promise<RunResult> {
+  const { verification } = c
+  const prereg = verification.prereg
+  const host = c.host ?? realHost
+  const { runId, runDir, manifest, model, settle, interrupted } = state
   if (c.signal?.aborted) return interrupted()
 
   const server =
@@ -548,27 +640,40 @@ async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, at
         if (!checks.ok) {
           final = settle('completed', 'fail', reasons)
         } else if (needsJudge && c.judge) {
-          // A throwing judge is a judge_error (FAIL), never an unhandled crash that loses the campaign.
-          const verdict: JudgeVerdict = await c
-            .judge({
+          let verdict: JudgeVerdict
+          try {
+            verdict = await c.judge({
               method: c.method,
               condition: run.condition,
               fixture: run.fixture,
               finalAnswer: events.assistantText,
               recordJson: records.map((r) => r.content),
             })
-            .catch((e: unknown) => ({ verdict: 'judge_error' as const, detail: `judge_threw: ${(e as Error).message}` }))
-          manifest.verdict_basis = 'judge'
-          if (verdict.evidence) {
-            manifest.judge = verdict.evidence
-            manifest.artifacts['judge.json'] = writeJudgeRecord(runDir, verdict.evidence)
+          } catch (e) {
+            // The judge's transport saw a configured secret: nothing from this run may stay on disk, and the campaign stops.
+            if (e instanceof CredentialLeakError) quarantineRun(runDir, manifest, runId, e.labels.map((l) => `credential_leak:${l}:judge`), e.labels)
+            // Any other throw is a judge_error (FAIL), never an unhandled crash that loses the campaign.
+            verdict = { verdict: 'judge_error', detail: `judge_threw: ${(e as Error).message}` }
           }
-          final =
-            verdict.verdict === 'pass'
-              ? settle('completed', 'pass', [])
-              : settle('completed', 'fail', verdict.verdict === 'judge_error' ? ['judge_error'] : ['judge_fail'])
+          if (verdict.verdict === 'infra_error') {
+            // The judge could not be reached: the answer was never graded, so the run is neither a pass nor a fail.
+            final = verdict.code === 'aborted' ? interrupted() : settle('infra_error', 'infra_error', [`judge_infra:${verdict.code}`])
+          } else {
+            manifest.verdict_basis = 'judge'
+            if (verdict.evidence) {
+              manifest.judge = verdict.evidence
+              manifest.artifacts['judge.json'] = writeJudgeRecord(runDir, verdict.evidence)
+            }
+            final =
+              verdict.verdict === 'pass'
+                ? settle('completed', 'pass', [])
+                : settle('completed', 'fail', verdict.verdict === 'judge_error' ? ['judge_error'] : ['judge_fail'])
+          }
+        } else if (needsJudge) {
+          // No judge wired: the checks passed, but nothing has graded the answer. No outcome until a judge does.
+          manifest.verdict_basis = 'pending-judge'
+          final = settle('completed', undefined, [])
         } else {
-          if (needsJudge) manifest.verdict_basis = 'pending-judge'
           final = settle('completed', 'pass', [])
         }
       }
@@ -581,31 +686,8 @@ async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, at
 
   /** Credential scan, then the final manifest write. Runs before the workspace is deleted. */
   function finish(final: RunResult): RunResult {
-    const artifactTexts: Record<string, string> = {}
-    for (const file of Object.keys(manifest.artifacts)) {
-      artifactTexts[file] = readFileSync(join(runDir, file), 'utf8')
-    }
-    const findings = scanForLeaks({
-      needles: [...LEAK_NEEDLES, ...needlesOf(c.auth ?? {}), ...(c.leakNeedles ?? [])],
-      manifestJson: JSON.stringify(manifest),
-      artifacts: artifactTexts,
-      dirs: [workspace.fixture.workspace],
-    })
-    if (findings.length) {
-      // Purge everything that could carry the key, keep only a sanitized manifest.
-      for (const file of Object.keys(manifest.artifacts)) rmSync(join(runDir, file), { force: true })
-      manifest.artifacts = {}
-      manifest.records = []
-      manifest.host_errors = []
-      manifest.check_failures = []
-      manifest.isolation = null
-      manifest.status = 'credential_leak'
-      manifest.outcome = undefined
-      manifest.reasons = [...new Set(findings.map((f) => `credential_leak:${f.label}:${f.where.startsWith('manifest') ? 'manifest' : f.where.includes('::') ? 'workspace' : 'artifact'}`))]
-      manifest.finished_at = new Date().toISOString()
-      writeManifest(runDir, manifest)
-      throw new CredentialLeakError(runId, findings.map((f) => f.label))
-    }
+    const findings = scanForLeaks({ ...leakScanInput(c, runDir, manifest), dirs: [workspace.fixture.workspace] })
+    if (findings.length) quarantineRun(runDir, manifest, runId, leakReasons(findings), findings.map((f) => f.label))
     writeManifest(runDir, manifest)
     return final
   }

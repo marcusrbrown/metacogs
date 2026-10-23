@@ -379,7 +379,10 @@ describe.skipIf(!opencodeAvailability().available)('scripted end-to-end', () => 
       const runs = readdirSync(join(out, campaign!)).filter((d) => d !== 'summary.json').sort()
       expect(runs).toEqual(['001-dev-d1-baseline-r1', '002-negative-n1-baseline-r1'])
       for (const run of runs) expect(existsSync(join(out, campaign!, run, 'manifest.json'))).toBe(true)
-      expect(t.lines.out.join('\n')).toContain('dev/d1/baseline: pass 1/1')
+      // no judge is wired in scripted mode: the positive-fixture run has no outcome and is not in the denominator
+      expect(t.lines.out.join('\n')).toContain('dev/d1/baseline: pass 0/0 (planned 1)')
+      expect(t.lines.out.join('\n')).toContain('negative/n1/baseline: pass 1/1 (planned 1)')
+      expect(t.lines.out.join('\n')).toContain('not graded (no judge)')
       expect(t.lines.err.join('\n')).toContain('deviate from the prereg plan')
     },
     180_000,

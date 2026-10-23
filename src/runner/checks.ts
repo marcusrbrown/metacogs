@@ -9,7 +9,7 @@ import { join, posix } from 'node:path'
 import { EXECUTION_MODES } from '../record/contract'
 import { recordFilename } from '../record/canonical'
 import { validateRecord } from '../record/validate'
-import { type EventSummary, isSkillContentLoad, skillCallName, type ToolUse } from './events'
+import { type EventSummary, isRateLimited, isSkillContentLoad, skillCallName, type ToolUse } from './events'
 import type { SpawnResult } from './opencode'
 import type { Condition, FixtureKind } from './workspace'
 
@@ -259,9 +259,9 @@ export function checkBudget(events: EventSummary, budget: { max_tool_calls: numb
 export type HostOutcome = 'completed' | 'timeout' | 'interrupted' | 'infra_error' | 'host_crash'
 
 /**
- * `infra_error` is only a provider/host outage *before skill content loads*.
- * A non-zero exit once the skill's content reached the model is a FAIL
- * (`host_crash`); a timeout is a FAIL regardless.
+ * `infra_error` is a provider/host outage *before skill content loads*, or a provider 429 at any point (runs are
+ * independent, so a rate limit says nothing about the skill). Any other non-zero exit once the skill's content reached the
+ * model is a FAIL (`host_crash`); a timeout is a FAIL regardless.
  */
 export function classifyHostOutcome(
   spawn: Pick<SpawnResult, 'exitCode' | 'timedOut' | 'aborted'>,
@@ -272,6 +272,7 @@ export function classifyHostOutcome(
   if (spawn.aborted) return 'interrupted'
   if (spawn.timedOut) return 'timeout'
   if (spawn.exitCode !== 0) {
+    if (isRateLimited(events.hostErrors)) return 'infra_error'
     const loaded = events.skillCalls.some((c) => isSkillContentLoad(c, method)) || events.toolUses.some((c) => isSkillBodyRead(c, method, skillText))
     return loaded ? 'host_crash' : 'infra_error'
   }

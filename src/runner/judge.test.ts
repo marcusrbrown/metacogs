@@ -15,6 +15,7 @@ import {
   parseVerdicts,
   verifyQuote,
 } from './judge'
+import { CredentialLeakError } from './manifest'
 import { RedactionFailed } from './redact'
 import { CLIPROXY_UPSTREAM } from './cliproxy'
 import { gatewayOf, GO_UPSTREAM, isLiveModel, providerOf, upstreamFor, ZEN_UPSTREAM } from './scripted-provider'
@@ -410,10 +411,35 @@ describe('judge hook', () => {
     expect(calls).toHaveLength(2)
   })
 
-  test('host failure on both attempts is judge_error with the transport reason', async () => {
+  test('a host failure is an infra_error (code host_exit), not a judge_error: one request, no verdict on the answer', async () => {
     const apiError = jsonl({ type: 'error', timestamp: 1, sessionID: 's', error: { name: 'APIError', data: { message: 'free tier' } } })
-    const { judge } = judgeWith([{ stdout: apiError, exitCode: 1 }])
-    expect(await judge.hook(inputFor(ANSWER))).toMatchObject({ verdict: 'judge_error', detail: 'transport_host_exit_1:APIError' })
+    const { judge, calls } = judgeWith([{ stdout: apiError, exitCode: 1 }])
+    expect(await judge.hook(inputFor(ANSWER))).toEqual({ verdict: 'infra_error', kind: 'infra', code: 'host_exit' })
+    expect(calls).toHaveLength(1)
+  })
+
+  test('a 429 that outlasts the transport backoff is an infra_error with code rate_limit', async () => {
+    const limited = jsonl({ type: 'error', timestamp: 1, sessionID: 's', error: { name: 'APIError', data: { message: 'Rate limit exceeded', statusCode: 429 } } })
+    const { judge } = judgeWith([{ stdout: limited, exitCode: 1 }])
+    expect(await judge.hook(inputFor(ANSWER))).toMatchObject({ verdict: 'infra_error', code: 'rate_limit' })
+  })
+
+  test.each([
+    ['timeout', 'timeout'],
+    ['aborted', 'aborted'],
+    ['host_exit_1:APIError:429', 'rate_limit'],
+    ['host_exit_2', 'host_exit'],
+    ['something unexpected', 'host_exit'],
+  ] as const)('transport error %s maps to infra code %s', async (error, code) => {
+    const transport = async () => ({ ok: false, error, text: '', returnedModels: [], temperature: null, systemPromptSeen: false, toolCalls: 0, wallMs: 1 })
+    const judge = createJudge({ repoRoot: REPO_ROOT, method: 'counterfactual', model: PINNED, transport })
+    expect(await judge.hook(inputFor(ANSWER))).toEqual({ verdict: 'infra_error', kind: 'infra', code })
+  })
+
+  test('a credential leak in the judge transport throws CredentialLeakError, never a verdict', async () => {
+    const transport = async () => ({ ok: false, error: 'credential_leak', text: '', returnedModels: [], temperature: null, systemPromptSeen: false, toolCalls: 0, wallMs: 1 })
+    const judge = createJudge({ repoRoot: REPO_ROOT, method: 'counterfactual', model: PINNED, transport })
+    await expect(judge.hook(inputFor(ANSWER))).rejects.toBeInstanceOf(CredentialLeakError)
   })
 
   test('redaction: method vocabulary never reaches the request; placeholders do', async () => {

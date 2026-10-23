@@ -138,6 +138,11 @@ export interface HostError {
   statusCode?: number
 }
 
+/** A provider rate limit: HTTP 429 from the host's error event, or its message. */
+export function isRateLimited(errors: readonly { message?: string | undefined; statusCode?: number }[]): boolean {
+  return errors.some((e) => e.statusCode === 429 || /rate.?limit|too many requests|\b429\b/i.test(e.message ?? ''))
+}
+
 export interface EventSummary {
   toolUses: ToolUse[]
   /** `tool_use` events with `part.tool === "skill"`, any status. */

@@ -148,6 +148,9 @@ function fakeHost(behaviors: Behavior | ((call: number) => Behavior)): Host & { 
   return host
 }
 
+/** Positive-fixture passes need a judge verdict to count; most tests are about something else, so they get a judge that passes. */
+const passJudge = async () => ({ verdict: 'pass' }) as const
+
 function campaign(runs: PlannedRun[], host: Host | undefined, extra: Partial<CampaignInput> = {}): CampaignInput {
   const dir = campaignDir()
   return {
@@ -160,6 +163,7 @@ function campaign(runs: PlannedRun[], host: Host | undefined, extra: Partial<Cam
     campaignDir: dir,
     runs,
     host,
+    judge: passJudge,
     ...extra,
   }
 }
@@ -229,7 +233,7 @@ describe('run outcomes (fake host)', () => {
     expect(m).toMatchObject({
       status: 'completed',
       outcome: 'pass',
-      verdict_basis: 'pending-judge',
+      verdict_basis: 'judge',
       method: 'demo',
       condition: 'baseline',
       attempt: 1,
@@ -453,7 +457,7 @@ describe('run outcomes (fake host)', () => {
     const res = await runCampaign(c)
     const dir = join(c.campaignDir, res.results[0]!.runId)
     expect(JSON.parse(readFileSync(join(dir, 'judge.json'), 'utf8'))).toMatchObject({ redacted_input_sha256: null, attempts: 2, error: 'invalid_malformed_json', criteria: [] })
-    const noJudge = campaign([planOne('dev', 'baseline', 'd')], fakeHost({}))
+    const noJudge = campaign([planOne('dev', 'baseline', 'd')], fakeHost({}), { judge: undefined })
     const res2 = await runCampaign(noJudge)
     expect(existsSync(join(noJudge.campaignDir, res2.results[0]!.runId, 'judge.json'))).toBe(false)
   })
@@ -663,10 +667,124 @@ describe('provider 429', () => {
     expect(waits).toEqual([])
   })
 
-  test('a 429 after skill content loaded is a FAIL, not an infra_error', async () => {
+  test('a 429 after skill content loaded is still an infra_error: runs are independent, so the rate limit says nothing about the skill', async () => {
     const host = fakeHost({ exitCode: 1, stdout: `${skillLoadEvent}\n${rateLimited}` })
-    const res = await runCampaign(campaign([planOne('heldout', 'skill', 'h1')], host))
-    expect(res.results[0]).toMatchObject({ status: 'host_crash', outcome: 'fail' })
+    const res = await runCampaign(campaign([planOne('heldout', 'skill', 'h1')], host, { sleep: async () => {} }))
+    expect(res.infraErrors[0]).toMatchObject({ status: 'infra_error', reasons: expect.arrayContaining(['provider_429']) })
+    expect(res.tallies['heldout/h1/skill']).toMatchObject({ attempted: 0 })
+  })
+
+  test('three rate-limited attempts in a row abort the campaign as provider_outage; later runs are never launched and the summary says so', async () => {
+    const host = fakeHost({ exitCode: 1, stdout: rateLimited })
+    const c = campaign([planOne('dev', 'baseline', 'a'), planOne('dev', 'baseline', 'b')], host, { sleep: async () => {} })
+    const res = await runCampaign(c)
+    expect(res.aborted).toBe('provider_outage')
+    expect(host.runCalls).toBe(3)
+    expect(res.results.map((r) => r.fixtureId)).toEqual(['a'])
+    const summary = JSON.parse(readFileSync(res.summaryPath, 'utf8')) as { aborted: string; planned_runs: number }
+    expect(summary).toMatchObject({ aborted: 'provider_outage', planned_runs: 2 })
+  })
+
+  test('the rate-limit streak resets on any attempt that is not rate limited', async () => {
+    const crash = ev({ type: 'error', timestamp: 1, error: { name: 'APIError', data: { message: 'provider down', statusCode: 503 } } })
+    const host = fakeHost((call) => (call === 2 ? { exitCode: 1, stdout: crash } : { exitCode: 1, stdout: rateLimited }))
+    const res = await runCampaign(campaign([planOne('dev', 'baseline', 'a')], host, { sleep: async () => {} }))
+    expect(host.runCalls).toBe(3)
+    expect(res.aborted).toBeUndefined()
+    expect(res.results[0]).toMatchObject({ status: 'infra_error', attempt: 3 })
+  })
+})
+
+describe('judge infrastructure failures and runner exceptions', () => {
+  const infra = (code: 'rate_limit' | 'timeout' | 'host_exit' | 'aborted') => ({ verdict: 'infra_error', kind: 'infra', code }) as const
+
+  test.each(['rate_limit', 'timeout', 'host_exit'] as const)('a %s from the judge is an infra_error: retried with backoff and outside the denominator', async (code) => {
+    const waits: number[] = []
+    let calls = 0
+    const judge = async () => (++calls <= 2 ? infra(code) : ({ verdict: 'pass' } as const))
+    const c = campaign([planOne('dev', 'baseline', 'd')], fakeHost({}), { judge, sleep: async (ms) => void waits.push(ms) })
+    const res = await runCampaign(c)
+    expect(waits).toEqual([30_000, 90_000])
+    expect(res.infraErrors.map((r) => r.reasons)).toEqual([[`judge_infra:${code}`], [`judge_infra:${code}`]])
+    expect(res.results[0]).toMatchObject({ outcome: 'pass', attempt: 3 })
+    expect(res.tallies['dev/d/baseline']).toMatchObject({ attempted: 1, pass: 1, fail: 0, infra_error: 2 })
+  })
+
+  test('a judge that stays unreachable leaves the run an infra_error, never a judge_error fail', async () => {
+    const c = campaign([planOne('dev', 'baseline', 'd')], fakeHost({}), { judge: async () => infra('timeout'), sleep: async () => {} })
+    const res = await runCampaign(c)
+    expect(res.results[0]).toMatchObject({ status: 'infra_error', outcome: 'infra_error', attempt: 3 })
+    expect(res.tallies['dev/d/baseline']).toMatchObject({ attempted: 0, fail: 0, infra_error: 3 })
+    expect(manifestOf(c.campaignDir, res.results[0]!.runId)).toMatchObject({ status: 'infra_error', verdict_basis: 'deterministic' })
+  })
+
+  test('a judge call that was interrupted settles the run as interrupted and stops the campaign', async () => {
+    const res = await runCampaign(campaign([planOne('dev', 'baseline', 'a'), planOne('dev', 'baseline', 'b')], fakeHost({}), { judge: async () => infra('aborted') }))
+    expect(res.aborted).toBe('interrupted')
+    expect(res.results).toHaveLength(1)
+  })
+
+  test('judge_error stays for model-output problems: it is a FAIL inside the denominator', async () => {
+    const res = await runCampaign(campaign([planOne('dev', 'baseline', 'd')], fakeHost({}), { judge: async () => ({ verdict: 'judge_error', detail: 'invalid_malformed_json' }) }))
+    expect(res.tallies['dev/d/baseline']).toMatchObject({ attempted: 1, fail: 1, infra_error: 0 })
+  })
+
+  test('a credential leak seen by the judge transport purges the run and stops the campaign', async () => {
+    const host = fakeHost({})
+    const c = campaign([planOne('dev', 'baseline', 'a'), planOne('dev', 'baseline', 'b')], host, {
+      judge: async () => {
+        throw new CredentialLeakError('judge', ['judge_transport'])
+      },
+    })
+    const res = await runCampaign(c)
+    expect(res.aborted).toBe('credential_leak')
+    expect(host.runCalls).toBe(1)
+    const runId = readdirSync(c.campaignDir).find((d) => d !== 'summary.json')!
+    expect(readdirSync(join(c.campaignDir, runId))).toEqual(['manifest.json'])
+    expect(manifestOf(c.campaignDir, runId)).toMatchObject({ status: 'credential_leak', reasons: ['credential_leak:judge_transport:judge'] })
+  })
+
+  test('with no judge wired a positive-fixture run has no outcome and is pending-judge; it is not in any denominator', async () => {
+    const c = campaign([planOne('dev', 'baseline', 'd'), planOne('negative', 'skill', 'n')], fakeHost({}), { judge: undefined })
+    const res = await runCampaign(c)
+    const positive = res.results.find((r) => r.kind === 'dev')!
+    expect(positive).toMatchObject({ status: 'completed', outcome: undefined })
+    expect(manifestOf(c.campaignDir, positive.runId)).toMatchObject({ status: 'completed', verdict_basis: 'pending-judge' })
+    expect(manifestOf(c.campaignDir, positive.runId).outcome).toBeUndefined()
+    expect(res.tallies['dev/d/baseline']).toMatchObject({ attempted: 0, pass: 0 })
+    expect(res.tallies['negative/n/skill']).toMatchObject({ attempted: 1, pass: 1 })
+  })
+
+  test('an exception inside an attempt settles that run as infra_error, writes a final manifest, is not retried, and the campaign carries on', async () => {
+    const inner = fakeHost({})
+    let calls = 0
+    const host: Host = {
+      debugConfig: (r) => inner.debugConfig(r),
+      run: (r) => {
+        if (++calls === 1) throw new TypeError(`boom ${PLACEHOLDER_API_KEY.slice(0, 4)}`)
+        return inner.run(r)
+      },
+    }
+    const c = campaign([planOne('negative', 'skill', 'a'), planOne('negative', 'skill', 'b')], host)
+    const res = await runCampaign(c)
+    expect(calls).toBe(2) // run a once (no retry), then run b
+    expect(res.results.map((r) => [r.fixtureId, r.status, r.reasons])).toEqual([
+      ['a', 'infra_error', ['runner_exception:TypeError']],
+      ['b', 'completed', []],
+    ])
+    const m = manifestOf(c.campaignDir, res.results[0]!.runId)
+    expect(m).toMatchObject({ status: 'infra_error', outcome: 'infra_error', reasons: ['runner_exception:TypeError'] })
+    expect(m.finished_at).not.toBeNull()
+    expect(JSON.stringify(m)).not.toContain('boom')
+    expect(res.tallies['negative/a/skill']).toMatchObject({ attempted: 0, infra_error: 1 })
+  })
+
+  test('summary.json is written even when the loop throws', async () => {
+    const bad = { ...verification, prereg: { ...verification.prereg, agent_model_id: 'bogus/model' } }
+    const c = campaign([planOne('dev', 'baseline')], fakeHost({}), { providerMode: 'live', verification: bad })
+    await expect(runCampaign(c)).rejects.toThrow('live mode only supports')
+    const summary = JSON.parse(readFileSync(join(c.campaignDir, 'summary.json'), 'utf8')) as { planned_runs: number; runs: unknown[] }
+    expect(summary).toMatchObject({ planned_runs: 1, runs: [] })
   })
 })
 

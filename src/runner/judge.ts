@@ -20,6 +20,8 @@
  * (`redact.json`) and wrapped in per-request random delimiters as data; strict
  * JSON out, one verdict and one verbatim quote per criterion; one retry, then
  * `judge_error` (a FAIL). The provider-returned model must equal the pinned one.
+ * A transport failure (rate limit, timeout, host exit, interrupt) is not a verdict
+ * on the answer: it comes back as `infra_error` and the caller retries the run.
  */
 import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
@@ -27,12 +29,12 @@ import { join } from 'node:path'
 
 import { needlesOf, type PassthroughAuth, writeIsolatedAuth } from './auth'
 import { createFixture, buildChildEnv, destroyFixture } from './env'
-import { analyzeEvents } from './events'
+import { analyzeEvents, isRateLimited } from './events'
 import { systemPromptSent } from './isolation'
-import type { JudgeEvidence } from './manifest'
+import { CredentialLeakError, type JudgeEvidence } from './manifest'
 import { opencodeArgv, type SpawnOptions, type SpawnResult, spawnCapture } from './opencode'
 import { loadRedactTokens, redactOrThrow, RedactionFailed } from './redact'
-import type { JudgeHook, JudgeInput, JudgeVerdict } from './run'
+import type { JudgeHook, JudgeInfraCode, JudgeInput, JudgeVerdict } from './run'
 import { type Gateway, gatewayOf, providerOf, type ScriptedProviderServer, startRecordingProxy, upstreamFor } from './scripted-provider'
 import { buildConfig, gitInit, sha256 } from './workspace'
 
@@ -368,7 +370,7 @@ export function opencodeTransport(overrides: Partial<TransportDeps> = {}, auth: 
       // Nothing the judge produced or saw may contain a passthrough credential.
       const haystack = `${spawn.stdout}\n${spawn.stderr}\n${JSON.stringify(server.requests.map((r) => r.body))}`
       const leaked = needles.some((n) => haystack.includes(n.value))
-      const rateLimited = isRateLimitError(events.hostErrors)
+      const rateLimited = isRateLimited(events.hostErrors)
       const failure = leaked
         ? 'credential_leak'
         : spawn.timedOut
@@ -406,8 +408,11 @@ export function opencodeTransport(overrides: Partial<TransportDeps> = {}, auth: 
   }
 }
 
-function isRateLimitError(errors: readonly { message?: string | undefined; statusCode?: number }[]): boolean {
-  return errors.some((e) => e.statusCode === 429 || /rate.?limit|too many requests|\b429\b/i.test(e.message ?? ''))
+function infraCodeOf(response: Pick<JudgeTransportResponse, 'error' | 'rateLimited'>): JudgeInfraCode {
+  const error = response.error ?? ''
+  if (error === 'timeout') return 'timeout'
+  if (error === 'aborted') return 'aborted'
+  return response.rateLimited || error.endsWith(':429') ? 'rate_limit' : 'host_exit'
 }
 
 // ── the judge ──────────────────────────────────────────────────────────────
@@ -504,8 +509,9 @@ export function createJudge(options: CreateJudgeOptions): Judge {
       evidence.wall_ms += response.wallMs
 
       if (!response.ok) {
-        lastCode = `transport_${response.error ?? 'failed'}`
-        continue
+        // Transport failures say nothing about the answer. A leak is fatal; the rest is infra, settled by the caller.
+        if (response.error === 'credential_leak') throw new CredentialLeakError('judge', ['judge_transport'])
+        return { verdict: 'infra_error', kind: 'infra', code: infraCodeOf(response) }
       }
       // A different model answering is not a retryable glitch: the run fails.
       const want = returnedModelName(model)

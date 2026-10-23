@@ -318,6 +318,11 @@ export async function rejudgeCampaign(input: RejudgeInput): Promise<RejudgeRow[]
       recordJson = (JSON.parse(raw) as { content: string }[]).map((r) => r.content)
     }
     const verdict = await input.judge({ method: manifest.method, condition: manifest.condition, fixture: { id: fixture.id, kind: manifest.fixture.kind, text: fixture.text, hash: fixture.hash }, finalAnswer: answer!, recordJson })
+    if (verdict.verdict === 'infra_error') {
+      rows.push({ run_id: manifest.run_id, prior_outcome: prior, verdict: 'skipped', reason: `judge unreachable (${verdict.code}); no verdict recorded` })
+      input.log?.(`${manifest.run_id}: ${prior} → judge unreachable (${verdict.code})`)
+      continue
+    }
     const ref = verdict.evidence ? writeJudgeRecord(run.dir, verdict.evidence) : undefined
     rows.push({ run_id: manifest.run_id, prior_outcome: prior, verdict: verdict.verdict, ...(ref ? { judge_json_sha256: ref.sha256 } : {}) })
     input.log?.(`${manifest.run_id}: ${prior} → ${verdict.verdict}`)

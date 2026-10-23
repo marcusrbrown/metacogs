@@ -279,15 +279,21 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
   }
 
   out(`\nsummary: ${result.summaryPath}`)
-  for (const [key, t] of Object.entries(result.tallies)) {
-    out(`  ${key}: pass ${t.pass}/${t.attempted}${t.infra_error ? ` · infra_error ${t.infra_error}` : ''}${t.non_isolated ? ` · non_isolated ${t.non_isolated}` : ''}`)
+  const planned: Record<string, number> = {}
+  for (const r of plan) planned[`${r.fixture.kind}/${r.fixture.id}/${r.condition}`] = (planned[`${r.fixture.kind}/${r.fixture.id}/${r.condition}`] ?? 0) + 1
+  for (const key of new Set([...Object.keys(planned), ...Object.keys(result.tallies)])) {
+    const t = result.tallies[key] ?? { attempted: 0, pass: 0, fail: 0, infra_error: 0, non_isolated: 0 }
+    out(`  ${key}: pass ${t.pass}/${t.attempted} (planned ${planned[key] ?? 0})${t.infra_error ? ` · infra_error ${t.infra_error}` : ''}${t.non_isolated ? ` · non_isolated ${t.non_isolated}` : ''}`)
   }
-  if (!judge && result.results.some((r) => r.outcome && r.outcome !== 'infra_error' && r.outcome !== 'non_isolated')) {
-    out('note: scripted run, no judge: positive-fixture outcomes are deterministic-only (verdict_basis=pending-judge).')
-  }
+  const ungraded = result.results.filter((r) => r.status === 'completed' && r.outcome === undefined).length
+  if (ungraded) out(`note: ${ungraded} positive-fixture run(s) passed their checks but were not graded (no judge): outcome pending, not counted. Judge them with rejudge before reporting.`)
   if (result.aborted === 'credential_leak') {
     err('ABORTED: credential_leak. Artifacts for that run were purged; see its manifest.')
     return EXIT.CREDENTIAL_LEAK
+  }
+  if (result.aborted === 'provider_outage') {
+    err('ABORTED: provider_outage. Three rate-limited attempts in a row; no further runs were launched. The summary lists what ran.')
+    return EXIT.ERROR
   }
   if (result.aborted === 'interrupted') return EXIT.INTERRUPTED
   return EXIT.OK
