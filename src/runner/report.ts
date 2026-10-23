@@ -130,11 +130,28 @@ const emptyTaxonomy = (): Taxonomy => ({ pass: 0, fail: 0, 'timeout->fail': 0, '
 
 type Bucket = keyof OutcomeCounts | 'incomplete'
 
+/**
+ * A positive-fixture result with no judge verdict behind it: a pass the deterministic checks alone produced, or a run still
+ * waiting for the judge. Failures that never reached the judge (timeout, budget, host crash, failed checks) are real failures.
+ */
+export function lacksJudgeVerdict(m: Pick<RunManifest, 'outcome' | 'verdict_basis' | 'fixture'>): boolean {
+  return m.fixture.kind !== 'negative' && m.verdict_basis !== 'judge' && (m.outcome === 'pass' || m.verdict_basis === 'pending-judge')
+}
+
+/** Reports count judged results only: an unjudged positive-fixture run is a reason to stop, not a number to average in. */
+function assertAllJudged(runs: readonly LoadedRun[]): void {
+  const unjudged = runs.filter((r) => lacksJudgeVerdict(r.manifest))
+  if (unjudged.length) {
+    throw new Error(`${unjudged.length} positive-fixture run(s) have no judge verdict (${unjudged.slice(0, 3).map((r) => r.manifest.run_id).join(', ')}); judge the campaign before reporting it`)
+  }
+}
+
 /** One manifest → exactly one bucket. */
-export function bucketOf(m: Pick<RunManifest, 'status' | 'outcome' | 'reasons'>): Bucket {
+export function bucketOf(m: Pick<RunManifest, 'status' | 'outcome' | 'reasons' | 'verdict_basis' | 'fixture'>): Bucket {
   if (m.status === 'infra_error') return 'infra_error'
   if (m.status === 'non_isolated') return 'non_isolated'
   if (m.status === 'running' || m.status === 'interrupted' || m.status === 'credential_leak') return 'incomplete'
+  if (lacksJudgeVerdict(m)) return 'incomplete'
   if (m.outcome === 'pass') return 'pass'
   if (m.outcome !== 'fail') return 'incomplete'
   if (m.status === 'timeout') return 'fail_timeout'
@@ -203,6 +220,7 @@ const sorted = <T>(values: Iterable<T>): T[] => [...new Set(values)].sort()
 export function buildRedReport(input: RedReportInput): RedReport {
   const { prereg, shas, runs } = input
   if (runs.length === 0) throw new Error('no run manifests to report')
+  assertAllJudged(runs)
   const bar = prereg.red_bar
 
   const byFixture = new Map<string, { id: string; kind: 'dev' | 'negative'; hash: string; runs: LoadedRun[] }>()
@@ -214,6 +232,11 @@ export function buildRedReport(input: RedReportInput): RedReport {
     const entry = byFixture.get(key) ?? { id: fixture.id, kind: fixture.kind, hash: fixture.hash, runs: [] }
     entry.runs.push(run)
     byFixture.set(key, entry)
+  }
+  const ranDev = [...byFixture.values()].filter((e) => e.kind === 'dev').map((e) => e.id)
+  const wantDev = Object.keys(prereg.fixture_hashes.dev)
+  if (ranDev.length !== wantDev.length || wantDev.some((id) => !ranDev.includes(id))) {
+    throw new Error(`the campaign covers dev fixtures [${ranDev.sort().join(', ')}] but the prereg pins [${[...wantDev].sort().join(', ')}]; refusing a partial or foreign RED read`)
   }
 
   const totalsTaxonomy = emptyTaxonomy()
@@ -274,8 +297,8 @@ export function buildRedReport(input: RedReportInput): RedReport {
         outcomes,
         taxonomy,
         criteria,
-        meets_red_bar: isDev && fail >= bar.min_baseline_fails_per_fixture,
-        fail_excluding_judge_error: { fail: cleanFail, attempted: cleanAttempted, meets_red_bar: isDev && cleanFail >= bar.min_baseline_fails_per_fixture },
+        meets_red_bar: isDev && attempted > 0 && fail >= bar.min_baseline_fails_per_fixture,
+        fail_excluding_judge_error: { fail: cleanFail, attempted: cleanAttempted, meets_red_bar: isDev && cleanAttempted > 0 && cleanFail >= bar.min_baseline_fails_per_fixture },
         retained,
       }
     })
@@ -624,6 +647,7 @@ export interface DevReportInput {
 export function buildDevReport(input: DevReportInput): DevReport {
   const { prereg, shas, runs } = input
   if (runs.length === 0) throw new Error('no run manifests to report')
+  assertAllJudged(runs)
 
   const byFixture = new Map<string, { id: string; kind: 'dev' | 'negative'; hash: string; runs: LoadedRun[] }>()
   for (const run of runs) {
@@ -769,6 +793,38 @@ export function buildDevReport(input: DevReportInput): DevReport {
       passes_dev_bar: dev.length > 0 && negatives.length > 0 && devMeeting === dev.length && negatives.every((f) => f.meets_dev_bar),
     },
   }
+}
+
+export interface DevRegressionInput {
+  prereg: Prereg
+  shas: PreregShas
+  headSha: string
+  /** Every manifest of the dev campaign that `green-dev.json` names. */
+  runs: readonly LoadedRun[]
+  plannedRuns: number
+}
+
+/**
+ * The dev-regression facts of a GREEN read, rebuilt from the dev campaign's manifests instead of read from the committed
+ * `green-dev.json`. Throws unless the campaign ran under this prereg, on one skill, over exactly the prereg's dev and
+ * negative fixtures.
+ */
+export function recomputeDevRegression(input: DevRegressionInput): Pick<DevReport, 'skill' | 'dev'> {
+  const { prereg, shas, runs } = input
+  if (runs.length === 0) throw new Error('the dev campaign has no run manifests')
+  const foreign = runs.filter((r) => r.manifest.prereg.commit_sha !== shas.commitSha)
+  if (foreign.length) throw new Error(`${foreign.length} dev manifest(s) were not produced under ${shas.tag} (${shas.commitSha.slice(0, 12)})`)
+  const skills = new Set(runs.map((r) => r.manifest.skill?.sha256))
+  const [skillSha256] = [...skills]
+  if (skills.size !== 1 || !skillSha256) throw new Error('the dev campaign did not run exactly one skill')
+  for (const kind of ['dev', 'negative'] as const) {
+    const want = prereg.fixture_hashes[kind]
+    const ran = runs.filter((r) => r.manifest.fixture.kind === kind).map((r) => r.manifest.fixture)
+    const wrong = [...Object.keys(want).filter((id) => !ran.some((f) => f.id === id)), ...ran.filter((f) => want[f.id] !== f.hash).map((f) => f.id)]
+    if (wrong.length) throw new Error(`the dev campaign's ${kind} fixtures do not match the prereg (${[...new Set(wrong)].sort().join(', ')})`)
+  }
+  const { skill, dev } = buildDevReport({ ...input, skillSha256 })
+  return { skill, dev }
 }
 
 export const DEV_REPORT_SCHEMA: Schema = obj({
@@ -1042,6 +1098,7 @@ const deltaOf = (skill: { pass: number; attempted: number }, baseline: { pass: n
 export function buildGreenReport(input: GreenReportInput): GreenReport {
   const { prereg, shas, runs } = input
   if (runs.length === 0) throw new Error('no run manifests to report')
+  assertAllJudged(runs)
   if (!shas.skillTreeSha) throw new Error('GREEN report needs the committed skill tree (enforce the prereg in green mode first)')
 
   type Group = { id: string; hash: string; baseline: LoadedRun[]; skill: LoadedRun[] }

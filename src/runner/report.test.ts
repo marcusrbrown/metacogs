@@ -15,6 +15,7 @@ import {
   loadCampaignManifests,
   newcombe95,
   type RedReport,
+  recomputeDevRegression,
   reportPath,
   validateDevReport,
   validateGreenReport,
@@ -183,6 +184,15 @@ describe('bucketOf', () => {
   ] as const)('%s → %s', (outcome, bucket) => {
     expect(bucketOf(manifestFor(1, 'dev', 'd1-x', 1, outcome))).toBe(bucket)
   })
+
+  test('a positive-fixture pass without a judge verdict is incomplete; a negative pass is deterministic by design', () => {
+    const pass = manifestFor(1, 'dev', 'd1-x', 1, 'pass')
+    expect(bucketOf({ ...pass, verdict_basis: 'deterministic' })).toBe('incomplete')
+    expect(bucketOf({ ...pass, verdict_basis: 'pending-judge', outcome: undefined })).toBe('incomplete')
+    expect(bucketOf({ ...pass, verdict_basis: 'deterministic', fixture: { ...pass.fixture, kind: 'negative' } })).toBe('pass')
+    // a failure that never reached the judge is still a failure
+    expect(bucketOf({ ...manifestFor(1, 'dev', 'd1-x', 1, 'timeout'), verdict_basis: 'deterministic' })).toBe('fail_timeout')
+  })
 })
 
 describe('buildRedReport', () => {
@@ -238,6 +248,40 @@ describe('buildRedReport', () => {
     expect(report.prereg).toMatchObject({ tag: 'prereg/demo/2', epoch: 2 })
   })
 
+  test('refuses a campaign whose dev fixtures are not the prereg set', () => {
+    const partial = campaign([['dev', 'd1-x', ['judge_fail']]])
+    expect(() => reportFor(partial)).toThrow('partial or foreign RED read')
+    const foreign = campaign([
+      ['dev', 'd1-x', ['judge_fail']],
+      ['dev', 'd2-y', ['judge_fail']],
+      ['dev', 'd9-extra', ['judge_fail']],
+    ])
+    expect(() => reportFor(foreign)).toThrow('d9-extra')
+  })
+
+  test('a fixture with nothing attempted never meets the RED bar, even when the bar is zero fails', () => {
+    const zeroBar = { ...prereg(), red_bar: { min_baseline_fails_per_fixture: 0, min_fixtures: 1 } }
+    const dir = campaign([
+      ['dev', 'd1-x', ['infra', 'infra']],
+      ['dev', 'd2-y', ['pass']],
+    ])
+    const report = buildRedReport({ prereg: zeroBar, shas: SHAS, headSha: HEAD, runs: loadCampaignManifests(dir), plannedRuns: 3 })
+    const d1 = report.fixtures.find((f) => f.id === 'd1-x')!
+    expect(d1).toMatchObject({ attempted: 0, meets_red_bar: false })
+    expect(d1.fail_excluding_judge_error.meets_red_bar).toBe(false)
+    expect(report.fixtures.find((f) => f.id === 'd2-y')!.meets_red_bar).toBe(true)
+  })
+
+  test('refuses an unjudged positive-fixture run', () => {
+    const dir = campaign([
+      ['dev', 'd1-x', ['judge_fail']],
+      ['dev', 'd2-y', ['pass']],
+    ])
+    const runs = loadCampaignManifests(dir)
+    runs.find((r) => r.manifest.fixture.id === 'd2-y')!.manifest.verdict_basis = 'pending-judge'
+    expect(() => buildRedReport({ prereg: prereg(), shas: SHAS, headSha: HEAD, runs, plannedRuns: 2 })).toThrow('no judge verdict')
+  })
+
   test('refuses a skill-condition manifest', () => {
     const d = campaign([['dev', 'd1-x', ['pass']]])
     const m = loadCampaignManifests(d)
@@ -249,6 +293,7 @@ describe('buildRedReport', () => {
 describe('allowlist projection', () => {
   const dir = campaign([
     ['dev', 'd1-x', ['judge_fail', 'pass', 'timeout', 'judge_error', 'infra']],
+    ['dev', 'd2-y', ['judge_fail']],
     ['negative', 'n1-z', ['pass']],
   ])
   const report = reportFor(dir)
@@ -429,6 +474,47 @@ describe('buildDevReport (skill condition, dev + negative fixtures)', () => {
     expect(() => buildDevReport({ prereg: prereg(), shas: SHAS, headSha: HEAD, runs: [baseline], plannedRuns: 1, skillSha256: SKILL })).toThrow('skill-condition')
   })
 
+  test('an unjudged positive-fixture pass is refused', () => {
+    const runs = runsFor([['dev', 'd1-x', ['pass', 'pass']], ['negative', 'n1-z', ['pass']]])
+    runs[0]!.manifest.verdict_basis = 'deterministic'
+    expect(() => buildDevReport({ prereg: prereg(), shas: SHAS, headSha: HEAD, runs, plannedRuns: 3, skillSha256: SKILL })).toThrow('no judge verdict')
+  })
+
+  describe('recomputeDevRegression', () => {
+    const dr = (): Prereg => ({ ...prereg(), fixture_hashes: { dev: { 'd1-x': sha256('d1-x'), 'd2-y': sha256('d2-y') }, negative: { 'n1-z': sha256('n1-z') }, heldout: {} } })
+    const all = (): ReturnType<typeof runsFor> =>
+      runsFor([
+        ['dev', 'd1-x', ['pass', 'pass', 'pass', 'pass', 'pass']],
+        ['dev', 'd2-y', ['pass', 'pass', 'pass', 'pass', 'judge_fail']],
+        ['negative', 'n1-z', ['pass', 'pass', 'pass', 'pass', 'pass']],
+      ])
+    const input = (runs: ReturnType<typeof runsFor>) => ({ prereg: dr(), shas: SHAS, headSha: HEAD, runs, plannedRuns: 15 })
+
+    test('rebuilds the dev bar and the skill hash from manifests', () => {
+      expect(recomputeDevRegression(input(all()))).toMatchObject({ skill: { sha256: SKILL }, dev: { passes_dev_bar: true, dev_fixtures: 2, negative_fixtures: 1 } })
+      const failing = all().map((r) => (r.manifest.fixture.id === 'd2-y' ? { ...r, manifest: { ...r.manifest, outcome: 'fail' as const, reasons: ['judge_fail'] } } : r))
+      expect(recomputeDevRegression(input(failing)).dev.passes_dev_bar).toBe(false)
+    })
+
+    test.each([
+      ['a manifest from another prereg commit', (runs: ReturnType<typeof runsFor>) => (runs[0]!.manifest.prereg.commit_sha = 'e'.repeat(40)), 'were not produced under'],
+      ['two different skills', (runs: ReturnType<typeof runsFor>) => (runs[0]!.manifest.skill = { sha256: sha256('other'), tree_sha: null }), 'exactly one skill'],
+      ['a wrong fixture hash', (runs: ReturnType<typeof runsFor>) => (runs[0]!.manifest.fixture.hash = sha256('edited')), 'do not match the prereg'],
+      ['an unjudged pass', (runs: ReturnType<typeof runsFor>) => (runs[0]!.manifest.verdict_basis = 'pending-judge'), 'no judge verdict'],
+    ])('refuses %s', (_name, tamper, message) => {
+      const runs = all().map((r) => ({ ...r, manifest: { ...r.manifest, fixture: { ...r.manifest.fixture, hash: sha256(r.manifest.fixture.id) }, prereg: { ...r.manifest.prereg, commit_sha: SHAS.commitSha } } }))
+      tamper(runs)
+      expect(() => recomputeDevRegression(input(runs))).toThrow(message)
+    })
+
+    test('a partial campaign (a dev fixture missing) is refused', () => {
+      const runs = all()
+        .filter((r) => r.manifest.fixture.id !== 'd2-y')
+        .map((r) => ({ ...r, manifest: { ...r.manifest, fixture: { ...r.manifest.fixture, hash: sha256(r.manifest.fixture.id) }, prereg: { ...r.manifest.prereg, commit_sha: SHAS.commitSha } } }))
+      expect(() => recomputeDevRegression(input(runs))).toThrow('d2-y')
+    })
+  })
+
   test('check codes are counted per fixture; extra keys are rejected by the allowlist', () => {
     const runs = runsFor([['dev', 'd1-x', ['pass', 'check']]])
     runs[1]!.manifest.check_failures = [{ code: 'helper_not_invoked', message: '/secret/path leaked here' }]
@@ -586,6 +672,12 @@ describe('buildGreenReport (held-out, both conditions)', () => {
     expect(build(good, { devReport: null }).checks.dev_regression).toBe(false)
     expect(build(good, { devReport: { skill: { sha256: SKILL }, dev: { passes_dev_bar: false } } as never }).verdict).toBe('green-miss')
     expect(build(good, { devReport: { skill: { sha256: sha256('older') }, dev: { passes_dev_bar: true } } as never }).dev_regression.skill_matches).toBe(false)
+  })
+
+  test('an unjudged positive-fixture pass is refused', () => {
+    const runs = runsFor(good)
+    runs.find((r) => r.manifest.fixture.kind === 'heldout' && r.manifest.outcome === 'pass')!.manifest.verdict_basis = 'deterministic'
+    expect(() => buildGreenReport({ prereg: greenPrereg(), shas: { ...SHAS, skillTreeSha: TREE }, headSha: HEAD, runs, plannedRuns: 25, skillSha256: SKILL, devReport: devOk, nearDuplicate: 'pass' })).toThrow('no judge verdict')
   })
 
   test('a near-duplicate held-out fixture misses; only pass/fail is reported', () => {

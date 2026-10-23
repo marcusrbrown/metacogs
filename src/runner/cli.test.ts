@@ -20,16 +20,21 @@ function tmp(prefix: string): string {
 
 function io() {
   const lines = { out: [] as string[], err: [] as string[] }
+  // Every invocation gets its own state root, so a held-out read marker never lands in the developer's real one.
+  const stateHome = tmp('metacogs-clitest-state-')
   return {
     lines,
+    stateHome,
     io: {
       out: (l: string) => lines.out.push(l),
       err: (l: string) => lines.err.push(l),
       installSignalHandlers: () => () => {},
-      env: {} as Record<string, string>,
+      env: { XDG_STATE_HOME: stateHome } as Record<string, string>,
     },
   }
 }
+
+const LIVE = ['--provider', 'live', '--auth-passthrough', 'none']
 
 function chainRepo() {
   const repo = new TestRepo('metacogs-clitest-')
@@ -49,6 +54,10 @@ describe('usage', () => {
       ['red', '--method', 'demo', '--provider', 'bogus'],
       ['red', '--nope'],
       ['red', '--method', 'demo', '--dev-only'],
+      ['red', '--method', 'demo', '--rehearsal'],
+      ['green', '--method', 'demo', '--rehearsal', '--dev-only'],
+      ['green', '--method', 'demo', '--rehearsal', '--provider', 'live'],
+      ['green', '--method', 'demo', '--include-dev', ...LIVE],
     ]) {
       const t = io()
       expect(await main(argv, t.io)).toBe(EXIT.USAGE)
@@ -123,8 +132,61 @@ describe('refusals happen before anything launches', () => {
     rmSync(join(heldout, 'h1.md'))
     const t = io()
     t.io.env.METACOGS_HELDOUT_DIR = heldout
-    expect(await main(['green', '--method', 'demo', '--repo', repo.dir], t.io)).toBe(EXIT.REFUSED)
+    expect(await main(['green', '--method', 'demo', '--repo', repo.dir, ...LIVE], t.io)).toBe(EXIT.REFUSED)
     expect(t.lines.err.join('\n')).toContain('heldout/h1 missing')
+  })
+
+  test('green without --provider live, or with --provider scripted, is refused before any held-out content is loaded or marked', async () => {
+    const { repo, heldout, scaffold } = chainRepo()
+    buildHappyChain(repo, scaffold)
+    for (const extra of [[], ['--provider', 'scripted']]) {
+      const t = io()
+      t.io.env.METACOGS_HELDOUT_DIR = heldout
+      expect(await main(['green', '--method', 'demo', '--repo', repo.dir, ...extra], t.io)).toBe(EXIT.REFUSED)
+      expect(t.lines.err.join('\n')).toContain('REFUSED: green requires --provider live')
+      expect(t.lines.out).toEqual([])
+      expect(existsSync(join(t.stateHome, 'metacogs', 'heldout'))).toBe(false)
+    }
+  })
+
+  test('the first GREEN attempt claims a read marker even when it is refused afterwards; the next attempt names the marker and is refused', async () => {
+    const { repo, heldout, scaffold } = chainRepo()
+    buildHappyChain(repo, scaffold)
+    rmSync(join(heldout, 'h1.md')) // the first attempt loads the set, finds a hash mismatch, and stops
+    const first = io()
+    first.io.env.METACOGS_HELDOUT_DIR = heldout
+    expect(await main(['green', '--method', 'demo', '--repo', repo.dir, ...LIVE], first.io)).toBe(EXIT.REFUSED)
+    expect(first.lines.err.join('\n')).toContain('heldout/h1 missing')
+    const markerPath = join(first.stateHome, 'metacogs', 'heldout', 'demo', '1.read.json')
+    const marker = JSON.parse(readFileSync(markerPath, 'utf8')) as { campaign_id: string; started_at: string; prereg_tag: string }
+    expect(marker.prereg_tag).toBe('prereg/demo/1')
+    expect(marker.campaign_id).toMatch(/^demo-green-/)
+    expect(Number.isNaN(Date.parse(marker.started_at))).toBe(false)
+
+    // same state root, restored set: the marker, not green.json, stops the second read
+    writeFileSync(join(heldout, 'h1.md'), 'Held-out fixture: pick a queue.\n')
+    const second = io()
+    second.io.env.METACOGS_HELDOUT_DIR = heldout
+    second.io.env.XDG_STATE_HOME = first.stateHome
+    expect(await main(['green', '--method', 'demo', '--repo', repo.dir, ...LIVE], second.io)).toBe(EXIT.REFUSED)
+    const message = second.lines.err.join('\n')
+    expect(message).toContain('already read')
+    expect(message).toContain(marker.campaign_id)
+    expect(message).toContain('prereg/demo/1')
+    expect(second.lines.out).toEqual([])
+  })
+
+  test('a git-ordering refusal happens before the marker is claimed', async () => {
+    const { repo, heldout, scaffold } = chainRepo()
+    repo.commit('fixtures', scaffold.fixturePaths)
+    writePrereg(repo, scaffold)
+    repo.write('skills/demo/SKILL.md', 'skill\n')
+    repo.commit('prereg+skill', [scaffold.preregPath, 'skills/demo'])
+    repo.tag('prereg/demo/1')
+    const t = io()
+    t.io.env.METACOGS_HELDOUT_DIR = heldout
+    expect(await main(['green', '--method', 'demo', '--repo', repo.dir, ...LIVE], t.io)).toBe(EXIT.REFUSED)
+    expect(existsSync(join(t.stateHome, 'metacogs', 'heldout'))).toBe(false)
   })
 
   test('a GREEN report already exists → the one-shot read is refused before anything launches', async () => {
@@ -133,7 +195,7 @@ describe('refusals happen before anything launches', () => {
     repo.write('evals/reports/demo/green.json', '{}\n')
     const t = io()
     t.io.env.METACOGS_HELDOUT_DIR = heldout
-    expect(await main(['green', '--method', 'demo', '--repo', repo.dir], t.io)).toBe(EXIT.REFUSED)
+    expect(await main(['green', '--method', 'demo', '--repo', repo.dir, ...LIVE], t.io)).toBe(EXIT.REFUSED)
     expect(t.lines.err.join('\n')).toContain('held-out set was read once')
     expect(t.lines.out).toEqual([])
   })
@@ -179,7 +241,7 @@ describe('refusals happen before anything launches', () => {
     const t = io()
     t.io.env.METACOGS_HELDOUT_DIR = heldout
     const inside = join(repo.dir, 'evals', 'runs')
-    expect(await main(['green', '--method', 'demo', '--repo', repo.dir, '--out', inside], t.io)).toBe(EXIT.REFUSED)
+    expect(await main(['green', '--method', 'demo', '--repo', repo.dir, '--out', inside, ...LIVE], t.io)).toBe(EXIT.REFUSED)
     expect(t.lines.err.join('\n')).toContain('inside the repository')
     expect(existsSync(inside)).toBe(false)
   })
@@ -247,6 +309,54 @@ describe('report', () => {
     expect(t.lines.err.join('\n')).toContain('not produced under')
   })
 
+  describe('report --green: the dev regression is recomputed, never read from green-dev.json', () => {
+    async function greenRepo() {
+      const { repo, heldout, scaffold } = chainRepo()
+      const { preregCommit } = buildHappyChain(repo, scaffold)
+      const { writeManifest } = await import('./manifest')
+      const campaign = join(tmp('metacogs-clitest-green-'), 'demo-green-2026-10-22T16-00-00-000Z')
+      const dir = join(campaign, '001-heldout-h1-skill-r1')
+      mkdirSync(dir, { recursive: true })
+      writeManifest(dir, { ...manifest('001-heldout-h1-skill-r1', 'h1', 'heldout', preregCommit), condition: 'skill' } as never)
+      return { repo, heldout, campaign, preregCommit }
+    }
+    const run = async (r: Awaited<ReturnType<typeof greenRepo>>) => {
+      const t = io()
+      t.io.env.METACOGS_HELDOUT_DIR = r.heldout
+      const code = await main(['report', '--green', '--method', 'demo', '--repo', r.repo.dir, '--campaign', r.campaign], t.io)
+      return { code, err: t.lines.err.join('\n') }
+    }
+
+    test('a green-dev.json that is not a valid dev report is refused', async () => {
+      const r = await greenRepo()
+      r.repo.write('evals/reports/demo/green-dev.json', '{"dev":{"passes_dev_bar":true},"skill":{"sha256":"x"}}\n')
+      const { code, err } = await run(r)
+      expect(code).toBe(EXIT.REFUSED)
+      expect(err).toContain('is not a valid dev report')
+    })
+
+    test('a valid-looking green-dev.json whose campaign manifests are not here is refused, not trusted', async () => {
+      const r = await greenRepo()
+      const { buildDevReport } = await import('./report')
+      const m = (id: string, kind: string) => ({ ...manifest(`001-${kind}-${id}-skill-r1`, id, kind, r.preregCommit), condition: 'skill', campaign_id: 'demo-dev-2026-10-22T15-00-00-000Z', verdict_basis: kind === 'dev' ? 'judge' : 'deterministic', skill: { sha256: '9'.repeat(64), tree_sha: null }, model: { pinned: 'opencode/big-pickle', returned: [] }, check_failures: [] })
+      const prereg = (await import('./prereg')).parsePrereg(readFileSync(join(r.repo.dir, 'evals', 'demo', 'prereg.json'), 'utf8'))
+      if (!prereg.ok) throw new Error('prereg')
+      const dev = buildDevReport({
+        prereg: prereg.prereg,
+        shas: { tag: 'prereg/demo/1', tagObjectSha: 'b'.repeat(40), commitSha: r.preregCommit, blobSha: 'd'.repeat(40), firstSkillCommit: null, skillTreeSha: null },
+        headSha: 'a'.repeat(40),
+        runs: [m('d1', 'dev'), m('n1', 'negative')].map((x) => ({ manifest: x as never, manifestSha256: 'f'.repeat(64) })),
+        plannedRuns: 2,
+        skillSha256: '9'.repeat(64),
+      })
+      r.repo.write('evals/reports/demo/green-dev.json', `${JSON.stringify(dev)}\n`)
+      const { code, err } = await run(r)
+      expect(code).toBe(EXIT.REFUSED)
+      expect(err).toContain('demo-dev-2026-10-22T15-00-00-000Z')
+      expect(err).toContain('the committed file is not trusted')
+    })
+  })
+
   test('no campaign → error, nothing written', async () => {
     const { repo } = reportRepo()
     const t = io()
@@ -289,6 +399,25 @@ describe.skipIf(!opencodeAvailability().available)('scripted end-to-end', () => 
       expect(campaign).toStartWith('demo-dev-')
       expect(readdirSync(join(out, campaign!)).filter((d) => d !== 'summary.json')).toEqual(['001-negative-n1-skill-r1'])
       expect(t.lines.err.join('\n')).not.toContain('REFUSED')
+    },
+    180_000,
+  )
+
+  test(
+    'green --rehearsal is scripted, plans no held-out fixture, and claims no read marker',
+    async () => {
+      const { repo, scaffold } = chainRepo()
+      buildHappyChain(repo, scaffold)
+      const out = tmp('metacogs-cliout-')
+      const t = io()
+      t.io.env.METACOGS_HELDOUT_DIR = join(tmp('metacogs-clitest-nohold-'), 'absent')
+      const code = await main(['green', '--rehearsal', '--runs', '1', '--fixture', 'n1', '--method', 'demo', '--repo', repo.dir, '--out', out], t.io)
+      expect(code).toBe(EXIT.OK)
+      const [campaign] = readdirSync(out)
+      expect(campaign).toStartWith('demo-rehearsal-')
+      expect(readdirSync(join(out, campaign!)).filter((d) => d !== 'summary.json')).toEqual(['001-negative-n1-skill-r1'])
+      expect(existsSync(join(t.stateHome, 'metacogs', 'heldout'))).toBe(false)
+      expect(existsSync(join(repo.dir, 'evals', 'reports', 'demo', 'green.json'))).toBe(false)
     },
     180_000,
   )

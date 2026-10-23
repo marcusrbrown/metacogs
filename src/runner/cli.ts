@@ -20,9 +20,9 @@ import { findStaleManifests } from './manifest'
 import { opencodeAvailability } from './opencode'
 import { isLiveModel } from './scripted-provider'
 import { enforcePrereg, parsePrereg, PreregRefusal } from './prereg'
-import { buildDevReport, buildGreenReport, buildRedReport, type DevReport, type GreenReport, greenReportPath, loadCampaignManifests, validateGreenReport, writeDevReport, writeGreenReport, writeReport } from './report'
+import { buildDevReport, buildGreenReport, buildRedReport, type DevReport, type GreenReport, greenReportPath, loadCampaignManifests, recomputeDevRegression, validateDevReport, validateGreenReport, writeDevReport, writeGreenReport, writeReport } from './report'
 import { planRuns, type ProviderMode, runCampaign } from './run'
-import { CustodyError, hashSkillDir, heldoutDir, resolveOutputDir, stateRoot } from './workspace'
+import { claimHeldoutRead, CustodyError, hashSkillDir, heldoutDir, heldoutReadMarkerPath, resolveOutputDir, stateRoot } from './workspace'
 
 export const EXIT = { OK: 0, ERROR: 1, USAGE: 64, REFUSED: 3, CREDENTIAL_LEAK: 4, INTERRUPTED: 130 } as const
 
@@ -36,10 +36,12 @@ const USAGE = `usage: bun run eval <red|green> --method <name> [options]
                                                                    judge calls over retained answers, then review.md; manifests untouched
 
   --runs <n>              runs per condition per fixture (default: prereg runs_per_condition)
-  --provider scripted|live   scripted = local stub (default), live = the model pinned in the prereg through OpenCode's gateway:
-                          opencode-go/* (Go subscription, the default and preferred) or opencode/* (Zen, bills credits)
+  --provider scripted|live   scripted = local stub (default for red and green --dev-only), live = the model pinned in the prereg through
+                          OpenCode's gateway: opencode-go/* (Go subscription, the default and preferred) or opencode/* (Zen, bills credits).
+                          The one-shot held-out read (green without --dev-only) refuses anything but --provider live
   --fixture <id>          only this fixture (single-run debugging; marks the campaign as deviating from prereg)
-  --include-dev           green only: also run dev fixtures under the skill condition
+  --rehearsal             green only: scripted dry run of the skill condition on dev + negative fixtures. Never loads held-out fixtures,
+                          never claims the read marker, never feeds a report
   --dev-only              green: authoring iteration. Skill condition on dev + negative fixtures only; never reads or plans held-out,
                           needs no committed skill. report: project the newest dev campaign into evals/reports/<m>/green-dev.json
   --repo <dir>            repository to enforce prereg against (default: current git toplevel)
@@ -108,12 +110,27 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
     err(`--dev-only applies to green (and report) only\n${USAGE}`)
     return EXIT.USAGE
   }
-  // The dev-only green is a separate runner mode: it can never plan, load, or hash held-out content.
-  const runMode = devOnly ? 'dev' : mode
+  const rehearsal = parsed.values.rehearsal === true
+  if (rehearsal && (mode !== 'green' || devOnly || provider === 'live')) {
+    err(`--rehearsal applies to scripted green only, and not together with --dev-only\n${USAGE}`)
+    return EXIT.USAGE
+  }
+  if (mode === 'green' && parsed.values['include-dev']) {
+    err(`--include-dev is not accepted for green: the dev regression comes from evals/reports/<method>/green-dev.json (run green --dev-only, then report --dev-only)\n${USAGE}`)
+    return EXIT.USAGE
+  }
   if (provider !== undefined && provider !== 'scripted' && provider !== 'live') {
     err(`--provider must be scripted or live\n${USAGE}`)
     return EXIT.USAGE
   }
+  // The held-out read is live or it does not happen: refuse before any held-out content is loaded or any marker is claimed.
+  const isGreenRead = mode === 'green' && !devOnly && !rehearsal
+  if (isGreenRead && provider !== 'live') {
+    err('REFUSED: green requires --provider live')
+    return EXIT.REFUSED
+  }
+  // The dev-only green and the rehearsal are separate runner modes: they can never plan, load, or hash held-out content.
+  const runMode = devOnly || rehearsal ? 'dev' : mode
   const providerMode: ProviderMode = provider === 'live' ? 'live' : 'scripted'
   let auth: PassthroughAuth = {}
   let cliproxy: ResolvedCliproxy | undefined
@@ -139,7 +156,6 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
   const stale = findStaleManifests([join(repoRoot, 'evals', 'runs'), join(stateRoot(env), 'runs')])
   for (const s of stale) err(`warning: stale "running" manifest (a previous runner did not finish): ${s.path}`)
 
-  const isGreenRead = mode === 'green' && !devOnly
   // One shot: a GREEN report for this method already exists, so the held-out set has been read.
   if (isGreenRead && existsSync(greenReportPath(repoRoot, method))) {
     err(`REFUSED: ${greenReportPath(repoRoot, method).slice(repoRoot.length + 1)} exists; the held-out set was read once for this epoch. A second read needs a new epoch and a new held-out set.`)
@@ -150,12 +166,26 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
     return EXIT.REFUSED
   }
 
+  const campaignId = `${method}-${rehearsal ? 'rehearsal' : runMode}-${new Date().toISOString().replace(/[:.]/g, '-')}`
+
   // Enforcement happens before anything launches.
   let verification: ReturnType<typeof enforcePrereg>
   try {
-    verification = enforcePrereg({ git, repoRoot, method, mode: runMode, heldoutDir: heldoutDir(method, env) })
+    verification = enforcePrereg({
+      git,
+      repoRoot,
+      method,
+      mode: runMode,
+      heldoutDir: heldoutDir(method, env),
+      // The marker is claimed after the ordering checks pass and before the set is loaded, so any later outcome (a hash
+      // mismatch, a crash, an interrupt) still leaves the read on record. A directory that does not exist has nothing to burn.
+      beforeHeldoutRead: ({ prereg: p, shas }) => {
+        if (!existsSync(heldoutDir(method, env))) return
+        claimHeldoutRead(heldoutReadMarkerPath(method, p.epoch, env), { campaign_id: campaignId, started_at: new Date().toISOString(), prereg_tag: shas.tag })
+      },
+    })
   } catch (e) {
-    if (e instanceof PreregRefusal) {
+    if (e instanceof PreregRefusal || e instanceof CustodyError) {
       err(`REFUSED: ${e.message}`)
       return EXIT.REFUSED
     }
@@ -178,14 +208,12 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
     fixtures: verification.content.fixtures,
     runsPerCondition,
     onlyFixture: fixture,
-    includeDev: parsed.values['include-dev'],
   })
   if (plan.length === 0) {
     err(`nothing to run: the ${mode} plan for ${method} is empty (no fixtures?)`)
     return EXIT.ERROR
   }
 
-  const campaignId = `${method}-${runMode}-${new Date().toISOString().replace(/[:.]/g, '-')}`
   let campaignDir: string
   try {
     campaignDir = resolveOutputDir({
@@ -477,7 +505,13 @@ function reportMain(a: ReportArgs): number {
   }
   if (a.green) return greenReportMain(a, { repoRoot, verification, headSha, runs, plannedRuns, needles, campaignDir })
   if (a.devOnly) return devReportMain(a, { repoRoot, git, verification, headSha, runs, plannedRuns, needles })
-  const report = buildRedReport({ prereg: verification.prereg, shas: verification.shas, headSha, runs, plannedRuns })
+  let report: ReturnType<typeof buildRedReport>
+  try {
+    report = buildRedReport({ prereg: verification.prereg, shas: verification.shas, headSha, runs, plannedRuns })
+  } catch (e) {
+    a.err(`REFUSED: ${(e as Error).message}`)
+    return EXIT.REFUSED
+  }
   const serialized = JSON.stringify(report)
   if (needles.some((n) => serialized.includes(n.value))) {
     a.err('ABORTED: credential_leak: the report contains a passthrough credential value; nothing was written')
@@ -488,6 +522,36 @@ function reportMain(a: ReportArgs): number {
   for (const f of report.fixtures) a.out(`  ${f.kind}/${f.id}: fail ${f.fail_over_total} ${JSON.stringify(f.fail_rate_wilson95)}${f.meets_red_bar ? ' · meets RED bar' : ''}`)
   a.out(`green_eligible=${report.red.green_eligible} (${report.red.dev_fixtures_meeting_bar}/${report.red.min_fixtures} dev fixtures at the bar; excluding judge_error: ${report.red.sensitivity_excluding_judge_error.dev_fixtures_meeting_bar})`)
   return EXIT.OK
+}
+
+/**
+ * `green-dev.json` is committed text an author can edit, so the GREEN checks never take its numbers. It only names the dev
+ * campaign; the dev regression is rebuilt from that campaign's manifests, and the read is refused when they are not here.
+ */
+function rebuildDevRegression(
+  a: ReportArgs,
+  c: { repoRoot: string; verification: ReturnType<typeof enforcePrereg>; headSha: string },
+): Pick<DevReport, 'skill' | 'dev'> | null {
+  const devPath = join(c.repoRoot, 'evals', 'reports', a.method, 'green-dev.json')
+  if (!existsSync(devPath)) return null
+  const committed = JSON.parse(readFileSync(devPath, 'utf8')) as DevReport
+  const problems = validateDevReport(committed)
+  const id = committed.campaign?.id
+  if (problems.length || typeof id !== 'string' || !/^[A-Za-z0-9._-]+$/.test(id)) {
+    throw new Error(`${devPath.slice(c.repoRoot.length + 1)} is not a valid dev report${problems.length ? `: ${problems.slice(0, 3).join('; ')}` : ''}`)
+  }
+  const dir = resolveCampaignDir(id, c.repoRoot, a.cwd, a.env)
+  if (!dir) {
+    throw new Error(`dev campaign ${id}, named by green-dev.json, has no manifests here (looked under evals/runs and the state root); the dev regression cannot be recomputed, so the committed file is not trusted`)
+  }
+  const summaryPath = join(dir, 'summary.json')
+  const runs = loadCampaignManifests(dir)
+  const plannedRuns = existsSync(summaryPath) ? ((JSON.parse(readFileSync(summaryPath, 'utf8')) as { planned_runs?: number }).planned_runs ?? runs.length) : runs.length
+  const rebuilt = recomputeDevRegression({ prereg: c.verification.prereg, shas: c.verification.shas, headSha: c.headSha, runs, plannedRuns })
+  if (rebuilt.dev.passes_dev_bar !== committed.dev.passes_dev_bar || rebuilt.skill.sha256 !== committed.skill.sha256) {
+    a.err(`warning: ${devPath.slice(c.repoRoot.length + 1)} disagrees with its campaign manifests; the recomputed values are used`)
+  }
+  return rebuilt
 }
 
 /** The one-shot GREEN read: counts and verdict only; the artifacts stay under the state root. */
@@ -507,8 +571,13 @@ function greenReportMain(
     a.err(`REFUSED: ${greenReportPath(c.repoRoot, a.method).slice(c.repoRoot.length + 1)} already exists; GREEN is a one-shot read`)
     return EXIT.REFUSED
   }
-  const devPath = join(c.repoRoot, 'evals', 'reports', a.method, 'green-dev.json')
-  const devReport = existsSync(devPath) ? (JSON.parse(readFileSync(devPath, 'utf8')) as Pick<DevReport, 'skill' | 'dev'>) : null
+  let devReport: Pick<DevReport, 'skill' | 'dev'> | null
+  try {
+    devReport = rebuildDevRegression(a, c)
+  } catch (e) {
+    a.err(`REFUSED: ${(e as Error).message}`)
+    return EXIT.REFUSED
+  }
   const fixtures = c.verification.content.fixtures
   const nearDuplicate = findNearDuplicates(fixtures.heldout, fixtures.dev).length === 0 ? 'pass' : 'fail'
   let report: ReturnType<typeof buildGreenReport>
@@ -596,6 +665,7 @@ const OPTIONS = {
   'auth-passthrough': { type: 'string' },
   'auth-cliproxy': { type: 'string' },
   'include-dev': { type: 'boolean' },
+  rehearsal: { type: 'boolean' },
   reconcile: { type: 'boolean' },
   'dev-only': { type: 'boolean' },
   green: { type: 'boolean' },

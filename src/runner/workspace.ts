@@ -97,6 +97,43 @@ export function heldoutDir(
   return override && isAbsolute(override) ? override : join(stateRoot(env, home), 'heldout', method)
 }
 
+export interface HeldoutReadMarker {
+  campaign_id: string
+  started_at: string
+  prereg_tag: string
+}
+
+/** `<state root>/heldout/<method>/<epoch>.read.json`: exists once an epoch's held-out set has been loaded for a GREEN read. */
+export function heldoutReadMarkerPath(
+  method: string,
+  epoch: number,
+  env: Record<string, string | undefined> = process.env,
+  home = homedir(),
+): string {
+  return join(stateRoot(env, home), 'heldout', method, `${epoch}.read.json`)
+}
+
+/**
+ * Claims the one-shot read: creates the marker exclusively (`wx`), so two readers cannot both succeed. An existing
+ * marker means the set was already loaded for this epoch, whatever became of that run; only a new epoch gets past it.
+ */
+export function claimHeldoutRead(path: string, marker: HeldoutReadMarker): void {
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+  try {
+    writeFileSync(path, `${JSON.stringify(marker, null, 2)}\n`, { flag: 'wx', mode: 0o600 })
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e
+    let prior = 'an earlier run'
+    try {
+      const read = JSON.parse(readFileSync(path, 'utf8')) as Partial<HeldoutReadMarker>
+      prior = `campaign ${read.campaign_id ?? '(unknown)'} under ${read.prereg_tag ?? '(unknown tag)'}`
+    } catch {
+      // an unreadable marker still blocks the read
+    }
+    throw new CustodyError(`the held-out set for ${marker.prereg_tag} was already read by ${prior}; a new epoch with a new held-out set is the only way past it`)
+  }
+}
+
 function realpathOfExistingPrefix(path: string): string {
   let current = resolve(path)
   const tail: string[] = []

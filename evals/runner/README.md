@@ -224,7 +224,7 @@ Verdict: **GO** for Unit 4 on macOS with the amendments. No plan reopening requi
 
 # Runner (Unit 4)
 
-`bun run eval <red|green> --method <m> [--runs N] [--provider scripted|live] [--fixture <id>] [--include-dev] [--repo <dir>] [--out <dir>]`. Code: `src/runner/`. Judge and report generation are Unit 6; `JudgeHook` in `run.ts` is the seam.
+`bun run eval <red|green> --method <m> [--runs N] [--provider scripted|live] [--fixture <id>] [--rehearsal] [--repo <dir>] [--out <dir>]`. The one-shot held-out read is `bun run eval green --method <m> --provider live`; `green` without `--provider live` is refused (`REFUSED: green requires --provider live`) before any held-out content is loaded. Code: `src/runner/`. Judge and report generation are Unit 6; `JudgeHook` in `run.ts` is the seam.
 
 Promoted from the spike (the spike suite re-exports them): the env allowlist (`env.ts`), scripted provider and recording proxy (`scripted-provider.ts`), spawn/availability (`opencode.ts`), event parsing (`events.ts`), model-visible-prompt instruments (`isolation.ts`), permission/config generation and `gitInit` (`workspace.ts`). The spike's `OPENCODE_PIN` and allowlist references above now live in `src/runner/env.ts`.
 
@@ -240,6 +240,13 @@ Why:
 - Request headers are never recorded. The response is tee'd; one branch is scanned only for the first `"model"` field, so the manifest can state the returned model next to the pinned one.
 
 Cost and failure mode: one extra local hop, and a dependency on the free tier tolerating a pass-through. If that breaks (e.g. 403), the run exits non-zero before skill content loads and is an `infra_error` (retried, reported). There is no silent fallback to unchecked runs.
+
+## The GREEN read guard
+
+- **Live only.** `green` (without `--dev-only`) refuses `--provider scripted` and the default alike, exit 3. `green --rehearsal` is the scripted dry run: the skill condition on dev and negative fixtures, campaign id `<m>-rehearsal-…`. It never loads held-out fixtures, never claims the marker below, and no report command reads it.
+- **Read marker.** After the git-ordering checks pass and before the held-out set is loaded, the runner creates `<state root>/heldout/<m>/<epoch>.read.json` (`{campaign_id, started_at, prereg_tag}`) with an exclusive create. If it exists, the read is refused and the message names the tag and the campaign that claimed it. The marker is claimed whatever happens next (a hash mismatch, a crash, an interrupt, a refused report), so the same set cannot be read twice. **A new epoch, with a new held-out set, is the only way past it.** The check for `evals/reports/<m>/green.json` stays as a second guard. A held-out directory that does not exist is not loaded and claims nothing.
+- **Dev regression is recomputed.** `--include-dev` is rejected for `green` (exit 64). The `dev_regression` check comes from `evals/reports/<m>/green-dev.json` only as a pointer: `report --green` reads the dev campaign id from it, loads that campaign's manifests (`evals/runs/<id>` or the state root), and rebuilds `passes_dev_bar` and `skill_matches` itself. The manifests must belong to this prereg commit, one skill, and exactly the prereg's dev and negative fixtures. If they are not on this machine, the report is refused; the committed file is not trusted on its own.
+- **Only judged results are counted.** A positive-fixture run that passed without a judge verdict (`verdict_basis` other than `judge`) is `incomplete` in every report, and all three report builders refuse a campaign that contains one. RED also refuses a campaign whose dev fixtures are not exactly the prereg's, and a fixture with no attempted runs never meets the RED bar.
 
 ## Per-run flow
 

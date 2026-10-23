@@ -71,7 +71,7 @@ Evals run locally with your own provider credentials. They never run in CI, and 
 ```sh
 bun install
 bun run eval red --method <method>       # baseline runs on dev fixtures
-bun run eval green --method <method>     # one-shot held-out read, both conditions
+bun run eval green --method <method> --provider live   # one-shot held-out read, both conditions
 bun run eval report --method <method>    # regenerate the report projection
 ```
 

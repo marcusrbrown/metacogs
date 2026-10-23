@@ -458,6 +458,8 @@ export interface EnforceInput {
   /** `dev` is authoring-time iteration: RED's ordering rules (an uncommitted skill is fine) and no held-out read. */
   mode: 'red' | 'green' | 'dev'
   heldoutDir: string
+  /** GREEN only: runs after the git-ordering checks pass and immediately before held-out content is loaded. May throw to refuse. */
+  beforeHeldoutRead?: (read: { prereg: Prereg; shas: PreregShas }) => void
 }
 
 export interface PreregVerification {
@@ -485,6 +487,7 @@ export function enforcePrereg(input: EnforceInput): PreregVerification {
   const ordering = checkPreregOrdering(git, prereg, mode === 'green' ? 'green' : 'red')
   if (ordering.violations.length) throw new PreregRefusal(ordering.violations, `prereg ordering for ${method} epoch ${prereg.epoch}`)
 
+  if (mode === 'green') input.beforeHeldoutRead?.({ prereg, shas: ordering.shas as PreregShas })
   const content = verifyPreregContent(prereg, { evalDir: join(repoRoot, 'evals', method), heldoutDir: input.heldoutDir }, { includeHeldout: mode === 'green' })
   if (content.problems.length) {
     const lines = content.problems.map((p) => `${p.set}/${p.id} ${p.kind}`)
