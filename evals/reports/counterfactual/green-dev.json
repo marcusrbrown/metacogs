@@ -14,10 +14,10 @@
     "per_run_timeout_ms": 180000
   },
   "repo": {
-    "head_sha": "6e6eb8bd2145a1a0630bd243839c7195e742d49f"
+    "head_sha": "1ec8c368eef093980cdd0eeb2d367cc8249e6e94"
   },
   "skill": {
-    "sha256": "c7d04a5910b898471d854b780717e082f6033f07280a58c823810611e1e377c9"
+    "sha256": "2d14a07f3956ab68ee6bccbb5db9996ce093ac40c9d8546e41bcd9454b76e809"
   },
   "opencode": {
     "package": "opencode-ai",
@@ -31,22 +31,25 @@
     "judge_pinned": "opencode-go/deepseek-v4.1-flash",
     "judge_returned": [
       "deepseek-v4.1-flash"
+    ],
+    "gateways": [
+      "go"
     ]
   },
   "judge": {
     "system_prompt_sha256": [
       "ea7ea92f0677e4ef05320618a215b3d5ad0b209409428f6a64392935394492c9"
     ],
-    "judged_runs": 24,
+    "judged_runs": 27,
     "judge_error_runs": 0,
     "temperature_observed": [
       0
     ]
   },
   "campaign": {
-    "id": "counterfactual-dev-2026-10-22T22-01-18-985Z",
-    "started_at": "2026-10-22T22:01:19.839Z",
-    "finished_at": "2026-10-22T22:12:14.728Z",
+    "id": "counterfactual-dev-2026-10-23T01-21-13-292Z",
+    "started_at": "2026-10-23T01:21:13.728Z",
+    "finished_at": "2026-10-23T01:34:22.047Z",
     "planned_runs": 45,
     "executed_manifests": 45,
     "incomplete_manifests": 0
@@ -54,19 +57,19 @@
   "totals": {
     "attempted": 45,
     "taxonomy": {
-      "pass": 38,
-      "fail": 7,
+      "pass": 40,
+      "fail": 5,
       "timeout->fail": 0,
       "budget->fail": 0,
       "judge_error->fail": 0,
       "infra_error": 0,
       "non_isolated": 0
     },
-    "wall_clock_ms": 433382,
+    "wall_clock_ms": 526290,
     "tokens": {
-      "input": 509723,
-      "output": 21964,
-      "reasoning": 39455
+      "input": 394138,
+      "output": 22798,
+      "reasoning": 37127
     }
   },
   "dev_bar": {
@@ -79,17 +82,17 @@
       "kind": "dev",
       "fixture_hash": "5aaa4d5c71d0746f630d9049de3207677a41a958c114292dfd3491cf2139c44f",
       "attempted": 5,
-      "pass": 3,
-      "fail": 2,
-      "pass_over_total": "3/5",
+      "pass": 4,
+      "fail": 1,
+      "pass_over_total": "4/5",
       "pass_rate_wilson95": [
-        0.2307,
-        0.8824
+        0.3755,
+        0.9638
       ],
       "outcomes": {
-        "pass": 3,
+        "pass": 4,
         "fail_judge_verdict": 0,
-        "fail_check": 2,
+        "fail_check": 1,
         "fail_timeout": 0,
         "fail_budget": 0,
         "fail_host_crash": 0,
@@ -98,8 +101,8 @@
         "non_isolated": 0
       },
       "taxonomy": {
-        "pass": 3,
-        "fail": 2,
+        "pass": 4,
+        "fail": 1,
         "timeout->fail": 0,
         "budget->fail": 0,
         "judge_error->fail": 0,
@@ -108,42 +111,42 @@
       },
       "criteria": {
         "CF1": {
-          "pass": 3,
+          "pass": 4,
           "fail_quoted": 0,
           "fail_absent": 0
         },
         "CF2": {
-          "pass": 3,
+          "pass": 4,
           "fail_quoted": 0,
           "fail_absent": 0
         },
         "CF3": {
-          "pass": 3,
+          "pass": 4,
           "fail_quoted": 0,
           "fail_absent": 0
         },
         "CF4": {
-          "pass": 3,
+          "pass": 4,
           "fail_quoted": 0,
           "fail_absent": 0
         },
         "CF5": {
-          "pass": 3,
+          "pass": 4,
           "fail_quoted": 0,
           "fail_absent": 0
         }
       },
       "check_codes": {
-        "helper_not_invoked": 2,
-        "record_missing": 2,
-        "skill_not_loaded": 2
+        "helper_not_invoked": 1,
+        "record_missing": 1,
+        "skill_not_loaded": 1
       },
       "fire_basis": {
-        "skill_tool": 2,
+        "skill_tool": 3,
         "direct_read": 1,
-        "none": 2
+        "none": 1
       },
-      "meets_dev_bar": false
+      "meets_dev_bar": true
     },
     {
       "id": "cf-d2-ci-reach",
@@ -273,8 +276,8 @@
       },
       "check_codes": {},
       "fire_basis": {
-        "skill_tool": 4,
-        "direct_read": 1,
+        "skill_tool": 5,
+        "direct_read": 0,
         "none": 0
       },
       "meets_dev_bar": true
@@ -283,77 +286,6 @@
       "id": "cf-d4-replica-lag",
       "kind": "dev",
       "fixture_hash": "ee1263364b4be1ddac843a644e11e35059aa98161c6a69ea716d4fad286a8eea",
-      "attempted": 5,
-      "pass": 4,
-      "fail": 1,
-      "pass_over_total": "4/5",
-      "pass_rate_wilson95": [
-        0.3755,
-        0.9638
-      ],
-      "outcomes": {
-        "pass": 4,
-        "fail_judge_verdict": 0,
-        "fail_check": 1,
-        "fail_timeout": 0,
-        "fail_budget": 0,
-        "fail_host_crash": 0,
-        "fail_judge_error": 0,
-        "infra_error": 0,
-        "non_isolated": 0
-      },
-      "taxonomy": {
-        "pass": 4,
-        "fail": 1,
-        "timeout->fail": 0,
-        "budget->fail": 0,
-        "judge_error->fail": 0,
-        "infra_error": 0,
-        "non_isolated": 0
-      },
-      "criteria": {
-        "CF1": {
-          "pass": 4,
-          "fail_quoted": 0,
-          "fail_absent": 0
-        },
-        "CF2": {
-          "pass": 4,
-          "fail_quoted": 0,
-          "fail_absent": 0
-        },
-        "CF3": {
-          "pass": 4,
-          "fail_quoted": 0,
-          "fail_absent": 0
-        },
-        "CF4": {
-          "pass": 4,
-          "fail_quoted": 0,
-          "fail_absent": 0
-        },
-        "CF5": {
-          "pass": 4,
-          "fail_quoted": 0,
-          "fail_absent": 0
-        }
-      },
-      "check_codes": {
-        "helper_not_invoked": 1,
-        "record_missing": 1,
-        "skill_not_loaded": 1
-      },
-      "fire_basis": {
-        "skill_tool": 4,
-        "direct_read": 0,
-        "none": 1
-      },
-      "meets_dev_bar": true
-    },
-    {
-      "id": "cf-d5-edge-limits",
-      "kind": "dev",
-      "fixture_hash": "3328b3a4f3ccaa78e8726c5e3d5470afdfcae76178d0db055298263accb6beda",
       "attempted": 5,
       "pass": 3,
       "fail": 2,
@@ -364,8 +296,8 @@
       ],
       "outcomes": {
         "pass": 3,
-        "fail_judge_verdict": 0,
-        "fail_check": 2,
+        "fail_judge_verdict": 1,
+        "fail_check": 1,
         "fail_timeout": 0,
         "fail_budget": 0,
         "fail_host_crash": 0,
@@ -384,47 +316,47 @@
       },
       "criteria": {
         "CF1": {
-          "pass": 3,
+          "pass": 4,
           "fail_quoted": 0,
           "fail_absent": 0
         },
         "CF2": {
-          "pass": 3,
+          "pass": 4,
           "fail_quoted": 0,
           "fail_absent": 0
         },
         "CF3": {
-          "pass": 3,
+          "pass": 4,
           "fail_quoted": 0,
           "fail_absent": 0
         },
         "CF4": {
-          "pass": 3,
+          "pass": 4,
           "fail_quoted": 0,
           "fail_absent": 0
         },
         "CF5": {
           "pass": 3,
-          "fail_quoted": 0,
+          "fail_quoted": 1,
           "fail_absent": 0
         }
       },
       "check_codes": {
-        "helper_not_invoked": 2,
-        "record_missing": 2,
-        "skill_not_loaded": 2
+        "helper_not_invoked": 1,
+        "record_missing": 1,
+        "skill_not_loaded": 1
       },
       "fire_basis": {
-        "skill_tool": 3,
+        "skill_tool": 4,
         "direct_read": 0,
-        "none": 2
+        "none": 1
       },
       "meets_dev_bar": false
     },
     {
-      "id": "cf-d6-autoscaler-removal",
+      "id": "cf-d5-edge-limits",
       "kind": "dev",
-      "fixture_hash": "82b1fe408c1484ca379f40900ca03946c4bf59a7efe31f33bdcca9bbc2b7ffe6",
+      "fixture_hash": "3328b3a4f3ccaa78e8726c5e3d5470afdfcae76178d0db055298263accb6beda",
       "attempted": 5,
       "pass": 4,
       "fail": 1,
@@ -489,6 +421,73 @@
         "skill_tool": 4,
         "direct_read": 0,
         "none": 1
+      },
+      "meets_dev_bar": true
+    },
+    {
+      "id": "cf-d6-autoscaler-removal",
+      "kind": "dev",
+      "fixture_hash": "82b1fe408c1484ca379f40900ca03946c4bf59a7efe31f33bdcca9bbc2b7ffe6",
+      "attempted": 5,
+      "pass": 5,
+      "fail": 0,
+      "pass_over_total": "5/5",
+      "pass_rate_wilson95": [
+        0.5655,
+        1
+      ],
+      "outcomes": {
+        "pass": 5,
+        "fail_judge_verdict": 0,
+        "fail_check": 0,
+        "fail_timeout": 0,
+        "fail_budget": 0,
+        "fail_host_crash": 0,
+        "fail_judge_error": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "taxonomy": {
+        "pass": 5,
+        "fail": 0,
+        "timeout->fail": 0,
+        "budget->fail": 0,
+        "judge_error->fail": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "criteria": {
+        "CF1": {
+          "pass": 5,
+          "fail_quoted": 0,
+          "fail_absent": 0
+        },
+        "CF2": {
+          "pass": 5,
+          "fail_quoted": 0,
+          "fail_absent": 0
+        },
+        "CF3": {
+          "pass": 5,
+          "fail_quoted": 0,
+          "fail_absent": 0
+        },
+        "CF4": {
+          "pass": 5,
+          "fail_quoted": 0,
+          "fail_absent": 0
+        },
+        "CF5": {
+          "pass": 5,
+          "fail_quoted": 0,
+          "fail_absent": 0
+        }
+      },
+      "check_codes": {},
+      "fire_basis": {
+        "skill_tool": 5,
+        "direct_read": 0,
+        "none": 0
       },
       "meets_dev_bar": true
     },
@@ -620,13 +619,13 @@
   ],
   "dev": {
     "dev_fixtures": 6,
-    "dev_fixtures_meeting_bar": 4,
+    "dev_fixtures_meeting_bar": 5,
     "negative_fixtures": 3,
     "negative_false_fires": 1,
     "fire_basis": {
-      "skill_tool": 22,
-      "direct_read": 2,
-      "none": 6
+      "skill_tool": 26,
+      "direct_read": 1,
+      "none": 3
     },
     "passes_dev_bar": false
   }
