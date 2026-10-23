@@ -17,11 +17,12 @@ A checklist for testing a decision against its weakest premise. It structures yo
 4. **Check it against the input.** Separate what the input shows (quote the config, measurement, or file) from what is only inferred or asserted: a remembered conversation, "everyone agrees", a result on one machine, CI, or staging, an average standing in for a peak. Never copy an assumption into `evidence`. → `evidence`
 5. **Counterfactual.** In conditional wording ("if the premise is false, then..."), say what breaks and what plan follows. Give a feasible alternative or adjusted plan. → `alternatives`, `findings`
 6. **Discriminating test.** Name one observation whose result differs between "holds" and "fails", where to get it (file, command, log, owner), and which result changes the decision. → `evidence`, `next_action`
-7. **Decide and record.** Give go, no-go, or conditional. The premise must change the action or its conditions, not sit in a footnote. Name an observable event that should reopen the decision, different from `next_action`. → `findings`, `reopen_condition`
+7. **Decide.** Give go, no-go, or conditional. The premise must change the action or its conditions, not sit in a footnote. Name an observable event that should reopen the decision, different from `next_action`. → `findings`, `reopen_condition`
+8. **Record, before any reply text.** Run the helper (below) now, once, as a bash call. Once the gate has passed this step is not optional and the reply comes after it: an answer with no helper call, and no "unrecorded" note after a failed one, is incomplete.
 
 ## Record
 
-After step 7, run the helper exactly once. The host reports this skill's base directory when it loads the skill; use it, never a guessed path. Send the record as JSON on stdin:
+The host reports this skill's base directory when it loads the skill; use it, never a guessed path. Send the record as JSON on stdin. The last line of the command is `EOF` and nothing follows it:
 
 ```
 node "<skill-base-dir>/scripts/record.mjs" <<'EOF'
@@ -31,13 +32,13 @@ EOF
 
 `execution_mode`: `direct` when you applied the steps yourself. `sequential` when the host has no way to delegate and you worked the steps one after another. `delegated` only if you actually delegated.
 
-- Exit 0: written.
+- Exit 0: written. Reply.
 - Exit 2: the output names a field. Fix it and rerun once.
-- Exit 3 or 4, a refused command, or no Node: rerun nothing. Say no record was written and set `execution_mode` to `unrecorded` in your reply.
+- Exit 3 or 4, a refused command, or no Node: rerun nothing. Reply, say no record was written, and state `execution_mode` as `unrecorded`.
 
 ## Reply
 
-The record is not your answer, and the user does not see it. Reply with the decision, then all five labelled lines, every time, even when the decision is short:
+After step 8. The record is not your answer, and the user does not see it. Reply with the decision, then all five labelled lines, every time, even when the decision is short:
 
 - **Premise:** the falsifiable claim.
 - **Observed:** what the input shows.
