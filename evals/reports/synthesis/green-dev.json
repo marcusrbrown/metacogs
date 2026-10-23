@@ -14,10 +14,10 @@
     "per_run_timeout_ms": 180000
   },
   "repo": {
-    "head_sha": "70b9a4da4a7924ee59e9b1dd46ed767321bfab42"
+    "head_sha": "8079747abe263d8d4570c5a774147b1bbe0c30a6"
   },
   "skill": {
-    "sha256": "f2b7dd054161481db88181c70b85828d2b6bf7014bf4f4d166efffc89dd40173"
+    "sha256": "39e2f64a329c055a4951dc46156399281625ef6bd50a334d37f77ed1c47e454c"
   },
   "opencode": {
     "package": "opencode-ai",
@@ -45,9 +45,9 @@
     "temperature_observed": []
   },
   "campaign": {
-    "id": "synthesis-dev-2026-10-23T02-48-10-964Z",
-    "started_at": "2026-10-23T02:48:11.424Z",
-    "finished_at": "2026-10-23T03:12:15.100Z",
+    "id": "synthesis-dev-2026-10-23T03-47-22-935Z",
+    "started_at": "2026-10-23T03:47:23.480Z",
+    "finished_at": "2026-10-23T04:10:42.724Z",
     "planned_runs": 45,
     "executed_manifests": 45,
     "incomplete_manifests": 0
@@ -55,19 +55,19 @@
   "totals": {
     "attempted": 45,
     "taxonomy": {
-      "pass": 41,
-      "fail": 4,
+      "pass": 45,
+      "fail": 0,
       "timeout->fail": 0,
       "budget->fail": 0,
       "judge_error->fail": 0,
       "infra_error": 0,
       "non_isolated": 0
     },
-    "wall_clock_ms": 1057065,
+    "wall_clock_ms": 1024318,
     "tokens": {
-      "input": 330063,
-      "output": 32544,
-      "reasoning": 3198
+      "input": 363130,
+      "output": 32879,
+      "reasoning": 3397
     }
   },
   "dev_bar": {
@@ -420,16 +420,16 @@
       "kind": "dev",
       "fixture_hash": "750ce74926c02623473f8bd0a0c0c2388304aacaf872416f2aeee0e11e00698f",
       "attempted": 5,
-      "pass": 1,
-      "fail": 4,
-      "pass_over_total": "1/5",
+      "pass": 5,
+      "fail": 0,
+      "pass_over_total": "5/5",
       "pass_rate_wilson95": [
-        0.0362,
-        0.6245
+        0.5655,
+        1
       ],
       "outcomes": {
-        "pass": 1,
-        "fail_judge_verdict": 4,
+        "pass": 5,
+        "fail_judge_verdict": 0,
         "fail_check": 0,
         "fail_timeout": 0,
         "fail_budget": 0,
@@ -439,8 +439,8 @@
         "non_isolated": 0
       },
       "taxonomy": {
-        "pass": 1,
-        "fail": 4,
+        "pass": 5,
+        "fail": 0,
         "timeout->fail": 0,
         "budget->fail": 0,
         "judge_error->fail": 0,
@@ -459,8 +459,8 @@
           "fail_absent": 0
         },
         "SY3": {
-          "pass": 1,
-          "fail_quoted": 4,
+          "pass": 5,
+          "fail_quoted": 0,
           "fail_absent": 0
         },
         "SY4": {
@@ -481,7 +481,7 @@
         "none": 0
       },
       "load_rate": 1,
-      "meets_dev_bar": false
+      "meets_dev_bar": true
     },
     {
       "id": "sy-n1-sort-imports",
@@ -612,7 +612,7 @@
   ],
   "dev": {
     "dev_fixtures": 6,
-    "dev_fixtures_meeting_bar": 5,
+    "dev_fixtures_meeting_bar": 6,
     "negative_fixtures": 3,
     "negative_false_fires": 0,
     "fire_basis": {
@@ -621,6 +621,6 @@
       "none": 0
     },
     "load_rate": 1,
-    "passes_dev_bar": false
+    "passes_dev_bar": true
   }
 }

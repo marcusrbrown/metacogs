@@ -53,3 +53,30 @@ What changed against epoch 2: the load rate is no longer the problem (1.0 for bo
 The dev bar is not met by either method, so no one-shot GREEN read was made: the synthesis epoch-3 held-out set (`sy-h5` to `sy-h8`) and the counterfactual held-out set are unread. Human review of the judge verdicts has not been done. Agent cost reported by the provider (not the judge): about $0.048 (counterfactual) and $0.054 (synthesis) for 45 runs each; the judge's cost is not recorded.
 
 The epoch-2 synthesis GREEN read is preserved as `synthesis/green.epoch2.json` (its held-out set is burned).
+
+## Epoch 3 re-run after one skill edit per method (2026-10-23)
+
+Same models and gateway as above (`openai/gpt-6-luna` agent, `anthropic/claude-haiku-5-5` judge, `gateways: ["cliproxy"]`), same prereg tags, bars, fixtures, and rubric. Skill text edited once per method (log in `authoring.md`). Dev reads first, N=5, skill condition:
+
+| Method | Skill commit | Per dev fixture | Fire basis (skill tool / direct read / none) | Load rate | Negative false fires | `passes_dev_bar` | GREEN read |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| counterfactual | `7a3bf22` | d1–d5 5/5, **d6 3/5** | 30 / 0 / 0 | 1.0 | 0 of 15 | no | not made |
+| synthesis | `8079747` | d1–d6 5/5 | 30 / 0 / 0 | 1.0 | 0 of 15 | yes | made once, below |
+
+Counterfactual: the record-step edit worked (a record was written in 30 of 30 positive runs, against 26 of 30 before), but `cf-d6-autoscaler-removal` fell from 5/5 to 3/5 on CF5 judge fails, so the held-out set stays unread.
+
+### Synthesis epoch-3 GREEN read (one shot, `prereg/synthesis/3`)
+
+Both conditions on the four new held-out fixtures, N=5, plus the three negatives under the skill condition. Prereg check, near-duplicate gate (pass), and held-out hash check ran before launch. Artifacts and `review.md` live under the state root (`metacogs/runs/synthesis-green-2026-10-23T04-11-00-725Z/`), never in the repo.
+
+| Held-out fixture | Skill | Baseline | Delta (Newcombe 95%) | Skill load rate |
+| --- | --- | --- | --- | --- |
+| sy-h5 | 5/5 | 2/5 | 0.6 [0.030, 0.882] | 1.0 |
+| sy-h6 | 4/5 | 1/5 | 0.6 [-0.000, 0.832] | 0.8 |
+| sy-h7 | 5/5 | 0/5 | 1.0 [0.386, 1.0] | 1.0 |
+| sy-h8 | 5/5 | 0/5 | 1.0 [0.386, 1.0] | 1.0 |
+| **Pooled** | **19/20** (Wilson [0.764, 0.991]) | **3/20** ([0.052, 0.360]) | **0.8 [0.519, 0.906]** | 0.95 |
+
+Bars: skill pooled ≥17/20 yes (19), per-fixture floor ≥3/5 yes (min 4), baseline ≤10/20 yes (3; `held_out_too_easy: false`), negatives silent yes (0 of 15 false fires), dev regression yes, near-duplicate yes. **Machine verdict: `green`.** Taxonomy over the 55 runs: 37 pass, 18 fail, 0 timeout, 0 budget, 0 `judge_error`, 0 `infra_error`, 0 `non_isolated`. The one skill-condition failure (`sy-h6`, run 2) never loaded the skill (`skill_not_loaded`, no helper call, no record). Baseline failures were judge failures, most often SY1 (perspectives not restated: 16 of 20 baseline runs), then SY4 and SY5 on sy-h7 and SY5/SY2 on sy-h8. Burn status: the epoch-3 held-out set is **burned** (one-shot read made); any `skills/synthesis/` edit under this epoch voids it, and a retry needs a new epoch and a new set.
+
+What this does not show. Human review of the 39 judged runs is pending: `human_review.status` is `pending`, 0 reviewed. The judge is one model (`claude-haiku-5-5`) with no temperature parameter sent, so determinism is unproven; the `sy-h6` delta interval touches zero at its lower bound. The baseline-versus-skill gap is again largely process visibility (the skill makes the agent write out perspectives, dependence, and a conclusion), which the rubric rewards as preregistered. The claim is limited to this (host version, models) pair on this fixture family.

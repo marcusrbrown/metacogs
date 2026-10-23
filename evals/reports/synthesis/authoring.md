@@ -27,3 +27,14 @@ Previous final status text follows, from the pre-fix check:
 Final dev status at N=5 (iteration 4): d1 4/5, d2 5/5, d3 4/5, d4 5/5, d5 5/5, d6 3/5. Negatives 0 false fires in 15. Dev bar (every dev fixture at least 4/5) **not met** on d6 alone. All four failing positive runs in the final iteration were `skill_not_loaded`.
 
 Not changed: fixtures, rubric, redaction list, prereg. The near-miss negative `sy-n2` (uses "consensus", "synthesis", "perspectives" as words) stayed silent in every run.
+
+## Epoch 3 (agent `openai/gpt-6-luna`, judge `anthropic/claude-haiku-5-5`, via CLIProxyAPI)
+
+Same fixtures, rubric, and bars. Dev fixtures and negatives only until the dev bar passed.
+
+| # | What the previous run showed | The one change | Dev result |
+| --- | --- | --- | --- |
+| 6 | The epoch-2 skill text on the new models; no edit. | none | N=5: d1 to d5 5/5, d6 1/5. Skill load 30 of 30; negatives 0 of 15. All four d6 failures were SY3 judge fails with SY1, SY2, SY4, SY5 passing. |
+| 7 | Transcripts of d6: the Dependence line either named the deciding evidence ("the configured logging path outweighs either reviewer's claim") or called the reviewers' claims "separate arguments" while naming the policy only under Shared constraint. The fixture's dependence is a constraint both reviewers omit; step 5 said to group perspectives on the same premise, source, or artifact, which reads as agreement, so a disagreement where nobody agrees gave the agent nothing to name. | Step 5 now lists the allowed paths (shared source or artifact, shared prompt or framing, shared premise, or a constraint every perspective leaves out), says disagreeing perspectives can share a blind spot, and forbids "independent" without a stated check ("If you find no path, say so and say what you checked"). The Dependence line is `"Path:" ... or "No path found:" what you checked`. Body now 453 words (limit 500), down from the original by tightening other lines; description unchanged. | N=5: d1 to d6 all 5/5. Skill load 30 of 30; negatives 0 of 15. **Final text.** |
+
+Final dev status at N=5 (iteration 7): 30 of 30 positive runs passed, 0 of 15 negative false fires. Dev bar **met**; the one-shot held-out read followed (see `green.json`). Not changed: fixtures, rubric, redaction list, prereg.

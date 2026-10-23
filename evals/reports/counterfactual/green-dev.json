@@ -14,10 +14,10 @@
     "per_run_timeout_ms": 180000
   },
   "repo": {
-    "head_sha": "70b9a4da4a7924ee59e9b1dd46ed767321bfab42"
+    "head_sha": "8079747abe263d8d4570c5a774147b1bbe0c30a6"
   },
   "skill": {
-    "sha256": "2d14a07f3956ab68ee6bccbb5db9996ce093ac40c9d8546e41bcd9454b76e809"
+    "sha256": "44b9c08c3ca650a81631fd9f83f05147208812e326c12c54afb53d010e9e4c97"
   },
   "opencode": {
     "package": "opencode-ai",
@@ -40,14 +40,14 @@
     "system_prompt_sha256": [
       "ea7ea92f0677e4ef05320618a215b3d5ad0b209409428f6a64392935394492c9"
     ],
-    "judged_runs": 26,
+    "judged_runs": 30,
     "judge_error_runs": 0,
     "temperature_observed": []
   },
   "campaign": {
-    "id": "counterfactual-dev-2026-10-23T02-28-29-821Z",
-    "started_at": "2026-10-23T02:28:30.293Z",
-    "finished_at": "2026-10-23T02:47:32.126Z",
+    "id": "counterfactual-dev-2026-10-23T03-26-00-130Z",
+    "started_at": "2026-10-23T03:26:01.097Z",
+    "finished_at": "2026-10-23T03:46:56.960Z",
     "planned_runs": 45,
     "executed_manifests": 45,
     "incomplete_manifests": 0
@@ -55,19 +55,19 @@
   "totals": {
     "attempted": 45,
     "taxonomy": {
-      "pass": 41,
-      "fail": 4,
+      "pass": 43,
+      "fail": 2,
       "timeout->fail": 0,
       "budget->fail": 0,
       "judge_error->fail": 0,
       "infra_error": 0,
       "non_isolated": 0
     },
-    "wall_clock_ms": 819440,
+    "wall_clock_ms": 836071,
     "tokens": {
-      "input": 328422,
-      "output": 21960,
-      "reasoning": 3243
+      "input": 330048,
+      "output": 22320,
+      "reasoning": 1789
     }
   },
   "dev_bar": {
@@ -80,17 +80,17 @@
       "kind": "dev",
       "fixture_hash": "5aaa4d5c71d0746f630d9049de3207677a41a958c114292dfd3491cf2139c44f",
       "attempted": 5,
-      "pass": 4,
-      "fail": 1,
-      "pass_over_total": "4/5",
+      "pass": 5,
+      "fail": 0,
+      "pass_over_total": "5/5",
       "pass_rate_wilson95": [
-        0.3755,
-        0.9638
+        0.5655,
+        1
       ],
       "outcomes": {
-        "pass": 4,
+        "pass": 5,
         "fail_judge_verdict": 0,
-        "fail_check": 1,
+        "fail_check": 0,
         "fail_timeout": 0,
         "fail_budget": 0,
         "fail_host_crash": 0,
@@ -99,8 +99,8 @@
         "non_isolated": 0
       },
       "taxonomy": {
-        "pass": 4,
-        "fail": 1,
+        "pass": 5,
+        "fail": 0,
         "timeout->fail": 0,
         "budget->fail": 0,
         "judge_error->fail": 0,
@@ -109,35 +109,32 @@
       },
       "criteria": {
         "CF1": {
-          "pass": 4,
+          "pass": 5,
           "fail_quoted": 0,
           "fail_absent": 0
         },
         "CF2": {
-          "pass": 4,
+          "pass": 5,
           "fail_quoted": 0,
           "fail_absent": 0
         },
         "CF3": {
-          "pass": 4,
+          "pass": 5,
           "fail_quoted": 0,
           "fail_absent": 0
         },
         "CF4": {
-          "pass": 4,
+          "pass": 5,
           "fail_quoted": 0,
           "fail_absent": 0
         },
         "CF5": {
-          "pass": 4,
+          "pass": 5,
           "fail_quoted": 0,
           "fail_absent": 0
         }
       },
-      "check_codes": {
-        "helper_not_invoked": 1,
-        "record_missing": 1
-      },
+      "check_codes": {},
       "fire_basis": {
         "skill_tool": 5,
         "direct_read": 0,
@@ -151,17 +148,17 @@
       "kind": "dev",
       "fixture_hash": "4bcabd82176519b1b5f6a970070e8fc56369afd32b573bd6b55426b5ac8e2813",
       "attempted": 5,
-      "pass": 3,
-      "fail": 2,
-      "pass_over_total": "3/5",
+      "pass": 5,
+      "fail": 0,
+      "pass_over_total": "5/5",
       "pass_rate_wilson95": [
-        0.2307,
-        0.8824
+        0.5655,
+        1
       ],
       "outcomes": {
-        "pass": 3,
+        "pass": 5,
         "fail_judge_verdict": 0,
-        "fail_check": 2,
+        "fail_check": 0,
         "fail_timeout": 0,
         "fail_budget": 0,
         "fail_host_crash": 0,
@@ -170,8 +167,8 @@
         "non_isolated": 0
       },
       "taxonomy": {
-        "pass": 3,
-        "fail": 2,
+        "pass": 5,
+        "fail": 0,
         "timeout->fail": 0,
         "budget->fail": 0,
         "judge_error->fail": 0,
@@ -180,42 +177,39 @@
       },
       "criteria": {
         "CF1": {
-          "pass": 3,
+          "pass": 5,
           "fail_quoted": 0,
           "fail_absent": 0
         },
         "CF2": {
-          "pass": 3,
+          "pass": 5,
           "fail_quoted": 0,
           "fail_absent": 0
         },
         "CF3": {
-          "pass": 3,
+          "pass": 5,
           "fail_quoted": 0,
           "fail_absent": 0
         },
         "CF4": {
-          "pass": 3,
+          "pass": 5,
           "fail_quoted": 0,
           "fail_absent": 0
         },
         "CF5": {
-          "pass": 3,
+          "pass": 5,
           "fail_quoted": 0,
           "fail_absent": 0
         }
       },
-      "check_codes": {
-        "helper_not_invoked": 1,
-        "record_missing": 2
-      },
+      "check_codes": {},
       "fire_basis": {
         "skill_tool": 5,
         "direct_read": 0,
         "none": 0
       },
       "load_rate": 1,
-      "meets_dev_bar": false
+      "meets_dev_bar": true
     },
     {
       "id": "cf-d3-vendor-idempotency",
@@ -358,77 +352,6 @@
       "kind": "dev",
       "fixture_hash": "3328b3a4f3ccaa78e8726c5e3d5470afdfcae76178d0db055298263accb6beda",
       "attempted": 5,
-      "pass": 4,
-      "fail": 1,
-      "pass_over_total": "4/5",
-      "pass_rate_wilson95": [
-        0.3755,
-        0.9638
-      ],
-      "outcomes": {
-        "pass": 4,
-        "fail_judge_verdict": 0,
-        "fail_check": 1,
-        "fail_timeout": 0,
-        "fail_budget": 0,
-        "fail_host_crash": 0,
-        "fail_judge_error": 0,
-        "infra_error": 0,
-        "non_isolated": 0
-      },
-      "taxonomy": {
-        "pass": 4,
-        "fail": 1,
-        "timeout->fail": 0,
-        "budget->fail": 0,
-        "judge_error->fail": 0,
-        "infra_error": 0,
-        "non_isolated": 0
-      },
-      "criteria": {
-        "CF1": {
-          "pass": 4,
-          "fail_quoted": 0,
-          "fail_absent": 0
-        },
-        "CF2": {
-          "pass": 4,
-          "fail_quoted": 0,
-          "fail_absent": 0
-        },
-        "CF3": {
-          "pass": 4,
-          "fail_quoted": 0,
-          "fail_absent": 0
-        },
-        "CF4": {
-          "pass": 4,
-          "fail_quoted": 0,
-          "fail_absent": 0
-        },
-        "CF5": {
-          "pass": 4,
-          "fail_quoted": 0,
-          "fail_absent": 0
-        }
-      },
-      "check_codes": {
-        "helper_not_invoked": 1,
-        "record_missing": 1
-      },
-      "fire_basis": {
-        "skill_tool": 5,
-        "direct_read": 0,
-        "none": 0
-      },
-      "load_rate": 1,
-      "meets_dev_bar": true
-    },
-    {
-      "id": "cf-d6-autoscaler-removal",
-      "kind": "dev",
-      "fixture_hash": "82b1fe408c1484ca379f40900ca03946c4bf59a7efe31f33bdcca9bbc2b7ffe6",
-      "attempted": 5,
       "pass": 5,
       "fail": 0,
       "pass_over_total": "5/5",
@@ -491,6 +414,74 @@
       },
       "load_rate": 1,
       "meets_dev_bar": true
+    },
+    {
+      "id": "cf-d6-autoscaler-removal",
+      "kind": "dev",
+      "fixture_hash": "82b1fe408c1484ca379f40900ca03946c4bf59a7efe31f33bdcca9bbc2b7ffe6",
+      "attempted": 5,
+      "pass": 3,
+      "fail": 2,
+      "pass_over_total": "3/5",
+      "pass_rate_wilson95": [
+        0.2307,
+        0.8824
+      ],
+      "outcomes": {
+        "pass": 3,
+        "fail_judge_verdict": 2,
+        "fail_check": 0,
+        "fail_timeout": 0,
+        "fail_budget": 0,
+        "fail_host_crash": 0,
+        "fail_judge_error": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "taxonomy": {
+        "pass": 3,
+        "fail": 2,
+        "timeout->fail": 0,
+        "budget->fail": 0,
+        "judge_error->fail": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "criteria": {
+        "CF1": {
+          "pass": 5,
+          "fail_quoted": 0,
+          "fail_absent": 0
+        },
+        "CF2": {
+          "pass": 5,
+          "fail_quoted": 0,
+          "fail_absent": 0
+        },
+        "CF3": {
+          "pass": 5,
+          "fail_quoted": 0,
+          "fail_absent": 0
+        },
+        "CF4": {
+          "pass": 5,
+          "fail_quoted": 0,
+          "fail_absent": 0
+        },
+        "CF5": {
+          "pass": 3,
+          "fail_quoted": 2,
+          "fail_absent": 0
+        }
+      },
+      "check_codes": {},
+      "fire_basis": {
+        "skill_tool": 5,
+        "direct_read": 0,
+        "none": 0
+      },
+      "load_rate": 1,
+      "meets_dev_bar": false
     },
     {
       "id": "cf-n1-rename",
