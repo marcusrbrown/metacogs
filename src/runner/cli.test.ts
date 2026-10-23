@@ -121,6 +121,26 @@ describe('refusals happen before anything launches', () => {
     expect(t.lines.err.join('\n')).toContain('heldout/h1 missing')
   })
 
+  test('a GREEN report already exists → the one-shot read is refused before anything launches', async () => {
+    const { repo, heldout, scaffold } = chainRepo()
+    buildHappyChain(repo, scaffold)
+    repo.write('evals/reports/demo/green.json', '{}\n')
+    const t = io()
+    t.io.env.METACOGS_HELDOUT_DIR = heldout
+    expect(await main(['green', '--method', 'demo', '--repo', repo.dir], t.io)).toBe(EXIT.REFUSED)
+    expect(t.lines.err.join('\n')).toContain('held-out set was read once')
+    expect(t.lines.out).toEqual([])
+  })
+
+  test('a live GREEN read refuses --runs and --fixture: the one read follows the prereg plan', async () => {
+    const { repo, heldout, scaffold } = chainRepo()
+    buildHappyChain(repo, scaffold)
+    const t = io()
+    t.io.env.METACOGS_HELDOUT_DIR = heldout
+    expect(await main(['green', '--method', 'demo', '--repo', repo.dir, '--provider', 'live', '--auth-passthrough', 'none', '--runs', '1'], t.io)).toBe(EXIT.REFUSED)
+    expect(t.lines.err.join('\n')).toContain('must follow the prereg plan')
+  })
+
   test('held-out output dir inside the repo → refused (nothing written there)', async () => {
     const { repo, heldout, scaffold } = chainRepo()
     buildHappyChain(repo, scaffold)

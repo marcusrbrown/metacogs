@@ -70,7 +70,7 @@ function fenced(text: string): string {
 
 export const HUMAN_LINE = 'human: [ ] agree [ ] disagree — note:'
 
-export function renderRunBlock(run: CampaignRun, answer: string | undefined, judge: JudgeRecord | undefined, anchors: Map<string, Anchors>): string {
+export function renderRunBlock(run: CampaignRun, answer: string | undefined, judge: JudgeRecord | undefined, anchors: Map<string, Anchors>, records: readonly string[] = []): string {
   const { manifest } = run
   const lines: string[] = [
     `## ${manifest.run_id}`,
@@ -83,6 +83,7 @@ export function renderRunBlock(run: CampaignRun, answer: string | undefined, jud
     '',
     answer === undefined ? '_no stdout captured_' : answer.trim() === '' ? '_empty_' : fenced(answer.trimEnd()),
     '',
+    ...records.flatMap((r) => ['**Record** (the judge saw this too)', '', fenced(r.trimEnd()), '']),
   ]
   if (!judge) {
     lines.push('**Judge**: no verdict stored for this run.')
@@ -117,7 +118,9 @@ export function renderReview(campaignDir: string, repoRoot: string): string {
   ]
   const blocks = runs.map((run) => {
     const raw = readIfExists(join(run.dir, 'judge.json'))
-    return renderRunBlock(run, finalAnswerOf(run.dir), raw === undefined ? undefined : readJudgeRecord(raw), anchors)
+    const kept = readIfExists(join(run.dir, 'records.json'))
+    const records = kept === undefined ? [] : (JSON.parse(kept) as { content: string }[]).map((r) => r.content)
+    return renderRunBlock(run, finalAnswerOf(run.dir), raw === undefined ? undefined : readJudgeRecord(raw), anchors, records)
   })
   return `${head.join('\n')}\n${blocks.join('\n')}`
 }

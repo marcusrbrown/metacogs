@@ -7,16 +7,21 @@ import { type JudgeEvidence, MANIFEST_SCHEMA_VERSION, type RunManifest, writeMan
 import {
   bucketOf,
   buildDevReport,
+  buildGreenReport,
   buildRedReport,
   type DevReport,
   devReportPath,
+  greenReportPath,
   loadCampaignManifests,
+  newcombe95,
   type RedReport,
   reportPath,
   validateDevReport,
+  validateGreenReport,
   validateReport,
   wilson95,
   writeDevReport,
+  writeGreenReport,
   writeReport,
 } from './report'
 import { parsePrereg, type Prereg, type PreregShas, RUN_OUTCOME_TAXONOMY } from './prereg'
@@ -423,6 +428,139 @@ describe('committed dev reports', () => {
       expect(report.prereg.tag).toBe(`prereg/${method}/2`)
       expect(report.held_out).toBe('untouched')
       expect(report.fixtures.every((f) => f.kind === 'dev' || f.kind === 'negative')).toBe(true)
+    })
+  }
+})
+
+describe('buildGreenReport (held-out, both conditions)', () => {
+  const SKILL = sha256('skill-tree')
+  const TREE = 'f'.repeat(40)
+  const greenPrereg = (): Prereg => ({
+    ...prereg(),
+    fixture_hashes: { dev: { 'd1-x': sha256('1') }, negative: { 'n1-z': sha256('3') }, heldout: { h1: sha256('h1'), h2: sha256('h2') } },
+    green_bar: { skill_pooled_pass_min: 8, skill_per_fixture_pass_min: 3, baseline_pooled_pass_max: 4 },
+  })
+  type Plan = [kind: 'heldout' | 'negative', fixture: string, condition: 'baseline' | 'skill', outcomes: Outcome[]][]
+  const runsFor = (plan: Plan, skillSha = SKILL): { manifest: RunManifest; manifestSha256: string }[] => {
+    let seq = 0
+    return plan.flatMap(([kind, fixture, condition, outcomes]) =>
+      outcomes.map((o, i) => {
+        const m = manifestFor((seq += 1), kind === 'heldout' ? 'dev' : 'negative', fixture, i + 1, o)
+        return {
+          manifest: {
+            ...m,
+            condition,
+            campaign_id: 'demo-green-2026-10-22T16-00-00-000Z',
+            fixture: { ...m.fixture, kind },
+            skill: condition === 'skill' ? { sha256: skillSha, tree_sha: TREE } : null,
+            fire_basis: condition === 'skill' && o === 'pass' ? 'skill_tool' : null,
+          } as RunManifest,
+          manifestSha256: sha256(`${seq}`),
+        }
+      }),
+    )
+  }
+  const P = (n: number, f: Outcome = 'judge_fail'): Outcome[] => [...Array<Outcome>(n).fill('pass'), ...Array<Outcome>(5 - n).fill(f)]
+  const good: Plan = [
+    ['heldout', 'h1', 'skill', P(5)],
+    ['heldout', 'h1', 'baseline', P(1)],
+    ['heldout', 'h2', 'skill', P(4)],
+    ['heldout', 'h2', 'baseline', P(2)],
+    ['negative', 'n1-z', 'skill', P(5)],
+  ]
+  const devOk = { skill: { sha256: SKILL }, dev: { passes_dev_bar: true } } as never
+  const build = (plan: Plan, over: Partial<Parameters<typeof buildGreenReport>[0]> = {}) =>
+    buildGreenReport({
+      prereg: greenPrereg(),
+      shas: { ...SHAS, skillTreeSha: TREE },
+      headSha: HEAD,
+      runs: runsFor(plan),
+      plannedRuns: 25,
+      skillSha256: SKILL,
+      devReport: devOk,
+      nearDuplicate: 'pass',
+      ...over,
+    })
+
+  test('every bar met: verdict green, allowlist-valid, paired per-fixture outcomes with Newcombe intervals', () => {
+    const report = build(good)
+    expect(validateGreenReport(report)).toEqual([])
+    expect(report.verdict).toBe('green')
+    expect(report.checks).toEqual({ skill_pooled: true, per_fixture_floor: true, baseline_ceiling: true, negatives_silent: true, dev_regression: true, near_duplicate: true })
+    expect(report.heldout.map((f) => [f.id, f.skill.pass_over_total, f.baseline.pass_over_total, f.delta.value])).toEqual([
+      ['h1', '5/5', '1/5', 0.8],
+      ['h2', '4/5', '2/5', 0.4],
+    ])
+    expect(report.pooled.skill).toMatchObject({ pass: 9, attempted: 10 })
+    expect(report.pooled.baseline).toMatchObject({ pass: 3, attempted: 10 })
+    expect(report.pooled.delta.value).toBe(0.6)
+    expect(report.pooled.delta.newcombe95[0]).toBeGreaterThan(0)
+    expect(report.heldout[0]!.skill.fire_basis).toEqual({ skill_tool: 5, direct_read: 0, none: 0 })
+    expect(report.human_review).toEqual({ status: 'pending', judged_runs: expect.any(Number), reviewed: 0 })
+    expect(JSON.stringify(report)).not.toContain('secret')
+  })
+
+  test('a baseline above the ceiling means the held-out set was too easy, even when the skill clears its bars', () => {
+    const report = build(good.map((g) => (g[1] === 'h2' && g[2] === 'baseline' ? ([g[0], g[1], g[2], P(5)] as Plan[number]) : g)))
+    expect(report.checks.baseline_ceiling).toBe(false)
+    expect(report.checks.skill_pooled).toBe(true)
+    expect(report.verdict).toBe('green-miss')
+    expect(report.held_out_too_easy).toBe(true)
+  })
+
+  test('a fixture under the per-fixture floor, a pooled miss, or a negative false fire each miss', () => {
+    expect(build(good.map((g) => (g[1] === 'h2' && g[2] === 'skill' ? ([g[0], g[1], g[2], P(2)] as Plan[number]) : g))).checks).toMatchObject({ per_fixture_floor: false, skill_pooled: false })
+    expect(build([...good.slice(0, 4), ['negative', 'n1-z', 'skill', P(4, 'check')]]).checks.negatives_silent).toBe(false)
+  })
+
+  test('dev regression: needs the dev report, a passing dev bar, and the same skill hash', () => {
+    expect(build(good, { devReport: null }).checks.dev_regression).toBe(false)
+    expect(build(good, { devReport: { skill: { sha256: SKILL }, dev: { passes_dev_bar: false } } as never }).verdict).toBe('green-miss')
+    expect(build(good, { devReport: { skill: { sha256: sha256('older') }, dev: { passes_dev_bar: true } } as never }).dev_regression.skill_matches).toBe(false)
+  })
+
+  test('a near-duplicate held-out fixture misses; only pass/fail is reported', () => {
+    const report = build(good, { nearDuplicate: 'fail' })
+    expect(report.verdict).toBe('green-miss')
+    expect(report.near_duplicate_check).toBe('fail')
+  })
+
+  test('partial campaigns, dev fixtures, unfinished runs, and a different skill are refused', () => {
+    expect(() => build(good.slice(0, 2))).toThrow('partial read')
+    expect(() => buildGreenReport({ prereg: greenPrereg(), shas: { ...SHAS, skillTreeSha: TREE }, headSha: HEAD, runs: runsFor(good, sha256('edited')), plannedRuns: 25, skillSha256: SKILL, devReport: devOk, nearDuplicate: 'pass' })).toThrow('different skill')
+    expect(() => build([...good.slice(0, 4), ['negative', 'n1-z', 'skill', [...P(4), 'running']]])).toThrow('never finished')
+    expect(() => build(good, { shas: { ...SHAS, skillTreeSha: null } })).toThrow('committed skill tree')
+  })
+
+  test('newcombe95: no difference straddles zero; a clean 5/5 versus 0/5 does not', () => {
+    const [lo, hi] = newcombe95(5, 5, 0, 5)
+    expect(lo).toBeGreaterThan(0.3)
+    expect(hi).toBeLessThanOrEqual(1)
+    const same = newcombe95(3, 5, 3, 5)
+    expect(same[0]).toBeLessThan(0)
+    expect(same[1]).toBeGreaterThan(0)
+    expect(newcombe95(0, 0, 1, 1)).toEqual([-1, 1])
+  })
+
+  test('written through the allowlist; a stray key is rejected', () => {
+    const root = mkdtempSync(join(tmpdir(), 'metacogs-green-'))
+    scratch.push(root)
+    const report = build(good)
+    expect(writeGreenReport(root, report)).toBe(greenReportPath(root, 'demo'))
+    expect(() => writeGreenReport(root, { ...report, leak: 'x' } as never)).toThrow('allowlist')
+  })
+})
+
+describe('committed green reports', () => {
+  const REPO_ROOT = join(import.meta.dir, '..', '..')
+  for (const method of ['counterfactual', 'synthesis']) {
+    const path = greenReportPath(REPO_ROOT, method)
+    test.skipIf(!existsSync(path))(`evals/reports/${method}/green.json is allowlist-only and names the epoch-2 tag`, () => {
+      const report = JSON.parse(readFileSync(path, 'utf8')) as ReturnType<typeof buildGreenReport>
+      expect(validateGreenReport(report)).toEqual([])
+      expect(report.method).toBe(method)
+      expect(report.prereg.tag).toBe(`prereg/${method}/2`)
+      expect(report.burn_rule).toEqual({ one_shot_read: true, skill_edit_burns_set: true })
     })
   }
 })

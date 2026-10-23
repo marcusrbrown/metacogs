@@ -356,6 +356,7 @@ type Schema =
   | { t: 'bool' }
   | { t: 'arr'; of: Schema }
   | { t: 'tuple2num' }
+  | { t: 'tuple2delta' }
   | { t: 'opt'; of: Schema }
   | { t: 'obj'; shape: Record<string, Schema> }
   | { t: 'rec'; keys: RegExp; of: Schema }
@@ -458,6 +459,9 @@ function check(value: unknown, schema: Schema, path: string, errors: string[]): 
       return
     case 'tuple2num':
       if (!Array.isArray(value) || value.length !== 2 || !value.every((n) => typeof n === 'number' && n >= 0 && n <= 1)) fail('expected [lo, hi] within [0, 1]')
+      return
+    case 'tuple2delta':
+      if (!Array.isArray(value) || value.length !== 2 || !value.every((n) => typeof n === 'number' && n >= -1 && n <= 1)) fail('expected [lo, hi] within [-1, 1]')
       return
     case 'arr':
       if (!Array.isArray(value)) fail('expected an array')
@@ -826,6 +830,404 @@ export function writeDevReport(repoRoot: string, report: DevReport): string {
   const errors = validateDevReport(report)
   if (errors.length) throw new Error(`report is not an allowlist projection:\n  ${errors.join('\n  ')}`)
   const path = devReportPath(repoRoot, report.method)
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, `${JSON.stringify(report, null, 2)}\n`)
+  return path
+}
+
+// ── GREEN report (held-out, one-shot) ──────────────────────────────────────
+//
+// `evals/reports/<method>/green.json`. Counts, intervals, paired per-fixture outcomes, and a
+// verdict. No held-out text, answers, quotes, or paths: held-out fixtures appear by id and hash
+// only (both already in the prereg).
+
+/** Newcombe's hybrid score interval for a difference of two proportions (Wilson-based), clamped to [-1, 1]. */
+export function newcombe95(k1: number, n1: number, k2: number, n2: number): [number, number] {
+  if (n1 <= 0 || n2 <= 0) return [-1, 1]
+  const p1 = k1 / n1
+  const p2 = k2 / n2
+  const [l1, u1] = wilson95(k1, n1)
+  const [l2, u2] = wilson95(k2, n2)
+  const d = p1 - p2
+  const lo = d - Math.sqrt((p1 - l1) ** 2 + (u2 - p2) ** 2)
+  const hi = d + Math.sqrt((u1 - p1) ** 2 + (p2 - l2) ** 2)
+  return [round4(Math.max(-1, lo)), round4(Math.min(1, hi))]
+}
+
+export interface GreenCell {
+  attempted: number
+  pass: number
+  fail: number
+  pass_over_total: string
+  pass_rate_wilson95: [number, number]
+  outcomes: OutcomeCounts
+  taxonomy: Taxonomy
+  criteria: Record<string, CriterionTally>
+  check_codes: Record<string, number>
+  fire_basis: FireBasisTally
+}
+
+export interface GreenDelta {
+  /** Skill pass rate minus baseline pass rate. */
+  value: number
+  newcombe95: [number, number]
+}
+
+export interface GreenFixtureReport {
+  id: string
+  fixture_hash: string
+  skill: GreenCell
+  baseline: GreenCell
+  delta: GreenDelta
+  meets_floor: boolean
+}
+
+export interface GreenNegativeReport {
+  id: string
+  fixture_hash: string
+  attempted: number
+  /** Failed runs of a silent-expected fixture: false fires, plus any other failure. */
+  false_fires: number
+  outcomes: OutcomeCounts
+  taxonomy: Taxonomy
+  check_codes: Record<string, number>
+  fire_basis: FireBasisTally
+}
+
+export interface GreenPooled {
+  pass: number
+  attempted: number
+  pass_rate_wilson95: [number, number]
+}
+
+export interface GreenReport {
+  schema_version: typeof REPORT_SCHEMA_VERSION
+  kind: 'green'
+  method: string
+  prereg: DevReport['prereg']
+  repo: { head_sha: string }
+  skill: { sha256: string; tree_sha: string }
+  opencode: { package: string; version: string }
+  models: { agent_pinned: string; agent_returned: string[]; judge_pinned: string; judge_returned: string[]; gateways?: string[] }
+  judge: { system_prompt_sha256: string[]; judged_runs: number; judge_error_runs: number; temperature_observed: number[] }
+  campaign: { id: string; started_at: string; finished_at: string; planned_runs: number; executed_manifests: number; incomplete_manifests: number }
+  totals: { attempted: number; taxonomy: Taxonomy; wall_clock_ms: number; tokens: { input: number; output: number; reasoning: number } }
+  bars: { skill_pooled_pass_min: number; skill_per_fixture_pass_min: number; baseline_pooled_pass_max: number; false_fire_max: number }
+  heldout: GreenFixtureReport[]
+  negatives: GreenNegativeReport[]
+  pooled: { skill: GreenPooled; baseline: GreenPooled; delta: GreenDelta }
+  dev_regression: { source_report_present: boolean; passes_dev_bar: boolean; skill_matches: boolean }
+  near_duplicate_check: 'pass' | 'fail'
+  checks: {
+    skill_pooled: boolean
+    per_fixture_floor: boolean
+    baseline_ceiling: boolean
+    negatives_silent: boolean
+    dev_regression: boolean
+    near_duplicate: boolean
+  }
+  /** `green` only if every check holds. Machine verdict: human review below is still owed. */
+  verdict: 'green' | 'green-miss'
+  held_out_too_easy: boolean
+  human_review: { status: 'pending'; judged_runs: number; reviewed: number }
+  /** One-shot: any edit under `skills/<method>/` after this report, in this epoch, burns the held-out set. */
+  burn_rule: { one_shot_read: true; skill_edit_burns_set: true }
+}
+
+export interface GreenReportInput {
+  prereg: Prereg
+  shas: PreregShas
+  headSha: string
+  runs: readonly LoadedRun[]
+  plannedRuns: number
+  /** Hash of `skills/<method>/` as checked out now. */
+  skillSha256: string
+  /** The committed `green-dev.json`, parsed; `null` when absent. */
+  devReport: Pick<DevReport, 'skill' | 'dev'> | null
+  nearDuplicate: 'pass' | 'fail'
+}
+
+interface Accumulator {
+  wall: number
+  tokens: { input: number; output: number; reasoning: number }
+  incomplete: number
+  judged: number
+  judgeErrors: number
+  taxonomy: Taxonomy
+}
+
+function cellOf(runs: readonly LoadedRun[], acc: Accumulator): GreenCell {
+  const outcomes = emptyOutcomes()
+  const taxonomy = emptyTaxonomy()
+  const criteria: Record<string, CriterionTally> = {}
+  const checkCodes: Record<string, number> = {}
+  const fireBasis = emptyFireBasis()
+  for (const { manifest } of runs) {
+    const bucket = bucketOf(manifest)
+    if (bucket === 'incomplete') {
+      acc.incomplete += 1
+      continue
+    }
+    outcomes[bucket] += 1
+    addToTaxonomy(taxonomy, bucket)
+    addToTaxonomy(acc.taxonomy, bucket)
+    acc.wall += manifest.wall_clock_ms ?? 0
+    acc.tokens.input += manifest.usage?.input ?? 0
+    acc.tokens.output += manifest.usage?.output ?? 0
+    acc.tokens.reasoning += manifest.usage?.reasoning ?? 0
+    if (bucket !== 'infra_error' && bucket !== 'non_isolated') fireBasis[manifest.fire_basis ?? 'none'] += 1
+    for (const f of manifest.check_failures) checkCodes[f.code] = (checkCodes[f.code] ?? 0) + 1
+    if (manifest.judge) {
+      acc.judged += 1
+      if (manifest.judge.error_code !== null) acc.judgeErrors += 1
+      for (const c of manifest.judge.criteria) {
+        const t = (criteria[c.id] ??= { pass: 0, fail_quoted: 0, fail_absent: 0 })
+        if (c.verdict === 'pass') t.pass += 1
+        else if (c.quote.trim().toLowerCase() === 'absent') t.fail_absent += 1
+        else t.fail_quoted += 1
+      }
+    }
+  }
+  const fail = outcomes.fail_judge_verdict + outcomes.fail_check + outcomes.fail_timeout + outcomes.fail_budget + outcomes.fail_host_crash + outcomes.fail_judge_error
+  const attempted = outcomes.pass + fail
+  return {
+    attempted,
+    pass: outcomes.pass,
+    fail,
+    pass_over_total: `${outcomes.pass}/${attempted}`,
+    pass_rate_wilson95: wilson95(outcomes.pass, attempted),
+    outcomes,
+    taxonomy,
+    criteria,
+    check_codes: Object.fromEntries(Object.entries(checkCodes).sort(([a], [b]) => (a < b ? -1 : 1))),
+    fire_basis: fireBasis,
+  }
+}
+
+const deltaOf = (skill: { pass: number; attempted: number }, baseline: { pass: number; attempted: number }): GreenDelta => ({
+  value: round4((skill.attempted ? skill.pass / skill.attempted : 0) - (baseline.attempted ? baseline.pass / baseline.attempted : 0)),
+  newcombe95: newcombe95(skill.pass, skill.attempted, baseline.pass, baseline.attempted),
+})
+
+export function buildGreenReport(input: GreenReportInput): GreenReport {
+  const { prereg, shas, runs } = input
+  if (runs.length === 0) throw new Error('no run manifests to report')
+  if (!shas.skillTreeSha) throw new Error('GREEN report needs the committed skill tree (enforce the prereg in green mode first)')
+
+  type Group = { id: string; hash: string; baseline: LoadedRun[]; skill: LoadedRun[] }
+  const heldout = new Map<string, Group>()
+  const negatives = new Map<string, Group>()
+  for (const run of runs) {
+    const { fixture, condition, skill } = run.manifest
+    if (fixture.kind === 'dev') throw new Error(`a GREEN campaign must not contain dev fixtures; ${run.manifest.run_id} is dev`)
+    if (condition === 'skill' && skill?.sha256 !== input.skillSha256) {
+      throw new Error(`${run.manifest.run_id} ran a different skill than the one checked out now; the read is void`)
+    }
+    const target = fixture.kind === 'heldout' ? heldout : negatives
+    if (fixture.kind === 'negative' && condition !== 'skill') throw new Error(`negatives run under the skill condition only; ${run.manifest.run_id} is ${condition}`)
+    const g = target.get(fixture.id) ?? { id: fixture.id, hash: fixture.hash, baseline: [], skill: [] }
+    g[condition].push(run)
+    target.set(fixture.id, g)
+  }
+  const wantHeldout = Object.keys(prereg.fixture_hashes.heldout).length
+  const wantNegative = Object.keys(prereg.fixture_hashes.negative).length
+  if (heldout.size !== wantHeldout || negatives.size !== wantNegative) {
+    throw new Error(`campaign covers ${heldout.size}/${wantHeldout} held-out and ${negatives.size}/${wantNegative} negative fixtures; refusing a partial read`)
+  }
+
+  const acc: Accumulator = { wall: 0, tokens: { input: 0, output: 0, reasoning: 0 }, incomplete: 0, judged: 0, judgeErrors: 0, taxonomy: emptyTaxonomy() }
+  const floor = prereg.green_bar.skill_per_fixture_pass_min
+  const heldoutReports: GreenFixtureReport[] = [...heldout.values()]
+    .sort((a, b) => (a.id < b.id ? -1 : 1))
+    .map((g) => {
+      const skill = cellOf(g.skill, acc)
+      const baseline = cellOf(g.baseline, acc)
+      return { id: g.id, fixture_hash: g.hash, skill, baseline, delta: deltaOf(skill, baseline), meets_floor: skill.pass >= floor }
+    })
+  const negativeReports: GreenNegativeReport[] = [...negatives.values()]
+    .sort((a, b) => (a.id < b.id ? -1 : 1))
+    .map((g) => {
+      const cell = cellOf(g.skill, acc)
+      return { id: g.id, fixture_hash: g.hash, attempted: cell.attempted, false_fires: cell.fail, outcomes: cell.outcomes, taxonomy: cell.taxonomy, check_codes: cell.check_codes, fire_basis: cell.fire_basis }
+    })
+  if (acc.incomplete > 0) throw new Error(`${acc.incomplete} manifest(s) never finished; refusing to report an unfinished campaign`)
+
+  const sum = (pick: (f: GreenFixtureReport) => GreenCell): { pass: number; attempted: number } =>
+    heldoutReports.reduce((t, f) => ({ pass: t.pass + pick(f).pass, attempted: t.attempted + pick(f).attempted }), { pass: 0, attempted: 0 })
+  const skillPooled = sum((f) => f.skill)
+  const baselinePooled = sum((f) => f.baseline)
+  const bar = prereg.green_bar
+  const falseFires = negativeReports.reduce((n, f) => n + f.false_fires, 0)
+  const dev = input.devReport
+  const devRegression = {
+    source_report_present: dev !== null,
+    passes_dev_bar: dev?.dev.passes_dev_bar === true,
+    skill_matches: dev?.skill.sha256 === input.skillSha256,
+  }
+  const checks = {
+    skill_pooled: skillPooled.pass >= bar.skill_pooled_pass_min,
+    per_fixture_floor: heldoutReports.every((f) => f.meets_floor),
+    baseline_ceiling: baselinePooled.pass <= bar.baseline_pooled_pass_max,
+    negatives_silent: falseFires <= prereg.false_fire_max,
+    dev_regression: devRegression.source_report_present && devRegression.passes_dev_bar && devRegression.skill_matches,
+    near_duplicate: input.nearDuplicate === 'pass',
+  }
+  const manifests = runs.map((r) => r.manifest)
+  return {
+    schema_version: REPORT_SCHEMA_VERSION,
+    kind: 'green',
+    method: prereg.method,
+    prereg: {
+      tag: shas.tag,
+      tag_object_sha: shas.tagObjectSha,
+      commit_sha: shas.commitSha,
+      blob_sha: shas.blobSha,
+      epoch: prereg.epoch,
+      rubric_hash: prereg.rubric_hash,
+      runs_per_condition: prereg.runs_per_condition,
+      per_run_timeout_ms: prereg.per_run_timeout_ms,
+    },
+    repo: { head_sha: input.headSha },
+    skill: { sha256: input.skillSha256, tree_sha: shas.skillTreeSha },
+    opencode: { package: manifests[0]!.opencode.package, version: manifests[0]!.opencode.version },
+    models: {
+      agent_pinned: prereg.agent_model_id,
+      agent_returned: sorted(manifests.flatMap((m) => m.model.returned)),
+      judge_pinned: prereg.judge_model_id,
+      judge_returned: sorted(manifests.flatMap((m) => m.judge?.model.returned ?? [])),
+      gateways: sorted(manifests.flatMap((m) => [m.gateway, m.judge?.gateway].filter((g): g is NonNullable<typeof g> => Boolean(g)))),
+    },
+    judge: {
+      system_prompt_sha256: sorted(manifests.flatMap((m) => (m.judge ? [m.judge.system_prompt_sha256] : []))),
+      judged_runs: acc.judged,
+      judge_error_runs: acc.judgeErrors,
+      temperature_observed: sorted(manifests.flatMap((m) => (m.judge?.temperature == null ? [] : [m.judge.temperature]))),
+    },
+    campaign: {
+      id: manifests[0]!.campaign_id,
+      started_at: sorted(manifests.map((m) => m.started_at))[0]!,
+      finished_at: sorted(manifests.map((m) => m.finished_at ?? m.started_at)).at(-1)!,
+      planned_runs: input.plannedRuns,
+      executed_manifests: manifests.length,
+      incomplete_manifests: acc.incomplete,
+    },
+    totals: {
+      attempted: acc.taxonomy.pass + acc.taxonomy.fail + acc.taxonomy['timeout->fail'] + acc.taxonomy['budget->fail'] + acc.taxonomy['judge_error->fail'],
+      taxonomy: acc.taxonomy,
+      wall_clock_ms: acc.wall,
+      tokens: acc.tokens,
+    },
+    bars: {
+      skill_pooled_pass_min: bar.skill_pooled_pass_min,
+      skill_per_fixture_pass_min: bar.skill_per_fixture_pass_min,
+      baseline_pooled_pass_max: bar.baseline_pooled_pass_max,
+      false_fire_max: prereg.false_fire_max,
+    },
+    heldout: heldoutReports,
+    negatives: negativeReports,
+    pooled: {
+      skill: { ...skillPooled, pass_rate_wilson95: wilson95(skillPooled.pass, skillPooled.attempted) },
+      baseline: { ...baselinePooled, pass_rate_wilson95: wilson95(baselinePooled.pass, baselinePooled.attempted) },
+      delta: deltaOf(skillPooled, baselinePooled),
+    },
+    dev_regression: devRegression,
+    near_duplicate_check: input.nearDuplicate,
+    checks,
+    verdict: Object.values(checks).every(Boolean) ? 'green' : 'green-miss',
+    held_out_too_easy: !checks.baseline_ceiling,
+    human_review: { status: 'pending', judged_runs: acc.judged, reviewed: 0 },
+    burn_rule: { one_shot_read: true, skill_edit_burns_set: true },
+  }
+}
+
+const poolShape = (): Schema => obj({ pass: INT, attempted: INT, pass_rate_wilson95: { t: 'tuple2num' } })
+const deltaShape = (): Schema => obj({ value: NUM, newcombe95: { t: 'tuple2delta' } })
+const cellShape = (): Schema =>
+  obj({
+    attempted: INT,
+    pass: INT,
+    fail: INT,
+    pass_over_total: str(/^\d+\/\d+$/),
+    pass_rate_wilson95: { t: 'tuple2num' },
+    outcomes: outcomesShape(),
+    taxonomy: taxonomyShape(),
+    criteria: { t: 'rec', keys: /^[A-Z]{2}\d+$/, of: obj({ pass: INT, fail_quoted: INT, fail_absent: INT }) },
+    check_codes: { t: 'rec', keys: /^[a-z][a-z_]*$/, of: INT },
+    fire_basis: obj({ skill_tool: INT, direct_read: INT, none: INT }),
+  })
+
+export const GREEN_REPORT_SCHEMA: Schema = obj({
+  schema_version: { t: 'lit', v: REPORT_SCHEMA_VERSION },
+  kind: { t: 'lit', v: 'green' },
+  method: str(/^[a-z][a-z0-9-]{0,63}$/),
+  prereg: obj({
+    tag: str(/^prereg\/[a-z][a-z0-9-]{0,63}\/\d+$/),
+    tag_object_sha: str(HEX40),
+    commit_sha: str(HEX40),
+    blob_sha: str(HEX40),
+    epoch: INT,
+    rubric_hash: str(HEX64),
+    runs_per_condition: INT,
+    per_run_timeout_ms: INT,
+  }),
+  repo: obj({ head_sha: str(HEX40) }),
+  skill: obj({ sha256: str(HEX64), tree_sha: str(HEX40) }),
+  opencode: obj({ package: str(/^[a-z][a-z0-9-]*$/), version: str(/^\d+\.\d+\.\d+$/) }),
+  models: obj({
+    agent_pinned: str(PINNED_MODEL),
+    agent_returned: arr(str(RETURNED_MODEL)),
+    judge_pinned: str(PINNED_MODEL),
+    judge_returned: arr(str(RETURNED_MODEL)),
+    gateways: gatewaysShape,
+  }),
+  judge: obj({ system_prompt_sha256: arr(str(HEX64)), judged_runs: INT, judge_error_runs: INT, temperature_observed: arr(NUM) }),
+  campaign: obj({
+    id: str(/^[a-z][a-z0-9-]*-green-[0-9TZ-]+$/),
+    started_at: str(ISO),
+    finished_at: str(ISO),
+    planned_runs: INT,
+    executed_manifests: INT,
+    incomplete_manifests: INT,
+  }),
+  totals: obj({ attempted: INT, taxonomy: taxonomyShape(), wall_clock_ms: INT, tokens: obj({ input: INT, output: INT, reasoning: INT }) }),
+  bars: obj({ skill_pooled_pass_min: INT, skill_per_fixture_pass_min: INT, baseline_pooled_pass_max: INT, false_fire_max: INT }),
+  heldout: arr(obj({ id: str(ID), fixture_hash: str(HEX64), skill: cellShape(), baseline: cellShape(), delta: deltaShape(), meets_floor: BOOL })),
+  negatives: arr(
+    obj({
+      id: str(ID),
+      fixture_hash: str(HEX64),
+      attempted: INT,
+      false_fires: INT,
+      outcomes: outcomesShape(),
+      taxonomy: taxonomyShape(),
+      check_codes: { t: 'rec', keys: /^[a-z][a-z_]*$/, of: INT },
+      fire_basis: obj({ skill_tool: INT, direct_read: INT, none: INT }),
+    }),
+  ),
+  pooled: obj({ skill: poolShape(), baseline: poolShape(), delta: deltaShape() }),
+  dev_regression: obj({ source_report_present: BOOL, passes_dev_bar: BOOL, skill_matches: BOOL }),
+  near_duplicate_check: str(/^(pass|fail)$/),
+  checks: obj({ skill_pooled: BOOL, per_fixture_floor: BOOL, baseline_ceiling: BOOL, negatives_silent: BOOL, dev_regression: BOOL, near_duplicate: BOOL }),
+  verdict: str(/^(green|green-miss)$/),
+  held_out_too_easy: BOOL,
+  human_review: obj({ status: str(/^pending$/), judged_runs: INT, reviewed: INT }),
+  burn_rule: obj({ one_shot_read: BOOL, skill_edit_burns_set: BOOL }),
+})
+
+export function validateGreenReport(report: unknown): string[] {
+  const errors: string[] = []
+  check(report, GREEN_REPORT_SCHEMA, '', errors)
+  return errors
+}
+
+export function greenReportPath(repoRoot: string, method: string): string {
+  return join(repoRoot, 'evals', 'reports', method, 'green.json')
+}
+
+export function writeGreenReport(repoRoot: string, report: GreenReport): string {
+  const errors = validateGreenReport(report)
+  if (errors.length) throw new Error(`report is not an allowlist projection:\n  ${errors.join('\n  ')}`)
+  const path = greenReportPath(repoRoot, report.method)
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, `${JSON.stringify(report, null, 2)}\n`)
   return path

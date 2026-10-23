@@ -11,13 +11,14 @@ import { join, resolve } from 'node:path'
 
 import { AuthPassthroughError, DEFAULT_PASSTHROUGH, needlesOf, type PassthroughAuth, parseAuthPassthrough, PASSTHROUGH_PROVIDERS, readPassthroughAuth } from './auth'
 import { Git } from './git'
+import { findNearDuplicates, NEAR_DUPLICATE_THRESHOLD } from './neardup'
 import { loadCampaignRuns, rejudgeCampaign, writeReview } from './review'
 import { createJudge } from './judge'
 import { findStaleManifests } from './manifest'
 import { opencodeAvailability } from './opencode'
 import { isLiveModel } from './scripted-provider'
 import { enforcePrereg, PreregRefusal } from './prereg'
-import { buildDevReport, buildRedReport, loadCampaignManifests, writeDevReport, writeReport } from './report'
+import { buildDevReport, buildGreenReport, buildRedReport, type DevReport, greenReportPath, loadCampaignManifests, writeDevReport, writeGreenReport, writeReport } from './report'
 import { planRuns, type ProviderMode, runCampaign } from './run'
 import { CustodyError, hashSkillDir, heldoutDir, resolveOutputDir, stateRoot } from './workspace'
 
@@ -41,6 +42,8 @@ const USAGE = `usage: bun run eval <red|green> --method <name> [options]
   --auth-passthrough <p,..>  copy these provider entries (opencode-go, opencode) from the real auth.json into each run's isolated
                           auth.json; or set METACOGS_AUTH_PASSTHROUGH. Live runs default to opencode-go only; opencode (Zen, credit-billed)
                           is copied only when listed; 'none' copies nothing. Values are never logged or recorded; names go in the manifest
+  --green                 report: project the one-shot GREEN campaign (default: newest <state root>/runs/<name>-green-*) into
+                          evals/reports/<m>/green.json. Refuses if green.json exists.
   --campaign <dir>        report only: the RED campaign directory (default: newest evals/runs/<name>-red-*)
 
 Live runs are judged by the prereg's judge model through the isolated OpenCode gateway (Go by default); scripted runs are not judged.
@@ -87,7 +90,7 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
   if ((mode === 'review' || mode === 'rejudge') && !extra.length) {
     return campaignToolMain({ mode, campaign: parsed.values.campaign, repo, authFlag: parsed.values['auth-passthrough'], cwd, env, out, err })
   }
-  if (mode === 'report' && !extra.length && method) return reportMain({ method, repo, campaign: parsed.values.campaign, devOnly, cwd, env, out, err })
+  if (mode === 'report' && !extra.length && method) return reportMain({ method, repo, campaign: parsed.values.campaign, devOnly, green: parsed.values.green === true, cwd, env, out, err })
   if ((mode !== 'red' && mode !== 'green') || extra.length || !method) {
     err(USAGE)
     return EXIT.USAGE
@@ -126,6 +129,17 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
   const stale = findStaleManifests([join(repoRoot, 'evals', 'runs'), join(stateRoot(env), 'runs')])
   for (const s of stale) err(`warning: stale "running" manifest (a previous runner did not finish): ${s.path}`)
 
+  const isGreenRead = mode === 'green' && !devOnly
+  // One shot: a GREEN report for this method already exists, so the held-out set has been read.
+  if (isGreenRead && existsSync(greenReportPath(repoRoot, method))) {
+    err(`REFUSED: ${greenReportPath(repoRoot, method).slice(repoRoot.length + 1)} exists; the held-out set was read once for this epoch. A second read needs a new epoch and a new held-out set.`)
+    return EXIT.REFUSED
+  }
+  if (isGreenRead && providerMode === 'live' && (runsOverride !== undefined || fixture !== undefined)) {
+    err('REFUSED: the one-shot GREEN read must follow the prereg plan; --runs and --fixture are for dev and debugging only.')
+    return EXIT.REFUSED
+  }
+
   // Enforcement happens before anything launches.
   let verification: ReturnType<typeof enforcePrereg>
   try {
@@ -138,6 +152,15 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
     throw e
   }
   const { prereg } = verification
+
+  // Private near-duplicate check: a held-out fixture that copies a dev fixture measures memorization, not the skill.
+  if (isGreenRead) {
+    const hits = findNearDuplicates(verification.content.fixtures.heldout, verification.content.fixtures.dev)
+    if (hits.length) {
+      err(`REFUSED: near-duplicate held-out/dev fixtures (word 3-gram Jaccard >= ${NEAR_DUPLICATE_THRESHOLD}): ${hits.map((h) => `${h.heldout}~${h.dev} ${h.similarity}`).join(', ')}`)
+      return EXIT.REFUSED
+    }
+  }
 
   const runsPerCondition = runsOverride ?? prereg.runs_per_condition
   const plan = planRuns({
@@ -313,6 +336,7 @@ interface ReportArgs {
   repo?: string
   campaign?: string
   devOnly: boolean
+  green: boolean
   cwd: string
   env: Record<string, string | undefined>
   out: (line: string) => void
@@ -320,7 +344,7 @@ interface ReportArgs {
 }
 
 /** Newest `<runs>/<method>-<kind>-*` directory (campaign ids embed an ISO timestamp, so names sort by time). */
-function latestCampaign(runsDir: string, method: string, kind: 'red' | 'dev'): string | undefined {
+function latestCampaign(runsDir: string, method: string, kind: 'red' | 'dev' | 'green'): string | undefined {
   if (!existsSync(runsDir)) return undefined
   const names = readdirSync(runsDir)
     .filter((n) => n.startsWith(`${method}-${kind}-`) && statSync(join(runsDir, n)).isDirectory())
@@ -334,7 +358,7 @@ function reportMain(a: ReportArgs): number {
   const git = new Git(repoRoot)
   let verification: ReturnType<typeof enforcePrereg>
   try {
-    verification = enforcePrereg({ git, repoRoot, method: a.method, mode: a.devOnly ? 'dev' : 'red', heldoutDir: heldoutDir(a.method, a.env) })
+    verification = enforcePrereg({ git, repoRoot, method: a.method, mode: a.green ? 'green' : a.devOnly ? 'dev' : 'red', heldoutDir: heldoutDir(a.method, a.env) })
   } catch (e) {
     if (e instanceof PreregRefusal) {
       a.err(`REFUSED: ${e.message}`)
@@ -342,9 +366,12 @@ function reportMain(a: ReportArgs): number {
     }
     throw e
   }
-  const campaignDir = a.campaign ? resolve(a.cwd, a.campaign) : latestCampaign(join(repoRoot, 'evals', 'runs'), a.method, a.devOnly ? 'dev' : 'red')
+  const kind = a.green ? 'green' : a.devOnly ? 'dev' : 'red'
+  const campaignDir = a.campaign
+    ? (resolveCampaignDir(a.campaign, repoRoot, a.cwd, a.env) ?? resolve(a.cwd, a.campaign))
+    : latestCampaign(a.green ? join(stateRoot(a.env), 'runs') : join(repoRoot, 'evals', 'runs'), a.method, kind)
   if (!campaignDir || !existsSync(campaignDir)) {
-    a.err(`no ${a.devOnly ? 'dev' : 'RED'} campaign found for ${a.method}; pass --campaign <dir>`)
+    a.err(`no ${kind === 'red' ? 'RED' : kind} campaign found for ${a.method}; pass --campaign <id|dir>`)
     return EXIT.ERROR
   }
   const runs = loadCampaignManifests(campaignDir)
@@ -367,6 +394,7 @@ function reportMain(a: ReportArgs): number {
   } catch {
     // no real auth.json (CI, other machines): nothing to compare against
   }
+  if (a.green) return greenReportMain(a, { repoRoot, verification, headSha, runs, plannedRuns, needles })
   if (a.devOnly) return devReportMain(a, { repoRoot, git, verification, headSha, runs, plannedRuns, needles })
   const report = buildRedReport({ prereg: verification.prereg, shas: verification.shas, headSha, runs, plannedRuns })
   const serialized = JSON.stringify(report)
@@ -378,6 +406,55 @@ function reportMain(a: ReportArgs): number {
   a.out(`wrote ${path.slice(repoRoot.length + 1)}`)
   for (const f of report.fixtures) a.out(`  ${f.kind}/${f.id}: fail ${f.fail_over_total} ${JSON.stringify(f.fail_rate_wilson95)}${f.meets_red_bar ? ' · meets RED bar' : ''}`)
   a.out(`green_eligible=${report.red.green_eligible} (${report.red.dev_fixtures_meeting_bar}/${report.red.min_fixtures} dev fixtures at the bar; excluding judge_error: ${report.red.sensitivity_excluding_judge_error.dev_fixtures_meeting_bar})`)
+  return EXIT.OK
+}
+
+/** The one-shot GREEN read: counts and verdict only; the artifacts stay under the state root. */
+function greenReportMain(
+  a: ReportArgs,
+  c: {
+    repoRoot: string
+    verification: ReturnType<typeof enforcePrereg>
+    headSha: string
+    runs: ReturnType<typeof loadCampaignManifests>
+    plannedRuns: number
+    needles: ReturnType<typeof needlesOf>
+  },
+): number {
+  if (existsSync(greenReportPath(c.repoRoot, a.method))) {
+    a.err(`REFUSED: ${greenReportPath(c.repoRoot, a.method).slice(c.repoRoot.length + 1)} already exists; GREEN is a one-shot read`)
+    return EXIT.REFUSED
+  }
+  const devPath = join(c.repoRoot, 'evals', 'reports', a.method, 'green-dev.json')
+  const devReport = existsSync(devPath) ? (JSON.parse(readFileSync(devPath, 'utf8')) as Pick<DevReport, 'skill' | 'dev'>) : null
+  const fixtures = c.verification.content.fixtures
+  const nearDuplicate = findNearDuplicates(fixtures.heldout, fixtures.dev).length === 0 ? 'pass' : 'fail'
+  let report: ReturnType<typeof buildGreenReport>
+  try {
+    report = buildGreenReport({
+      prereg: c.verification.prereg,
+      shas: c.verification.shas,
+      headSha: c.headSha,
+      runs: c.runs,
+      plannedRuns: c.plannedRuns,
+      skillSha256: hashSkillDir(join(c.repoRoot, 'skills', a.method)).sha256,
+      devReport,
+      nearDuplicate,
+    })
+  } catch (e) {
+    a.err(`REFUSED: ${(e as Error).message}`)
+    return EXIT.REFUSED
+  }
+  if (c.needles.some((n) => JSON.stringify(report).includes(n.value))) {
+    a.err('ABORTED: credential_leak: the report contains a passthrough credential value; nothing was written')
+    return EXIT.CREDENTIAL_LEAK
+  }
+  const path = writeGreenReport(c.repoRoot, report)
+  a.out(`wrote ${path.slice(c.repoRoot.length + 1)}`)
+  for (const f of report.heldout) a.out(`  ${f.id}: skill ${f.skill.pass_over_total} baseline ${f.baseline.pass_over_total} delta ${f.delta.value} ${JSON.stringify(f.delta.newcombe95)}`)
+  for (const f of report.negatives) a.out(`  ${f.id}: false fires ${f.false_fires}/${f.attempted}`)
+  a.out(`pooled skill ${report.pooled.skill.pass}/${report.pooled.skill.attempted} baseline ${report.pooled.baseline.pass}/${report.pooled.baseline.attempted}; checks ${JSON.stringify(report.checks)}`)
+  a.out(`verdict=${report.verdict}${report.held_out_too_easy ? ' (held-out too easy)' : ''}`)
   return EXIT.OK
 }
 
@@ -436,6 +513,7 @@ const OPTIONS = {
   'auth-passthrough': { type: 'string' },
   'include-dev': { type: 'boolean' },
   'dev-only': { type: 'boolean' },
+  green: { type: 'boolean' },
 } as const
 
 if (import.meta.main) {

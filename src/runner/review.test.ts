@@ -263,3 +263,14 @@ describe('rejudgeCampaign (mocked judge)', () => {
     expect(skipReason(manifest('x'), true)).toBeUndefined()
   })
 })
+
+describe('records in the review sheet', () => {
+  test('a skill run shows the record the judge saw, fenced', () => {
+    const campaign = tmp()
+    const dir = plant(campaign, '001-dev-d1-skill-r1', 'answer', { condition: 'skill' })
+    writeFileSync(join(dir, 'records.json'), JSON.stringify([{ name: 'demo-1.json', content: '{"method":"demo"}' }]))
+    const text = renderReview(campaign, repoWithRubric())
+    expect(text).toContain('**Record** (the judge saw this too)')
+    expect(text).toContain('```text\n{"method":"demo"}\n```')
+  })
+})
