@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "hosts": {
+    "opencode": { "name": "OpenCode", "project_path": ".agents/skills/" },
+    "pi": { "name": "Pi", "project_path": ".agents/skills/" },
+    "codex": { "name": "Codex", "project_path": ".agents/skills/" },
+    "claude-code": { "name": "Claude Code", "project_path": ".claude/skills/" }
+  },
+  "methods": {
+    "synthesis": {
+      "opencode": {
+        "status": "content-compatible-untested",
+        "pending_verification": true,
+        "evidence_ref": "evals/reports/synthesis/green.json",
+        "date": "2026-10-23",
+        "host_version": "1.19.4",
+        "model": "openai/gpt-6-luna",
+        "judge_model": "anthropic/claude-haiku-5-5",
+        "history": []
+      },
+      "pi": {
+        "status": "content-compatible-untested",
+        "evidence_ref": "docs/install.md#pi",
+        "date": "2026-10-23",
+        "host_version": "1.3.0",
+        "note": "Listing smoke only. Project skills load after trusting the project (`--approve`).",
+        "history": []
+      },
+      "codex": {
+        "status": "content-compatible-untested",
+        "evidence_ref": "docs/install.md#codex",
+        "date": "2026-10-23",
+        "host_version": "0.162.1",
+        "note": "Listing smoke only.",
+        "history": []
+      },
+      "claude-code": {
+        "status": "content-compatible-untested",
+        "evidence_ref": "docs/install.md#claude-code",
+        "date": "2026-10-23",
+        "host_version": "2.1.270",
+        "note": "Listing smoke only. Reads `.claude/skills/`, not `.agents/skills/`.",
+        "history": []
+      }
+    }
+  }
+}

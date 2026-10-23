@@ -13,7 +13,8 @@
     "generate": "bun src/generate/bundle-helpers.ts",
     "generate:check": "bun src/generate/check.ts",
     "eval": "bun src/runner/cli.ts",
-    "matrix:check": "echo 'matrix:check: placeholder, implemented in unit 8' && exit 0",
+    "matrix:check": "bun src/matrix/check.ts",
+    "matrix:render": "bun src/matrix/check.ts --render",
     "scan:secrets": "bun src/scan/secrets.ts"
   },
   "devDependencies": {
