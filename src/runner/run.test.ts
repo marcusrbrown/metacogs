@@ -667,8 +667,8 @@ describe('provider 429', () => {
     expect(waits).toEqual([30_000, 90_000])
     expect(res.results[0]).toMatchObject({ outcome: 'pass', attempt: 3 })
     expect(res.infraErrors.map((r) => r.reasons)).toEqual([
-      ['host_exit_before_skill_load', 'provider_429'],
-      ['host_exit_before_skill_load', 'provider_429'],
+      ['provider_429'],
+      ['provider_429'],
     ])
     expect(res.tallies['dev/x/baseline']).toMatchObject({ attempted: 1, pass: 1, infra_error: 2 })
     expect(manifestOf(c.campaignDir, res.infraErrors[0]!.runId).host_errors[0]).toEqual({ name: 'APIError', message: 'Rate limit exceeded', statusCode: 429 })
@@ -685,7 +685,7 @@ describe('provider 429', () => {
   test('a 429 after skill content loaded is still an infra_error: runs are independent, so the rate limit says nothing about the skill', async () => {
     const host = fakeHost({ exitCode: 1, stdout: `${skillLoadEvent}\n${rateLimited}` })
     const res = await runCampaign(campaign([planOne('heldout', 'skill', 'h1')], host, { sleep: async () => {} }))
-    expect(res.infraErrors[0]).toMatchObject({ status: 'infra_error', reasons: expect.arrayContaining(['provider_429']) })
+    expect(res.infraErrors[0]).toMatchObject({ status: 'infra_error', reasons: ['provider_429'] })
     expect(res.tallies['heldout/h1/skill']).toMatchObject({ attempted: 0 })
   })
 

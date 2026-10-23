@@ -629,7 +629,7 @@ async function runAttempt(c: CampaignInput, run: PlannedRun, state: AttemptState
     // Classification, in precedence order.
     let final: RunResult
     if (hostOutcome === 'infra_error') {
-      final = settle('infra_error', 'infra_error', ['host_exit_before_skill_load', ...(isRateLimited(events.hostErrors) ? ['provider_429'] : [])])
+      final = settle('infra_error', 'infra_error', [isRateLimited(events.hostErrors) ? 'provider_429' : 'host_exit_before_skill_load'])
     } else if (isolationViolated(evidence, hostOutcome === 'completed')) {
       final = settle('non_isolated', 'non_isolated', evidence.checks.filter((k) => !k.passed).map((k) => k.name))
     } else if (hostOutcome === 'timeout') {

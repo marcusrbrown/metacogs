@@ -300,6 +300,8 @@ export type ViolationCode =
   | 'prereg_blob_mismatch'
   | 'epoch_base_invalid'
   | 'epoch_base_before_prior_tag'
+  | 'epoch_base_before_prior_read'
+  | 'heldout_reused_after_skill_edit'
   | 'fixtures_after_prereg'
   | 'tag_equals_skill_commit'
   | 'skill_commit_not_after_tag'
@@ -333,6 +335,30 @@ export const preregTagName = (method: string, epoch: number) => `prereg/${method
 export const preregRelPath = (method: string) => `evals/${method}/prereg.json`
 
 const short = (sha: string) => sha.slice(0, 12)
+
+/** Where an epoch's one-shot read report lives: `green.json` while it is current, `green.epoch<N>.json` once a later epoch replaces it. */
+const readReportPaths = (method: string, epoch: number) => [`evals/reports/${method}/green.json`, `evals/reports/${method}/green.epoch${epoch}.json`]
+
+/**
+ * The commit that first added epoch `epoch`'s read report (a `green` or `green-miss` projection), looking only at history
+ * reachable from `until`. A report counts for an epoch by the `prereg.epoch` it records, not by its file name. `null`:
+ * no read of that epoch is on record by `until`.
+ */
+function firstCommitOfReadReport(git: Git, method: string, epoch: number, until: string): string | null {
+  for (const path of readReportPaths(method, epoch)) {
+    for (const commit of git.commitsTouchingBetween(null, until, [path])) {
+      const blob = git.blobAt(commit, path)
+      if (!blob) continue
+      try {
+        const report = JSON.parse(git.showBlob(commit, path)) as { prereg?: { epoch?: unknown } }
+        if (report.prereg?.epoch === epoch) return commit
+      } catch {
+        // an unreadable report is not a read on record
+      }
+    }
+  }
+  return null
+}
 
 /**
  * The commit-ordering half of enforcement. `red` requires a well-formed prereg
@@ -399,6 +425,25 @@ export function checkPreregOrdering(git: Git, prereg: Prereg, mode: 'red' | 'gre
       } else if (!git.isAncestorOrEqual(prior.commitSha, closingCommit)) {
         add('epoch_base_before_prior_tag', `epoch ${epoch} base ${short(closingCommit)} is not at or after the ${priorName} commit ${short(prior.commitSha)}`)
       }
+      // If the previous epoch's held-out set was read, the base must not precede that read: otherwise this epoch's
+      // window would not cover the commits the read and its report produced.
+      const priorRead = firstCommitOfReadReport(git, method, epoch - 1, tag.commitSha)
+      if (priorRead && !git.isAncestorOrEqual(priorRead, closingCommit)) {
+        add('epoch_base_before_prior_read', `epoch ${epoch} base ${short(closingCommit)} precedes the commit ${short(priorRead)} that first recorded the epoch ${epoch - 1} read`)
+      }
+      // Burn rule: after a read, editing the skill and reusing the same held-out fixtures would test the edit against data it was tuned on.
+      if (priorRead && prior) {
+        const edits = git.commitsTouchingBetween(prior.commitSha, tag.commitSha, [`skills/${method}`])
+        if (edits.length) {
+          const earlier = parsePrereg(safeShowBlob(git, prior.commitSha, preregPath))
+          const reused = earlier.ok ? sharedHeldout(earlier.prereg, prereg) : null
+          if (reused === null) {
+            add('heldout_reused_after_skill_edit', `skills/${method} changed since ${priorName} (latest ${short(edits.at(-1)!)}), the epoch ${epoch - 1} read is on record, and the ${priorName} prereg could not be read to prove the held-out set is new`)
+          } else if (reused.length) {
+            add('heldout_reused_after_skill_edit', `skills/${method} changed since ${priorName} (latest ${short(edits.at(-1)!)}) and the epoch ${epoch - 1} read is on record, but epoch ${epoch} reuses held-out fixture(s) ${reused.join(', ')}; a read set is burned once the skill is edited`)
+          }
+        }
+      }
     }
     if (!base) return { violations, shas }
   }
@@ -453,6 +498,22 @@ export function checkPreregOrdering(git: Git, prereg: Prereg, mode: 'red' | 'gre
   }
 
   return { violations, shas }
+}
+
+function safeShowBlob(git: Git, rev: string, path: string): string {
+  try {
+    return git.showBlob(rev, path)
+  } catch {
+    return ''
+  }
+}
+
+/** Ids in the later prereg whose salted hash also appears in the earlier one's held-out set. */
+function sharedHeldout(earlier: Prereg, later: Prereg): string[] {
+  const burned = new Set(Object.values(earlier.fixture_hashes.heldout))
+  return Object.entries(later.fixture_hashes.heldout)
+    .filter(([, hash]) => burned.has(hash))
+    .map(([id]) => id)
 }
 
 export class PreregRefusal extends Error {

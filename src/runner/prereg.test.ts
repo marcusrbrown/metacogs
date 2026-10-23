@@ -355,6 +355,144 @@ describe('prereg ordering (temp git repo)', () => {
       })
     })
 
+    describe('the previous epoch\'s read', () => {
+      const report = (epoch: number) => `${JSON.stringify({ prereg: { epoch }, verdict: 'green-miss' })}\n`
+      const NEW_HELDOUT = { h9: 'e'.repeat(64) }
+
+      /** Epoch 1 → (optional read report) → (optional skill edit) → epoch 2 prereg and tag. Returns the pieces tests vary. */
+      function twoEpochs(opts: { read?: 'green.json' | 'green.epoch1.json'; edit?: boolean; closing: 'skill' | 'read' | 'edit'; newHeldout?: boolean }) {
+        const { repo, heldout } = setup()
+        const s1 = scaffoldMethod(repo, 'demo', { heldoutDir: heldout })
+        const chain1 = buildHappyChain(repo, s1)
+        let readCommit: string | null = null
+        if (opts.read) {
+          repo.write(`evals/reports/demo/${opts.read}`, report(1))
+          readCommit = repo.commit('epoch 1 read', [`evals/reports/demo/${opts.read}`])
+        }
+        let editCommit: string | null = null
+        if (opts.edit) {
+          repo.write('skills/demo/SKILL.md', 'edited after the read\n')
+          editCommit = repo.commit('skill edit', ['skills/demo'])
+        }
+        const closing = { skill: chain1.skillCommit, read: readCommit, edit: editCommit }[opts.closing]
+        if (!closing) throw new Error('test setup: closing commit does not exist')
+        const base = scaffoldMethod(repo, 'demo', { epoch: 2, prevClosing: closing, heldoutDir: heldout })
+        const s2 = opts.newHeldout ? { ...base, prereg: { ...base.prereg, fixture_hashes: { ...base.prereg.fixture_hashes, heldout: NEW_HELDOUT } } } : base
+        writePrereg(repo, s2)
+        repo.commit('epoch 2 prereg', [s2.preregPath])
+        repo.tag('prereg/demo/2')
+        return { repo, s1, s2, readCommit, editCommit, chain1 }
+      }
+
+      test('epoch_base_before_prior_read: a base after the epoch 1 tag but before its read report is refused', () => {
+        const { repo, s2, readCommit } = twoEpochs({ read: 'green.json', closing: 'skill', newHeldout: true })
+        const { violations } = checkPreregOrdering(repo.git, s2.prereg, 'red')
+        expect(codes(violations)).toEqual(['epoch_base_before_prior_read'])
+        expect(violations[0]?.message).toContain(readCommit!.slice(0, 12))
+      })
+
+      test('a base at the read report commit, or after it, is permitted', () => {
+        const exact = twoEpochs({ read: 'green.json', closing: 'read', newHeldout: true })
+        expect(checkPreregOrdering(exact.repo.git, exact.s2.prereg, 'red').violations).toEqual([])
+        const later = twoEpochs({ read: 'green.json', edit: true, closing: 'edit', newHeldout: true })
+        expect(checkPreregOrdering(later.repo.git, later.s2.prereg, 'red').violations).toEqual([])
+      })
+
+      test('the anchor is the commit that first added the report, even after it is renamed to green.epoch1.json', () => {
+        const early = twoEpochs({ read: 'green.epoch1.json', closing: 'skill', newHeldout: true })
+        expect(codes(checkPreregOrdering(early.repo.git, early.s2.prereg, 'red').violations)).toEqual(['epoch_base_before_prior_read'])
+        const ok = twoEpochs({ read: 'green.epoch1.json', closing: 'read', newHeldout: true })
+        expect(checkPreregOrdering(ok.repo.git, ok.s2.prereg, 'red').violations).toEqual([])
+      })
+
+      test('no read report on record: the rule is skipped', () => {
+        const { repo, s2 } = twoEpochs({ closing: 'skill', newHeldout: true })
+        expect(checkPreregOrdering(repo.git, s2.prereg, 'red').violations).toEqual([])
+      })
+
+      test('a report that belongs to another epoch is not this epoch\'s read', () => {
+        const { repo, heldout } = setup()
+        const s1 = scaffoldMethod(repo, 'demo', { heldoutDir: heldout })
+        const chain1 = buildHappyChain(repo, s1)
+        repo.write('evals/reports/demo/green.json', report(7))
+        repo.commit('some other epoch\'s report', ['evals/reports/demo/green.json'])
+        const s2 = scaffoldMethod(repo, 'demo', { epoch: 2, prevClosing: chain1.skillCommit, heldoutDir: heldout })
+        writePrereg(repo, s2)
+        repo.commit('epoch 2 prereg', [s2.preregPath])
+        repo.tag('prereg/demo/2')
+        expect(checkPreregOrdering(repo.git, s2.prereg, 'red').violations).toEqual([])
+      })
+
+      test('a report added after the epoch 2 tag does not move the anchor', () => {
+        const { repo, s2, chain1 } = twoEpochs({ closing: 'skill', newHeldout: true })
+        repo.write('evals/reports/demo/green.json', report(1))
+        repo.commit('late report', ['evals/reports/demo/green.json'])
+        expect(chain1.skillCommit).toBeTruthy()
+        expect(checkPreregOrdering(repo.git, s2.prereg, 'red').violations).toEqual([])
+      })
+
+      test('heldout_reused_after_skill_edit: a read, then a skill edit, then the same held-out fixtures: refused', () => {
+        const { repo, s2, editCommit } = twoEpochs({ read: 'green.json', edit: true, closing: 'edit' })
+        const { violations } = checkPreregOrdering(repo.git, s2.prereg, 'red')
+        expect(codes(violations)).toEqual(['heldout_reused_after_skill_edit'])
+        expect(violations[0]?.message).toContain('h1')
+        expect(violations[0]?.message).toContain(editCommit!.slice(0, 12))
+      })
+
+      test('a partly reused held-out set is still refused', () => {
+        const { repo, s1, s2 } = twoEpochs({ read: 'green.json', edit: true, closing: 'edit', newHeldout: true })
+        const partial = { ...s2.prereg, fixture_hashes: { ...s2.prereg.fixture_hashes, heldout: { ...s2.prereg.fixture_hashes.heldout, h1: s1.prereg.fixture_hashes.heldout.h1! } } }
+        expect(codes(checkPreregOrdering(repo.git, partial, 'red').violations)).toEqual(['heldout_reused_after_skill_edit'])
+      })
+
+      test('a read, a skill edit, and a new held-out set: permitted', () => {
+        const { repo, s2 } = twoEpochs({ read: 'green.json', edit: true, closing: 'edit', newHeldout: true })
+        expect(checkPreregOrdering(repo.git, s2.prereg, 'red').violations).toEqual([])
+      })
+
+      test('the same held-out set is fine when the previous epoch never read it (a red-retained method)', () => {
+        const { repo, s2 } = twoEpochs({ edit: true, closing: 'edit' })
+        expect(checkPreregOrdering(repo.git, s2.prereg, 'red').violations).toEqual([])
+      })
+
+      test('a read set carried into the next epoch is fine when the skill was not edited between those tags', () => {
+        // Epoch 2 reads its own held-out set; epoch 3 keeps both the skill and that set. (The read itself is the one-shot guard's job.)
+        const { repo, heldout } = setup()
+        const s1 = scaffoldMethod(repo, 'demo', { heldoutDir: heldout })
+        buildHappyChain(repo, s1)
+        const s2 = scaffoldMethod(repo, 'demo', { epoch: 2, prevClosing: repo.head(), heldoutDir: heldout })
+        const s2n = { ...s2, prereg: { ...s2.prereg, fixture_hashes: { ...s2.prereg.fixture_hashes, heldout: NEW_HELDOUT } } }
+        writePrereg(repo, s2n)
+        repo.commit('epoch 2 prereg', [s2n.preregPath])
+        repo.tag('prereg/demo/2')
+        repo.write('evals/reports/demo/green.json', report(2))
+        const read2 = repo.commit('epoch 2 read', ['evals/reports/demo/green.json'])
+        const s3 = scaffoldMethod(repo, 'demo', { epoch: 3, prevClosing: read2, heldoutDir: heldout, overrides: { fixture_hashes: s2n.prereg.fixture_hashes } })
+        writePrereg(repo, s3)
+        repo.commit('epoch 3 prereg', [s3.preregPath])
+        repo.tag('prereg/demo/3')
+        expect(checkPreregOrdering(repo.git, s3.prereg, 'red').violations).toEqual([])
+        // The same chain with a skill edit after the epoch 2 read is the burn case.
+        const { repo: r2, heldout: h2 } = setup()
+        const t1 = scaffoldMethod(r2, 'demo', { heldoutDir: h2 })
+        buildHappyChain(r2, t1)
+        const t2 = scaffoldMethod(r2, 'demo', { epoch: 2, prevClosing: r2.head(), heldoutDir: h2 })
+        const t2n = { ...t2, prereg: { ...t2.prereg, fixture_hashes: { ...t2.prereg.fixture_hashes, heldout: NEW_HELDOUT } } }
+        writePrereg(r2, t2n)
+        r2.commit('epoch 2 prereg', [t2n.preregPath])
+        r2.tag('prereg/demo/2')
+        r2.write('evals/reports/demo/green.json', report(2))
+        r2.commit('epoch 2 read', ['evals/reports/demo/green.json'])
+        r2.write('skills/demo/SKILL.md', 'edited after epoch 2 read\n')
+        const edit2 = r2.commit('skill edit', ['skills/demo'])
+        const t3 = scaffoldMethod(r2, 'demo', { epoch: 3, prevClosing: edit2, heldoutDir: h2, overrides: { fixture_hashes: t2n.prereg.fixture_hashes } })
+        writePrereg(r2, t3)
+        r2.commit('epoch 3 prereg', [t3.preregPath])
+        r2.tag('prereg/demo/3')
+        expect(codes(checkPreregOrdering(r2.git, t3.prereg, 'red').violations)).toEqual(['heldout_reused_after_skill_edit'])
+      })
+    })
+
     test('epoch_base_before_prior_tag: the base may not precede the previous epoch\'s own prereg tag', () => {
       const { repo, heldout } = setup()
       const s1 = scaffoldMethod(repo, 'demo', { heldoutDir: heldout })

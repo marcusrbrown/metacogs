@@ -101,6 +101,14 @@ export class Git {
       .filter(Boolean)
   }
 
+  /** Commits (oldest first) reachable from `until` and, when `exclude` is given, not from it, that touched any of `paths`. */
+  commitsTouchingBetween(exclude: string | null, until: string, paths: readonly string[]): string[] {
+    const range = exclude ? `${exclude}..${until}` : until
+    return this.run(['rev-list', '--reverse', '--topo-order', range, '--', ...paths])
+      .stdout.split('\n')
+      .filter(Boolean)
+  }
+
   /**
    * Blob id the working-tree file would get if committed: `hash-object --path`
    * applies the repository's clean filters and EOL attributes, so a CRLF
