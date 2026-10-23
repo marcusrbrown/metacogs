@@ -1,7 +1,7 @@
 ---
 title: "feat: metacogs v0.1 — skill pack, record helper, and evidence-gated eval harness"
 type: feat
-status: active
+status: complete
 date: 2026-10-22
 origin: docs/brainstorms/2026-10-22-metacogs-skill-pack-requirements.md
 deepened: 2026-10-22
@@ -435,7 +435,7 @@ Run-outcome taxonomy: `pass | fail | timeout→fail | budget→fail | judge_erro
 
 ### Phase 4 — GREEN and release
 
-- [ ] **Unit 7: Author skills and run GREEN**
+- [x] **Unit 7: Author skills and run GREEN** (synthesis `green` at epoch 3 on `openai/gpt-6-luna` / judge `anthropic/claude-haiku-5-5` via CLIProxyAPI: held-out 19/20 vs 3/20, delta +0.80 [0.52, 0.91], human review pending; counterfactual `red-retained` — three epoch-3 dev misses all on cf-d6/CF5 judge-boundary variance, held-out unread, deferred to v0.2 epoch 4. Free-tier/Go epoch 2 recorded as `green-miss` on load rate.)
 
 **Goal:** Write the minimal `SKILL.md` for each eligible method against dev fixtures only, then run the one-shot GREEN read on held-out fixtures with both conditions, judge, and human review.
 
@@ -469,7 +469,7 @@ Run-outcome taxonomy: `pass | fail | timeout→fail | budget→fail | judge_erro
 **Verification:**
 - `green.json` per method with counts, intervals, paired outcomes, agreement, verdict; a method meets every bar or returns to `hypothesis` with a new epoch required.
 
-- [ ] **Unit 8: Host matrix, discovery smoke, README, release candidate**
+- [x] **Unit 8: Host matrix, discovery smoke, README, release candidate** (`291bbf8`, `d2cbbbc`; all four hosts list the skill — OpenCode 1.19.4, Pi 1.3.0, Codex 0.162.1, Claude Code 2.1.270; OpenCode cell `content-compatible-untested` + `pending_verification` until human review reconciles; `v0.1.0` tag deferred to owner)
 
 **Goal:** Publish the honest matrix and install docs; cut the v0.1 release candidate.
 
