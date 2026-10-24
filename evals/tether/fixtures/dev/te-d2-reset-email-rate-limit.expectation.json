@@ -1,0 +1,5 @@
+{
+  "outcome": "The Thursday deploy cut max_send_rate in config/notify.yaml from 50 to 5, so notify-worker sends 5 emails per second while about 17 to 19 are enqueued per second and the queue backs up.",
+  "excludedTopics": ["the nodemailer advisory and version upgrade", "the missing audit_log index and the slow admin dashboard query"],
+  "maxWords": 250
+}

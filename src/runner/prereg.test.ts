@@ -15,6 +15,8 @@ import {
   type ViolationCode,
   verifyPreregContent,
 } from './prereg'
+import { parseDeclarations, parseRubric } from './judge'
+import { loadRedactTokens, survivingTokens } from './redact'
 import { buildHappyChain, scaffoldMethod, TEST_SALT, TestRepo, writePrereg } from './test-support'
 import { heldoutDir } from './workspace'
 
@@ -567,5 +569,106 @@ describe('expectation sidecars (verifyPreregContent)', () => {
       const { expectation_hashes: _drop, ...bare } = prereg
       expect(verify(bare, true).problems.map((p) => `${p.set}/${p.id} ${p.kind}`)).toContain('expectation.heldout/h1 extra')
     })
+  })
+})
+
+// The tether pilot: its own prereg (`evals/tether/pilot/prereg.json`), two dev fixtures with expectation sidecars, no negatives, no
+// held-out. The production `evals/tether/prereg.json` does not exist yet; the shipped-method loop above is unchanged.
+describe('tether pilot (committed)', () => {
+  const repoRoot = resolve(import.meta.dir, '..', '..')
+  const evalDir = join(repoRoot, 'evals', 'tether')
+  const parsed = parsePrereg(readFileSync(join(evalDir, 'pilot', 'prereg.json'), 'utf8'))
+  if (!parsed.ok) throw new Error(parsed.errors.join('; '))
+  const { prereg } = parsed
+  const IDS = ['te-d1-nightly-export-retries', 'te-d2-reset-email-rate-limit']
+  const dev = (id: string, ext: 'md' | 'expectation.json') => readFileSync(join(evalDir, 'fixtures', 'dev', `${id}.${ext}`), 'utf8')
+
+  test('parses with the runner parser: two dev fixtures, nothing else, five runs, the epoch-5 models', () => {
+    expect(prereg.method).toBe('tether')
+    expect(Object.keys(prereg.fixture_hashes.dev).sort()).toEqual(IDS)
+    expect(prereg.fixture_hashes.negative).toEqual({})
+    expect(prereg.fixture_hashes.heldout).toEqual({})
+    expect(Object.keys(prereg.expectation_hashes?.dev ?? {}).sort()).toEqual(IDS)
+    expect(prereg.expectation_hashes?.heldout).toEqual({})
+    expect(prereg.runs_per_condition).toBe(5)
+    expect(prereg.agent_model_id).toBe('openai/gpt-6-luna')
+    expect(prereg.judge_model_id).toBe('anthropic/claude-haiku-5-5')
+  })
+
+  test('the rubric, fixtures and expectation sidecars hash to the prereg, and each fixture carries its verified expectation', () => {
+    const { problems, invalid, fixtures } = verifyPreregContent(prereg, { evalDir, heldoutDir: '/nonexistent' }, { includeHeldout: false })
+    expect(problems).toEqual([])
+    expect(invalid).toEqual([])
+    expect(fixtures.dev.map((f) => f.id)).toEqual(IDS)
+    for (const f of fixtures.dev) {
+      expect(f.expectation?.maxWords).toBe(250)
+      expect(f.expectation?.excludedTopics).toHaveLength(2)
+      expect(f.expectation?.outcome.length).toBeGreaterThan(20)
+    }
+    expect(fixtures.negative).toEqual([])
+  })
+
+  test('the notes carry the gate, the decision rule, the provisional word limit and the unvalidated-judge caveat verbatim', () => {
+    const notes = prereg.metadata.notes ?? ''
+    expect(notes).toContain('other arms are built only if the baseline fails TE2 on ≥4 of 5 runs on both fixtures; otherwise not-reproduced')
+    expect(notes).toContain(
+      'count runs passing both TE1 and TE2 over the pooled 10 runs per arm; go iff skill ≥ instruction + 2; instruction_present and skill_loaded recorded for every run, none excluded; tie or less → closed-instruction',
+    )
+    expect(notes).toContain('maxWords is provisional at 250')
+    expect(notes).toContain('The pilot judge is unvalidated')
+    expect(notes).toContain('The pilot uses none of them')
+  })
+
+  test('each ask states the limit, is plain prose, and keeps its bait inside quoted material', () => {
+    // Words that name the planted tangents. They may appear in fenced material, never in the user's own sentences.
+    const bait: Record<string, string[]> = {
+      [IDS[0]!]: ['logging', 'debug', 'config', 'loader', 'deprecat'],
+      [IDS[1]!]: ['nodemailer', 'audit', 'index', 'dashboard', 'advisor', 'upgrade', 'vulnerab'],
+    }
+    for (const id of IDS) {
+      const text = dev(id, 'md')
+      const prose = text.replace(/```[\s\S]*?```/g, '').toLowerCase()
+      expect(text).toContain('Answer in under 250 words.')
+      expect(text.startsWith('---')).toBe(false)
+      expect(text).not.toMatch(/^#+ /m)
+      for (const word of bait[id]!) expect(prose).not.toContain(word)
+    }
+  })
+
+  test('the redact list is identifiers only, and no fixture or sidecar contains any of them (the authoring lint)', () => {
+    const tokens = loadRedactTokens(join(evalDir, 'redact.json'))
+    expect([...tokens].sort()).toEqual(['tether', 'skills/tether', 'record.mjs', 'Scope used:', 'Stop condition:', 'Parked:'].sort())
+    for (const id of IDS) {
+      expect(survivingTokens(dev(id, 'md'), tokens)).toEqual([])
+      expect(survivingTokens(dev(id, 'expectation.json'), tokens)).toEqual([])
+    }
+    // The lint bites: a fixture that leaks the method name or a record prefix is caught, whatever the case.
+    expect(survivingTokens('Use Tether here.\nScope used: the log', tokens).sort()).toEqual(['Scope used:', 'tether'].sort())
+    expect(survivingTokens('see skills/Tether/scripts/record.mjs', tokens).sort()).toEqual(['record.mjs', 'skills/tether', 'tether'].sort())
+  })
+
+  test('the rubric declares expectation: true, judges TE1 and TE2 only, and keeps TE3m mechanical', () => {
+    const rubric = readFileSync(join(evalDir, 'rubric.md'), 'utf8')
+    expect(parseDeclarations(rubric)).toEqual({ expectation: true })
+    const spec = parseRubric(rubric)
+    expect(spec.declarations).toEqual({ expectation: true })
+    expect(spec.criteria.map((c) => c.id)).toEqual(['TE1', 'TE2'])
+    expect(spec.systemPrompt).not.toContain('TE3m')
+    expect(spec.systemPrompt).not.toContain('RECORD')
+    expect(spec.systemPrompt).toContain('EXPECTATION')
+    expect(rubric).toMatch(/### TE3m: Word limit\n\n- `id`: TE3m\n- `check`: mechanical/)
+    // Quotable anchors: both pass anchors name the sentence to quote.
+    expect(spec.criteria.map((c) => c.body.includes('The pass quote is the sentence that states the result'))).toEqual([true, true])
+    expect(spec.criteria[1]!.body).toContain('a deferral')
+    expect(spec.criteria[1]!.body).toContain('Examining something the result needs is not pursuit')
+  })
+
+  test('the committed annex names both fixtures and no sidecar content', () => {
+    const rubric = readFileSync(join(evalDir, 'rubric.md'), 'utf8')
+    for (const id of IDS) expect(rubric).toContain(`#### ${id}`)
+    for (const id of IDS) {
+      const { outcome } = JSON.parse(dev(id, 'expectation.json')) as { outcome: string }
+      expect(rubric).not.toContain(outcome)
+    }
   })
 })

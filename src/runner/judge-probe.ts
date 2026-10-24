@@ -4,9 +4,11 @@
  * recording proxy, no key anywhere), then one probe with the real judge
  * prompt for a method to check the strict-JSON contract is followable.
  *
- *   bun src/runner/judge-probe.ts [--method counterfactual] [--expectation <file>] [model-id ...]
+ *   bun src/runner/judge-probe.ts [--method counterfactual] [--expectation <file>] [--task <file>] [--answers <file>] [model-id ...]
  *
- * A rubric that declares `expectation: true` needs `--expectation`: a sidecar JSON written for the canned probe task.
+ * A rubric that declares `expectation: true` needs `--expectation`: a sidecar JSON written for the probe task. `--task` replaces the
+ * canned counterfactual task with a fixture file, and `--answers` replaces the canned answers with a JSON object of name → text, so a
+ * method with its own fixtures (tether) is probed on those fixtures with answers written for them.
  *
  * Without model ids the probe lists them with `opencode models opencode`.
  * Output: one JSON object per model on stdout. Nothing secret exists to print.
@@ -40,11 +42,11 @@ const PROBE_ANSWERS = {
 } as const
 
 /** The judge input for one canned answer. `expectation` rides the fixture exactly as it does in a campaign or a rejudge. */
-export function probeJudgeInput(method: string, finalAnswer: string, expectation?: Expectation): JudgeInput {
+export function probeJudgeInput(method: string, finalAnswer: string, expectation?: Expectation, task: string = PROBE_TASK): JudgeInput {
   return {
     method,
     condition: 'baseline',
-    fixture: { id: 'probe', kind: 'dev', hash: '', text: PROBE_TASK, ...(expectation ? { expectation } : {}) },
+    fixture: { id: 'probe', kind: 'dev', hash: '', text: task, ...(expectation ? { expectation } : {}) },
     finalAnswer,
     recordJson: [],
   }
@@ -86,7 +88,16 @@ async function main() {
   const methodAt = args.indexOf('--method')
   const method = methodAt === -1 ? 'counterfactual' : (args[methodAt + 1] ?? 'counterfactual')
   const expectationAt = args.indexOf('--expectation')
-  const requested = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--method' && args[i - 1] !== '--expectation')
+  const valueFlags = ['--method', '--expectation', '--task', '--answers']
+  const requested = args.filter((a, i) => !a.startsWith('--') && !valueFlags.includes(args[i - 1] ?? ''))
+  const flagValue = (flag: string): string | undefined => {
+    const at = args.indexOf(flag)
+    return at === -1 ? undefined : args[at + 1]
+  }
+  const taskFile = flagValue('--task')
+  const task = taskFile ? readFileSync(taskFile, 'utf8') : PROBE_TASK
+  const answersFile = flagValue('--answers')
+  const answers: Record<string, string> = answersFile ? (JSON.parse(readFileSync(answersFile, 'utf8')) as Record<string, string>) : PROBE_ANSWERS
   const models = requested.length ? requested : await listFreeModels()
   // METACOGS_AUTH_PASSTHROUGH=opencode-go opts in (Go is the preferred gateway; add opencode only for Zen, which bills credits); values are copied by the transport, never printed.
   // METACOGS_AUTH_CLIPROXY=<key-name> uses the owner's CLIProxyAPI key instead (fetched through the infra CLI, never printed).
@@ -107,8 +118,8 @@ async function main() {
     // (should pass), and a weak one carrying an injection (should still fail).
     const judge = createJudge({ repoRoot, method, model, transport })
     const judged: Record<string, unknown> = {}
-    for (const [name, answer] of Object.entries(PROBE_ANSWERS)) {
-      const verdict = await judge.hook(probeJudgeInput(method, answer, expectation))
+    for (const [name, answer] of Object.entries(answers)) {
+      const verdict = await judge.hook(probeJudgeInput(method, answer, expectation, task))
       judged[name] = {
         verdict: verdict.verdict,
         error_code: verdict.evidence?.error_code ?? null,
