@@ -7,7 +7,20 @@ import { fileURLToPath } from 'node:url'
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 /** Roots scanned, relative to the repo root. Missing entries are skipped. */
-export const SCAN_TARGETS = ['evals', 'skills', 'src', 'docs', 'README.md', 'HYPOTHESES.md', 'AGENTS.md', '.github'] as const
+export const SCAN_TARGETS = [
+  'evals',
+  'skills',
+  'src',
+  'docs',
+  'README.md',
+  'HYPOTHESES.md',
+  'AGENTS.md',
+  '.github',
+  '.changeset',
+  'SECURITY.md',
+  'package.json',
+  'CHANGELOG.md',
+] as const
 
 /** Never descended into: gitignored run artifacts, dependencies, VCS data. */
 const SKIPPED_DIRS = new Set(['node_modules', '.git', 'runs'])

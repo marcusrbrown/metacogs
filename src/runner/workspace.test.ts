@@ -150,7 +150,7 @@ describe('run workspace', () => {
     expect(existsSync(join(skills, 'demo', 'SKILL.md'))).toBe(true)
     expect(existsSync(join(skills, 'demo', 'scripts', 'record.mjs'))).toBe(true)
     expect(ws.expectedSkills).toEqual(['demo'])
-    expect(ws.skill?.files.map((f) => f.path)).toEqual(['SKILL.md', 'scripts/record.mjs'])
+    expect(ws.skill?.files.map((f) => f.path)).toEqual(['SKILL.md']) // the hash covers method text, not the helper
   })
 
   test('generated config is the only config channel and carries the permission set', () => {
@@ -191,6 +191,44 @@ describe('skill hashing and copying', () => {
     expect(hashSkillDir(dir).sha256).toBe(first)
     writeFileSync(join(dir, 'SKILL.md'), 'changed\n')
     expect(hashSkillDir(dir).sha256).not.toBe(first)
+  })
+
+  test('the generated helper under scripts/ is not hashed', () => {
+    const repo = repoWithSkill()
+    const dir = join(repo, 'skills', 'demo')
+    const first = hashSkillDir(dir)
+    writeFileSync(join(dir, 'scripts', 'record.mjs'), '// regenerated for another version\n')
+    const second = hashSkillDir(dir)
+    expect(second.sha256).toBe(first.sha256)
+    expect(second.files.map((f) => f.path)).toEqual(['SKILL.md'])
+  })
+
+  test('a one-byte change to SKILL.md changes the hash', () => {
+    const dir = join(repoWithSkill(), 'skills', 'demo')
+    const first = hashSkillDir(dir).sha256
+    const text = readFileSync(join(dir, 'SKILL.md'), 'utf8')
+    writeFileSync(join(dir, 'SKILL.md'), `${text}x`)
+    expect(hashSkillDir(dir).sha256).not.toBe(first)
+  })
+
+  test('no scripts/, an empty scripts/ and a populated scripts/ all hash alike', () => {
+    const make = (scripts: 'none' | 'empty' | 'file'): string => {
+      const dir = join(tmp(), 'demo')
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(join(dir, 'SKILL.md'), 'body\n')
+      if (scripts !== 'none') mkdirSync(join(dir, 'scripts'))
+      if (scripts === 'file') writeFileSync(join(dir, 'scripts', 'record.mjs'), '// helper\n')
+      return hashSkillDir(dir).sha256
+    }
+    expect(make('empty')).toBe(make('none'))
+    expect(make('file')).toBe(make('none'))
+  })
+
+  test('the helper still ships in the copy', () => {
+    const dir = join(repoWithSkill(), 'skills', 'demo')
+    const dest = join(tmp(), 'dest')
+    copySkillDir(dir, dest)
+    expect(existsSync(join(dest, 'scripts', 'record.mjs'))).toBe(true)
   })
 
   test('symlinks are refused', () => {

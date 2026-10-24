@@ -143,6 +143,25 @@ describe('scanRepo', () => {
     expect(scanRepo({ root: tree({ 'evals/m/rubric.md': 'plain text' }) })).toEqual([])
   })
 
+  test('a nonexistent target is skipped silently', () => {
+    const root = tree({ 'README.md': 'plain text' })
+    expect(scanRepo({ root, targets: ['.changeset', 'SECURITY.md', 'nope/at/all.md', 'README.md'] })).toEqual([])
+  })
+
+  test('a planted key under .changeset is caught', () => {
+    const root = tree({ '.changeset/x.md': `leak ${OPENAI_STYLE}` })
+    expect(scanRepo({ root }).map((f) => `${f.path}:${f.line}:${f.rule}`)).toEqual(['.changeset/x.md:1:openai-style-key'])
+  })
+
+  test('SECURITY.md, package.json, and CHANGELOG.md are scanned', () => {
+    const root = tree({ 'SECURITY.md': `mail ${EMAIL}`, 'package.json': `{ ${JSON_KEY_FIELD} }`, 'CHANGELOG.md': AWS_STYLE })
+    expect(scanRepo({ root }).map((f) => `${f.path}:${f.rule}`)).toEqual([
+      'SECURITY.md:email',
+      'package.json:json-key-field',
+      'CHANGELOG.md:aws-access-key-id',
+    ])
+  })
+
   test('the real repository is clean: fixtures, rubrics, redaction lists, and preregs hold no keys, emails, or held-out paths', () => {
     expect(scanRepo({ root: REPO_ROOT })).toEqual([])
   })
