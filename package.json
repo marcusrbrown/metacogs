@@ -16,9 +16,12 @@
     "eval": "bun src/runner/cli.ts",
     "matrix:check": "bun src/matrix/check.ts",
     "matrix:render": "bun src/matrix/check.ts --render",
-    "scan:secrets": "bun src/scan/secrets.ts"
+    "scan:secrets": "bun src/scan/secrets.ts",
+    "version": "changeset version && bun run generate",
+    "release": "bun src/release/release.ts"
   },
   "devDependencies": {
+    "@changesets/cli": "^3.0.3",
     "@types/bun": "^1.4.3",
     "typescript": "^7.0.2"
   }
