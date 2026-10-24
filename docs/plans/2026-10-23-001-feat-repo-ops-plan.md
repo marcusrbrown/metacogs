@@ -40,7 +40,7 @@ metacogs shipped v0.1.0 with one CI workflow and nothing else: `main` unprotecte
 ### Deferred to Separate Tasks
 
 - Back-port the rotating issue and the verdict-gated check to dev-like and systematic: fleet work, separate repos.
-- Cut helper duplication and regenerate from one source (the owner's note): future metacogs iteration.
+- Cut helper duplication and regenerate from one source: future metacogs iteration.
 - Fleet-level fix for the Fro Bot check going green on exit 0 without a verdict: fro-bot/agent or sibling repos.
 
 ## Context & Research
@@ -131,7 +131,7 @@ metacogs shipped v0.1.0 with one CI workflow and nothing else: `main` unprotecte
 
 ## Key Technical Decisions
 
-- **Skill hash excludes `scripts/`.** The helper is generated and versioned by `helper_version`; hashing it made every release an apparent skill edit. Committed reports keep the hash they recorded; the new rule applies from the next campaign. `cli.ts` dev-regression already only warns on mismatch.
+- **Skill hash excludes `scripts/`.** The helper is generated and versioned by `helper_version`; hashing it made every release an apparent skill edit. Committed reports keep the hash they recorded; a dev campaign recorded under the old rule cannot be re-projected or count toward a GREEN read, so the next epoch starts with a fresh dev campaign.
 - **`helper_version` keeps tracking the package version; the Changesets `version` command runs `bun run generate`.** The version PR then carries the regenerated helpers and passes `generate:check`.
 - **Bun pinned once** via `packageManager` in `package.json`; every `setup-bun` step reads it (`bun-version-file: package.json`). Renovate owns the bump and the regen runs under the new Bun in the same PR.
 - **Release step is independent of the changesets publish branch.** `changesets/action` skips publish when changesets are pending, so a feature merge racing the version PR would leave the version untagged. The release script runs as its own idempotent step on every push to `main`: Release `v<version>` exists → no-op; changelog has a `## <version>` section → `gh release create` (which creates the tag when absent); otherwise no-op. `create-github-releases: false` on the action.
@@ -266,9 +266,9 @@ flowchart LR
 
 **Approach:**
 - Config per bfra-me: `privatePackages: {version: true, tag: true}`, `changelog: @changesets/cli/changelog`, `commit: false`, `baseBranch: main`.
-- Release workflow: `push: [main]` + `workflow_dispatch`; concurrency per ref, no cancel; App token; git user from the App bot id; checkout `fetch-depth: 0`, `persist-credentials: false`; `changesets/action` with `version-script`, `create-github-releases: false`, `commit-message: chore(changesets): version packages`; then an unconditional release step running `bun run release` with `GH_TOKEN` = App token.
+- Release workflow: `push: [main]` + `workflow_dispatch`; concurrency per ref, no cancel; App token; git user from the App bot id; checkout `fetch-depth: 0`, `persist-credentials: false`; a release step (`bun run release`, `GH_TOKEN` = App token, `if: github.ref == 'refs/heads/main'`) that runs BEFORE `changesets/action` so it sees the pristine push SHA; then `changesets/action` with `version-script`, `create-github-releases: false`, `commit-message: chore(changesets): version packages`. The Release targets the first-parent commit that introduced the current `package.json` version, not HEAD, so a later push cannot tag a feature commit with an older version's notes.
 - Release script (zero deps): read `package.json` version; if `gh release view v<version>` succeeds → no-op; if the changelog has no `## <version>` section → no-op with a notice; else extract the section (`^## <version>$` to the next `^## `) and `gh release create v<version> --target <sha> --title v<version> --notes-file …` (creates the tag when absent). Exit non-zero only on API failure.
-- The owner creates the `v0.1.0` Release by hand once; the script's first run is a no-op because the Release exists.
+- The owner creates the `v0.1.0` Release by hand once; the script's first run on `main` is a no-op because there is no `CHANGELOG.md` yet, and later runs skip `0.1.0` because the Release exists.
 - `SECURITY.md`: private vulnerability reporting, single maintainer, no SLA; no email literal. PR template: `## What` / `## Why` plus a checklist line "no edits under `evals/**` or skill text under `skills/**`".
 - Add `src/release` to the tsconfig include if not already covered (it is under `src/`).
 
