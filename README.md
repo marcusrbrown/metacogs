@@ -82,6 +82,12 @@ bun run eval report --method <method>    # regenerate the report projection
 
 Runs happen in a throwaway workspace with a scrubbed environment so nothing from your machine reaches the model; [`evals/runner/README.md`](evals/runner/README.md) documents the isolation checks and the OpenCode event mapping. Checks that do run in CI: `bun run typecheck`, `bun test`, `bun run generate:check`, `bun run matrix:check`, `bun run scan:secrets`.
 
+## Releases and automation
+
+Releases use [Changesets](https://github.com/changesets/changesets). Pending changesets produce a version PR; merging it creates the `v*` tag and a GitHub Release. Nothing is published to a registry.
+
+Fro Bot reviews pull requests and acts on `@fro-bot` mentions. The daily autoheal may open one fix PR and must not touch eval evidence (`evals/**`) or skill text (`skills/**`). The daily cron is enabled after the first successful manual dispatch.
+
 ## Attribution and license
 
 MIT. This project reinterprets concepts from [inanna-malick/metacog](https://github.com/inanna-malick/metacog) (MIT, pinned at commit `3d89bb30cd26369fdcd242fd704f66641dca327c`). Both copyright notices are in [LICENSE](LICENSE).
