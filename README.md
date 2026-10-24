@@ -86,7 +86,7 @@ Runs happen in a throwaway workspace with a scrubbed environment so nothing from
 
 Releases use [Changesets](https://github.com/changesets/changesets). Pending changesets produce a version PR; merging it creates the `v*` tag and a GitHub Release. Nothing is published to a registry.
 
-Fro Bot reviews pull requests and acts on `@fro-bot` mentions. The daily autoheal may open one fix PR and must not touch eval evidence (`evals/**`) or skill text (`skills/**`). The daily cron is enabled after the first successful manual dispatch.
+Fro Bot reviews pull requests and acts on `@fro-bot` mentions. The daily autoheal may open one fix PR and must not touch eval evidence (`evals/**`) or skill text (`skills/**`).
 
 ## Attribution and license
 
