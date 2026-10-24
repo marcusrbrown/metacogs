@@ -60,7 +60,7 @@ export function planPilot(input: PilotPlanInput): PlannedRun[] {
 
 // ── tally projection ───────────────────────────────────────────────────────
 
-export const PILOT_SCHEMA_VERSION = 1 as const
+export const PILOT_SCHEMA_VERSION = 2 as const
 
 /** Judge criteria the tether pilot reads; `TE3m` is mechanical and shows up as `over_limit`. */
 const TE1 = 'TE1'
@@ -88,11 +88,15 @@ export interface PilotTally {
   judge_model_id: string
   /** Arms with a tally, in `PILOT_ARMS` order. */
   arms: PilotArm[]
+  /** arm → id of the campaign that arm's tally was counted from. */
+  campaigns: Partial<Record<PilotArm, string>>
   /** arm → fixture id → counts. */
   tally: Partial<Record<PilotArm, Record<string, PilotCell>>>
 }
 
 const emptyCell = (): PilotCell => ({ runs: 0, te1_pass: 0, te2_pass: 0, both_pass: 0, over_limit: 0, empty: 0, skill_loaded: 0, instruction_present: 0 })
+
+const CELL_KEYS = ['runs', 'te1_pass', 'te2_pass', 'both_pass', 'over_limit', 'empty', 'skill_loaded', 'instruction_present'] as const satisfies readonly (keyof PilotCell)[]
 
 /** Rebuilds a cell with exactly the allowlisted keys, whatever the value passed in carried. */
 function fixedCell(cell: PilotCell): PilotCell {
@@ -135,11 +139,27 @@ export interface PilotContext {
   judge_model_id: string
 }
 
-/** Counts one pilot campaign into `arm → fixture → cell`. A manifest without an `arm` means this is not a pilot campaign. */
-export function tallyPilotCampaign(campaignDir: string, ctx: PilotContext): PilotTally {
+export interface TallyOptions {
+  /**
+   * Skip the check that every manifest was produced under `ctx.prereg_content_hash`. Only the rejudge path sets it: a rejudge
+   * rewrites `judge.json` under the current prereg and never touches the manifests, so they keep the hash they were run under.
+   */
+  allowRejudged?: boolean
+}
+
+/**
+ * Counts one pilot campaign into `arm → fixture → cell`. A manifest without an `arm` means this is not a pilot campaign, and a
+ * manifest produced under another prereg content hash is refused unless `allowRejudged`: its verdicts are not the current prereg's.
+ */
+export function tallyPilotCampaign(campaignDir: string, ctx: PilotContext, options: TallyOptions = {}): PilotTally {
   const tally: PilotTally['tally'] = {}
+  const campaignIds = new Set<string>()
   for (const { dir: runDir, manifest: m } of loadCampaignRuns(campaignDir)) {
     if (m.arm === undefined) throw new Error(`${m.run_id} carries no arm: ${campaignDir} is not a pilot campaign`)
+    if (!options.allowRejudged && m.prereg.content_hash !== ctx.prereg_content_hash) {
+      throw new Error(`${runDir} was run under prereg ${m.prereg.content_hash.slice(0, 12)}, not the current ${ctx.prereg_content_hash.slice(0, 12)}; rejudge the campaign under the current prereg before tallying it`)
+    }
+    campaignIds.add(m.campaign_id)
     if (!COUNTED_STATUSES.includes(m.status)) continue
     const cell = ((tally[m.arm] ??= {})[m.fixture.id] ??= emptyCell())
     const verdicts = verdictsOf(runDir, m)
@@ -154,16 +174,30 @@ export function tallyPilotCampaign(campaignDir: string, ctx: PilotContext): Pilo
     if (skillLoadedIn(runDir)) cell.skill_loaded += 1
     if (m.arm === 'instruction') cell.instruction_present += 1
   }
-  return projectPilot({ ...ctx, tally })
+  if (campaignIds.size > 1) throw new Error(`${campaignDir} holds manifests from more than one campaign (${[...campaignIds].sort().join(', ')})`)
+  const campaigns: PilotTally['campaigns'] = {}
+  const [campaignId] = campaignIds
+  if (campaignId !== undefined) for (const arm of PILOT_ARMS) if (tally[arm] !== undefined) campaigns[arm] = campaignId
+  return projectPilot({ ...ctx, tally, campaigns })
 }
 
-/** The fixed-key projection: nothing but the allowlisted keys reaches the file. */
-export function projectPilot(input: PilotContext & { tally: PilotTally['tally'] }): PilotTally {
+function assertKnownArm(arm: string, where: string): asserts arm is PilotArm {
+  if (!isPilotArm(arm)) throw new Error(`${where} carries unknown pilot arm "${arm}" (known: ${PILOT_ARMS.join(', ')})`)
+}
+
+/** The fixed-key projection: nothing but the allowlisted keys reaches the file. An arm outside `PILOT_ARMS` is an error, not dropped. */
+export function projectPilot(input: PilotContext & { tally: PilotTally['tally']; campaigns: PilotTally['campaigns'] }): PilotTally {
+  for (const arm of Object.keys(input.tally)) assertKnownArm(arm, 'tally')
+  for (const arm of Object.keys(input.campaigns)) assertKnownArm(arm, 'campaigns')
   const tally: PilotTally['tally'] = {}
+  const campaigns: PilotTally['campaigns'] = {}
   for (const arm of PILOT_ARMS) {
     const fixtures = input.tally[arm]
-    if (!fixtures) continue
-    tally[arm] = Object.fromEntries(Object.keys(fixtures).sort().map((id) => [id, fixedCell(fixtures[id]!)]))
+    const campaign = input.campaigns[arm]
+    if (fixtures === undefined && campaign === undefined) continue
+    if (fixtures === undefined || campaign === undefined) throw new Error(`arm ${arm} needs both a tally and a campaign id`)
+    tally[arm] = Object.fromEntries(Object.entries(fixtures).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([id, cell]) => [id, fixedCell(cell)]))
+    campaigns[arm] = campaign
   }
   return {
     schema_version: PILOT_SCHEMA_VERSION,
@@ -172,8 +206,49 @@ export function projectPilot(input: PilotContext & { tally: PilotTally['tally'] 
     agent_model_id: input.agent_model_id,
     judge_model_id: input.judge_model_id,
     arms: PILOT_ARMS.filter((arm) => tally[arm] !== undefined),
+    campaigns,
     tally,
   }
+}
+
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0
+const sameKeys = (value: Record<string, unknown>, expected: readonly string[]): boolean => {
+  const keys = Object.keys(value)
+  return keys.length === expected.length && expected.every((k) => keys.includes(k))
+}
+
+/**
+ * Reads a `pilot.json` back: the allowlisted keys and nothing else, the current schema version, a hex-64 prereg content hash, arms
+ * and tally and campaigns keys inside `PILOT_ARMS` and agreeing with each other, and every cell a closed record of non-negative
+ * integers. Throws naming the first thing wrong; nothing is repaired.
+ */
+export function parsePilotTally(value: unknown): PilotTally {
+  if (!isRecord(value)) throw new Error('not a JSON object')
+  const top = ['schema_version', 'method', 'prereg_content_hash', 'agent_model_id', 'judge_model_id', 'arms', 'campaigns', 'tally']
+  if (!sameKeys(value, top)) throw new Error(`keys are [${Object.keys(value).join(', ')}], expected [${top.join(', ')}]`)
+  if (value.schema_version !== PILOT_SCHEMA_VERSION) throw new Error(`schema_version is ${JSON.stringify(value.schema_version)}, this build writes ${PILOT_SCHEMA_VERSION}`)
+  for (const key of ['method', 'agent_model_id', 'judge_model_id'] as const) if (typeof value[key] !== 'string') throw new Error(`${key} is not a string`)
+  if (typeof value.prereg_content_hash !== 'string' || !/^[0-9a-f]{64}$/.test(value.prereg_content_hash)) throw new Error('prereg_content_hash is not 64 lowercase hex characters')
+  const { arms, campaigns, tally } = value
+  if (!Array.isArray(arms)) throw new Error('arms is not an array')
+  for (const arm of arms) assertKnownArm(String(arm), 'arms')
+  if (!isRecord(tally)) throw new Error('tally is not an object')
+  if (!isRecord(campaigns)) throw new Error('campaigns is not an object')
+  for (const arm of Object.keys(tally)) assertKnownArm(arm, 'tally')
+  for (const arm of Object.keys(campaigns)) assertKnownArm(arm, 'campaigns')
+  const expectedArms = PILOT_ARMS.filter((arm) => arm in tally)
+  if (JSON.stringify(arms) !== JSON.stringify(expectedArms)) throw new Error(`arms ${JSON.stringify(arms)} do not match the tallied arms ${JSON.stringify(expectedArms)}`)
+  if (!sameKeys(campaigns, expectedArms)) throw new Error('campaigns does not name exactly the tallied arms')
+  for (const [arm, id] of Object.entries(campaigns)) if (typeof id !== 'string' || id === '') throw new Error(`campaigns.${arm} is not a campaign id`)
+  for (const [arm, fixtures] of Object.entries(tally)) {
+    if (!isRecord(fixtures)) throw new Error(`tally.${arm} is not an object`)
+    for (const [id, cell] of Object.entries(fixtures)) {
+      if (!isRecord(cell) || !sameKeys(cell, CELL_KEYS)) throw new Error(`tally.${arm}.${id} is not a record of exactly [${CELL_KEYS.join(', ')}]`)
+      for (const key of CELL_KEYS) if (!isCount(cell[key])) throw new Error(`tally.${arm}.${id}.${key} is not a non-negative integer`)
+    }
+  }
+  return value as unknown as PilotTally
 }
 
 /**
@@ -188,26 +263,32 @@ export function pilotPreregRel(repoRoot: string, method: string, flag?: string):
 export const pilotDir = (repoRoot: string, method: string): string => join(repoRoot, 'evals', method, 'pilot')
 export const pilotTallyPath = (repoRoot: string, method: string): string => join(pilotDir(repoRoot, method), 'pilot.json')
 
+/** A missing file is the only "no existing tally". One that cannot be read or does not validate stops the write: it holds other arms' numbers. */
 function readExisting(path: string): PilotTally | undefined {
   if (!existsSync(path)) return undefined
   try {
-    const raw = JSON.parse(readFileSync(path, 'utf8')) as PilotTally
-    if (raw.schema_version !== PILOT_SCHEMA_VERSION || typeof raw.tally !== 'object' || raw.tally === null) return undefined
-    return raw
-  } catch {
-    return undefined
+    return parsePilotTally(JSON.parse(readFileSync(path, 'utf8')))
+  } catch (e) {
+    throw new Error(`${path}: unreadable or malformed pilot.json (${(e as Error).message}); fix it or delete it to start over`)
   }
 }
 
 /**
  * Writes `evals/<method>/pilot/pilot.json`. Arms run in separate campaigns, so an arm already tallied under the same prereg content
- * stays, and `incoming` replaces only its own arms; a different prereg content hash starts the file over.
+ * stays, and `incoming` replaces only its own arms (`log` hears which campaign each replaced); a different prereg content hash
+ * starts the file over. An existing file that does not validate is an error and is left as it is.
  */
-export function writePilotTally(repoRoot: string, incoming: PilotTally): string {
+export function writePilotTally(repoRoot: string, incoming: PilotTally, log?: (line: string) => void): string {
   const path = pilotTallyPath(repoRoot, incoming.method)
   const existing = readExisting(path)
-  const kept = existing && existing.prereg_content_hash === incoming.prereg_content_hash ? existing.tally : {}
-  const merged = projectPilot({ ...incoming, tally: { ...kept, ...incoming.tally } })
+  const keep = existing !== undefined && existing.prereg_content_hash === incoming.prereg_content_hash
+  const keptTally = keep ? existing.tally : {}
+  const keptCampaigns = keep ? existing.campaigns : {}
+  for (const arm of incoming.arms) {
+    const replaced = keptCampaigns[arm]
+    if (replaced !== undefined) log?.(`replaced ${arm} tally from ${replaced}`)
+  }
+  const merged = projectPilot({ ...incoming, tally: { ...keptTally, ...incoming.tally }, campaigns: { ...keptCampaigns, ...incoming.campaigns } })
   mkdirSync(pilotDir(repoRoot, incoming.method), { recursive: true })
   const tmp = `${path}.tmp`
   writeFileSync(tmp, `${JSON.stringify(merged, null, 2)}\n`)

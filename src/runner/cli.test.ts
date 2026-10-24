@@ -587,14 +587,14 @@ describe('pilot', () => {
     const { repo, scaffold } = chainRepo()
     writePrereg(repo, scaffold) // the production prereg exists; the pilot one does not
     const t = io()
-    expect(await main(['pilot', '--method', 'demo', '--repo', repo.dir], t.io)).toBe(EXIT.REFUSED)
+    expect(await main(['pilot', '--method', 'demo', '--repo', repo.dir, ...LIVE], t.io)).toBe(EXIT.REFUSED)
     expect(t.lines.err.join('\n')).toContain('evals/demo/pilot/prereg.json does not exist')
   })
 
   test('--prereg must stay inside the repository', async () => {
     const { repo } = pilotRepo()
     const t = io()
-    expect(await main(['pilot', '--method', 'demo', '--repo', repo.dir, '--prereg', '../elsewhere/prereg.json'], t.io)).toBe(EXIT.REFUSED)
+    expect(await main(['pilot', '--method', 'demo', '--repo', repo.dir, '--prereg', '../elsewhere/prereg.json', ...LIVE], t.io)).toBe(EXIT.REFUSED)
     expect(t.lines.err.join('\n')).toContain('outside the repository')
   })
 
@@ -602,7 +602,7 @@ describe('pilot', () => {
     const { repo } = pilotRepo()
     repo.write('evals/demo/fixtures/dev/d1.md', 'edited after the prereg\n')
     const t = io()
-    expect(await main(['pilot', '--method', 'demo', '--repo', repo.dir], t.io)).toBe(EXIT.REFUSED)
+    expect(await main(['pilot', '--method', 'demo', '--repo', repo.dir, ...LIVE], t.io)).toBe(EXIT.REFUSED)
     expect(t.lines.err.join('\n')).toContain('dev/d1 mismatch')
   })
 
@@ -610,7 +610,7 @@ describe('pilot', () => {
     const { repo, scaffold } = chainRepo()
     repo.write('evals/demo/pilot/other.json', `${JSON.stringify(scaffold.prereg)}\n`)
     const t = io()
-    expect(await main(['pilot', '--method', 'demo', '--repo', repo.dir, '--prereg', 'evals/demo/pilot/missing.json'], t.io)).toBe(EXIT.REFUSED)
+    expect(await main(['pilot', '--method', 'demo', '--repo', repo.dir, '--prereg', 'evals/demo/pilot/missing.json', ...LIVE], t.io)).toBe(EXIT.REFUSED)
     expect(t.lines.err.join('\n')).toContain('evals/demo/pilot/missing.json does not exist')
   })
 
@@ -675,11 +675,36 @@ describe('pilot', () => {
       const written = JSON.parse(readFileSync(join(repo.dir, 'evals', 'demo', 'pilot', 'pilot.json'), 'utf8')) as { prereg_content_hash: string; arms: string[]; tally: Record<string, Record<string, { runs: number; te1_pass: number; te2_pass: number; both_pass: number }>> }
       expect(written.prereg_content_hash).toBe(preregContentHash(scaffold.prereg))
       expect(written.arms).toEqual(['baseline'])
+      expect((written as unknown as { campaigns: object }).campaigns).toEqual({ baseline: CAMPAIGN })
       expect(written.tally.baseline!.d1).toMatchObject({ runs: 1, te1_pass: 1, te2_pass: 0, both_pass: 0 })
       expect(JSON.parse(readFileSync(join(repo.dir, 'evals', 'runs', CAMPAIGN, 'rejudge-summary.json'), 'utf8')).runs[0]).toMatchObject({ run_id: '001-dev-d1-baseline-r1', verdict: 'fail' })
       expect(readFileSync(join(dir, 'manifest.json'), 'utf8')).toBe(before)
       expect(existsSync(join(repo.dir, 'evals', 'runs', CAMPAIGN, 'review.md'))).toBe(false)
       expect(t.lines.out.join('\n')).toContain('pilot.json')
+    })
+
+    test('--tally-only rebuilds pilot.json from the verdicts on disk without building a judge, reading credentials, or needing OpenCode', async () => {
+      const { repo, scaffold, dir } = await plantedPilot()
+      const before = readFileSync(join(dir, 'manifest.json'), 'utf8')
+      const t = io()
+      t.io.createJudge = (() => {
+        throw new Error('the judge must not be built')
+      }) as never
+      t.io.opencodeAvailability = () => ({ available: false as const, reason: 'must not be asked' })
+      t.io.env.METACOGS_AUTH_CLIPROXY = 'no-such-key'
+      expect(await main(['rejudge', '--campaign', CAMPAIGN, '--repo', repo.dir, '--tally-only'], t.io)).toBe(EXIT.OK)
+      const written = JSON.parse(readFileSync(join(repo.dir, 'evals', 'demo', 'pilot', 'pilot.json'), 'utf8')) as { prereg_content_hash: string; tally: Record<string, Record<string, object>> }
+      expect(written.prereg_content_hash).toBe(preregContentHash(scaffold.prereg))
+      expect(written.tally.baseline!.d1).toMatchObject({ runs: 1, te1_pass: 1, te2_pass: 1, both_pass: 1 })
+      expect(readFileSync(join(dir, 'manifest.json'), 'utf8')).toBe(before)
+      expect(existsSync(join(repo.dir, 'evals', 'runs', CAMPAIGN, 'rejudge-summary.json'))).toBe(false)
+    })
+
+    test('--tally-only applies to rejudge of a pilot campaign only', async () => {
+      const { repo } = await plantedPilot()
+      const t = io()
+      expect(await main(['review', '--campaign', CAMPAIGN, '--repo', repo.dir, '--tally-only'], t.io)).toBe(EXIT.USAGE)
+      expect(t.lines.err.join('\n')).toContain('--tally-only')
     })
 
     test('a judge that cannot be reached for any run leaves pilot.json alone', async () => {
@@ -700,28 +725,30 @@ describe('pilot', () => {
     })
   })
 
-  describe.skipIf(!opencodeAvailability().available)('scripted end-to-end', () => {
-    test(
-      'pilot --arm baseline plans dev fixtures only, tags manifests with the arm, writes pilot.json, and leaves RED/GREEN untouched',
-      async () => {
-        const { repo } = pilotRepo()
-        const out = tmp('metacogs-cliout-')
-        const t = io()
-        const code = await main(['pilot', '--arm', 'baseline', '--provider', 'scripted', '--runs', '1', '--method', 'demo', '--repo', repo.dir, '--out', out], t.io)
-        expect(code).toBe(EXIT.OK)
-        const [campaign] = readdirSync(out)
-        expect(campaign).toStartWith('demo-pilot-')
-        expect(readdirSync(join(out, campaign!)).filter((d) => d !== 'summary.json')).toEqual(['001-dev-d1-baseline-r1'])
-        const manifest = JSON.parse(readFileSync(join(out, campaign!, '001-dev-d1-baseline-r1', 'manifest.json'), 'utf8')) as { arm: string }
-        expect(manifest.arm).toBe('baseline')
-        const written = JSON.parse(readFileSync(join(repo.dir, 'evals', 'demo', 'pilot', 'pilot.json'), 'utf8')) as { arms: string[]; tally: Record<string, Record<string, { runs: number }>> }
-        expect(written.arms).toEqual(['baseline'])
-        expect(written.tally.baseline!.d1!.runs).toBe(1)
-        expect(t.lines.out.join('\n')).toContain('dev/d1/baseline: pass 0/0 (planned 1)')
-        expect(existsSync(join(repo.dir, 'evals', 'reports'))).toBe(false)
-      },
-      180_000,
-    )
+  test('pilot requires --provider live: a usage error on one line, before credentials, the repo or the prereg are touched', async () => {
+    for (const argv of [
+      ['pilot', '--method', 'demo', '--repo', '/nonexistent'],
+      ['pilot', '--method', 'demo', '--repo', '/nonexistent', '--provider', 'scripted'],
+    ]) {
+      const t = io()
+      t.io.env.METACOGS_AUTH_CLIPROXY = 'no-such-key' // fetching it would fail with a different message
+      expect(await main(argv, t.io)).toBe(EXIT.USAGE)
+      expect(t.lines.err).toHaveLength(1)
+      expect(t.lines.err[0]).toContain('--provider live')
+      expect(t.lines.err[0]).not.toContain('\n')
+    }
+  })
+
+  test('a scripted pilot invocation leaves an existing pilot.json byte-identical', async () => {
+    const { repo } = pilotRepo()
+    const path = join(repo.dir, 'evals', 'demo', 'pilot', 'pilot.json')
+    const sentinel = '{"kept": true}\n'
+    repo.write('evals/demo/pilot/pilot.json', sentinel)
+    const out = tmp('metacogs-cliout-')
+    const t = io()
+    expect(await main(['pilot', '--arm', 'baseline', '--provider', 'scripted', '--runs', '1', '--method', 'demo', '--repo', repo.dir, '--out', out], t.io)).toBe(EXIT.USAGE)
+    expect(readFileSync(path, 'utf8')).toBe(sentinel)
+    expect(readdirSync(out)).toEqual([])
   })
 })
 

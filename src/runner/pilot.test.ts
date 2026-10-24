@@ -107,10 +107,14 @@ interface Plant {
   reasons?: string[]
   judge?: JudgeEvidence
   stdout?: string
+  /** The prereg content hash the manifest was produced under (default: the CTX hash). */
+  hash?: string
 }
 
+const CAMPAIGN_ID = 'demo-pilot-2026-10-24T00-00-00-000Z'
+
 function plantCampaign(plants: Plant[]): string {
-  const campaign = join(tmp('metacogs-pilot-'), 'demo-pilot-2026-10-24T00-00-00-000Z')
+  const campaign = join(tmp('metacogs-pilot-'), CAMPAIGN_ID)
   plants.forEach((p, i) => {
     const runId = `00${i + 1}-dev-${p.fixture}-${p.arm ?? 'baseline'}-r1`
     const dir = join(campaign, runId)
@@ -130,7 +134,7 @@ function plantCampaign(plants: Plant[]): string {
       check_failures: [],
       records: [],
       artifacts: {},
-      prereg: { content_hash: 'a'.repeat(64), epoch: 1 },
+      prereg: { content_hash: p.hash ?? 'a'.repeat(64), epoch: 1 },
       ...(p.judge ? { judge: p.judge } : {}),
     }
     writeManifest(dir, base as never)
@@ -197,55 +201,137 @@ describe('tallyPilotCampaign', () => {
   test('a manifest without an arm means this is not a pilot campaign', () => {
     expect(() => tallyPilotCampaign(plantCampaign([{ fixture: 'd1' }]), CTX)).toThrow(/not a pilot campaign/)
   })
+
+  test('campaigns maps each tallied arm to the campaign id the manifests carry', () => {
+    const t = tallyPilotCampaign(plantCampaign([{ arm: 'baseline', fixture: 'd1', judge: evidence('pass', 'pass') }]), CTX)
+    expect(t.campaigns).toEqual({ baseline: CAMPAIGN_ID })
+  })
+
+  test('a manifest produced under another prereg content hash is refused, naming its run dir', () => {
+    const dir = plantCampaign([
+      { arm: 'baseline', fixture: 'd1', judge: evidence('pass', 'pass') },
+      { arm: 'baseline', fixture: 'd1', judge: evidence('pass', 'pass'), hash: 'b'.repeat(64) },
+    ])
+    expect(() => tallyPilotCampaign(dir, CTX)).toThrow(/002-dev-d1-baseline-r1/)
+    expect(() => tallyPilotCampaign(dir, CTX)).toThrow(/prereg/)
+  })
+
+  test('allowRejudged skips the hash comparison: a rejudge rewrote the verdicts under the current prereg', () => {
+    const dir = plantCampaign([{ arm: 'baseline', fixture: 'd1', judge: evidence('pass', 'pass'), hash: 'b'.repeat(64) }])
+    expect(tallyPilotCampaign(dir, CTX, { allowRejudged: true }).tally.baseline!.d1).toMatchObject({ runs: 1 })
+  })
+
+  test('manifests from two campaigns in one directory are refused', () => {
+    const dir = plantCampaign([{ arm: 'baseline', fixture: 'd1', judge: evidence('pass', 'pass') }, { arm: 'baseline', fixture: 'd1', judge: evidence('pass', 'pass') }])
+    const path = join(dir, '002-dev-d1-baseline-r1', 'manifest.json')
+    writeFileSync(path, readFileSync(path, 'utf8').replace(CAMPAIGN_ID, 'demo-pilot-other'))
+    expect(() => tallyPilotCampaign(dir, CTX)).toThrow(/more than one campaign/)
+  })
 })
 
 describe('writePilotTally (fixed-key projection)', () => {
+  const CELL = { runs: 1, te1_pass: 0, te2_pass: 0, both_pass: 0, over_limit: 0, empty: 0, skill_loaded: 0, instruction_present: 0 }
   const tally = (arms: Partial<Record<'baseline' | 'instruction', number>>, hash = 'a'.repeat(64)): PilotTally =>
     projectPilot({
       ...CTX,
       prereg_content_hash: hash,
-      tally: Object.fromEntries(Object.entries(arms).map(([arm, runs]) => [arm, { d1: { runs, te1_pass: 0, te2_pass: 0, both_pass: 0, over_limit: 0, empty: 0, skill_loaded: 0, instruction_present: 0 } }])),
+      tally: Object.fromEntries(Object.entries(arms).map(([arm, runs]) => [arm, { d1: { ...CELL, runs } }])),
+      campaigns: Object.fromEntries(Object.keys(arms).map((arm) => [arm, `campaign-${arm}-${Object.values(arms).join('')}`])),
     })
+  const read = (repo: string): PilotTally => JSON.parse(readFileSync(pilotTallyPath(repo, 'demo'), 'utf8')) as PilotTally
+  const plant = (repo: string, text: string): string => {
+    mkdirSync(join(repo, 'evals', 'demo', 'pilot'), { recursive: true })
+    writeFileSync(pilotTallyPath(repo, 'demo'), text)
+    return text
+  }
 
   test('only the allowlisted keys are written, even if the cell carried more', () => {
     const repo = tmp('metacogs-pilotwrite-')
-    const dirty = { runs: 1, te1_pass: 0, te2_pass: 0, both_pass: 0, over_limit: 0, empty: 0, skill_loaded: 0, instruction_present: 0, stdout: 'SECRET', env: { K: 'V' } }
-    const path = writePilotTally(repo, projectPilot({ ...CTX, tally: { baseline: { d1: dirty } } }))
+    const dirty = { ...CELL, stdout: 'SECRET', env: { K: 'V' } }
+    const path = writePilotTally(repo, projectPilot({ ...CTX, tally: { baseline: { d1: dirty } }, campaigns: { baseline: 'c1' } }))
     expect(path).toBe(pilotTallyPath(repo, 'demo'))
     const written = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
-    expect(Object.keys(written)).toEqual(['schema_version', 'method', 'prereg_content_hash', 'agent_model_id', 'judge_model_id', 'arms', 'tally'])
+    expect(Object.keys(written)).toEqual(['schema_version', 'method', 'prereg_content_hash', 'agent_model_id', 'judge_model_id', 'arms', 'campaigns', 'tally'])
+    expect(written.campaigns).toEqual({ baseline: 'c1' })
     expect(Object.keys((written.tally as { baseline: { d1: object } }).baseline.d1)).toEqual(['runs', 'te1_pass', 'te2_pass', 'both_pass', 'over_limit', 'empty', 'skill_loaded', 'instruction_present'])
     expect(readFileSync(path, 'utf8')).not.toMatch(/SECRET|stdout|"env"/)
   })
 
-  test('a second arm under the same prereg content joins the file; a rerun of an arm replaces it', () => {
+  test('a tally key outside PILOT_ARMS is refused, not filtered', () => {
+    expect(() => projectPilot({ ...CTX, tally: { baseline: { d1: CELL }, bogus: { d1: CELL } } as never, campaigns: { baseline: 'c1' } })).toThrow(/bogus/)
+    expect(() => projectPilot({ ...CTX, tally: { baseline: { d1: CELL } }, campaigns: { bogus: 'c1' } as never })).toThrow(/bogus/)
+  })
+
+  test('a second arm under the same prereg content joins the file; a rerun of an arm replaces it and says which campaign it replaced', () => {
     const repo = tmp('metacogs-pilotwrite-')
-    writePilotTally(repo, tally({ baseline: 3 }))
-    writePilotTally(repo, tally({ instruction: 2 }))
-    let written = JSON.parse(readFileSync(pilotTallyPath(repo, 'demo'), 'utf8')) as PilotTally
+    const lines: string[] = []
+    writePilotTally(repo, tally({ baseline: 3 }), (l) => lines.push(l))
+    writePilotTally(repo, tally({ instruction: 2 }), (l) => lines.push(l))
+    expect(lines).toEqual([])
+    let written = read(repo)
     expect(written.arms).toEqual(['baseline', 'instruction'])
-    writePilotTally(repo, tally({ baseline: 5 }))
-    written = JSON.parse(readFileSync(pilotTallyPath(repo, 'demo'), 'utf8')) as PilotTally
+    writePilotTally(repo, tally({ baseline: 5 }), (l) => lines.push(l))
+    written = read(repo)
     expect(written.arms).toEqual(['baseline', 'instruction'])
     expect(written.tally.baseline!.d1!.runs).toBe(5)
     expect(written.tally.instruction!.d1!.runs).toBe(2)
+    expect(written.campaigns).toEqual({ baseline: 'campaign-baseline-5', instruction: 'campaign-instruction-2' })
+    expect(lines).toEqual(['replaced baseline tally from campaign-baseline-3'])
   })
 
   test('a different prereg content hash starts the file over', () => {
     const repo = tmp('metacogs-pilotwrite-')
     writePilotTally(repo, tally({ baseline: 3, instruction: 3 }))
     writePilotTally(repo, tally({ baseline: 1 }, 'b'.repeat(64)))
-    const written = JSON.parse(readFileSync(pilotTallyPath(repo, 'demo'), 'utf8')) as PilotTally
+    const written = read(repo)
     expect(written.arms).toEqual(['baseline'])
     expect(written.prereg_content_hash).toBe('b'.repeat(64))
   })
 
-  test('a corrupt existing file is replaced, not trusted', () => {
+  test('a corrupt existing file is refused, naming its path; the file is not touched', () => {
     const repo = tmp('metacogs-pilotwrite-')
-    mkdirSync(join(repo, 'evals', 'demo', 'pilot'), { recursive: true })
-    writeFileSync(pilotTallyPath(repo, 'demo'), '{nope')
-    writePilotTally(repo, tally({ baseline: 1 }))
-    expect((JSON.parse(readFileSync(pilotTallyPath(repo, 'demo'), 'utf8')) as PilotTally).arms).toEqual(['baseline'])
+    const before = plant(repo, '{nope')
+    expect(() => writePilotTally(repo, tally({ baseline: 1 }))).toThrow(/evals.demo.pilot.pilot\.json/)
+    expect(readFileSync(pilotTallyPath(repo, 'demo'), 'utf8')).toBe(before)
+  })
+
+  describe('an existing pilot.json that does not validate is refused and left byte-identical', () => {
+    const good = (): Record<string, unknown> => JSON.parse(JSON.stringify(tally({ baseline: 3, instruction: 2 }))) as Record<string, unknown>
+    const mutate = (fn: (t: { arms: string[]; campaigns: Record<string, string>; tally: Record<string, Record<string, Record<string, unknown>>>; [k: string]: unknown }) => void): string => {
+      const t = good() as never
+      fn(t)
+      return `${JSON.stringify(t, null, 2)}\n`
+    }
+    const cases: [string, string][] = [
+      ['an unknown arm in arms', mutate((t) => t.arms.push('bogus'))],
+      ['an unknown arm in the tally', mutate((t) => (t.tally.bogus = { d1: { ...CELL } }))],
+      ['an unknown arm in campaigns', mutate((t) => (t.campaigns.bogus = 'c'))],
+      ['an old schema version', mutate((t) => (t.schema_version = 1))],
+      ['a bad prereg content hash', mutate((t) => (t.prereg_content_hash = 'nope'))],
+      ['a negative count', mutate((t) => (t.tally.instruction!.d1!.runs = -1))],
+      ['a fractional count', mutate((t) => (t.tally.instruction!.d1!.runs = 1.5))],
+      ['a string count', mutate((t) => (t.tally.instruction!.d1!.runs = '2'))],
+      ['an extra cell key', mutate((t) => (t.tally.instruction!.d1!.stdout = 1))],
+      ['a missing cell key', mutate((t) => delete t.tally.instruction!.d1!.empty)],
+      ['arms that disagree with the tally', mutate((t) => (t.arms = ['baseline']))],
+      ['a tally that is not an object', mutate((t) => (t.tally = null as never))],
+    ]
+    for (const [name, text] of cases) {
+      test(name, () => {
+        const repo = tmp('metacogs-pilotwrite-')
+        plant(repo, text)
+        // Writing the baseline arm again must not rewrite the instruction arm's numbers, nor the file at all.
+        expect(() => writePilotTally(repo, tally({ baseline: 9 }))).toThrow(/pilot\.json/)
+        expect(readFileSync(pilotTallyPath(repo, 'demo'), 'utf8')).toBe(text)
+      })
+    }
+
+    test('a valid file passes the same validation', () => {
+      const repo = tmp('metacogs-pilotwrite-')
+      plant(repo, `${JSON.stringify(good(), null, 2)}\n`)
+      writePilotTally(repo, tally({ baseline: 9 }))
+      expect(read(repo).tally.instruction!.d1!.runs).toBe(2)
+    })
   })
 })
 

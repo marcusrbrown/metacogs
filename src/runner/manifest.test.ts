@@ -74,6 +74,14 @@ describe('manifest files', () => {
     expect(() => parseManifest(JSON.stringify({ ...manifest(), prereg: undefined }))).toThrow(ManifestFormatError)
     expect(parseManifest(JSON.stringify(manifest())).prereg).toEqual({ content_hash: 'a'.repeat(64), epoch: 1 })
   })
+
+  test('an arm outside PILOT_ARMS is refused; a known arm and no arm both parse', () => {
+    expect(() => parseManifest(JSON.stringify({ ...manifest(), arm: 'bogus' }))).toThrow(ManifestFormatError)
+    expect(() => parseManifest(JSON.stringify({ ...manifest(), arm: 'bogus' }))).toThrow(/arm/)
+    expect(() => parseManifest(JSON.stringify({ ...manifest(), arm: 7 }))).toThrow(ManifestFormatError)
+    expect(parseManifest(JSON.stringify({ ...manifest(), arm: 'baseline' })).arm).toBe('baseline')
+    expect(parseManifest(JSON.stringify(manifest())).arm).toBeUndefined()
+  })
 })
 
 describe('stale manifests', () => {

@@ -29,7 +29,7 @@ import { claimHeldoutRead, CustodyError, hashSkillDir, heldoutDir, heldoutReadMa
 export const EXIT = { OK: 0, ERROR: 1, USAGE: 64, REFUSED: 3, CREDENTIAL_LEAK: 4, INTERRUPTED: 130 } as const
 
 const USAGE = `usage: bun run eval <red|green> --method <name> [options]
-       bun run eval pilot --method <name> [--arm baseline] [--prereg <repo-relative file>]
+       bun run eval pilot --method <name> --provider live [--arm baseline] [--prereg <repo-relative file>]
                                                                     dev-only comparison of arms on evals/<m>/pilot/prereg.json; writes evals/<m>/pilot/pilot.json.
                                                                     Never reported: report refuses its campaigns. Only --arm baseline runs in this build
        bun run eval report --method <name> [--campaign <dir>]
@@ -38,8 +38,8 @@ const USAGE = `usage: bun run eval <red|green> --method <name> [options]
        bun run eval review --campaign <id|dir> --reconcile         read the marked-up review.md against review-key.md: per-criterion agreement, run-outcome
                                                                    flips, human-review.json; updates a matching GREEN report's human_review block
        bun run eval rejudge --campaign <id|dir> [--auth-passthrough opencode-go]
-                                                                   judge calls over retained answers, then review.md; manifests untouched
-
+                                                                    judge calls over retained answers, then review.md; manifests untouched
+       bun run eval rejudge --campaign <id|dir> --tally-only         pilot campaigns only: rebuild pilot.json from the verdicts already on disk; no judge call, no credentials
   --runs <n>              runs per condition per fixture (default: prereg runs_per_condition)
   --provider scripted|live   scripted = local stub (default for red and green --dev-only), live = the model pinned in the prereg through
                           OpenCode's gateway: opencode-go/* (Go subscription, the default and preferred) or opencode/* (Zen, bills credits).
@@ -125,6 +125,7 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
       authFlag: parsed.values['auth-passthrough'],
       cliproxyFlag: parsed.values['auth-cliproxy'],
       preregFlag: parsed.values.prereg,
+      tallyOnly: parsed.values['tally-only'] === true,
       cwd,
       env,
       out,
@@ -157,6 +158,12 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
   if (armRefused) {
     err(`REFUSED: ${armRefused}`)
     return EXIT.REFUSED
+  }
+  // A pilot is a live experiment: a scripted run answers from a stub, so there is nothing to compare, and it would overwrite a real tally.
+  // Refused before any credential is fetched or the prereg is read.
+  if (isPilot && provider !== 'live') {
+    err('eval pilot requires --provider live')
+    return EXIT.USAGE
   }
   if (devOnly && mode !== 'green') {
     err(`--dev-only applies to green (and report) only\n${USAGE}`)
@@ -392,7 +399,7 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
       agent_model_id: prereg.agent_model_id,
       judge_model_id: prereg.judge_model_id,
     })
-    out(`wrote ${writePilotTally(repoRoot, pilotTally).slice(repoRoot.length + 1)} (arms: ${pilotTally.arms.join(', ')})`)
+    out(`wrote ${writePilotTally(repoRoot, pilotTally, out).slice(repoRoot.length + 1)} (arms: ${pilotTally.arms.join(', ')})`)
   }
   if (result.aborted === 'provider_outage') {
     err('ABORTED: provider_outage. Three rate-limited attempts in a row; no further runs were launched. The summary lists what ran.')
@@ -411,6 +418,8 @@ interface CampaignToolArgs {
   cliproxyFlag?: string
   /** `--prereg`: rejudge of a pilot campaign only. */
   preregFlag?: string | undefined
+  /** `--tally-only`: rejudge of a pilot campaign only; rebuild pilot.json from the verdicts on disk, no judge call. */
+  tallyOnly?: boolean
   cwd: string
   env: Record<string, string | undefined>
   out: (line: string) => void
@@ -429,6 +438,10 @@ export function resolveCampaignDir(value: string, repoRoot: string, cwd: string,
 async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
   if (!a.campaign) {
     a.err(`${a.mode} needs --campaign <id|dir>\n${USAGE}`)
+    return EXIT.USAGE
+  }
+  if (a.tallyOnly && a.mode !== 'rejudge') {
+    a.err(`--tally-only applies to rejudge only\n${USAGE}`)
     return EXIT.USAGE
   }
   const repoRoot = new Git(a.repo ?? a.cwd).toplevel()
@@ -458,21 +471,28 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
     return reconcileMain({ a, repoRoot, campaignDir, method })
   }
   if (a.mode === 'rejudge') {
-    let auth: PassthroughAuth = {}
-    let cliproxyOn = false
-    try {
-      const cliproxy = resolveCliproxy(a.cliproxyFlag, a.env, { live: true, passthroughFlag: a.authFlag })
-      cliproxyOn = cliproxy !== undefined
-      auth = cliproxy ? cliproxy.auth : readPassthroughAuth(parseAuthPassthrough(a.authFlag, a.env, DEFAULT_PASSTHROUGH))
-    } catch (e) {
-      if (e instanceof AuthPassthroughError || e instanceof CliproxyAuthError) {
-        a.err(`${e.message}\n${USAGE}`)
-        return EXIT.USAGE
-      }
-      throw e
-    }
     // A pilot campaign (its manifests carry an arm) was run under the pilot prereg, not evals/<m>/prereg.json.
     const isPilotCampaign = runs.some((r) => r.manifest.arm !== undefined)
+    if (a.tallyOnly && !isPilotCampaign) {
+      a.err(`--tally-only applies to a pilot campaign only; ${a.campaign} carries no arm\n${USAGE}`)
+      return EXIT.USAGE
+    }
+    let auth: PassthroughAuth = {}
+    let cliproxyOn = false
+    // --tally-only makes no judge call, so it reads no credentials.
+    if (!a.tallyOnly) {
+      try {
+        const cliproxy = resolveCliproxy(a.cliproxyFlag, a.env, { live: true, passthroughFlag: a.authFlag })
+        cliproxyOn = cliproxy !== undefined
+        auth = cliproxy ? cliproxy.auth : readPassthroughAuth(parseAuthPassthrough(a.authFlag, a.env, DEFAULT_PASSTHROUGH))
+      } catch (e) {
+        if (e instanceof AuthPassthroughError || e instanceof CliproxyAuthError) {
+          a.err(`${e.message}\n${USAGE}`)
+          return EXIT.USAGE
+        }
+        throw e
+      }
+    }
     const preregPath = isPilotCampaign ? pilotPreregRel(repoRoot, method, a.preregFlag) : undefined
     if (isPilotCampaign && preregPath === undefined) {
       a.err(`REFUSED: --prereg ${a.preregFlag} is outside the repository`)
@@ -495,6 +515,24 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
       }
       throw e
     }
+    /** A pilot has no review sheets. Its only projection is pilot.json, rebuilt from the verdicts now on disk, keyed to this prereg. */
+    const writePilotFromDisk = (): number => {
+      let tally: ReturnType<typeof tallyPilotCampaign>
+      try {
+        // A rejudge rewrites judge.json under this prereg and leaves the manifests (and the hash they were run under) alone.
+        tally = tallyPilotCampaign(
+          campaignDir,
+          { method, prereg_content_hash: verification.contentHash, agent_model_id: verification.prereg.agent_model_id, judge_model_id: verification.prereg.judge_model_id },
+          { allowRejudged: true },
+        )
+      } catch (e) {
+        a.err(`REFUSED: ${(e as Error).message}`)
+        return EXIT.REFUSED
+      }
+      a.out(`wrote ${writePilotTally(repoRoot, tally, a.out).slice(repoRoot.length + 1)} (arms: ${tally.arms.join(', ')})`)
+      return EXIT.OK
+    }
+    if (a.tallyOnly) return writePilotFromDisk()
     const model = verification.prereg.judge_model_id
     if (!isLiveModel(model)) {
       a.err(`prereg pins judge ${model}; this runner only reaches opencode/*, opencode-go/*, openai/* and anthropic/* judges`)
@@ -522,20 +560,12 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
     const count = (v: string) => rows.filter((r) => r.verdict === v).length
     a.out(`rejudged ${rows.length - count('skipped')} of ${rows.length} runs: pass ${count('pass')} · fail ${count('fail')} · judge_error ${count('judge_error')} · skipped ${count('skipped')} (manifests unchanged)`)
     if (isPilotCampaign) {
-      // A pilot has no review sheets. Its only projection is pilot.json, rebuilt from the verdicts now on disk, keyed to this prereg.
       const unreachable = rows.filter((r) => r.reason?.startsWith('judge unreachable'))
       if (unreachable.length) {
         a.err(`ABORTED: the judge could not be reached for ${unreachable.length} run(s) (${unreachable.map((r) => r.run_id).join(', ')}); their old verdicts are still on disk, so pilot.json was not written. Run rejudge again.`)
         return EXIT.ERROR
       }
-      const tally = tallyPilotCampaign(campaignDir, {
-        method,
-        prereg_content_hash: verification.contentHash,
-        agent_model_id: verification.prereg.agent_model_id,
-        judge_model_id: verification.prereg.judge_model_id,
-      })
-      a.out(`wrote ${writePilotTally(repoRoot, tally).slice(repoRoot.length + 1)} (arms: ${tally.arms.join(', ')})`)
-      return EXIT.OK
+      return writePilotFromDisk()
     }
   }
   let paths: ReturnType<typeof writeReview>
@@ -842,6 +872,7 @@ const OPTIONS = {
   reconcile: { type: 'boolean' },
   'dev-only': { type: 'boolean' },
   green: { type: 'boolean' },
+  'tally-only': { type: 'boolean' },
 } as const
 
 if (import.meta.main) {

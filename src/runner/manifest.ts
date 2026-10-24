@@ -148,6 +148,10 @@ export function parseManifest(text: string): RunManifest {
   if (typeof prereg?.content_hash !== 'string' || !/^[0-9a-f]{64}$/.test(prereg.content_hash) || !Number.isInteger(prereg.epoch)) {
     throw new ManifestFormatError('manifest predates the content-contract format')
   }
+  const arm = (raw as { arm?: unknown }).arm
+  if (arm !== undefined && !(PILOT_ARMS as readonly unknown[]).includes(arm)) {
+    throw new ManifestFormatError(`manifest carries an unknown pilot arm ${JSON.stringify(arm)} (known: ${PILOT_ARMS.join(', ')})`)
+  }
   return raw as RunManifest
 }
 
