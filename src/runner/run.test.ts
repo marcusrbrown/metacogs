@@ -242,7 +242,7 @@ describe('run outcomes (fake host)', () => {
       skill: null,
       provider_mode: 'scripted',
       opencode: { package: 'opencode-ai', version: '1.19.4' },
-      prereg: { tag: 'prereg/demo/1', commit_sha: verification.shas.commitSha, tag_object_sha: verification.shas.tagObjectSha, blob_sha: verification.shas.blobSha, epoch: 1 },
+      prereg: { content_hash: verification.contentHash, epoch: 1 },
       tool_call_count: 0,
       wall_clock_ms: 7,
     })
@@ -285,7 +285,7 @@ describe('run outcomes (fake host)', () => {
     expect(res.results[0]).toMatchObject({ status: 'completed', outcome: 'pass' })
     const m = manifestOf(c.campaignDir, res.results[0]!.runId)
     expect(m.skill?.sha256).toMatch(/^[0-9a-f]{64}$/)
-    expect(m.skill?.tree_sha).toBe(verification.shas.skillTreeSha ?? null)
+    expect(m.prereg.content_hash).toBe(verification.contentHash)
     expect(m.records).toHaveLength(1)
     expect(m.isolation?.expectedSkills).toEqual(['demo'])
   })

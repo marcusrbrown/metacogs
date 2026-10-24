@@ -4,10 +4,7 @@
   "method": "counterfactual",
   "held_out": "untouched",
   "prereg": {
-    "tag": "prereg/counterfactual/5",
-    "tag_object_sha": "d607d508e3c8954ce9dd4768a41ee75b7ff2dacc",
-    "commit_sha": "f120783582251890a2ec9439fa769cbdfd72241a",
-    "blob_sha": "2f00f0f18e941c25b2b23e6fa8ca54801ffbfe67",
+    "content_hash": "152c5889db5bc7a029c802a0365b19bc22c613def222512c31d62a377b8a6fa4",
     "epoch": 5,
     "rubric_hash": "4dbd235645f66aba120e5b87c151188ae3b90e6ce4d0f6e23ff7bd60a48a367b",
     "runs_per_condition": 5,

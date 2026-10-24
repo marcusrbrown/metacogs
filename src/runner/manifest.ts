@@ -75,14 +75,9 @@ export interface RunManifest {
   fixture: { id: string; kind: FixtureKind; hash: string }
   /** 1 for the first launch; infra retries increment. */
   attempt: number
-  skill: { sha256: string; tree_sha: string | null } | null
-  prereg: {
-    tag: string
-    tag_object_sha: string
-    commit_sha: string
-    blob_sha: string
-    epoch: number
-  }
+  skill: { sha256: string } | null
+  /** `content_hash`: `preregContentHash` of the prereg this run was produced under. */
+  prereg: { content_hash: string; epoch: number }
   provider_mode: 'scripted' | 'live'
   /** Provider names whose real credentials were copied into this run's isolated auth.json. Never values. */
   auth_passthrough?: string[]
@@ -127,8 +122,25 @@ export function writeManifest(runDir: string, manifest: RunManifest): string {
   return path
 }
 
+/** A manifest written before the content-contract format (`prereg.tag`/`commit_sha`), or otherwise not shaped like one. */
+export class ManifestFormatError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ManifestFormatError'
+  }
+}
+
+export function parseManifest(text: string): RunManifest {
+  const raw: unknown = JSON.parse(text)
+  const prereg = (raw as { prereg?: { content_hash?: unknown; epoch?: unknown } } | null)?.prereg
+  if (typeof prereg?.content_hash !== 'string' || !/^[0-9a-f]{64}$/.test(prereg.content_hash) || !Number.isInteger(prereg.epoch)) {
+    throw new ManifestFormatError('manifest predates the content-contract format')
+  }
+  return raw as RunManifest
+}
+
 export function readManifest(path: string): RunManifest {
-  return JSON.parse(readFileSync(path, 'utf8')) as RunManifest
+  return parseManifest(readFileSync(path, 'utf8'))
 }
 
 export interface StaleManifest {
@@ -153,7 +165,8 @@ export function findStaleManifests(roots: readonly string[]): StaleManifest[] {
         const path = manifestPath(join(campaignDir, run))
         if (!existsSync(path)) continue
         try {
-          const m = readManifest(path)
+          // Stale detection needs only `status`: a pre-contract manifest that is still `running` is as stale as any other.
+          const m = JSON.parse(readFileSync(path, 'utf8')) as Pick<RunManifest, 'status' | 'run_id' | 'started_at'>
           if (m.status === 'running') stale.push({ path, run_id: m.run_id, started_at: m.started_at })
         } catch {
           // unreadable manifests are not our business at startup

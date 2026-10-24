@@ -67,7 +67,7 @@ What this does not show:
 - One host, one model pair, one fixture family. The judge is a single model whose draw is not fixed.
 - Pi, Codex, and Claude Code were checked for discovery only. No model was run on them.
 
-**What preregistration proves.** Thresholds, rubric, and fixture hashes are committed and tagged (`prereg/<method>/<epoch>`) before any skill content, and the runner refuses a GREEN read if the order is wrong. This makes edits after the tag visible. It does not make them impossible: the author controls the repository and can retag. Held-out fixtures stay outside the repository until release.
+**What preregistration proves.** Thresholds, rubric, and fixture hashes are committed in `evals/<method>/prereg.json` before the skill is authored, and the runner reads its bars and hashes from that file. Every manifest and report carries the sha256 of the file's canonical form, so a changed prereg no longer matches the runs made under the old one. This is a content contract, not a proof of git history: the author controls the repository and can rewrite the prereg and re-run. Held-out fixtures stay outside the repository until release.
 
 ## Reproduce
 

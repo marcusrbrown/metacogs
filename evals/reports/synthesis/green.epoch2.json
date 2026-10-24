@@ -3,10 +3,7 @@
   "kind": "green",
   "method": "synthesis",
   "prereg": {
-    "tag": "prereg/synthesis/2",
-    "tag_object_sha": "607ebfaf713afc9b3accc7ccfbee69de05ac15cd",
-    "commit_sha": "4954a74285c5b7bc734470c5b52af340582adf9b",
-    "blob_sha": "803447fcb30fa109c4938a0dda1d6dbef8841038",
+    "content_hash": "74b16228c720f75e5db8cd0c3c5f76abbb52881a262a773c68c640b3de969e27",
     "epoch": 2,
     "rubric_hash": "2701141a85847fe1ca78a32bc3fbcc359ef8c196d6f15538963ba76ad8b0180c",
     "runs_per_condition": 5,
@@ -16,8 +13,7 @@
     "head_sha": "2a1728e0218de27d3077fd61d89a2e53f157d9ca"
   },
   "skill": {
-    "sha256": "f2b7dd054161481db88181c70b85828d2b6bf7014bf4f4d166efffc89dd40173",
-    "tree_sha": "f29206bacd892c683efcc94c979c2fa2f5b14e27"
+    "sha256": "f2b7dd054161481db88181c70b85828d2b6bf7014bf4f4d166efffc89dd40173"
   },
   "opencode": {
     "package": "opencode-ai",

@@ -16,11 +16,11 @@ import { findNearDuplicates, NEAR_DUPLICATE_THRESHOLD } from './neardup'
 import { HUMAN_REVIEW_FILE, loadCampaignRuns, reconcileCampaign, rejudgeCampaign, writeReview } from './review'
 import { type HumanReview, humanReviewBlock, summarize } from './human-review'
 import { createJudge } from './judge'
-import { findStaleManifests } from './manifest'
+import { findStaleManifests, ManifestFormatError } from './manifest'
 import { removeLiveFixtures } from './env'
 import { killLiveGroups, opencodeAvailability } from './opencode'
 import { isLiveModel } from './scripted-provider'
-import { enforcePrereg, parsePrereg, type Prereg, preregRelPath, PreregRefusal } from './prereg'
+import { enforcePrereg, heldoutFingerprints, parsePrereg, type Prereg, preregRelPath, PreregRefusal } from './prereg'
 import { buildDevReport, buildGreenReport, buildRedReport, type DevReport, type DevRegressionSource, type GreenReport, greenReportPath, loadCampaignManifests, recomputeDevRegression, validateDevReport, validateGreenReport, writeDevReport, writeGreenReport, writeReport } from './report'
 import { planRuns, type ProviderMode, runCampaign } from './run'
 import { claimHeldoutRead, CustodyError, hashSkillDir, heldoutDir, heldoutReadMarkerPath, resolveOutputDir, stateRoot } from './workspace'
@@ -247,11 +247,17 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
       method,
       mode: runMode,
       heldoutDir: heldoutDir(method, env, undefined, repoRoot),
-      // The marker is claimed after the ordering checks pass and before the set is loaded, so any later outcome (a hash
-      // mismatch, a crash, an interrupt) still leaves the read on record. A directory that does not exist has nothing to burn.
-      beforeHeldoutRead: ({ prereg: p, shas }) => {
+      // The marker is claimed once the prereg, skill, fixtures and rubric have all verified and before anything is handed to an agent or
+      // judge, so any later outcome (a crash, an interrupt) still leaves the read on record, and a refusal that has nothing to do with the
+      // held-out set cannot burn it. A directory that does not exist has nothing to burn.
+      beforeHeldoutRead: ({ prereg: p, contentHash, heldout }) => {
         if (!existsSync(heldoutDir(method, env, undefined, repoRoot))) return
-        claimHeldoutRead(heldoutReadMarkerPath(method, p.epoch, env), { campaign_id: campaignId, started_at: new Date().toISOString(), prereg_tag: shas.tag })
+        claimHeldoutRead(heldoutReadMarkerPath(method, p.epoch, env), {
+          campaign_id: campaignId,
+          started_at: new Date().toISOString(),
+          prereg_content_hash: contentHash,
+          heldout_fingerprints: heldoutFingerprints(heldout),
+        })
       },
     })
   } catch (e) {
@@ -363,7 +369,14 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
     a.err(`no campaign directory found for ${a.campaign}`)
     return EXIT.ERROR
   }
-  const runs = loadCampaignRuns(campaignDir)
+  let runs: ReturnType<typeof loadCampaignRuns>
+  try {
+    runs = loadCampaignRuns(campaignDir)
+  } catch (e) {
+    if (!(e instanceof ManifestFormatError)) throw e
+    a.err(`REFUSED: ${campaignDir}: ${e.message}`)
+    return EXIT.REFUSED
+  }
   if (runs.length === 0) {
     a.err(`no run manifests in ${a.campaign}`)
     return EXIT.ERROR
@@ -520,10 +533,17 @@ function reportMain(a: ReportArgs): number {
     a.err(`no ${kind === 'red' ? 'RED' : kind} campaign found for ${a.method}; pass --campaign <id|dir>`)
     return EXIT.ERROR
   }
-  const runs = loadCampaignManifests(campaignDir)
-  const stale = runs.filter((r) => r.manifest.prereg.commit_sha !== verification.shas.commitSha || r.manifest.method !== a.method)
+  let runs: ReturnType<typeof loadCampaignManifests>
+  try {
+    runs = loadCampaignManifests(campaignDir)
+  } catch (e) {
+    if (!(e instanceof ManifestFormatError)) throw e
+    a.err(`REFUSED: ${campaignDir}: ${e.message}`)
+    return EXIT.REFUSED
+  }
+  const stale = runs.filter((r) => r.manifest.prereg.content_hash !== verification.contentHash || r.manifest.method !== a.method)
   if (stale.length) {
-    a.err(`REFUSED: ${stale.length} manifest(s) in ${campaignDir} were not produced under ${verification.shas.tag} (${verification.shas.commitSha.slice(0, 12)})`)
+    a.err(`REFUSED: ${stale.length} manifest(s) in ${campaignDir} were not produced under prereg ${verification.contentHash.slice(0, 12)}`)
     return EXIT.REFUSED
   }
   const summaryPath = join(campaignDir, 'summary.json')
@@ -555,7 +575,7 @@ function reportMain(a: ReportArgs): number {
   if (a.devOnly) return devReportMain(a, { repoRoot, git, verification, headSha, runs, plannedRuns, needles })
   let report: ReturnType<typeof buildRedReport>
   try {
-    report = buildRedReport({ prereg: verification.prereg, shas: verification.shas, headSha, runs, plannedRuns })
+    report = buildRedReport({ prereg: verification.prereg, contentHash: verification.contentHash, headSha, runs, plannedRuns })
   } catch (e) {
     a.err(`REFUSED: ${(e as Error).message}`)
     return EXIT.REFUSED
@@ -597,7 +617,7 @@ function rebuildDevRegression(
   const summaryPath = join(dir, 'summary.json')
   const runs = loadCampaignManifests(dir)
   const plannedRuns = existsSync(summaryPath) ? ((JSON.parse(readFileSync(summaryPath, 'utf8')) as { planned_runs?: number }).planned_runs ?? runs.length) : runs.length
-  const rebuilt = recomputeDevRegression({ prereg: c.verification.prereg, shas: c.verification.shas, headSha: c.headSha, runs, plannedRuns })
+  const rebuilt = recomputeDevRegression({ prereg: c.verification.prereg, contentHash: c.verification.contentHash, headSha: c.headSha, runs, plannedRuns })
   if (rebuilt.dev.passes_dev_bar !== committed.dev.passes_dev_bar || rebuilt.skill.sha256 !== committed.skill.sha256) {
     a.err(`warning: ${devPath.slice(c.repoRoot.length + 1)} disagrees with its campaign manifests; the recomputed values are used`)
   }
@@ -634,7 +654,7 @@ function greenReportMain(
   try {
     report = buildGreenReport({
       prereg: c.verification.prereg,
-      shas: c.verification.shas,
+      contentHash: c.verification.contentHash,
       headSha: c.headSha,
       runs: c.runs,
       plannedRuns: c.plannedRuns,
@@ -680,7 +700,7 @@ function devReportMain(
   const current = hashSkillDir(join(c.repoRoot, 'skills', a.method)).sha256
   let report: ReturnType<typeof buildDevReport>
   try {
-    report = buildDevReport({ prereg: c.verification.prereg, shas: c.verification.shas, headSha: c.headSha, runs: c.runs, plannedRuns: c.plannedRuns, skillSha256: current })
+    report = buildDevReport({ prereg: c.verification.prereg, contentHash: c.verification.contentHash, headSha: c.headSha, runs: c.runs, plannedRuns: c.plannedRuns, skillSha256: current })
   } catch (e) {
     a.err(`REFUSED: ${(e as Error).message}`)
     return EXIT.REFUSED

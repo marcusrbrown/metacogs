@@ -4,10 +4,7 @@
   "method": "synthesis",
   "held_out": "untouched",
   "prereg": {
-    "tag": "prereg/synthesis/3",
-    "tag_object_sha": "80dcfcff6120a411a20975338134d1e9564e6335",
-    "commit_sha": "58372061efc4da666a32047c68df489948697e6d",
-    "blob_sha": "c914af88d613a7b4fdb65774b4f9932349021016",
+    "content_hash": "7cf14e1b617452de157593316cdc45a9bacf4a6828242024d90ee6faf2599b81",
     "epoch": 3,
     "rubric_hash": "2701141a85847fe1ca78a32bc3fbcc359ef8c196d6f15538963ba76ad8b0180c",
     "runs_per_condition": 5,

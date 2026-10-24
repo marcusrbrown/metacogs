@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { findStaleManifests, MANIFEST_SCHEMA_VERSION, manifestPath, readManifest, type RunManifest, scanForLeaks, writeManifest } from './manifest'
+import { findStaleManifests, ManifestFormatError, MANIFEST_SCHEMA_VERSION, manifestPath, parseManifest, readManifest, type RunManifest, scanForLeaks, writeManifest } from './manifest'
 
 const dirs: string[] = []
 function tmp(): string {
@@ -28,7 +28,7 @@ function manifest(overrides: Partial<RunManifest> = {}): RunManifest {
     fixture: { id: 'f', kind: 'dev', hash: 'h' },
     attempt: 1,
     skill: null,
-    prereg: { tag: 'prereg/demo/1', tag_object_sha: 'a', commit_sha: 'b', blob_sha: 'c', epoch: 1 },
+    prereg: { content_hash: 'a'.repeat(64), epoch: 1 },
     provider_mode: 'scripted',
     opencode: { package: 'opencode-ai', version: '1.19.4' },
     model: { pinned: 'p/m', returned: [] },
@@ -57,6 +57,22 @@ describe('manifest files', () => {
     writeManifest(dir, manifest({ status: 'completed', outcome: 'pass' }))
     expect(readManifest(path)).toMatchObject({ status: 'completed', outcome: 'pass' })
     expect((require('node:fs').statSync(path).mode & 0o777).toString(8)).toBe('600')
+  })
+
+  test('a manifest with legacy prereg.tag/commit_sha and no content_hash predates the content-contract format', () => {
+    const legacy = { ...manifest(), prereg: { tag: 'prereg/demo/1', commit_sha: 'f'.repeat(40), epoch: 1 } }
+    expect(() => parseManifest(JSON.stringify(legacy))).toThrow(ManifestFormatError)
+    expect(() => parseManifest(JSON.stringify(legacy))).toThrow('manifest predates the content-contract format')
+    const dir = tmp()
+    writeFileSync(manifestPath(dir), JSON.stringify(legacy))
+    expect(() => readManifest(manifestPath(dir))).toThrow(ManifestFormatError)
+  })
+
+  test('a content hash that is not 64-hex, or a non-integer epoch, is refused', () => {
+    expect(() => parseManifest(JSON.stringify({ ...manifest(), prereg: { content_hash: 'abc', epoch: 1 } }))).toThrow(ManifestFormatError)
+    expect(() => parseManifest(JSON.stringify({ ...manifest(), prereg: { content_hash: 'a'.repeat(64), epoch: 1.5 } }))).toThrow(ManifestFormatError)
+    expect(() => parseManifest(JSON.stringify({ ...manifest(), prereg: undefined }))).toThrow(ManifestFormatError)
+    expect(parseManifest(JSON.stringify(manifest())).prereg).toEqual({ content_hash: 'a'.repeat(64), epoch: 1 })
   })
 })
 
