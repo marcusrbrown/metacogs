@@ -37,7 +37,6 @@ rulesets:
           required_status_checks:
             - {context: check, integration_id: 15368}
             - {context: Fro Bot, integration_id: 15368}
-            - {context: Renovate / Renovate, integration_id: 15368}
     bypass_actors: []
 
   # Release tags are immutable: no moves, no deletes. Creation stays open so the
