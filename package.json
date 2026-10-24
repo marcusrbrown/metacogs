@@ -2,6 +2,9 @@
   "name": "metacogs",
   "version": "0.1.0",
   "packageManager": "bun@1.4.4",
+  "workspaces": [
+    "."
+  ],
   "private": true,
   "type": "module",
   "license": "MIT",
