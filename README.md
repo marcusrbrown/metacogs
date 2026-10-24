@@ -82,6 +82,14 @@ bun run eval report --method <method>    # regenerate the report projection
 
 Runs happen in a throwaway workspace with a scrubbed environment so nothing from your machine reaches the model; [`evals/runner/README.md`](evals/runner/README.md) documents the isolation checks and the OpenCode event mapping. Checks that do run in CI: `bun run typecheck`, `bun test`, `bun run generate:check`, `bun run matrix:check`, `bun run scan:secrets`.
 
+## Releases and automation
+
+Releases use [Changesets](https://github.com/changesets/changesets). Pending changesets produce a version PR; merging it creates the `v*` tag and a GitHub Release. Nothing is published to a registry.
+
+Fro Bot reviews each pull request and ends the review with a verdict. The `Fro Bot` check passes only when the latest review on the PR head says `PASS` and approves, so the verdict gates merge. Bot-authored and draft PRs are not reviewed.
+
+A daily autoheal run may open one fix PR, on the branch `autoheal/current`. It may change `src/**` (not `src/runner/**`, `src/record/**`, or `src/generate/**`), `docs/**`, `README.md`, `HYPOTHESES.md`, `matrix.json`, and `.changeset/*.md`. It never changes eval evidence (`evals/**`) or skill text (`skills/**`), and it never changes a number or result claim. The boundary is enforced by the run's prompt and by an audit after the run that closes any PR touching other paths. Its findings go to a single open issue titled `Fro Bot Autoheal — <date>`. The daily schedule is turned on after the first successful manual dispatch.
+
 ## Attribution and license
 
 MIT. This project reinterprets concepts from [inanna-malick/metacog](https://github.com/inanna-malick/metacog) (MIT, pinned at commit `3d89bb30cd26369fdcd242fd704f66641dca327c`). Both copyright notices are in [LICENSE](LICENSE).

@@ -157,7 +157,8 @@ env:
     create or edit issues or comments: the workflow publishes your findings.
 
     FINDINGS FILE
-    Last, write the findings file named in the RUN IDENTITY block below.
+    Last, write the findings file named in the RUN IDENTITY block below. That
+    path is the only place outside the checkout your write tools may reach.
     Its first line is the marker line given there, verbatim. Then two
     sections, in this order:
     ## Fix
@@ -217,13 +218,43 @@ jobs:
         )
       )
     steps:
+      # On issue_comment, github.event.pull_request is null even when the issue
+      # is a PR, so the job-level fork guard cannot see the fork bit. This step
+      # refuses fork heads for that event and resolves the same-repository head
+      # SHA that the checkout uses and that anchors the action's brokered push.
+      # The output is empty when the head repository is not this repository.
+      - name: Refuse fork PR heads from comment triggers
+        id: prehead
+        if: github.event_name == 'issue_comment' && github.event.issue.pull_request
+        env:
+          GH_TOKEN: ${{ secrets.FRO_BOT_PAT }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          pr_json=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}")
+          is_fork=$(printf '%s' "$pr_json" | jq -r 'if .head.repo.fork == null then "unknown" else (.head.repo.fork | tostring) end')
+          if [ "$is_fork" != "false" ]; then
+            echo "::error::Refusing to check out fork PR head from comment trigger (PR #${PR_NUMBER}, fork=${is_fork})."
+            exit 1
+          fi
+          sha=""
+          if [ "$(printf '%s' "$pr_json" | jq -r '.head.repo.full_name // empty')" = "${REPO}" ]; then
+            sha=$(printf '%s' "$pr_json" | jq -r '.head.sha // empty')
+          fi
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+
       # Pull-request events review the exact head commit; the verdict gate below
-      # matches reviews to it. Comment and issue events get the default branch.
+      # matches reviews to it. Issue and discussion events get the default branch.
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha || '' }}
+          ref: >-
+            ${{
+              steps.prehead.outputs.sha
+              || github.event.pull_request.head.sha
+              || ''
+            }}
           token: ${{ secrets.FRO_BOT_PAT }}
           persist-credentials: false
 
@@ -251,6 +282,10 @@ jobs:
           auth-json: ${{ secrets.OPENCODE_AUTH_JSON }}
           github-token: ${{ secrets.FRO_BOT_PAT }}
           opencode-config: ${{ secrets.OPENCODE_CONFIG }}
+          trusted-head-sha: ${{ steps.prehead.outputs.sha }}
+          # Default brokered-push paths are src/, packages/*/src/ and docs/.
+          # .github, scripts, package.json and lockfiles stay denied by the action.
+          brokered-push-extra-paths: HYPOTHESES.md,matrix.json,.changeset
           model: ${{ vars.FRO_BOT_MODEL }}
           # A push inside the default 10-minute window would otherwise skip the
           # re-review and leave the check on a stale head.
@@ -259,14 +294,21 @@ jobs:
           prompt: ${{ env.PROMPT }}
 
       # The agent step exits 0 even when it delivers no review, so the check is
-      # decided here: it passes only when the reviewed head carries a PASS.
+      # decided here: it passes only when the reviewed head carries a PASS. The
+      # gate runs for every event with a PR context, so a mention cannot turn
+      # the check green without a PASS at the PR head. Issue and discussion
+      # events have no PR and skip it.
       - name: Verdict gate
-        if: github.event_name == 'pull_request'
+        if: >-
+          github.event_name == 'pull_request' ||
+          github.event_name == 'pull_request_review_comment' ||
+          (github.event_name == 'issue_comment' && github.event.issue.pull_request)
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           DELIVERY_KIND: ${{ steps.fro-bot.outputs.delivery-kind }}
           INVOCATION_OUTCOME: ${{ steps.fro-bot.outputs.invocation-outcome }}
         run: |
@@ -277,10 +319,19 @@ jobs:
             exit 1
           }
 
-          [ "${DELIVERY_KIND}" = "review" ] ||
-            fail "delivery-kind was '${DELIVERY_KIND:-empty}', not 'review'."
-          [ "${INVOCATION_OUTCOME}" = "succeeded" ] ||
-            fail "invocation-outcome was '${INVOCATION_OUTCOME:-empty}', not 'succeeded'."
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            HEAD_SHA="${EVENT_HEAD_SHA}"
+            # Only a pull_request run delivers a review; a mention delivers a
+            # comment, so these two checks do not apply to it.
+            [ "${DELIVERY_KIND}" = "review" ] ||
+              fail "delivery-kind was '${DELIVERY_KIND:-empty}', not 'review'."
+            [ "${INVOCATION_OUTCOME}" = "succeeded" ] ||
+              fail "invocation-outcome was '${INVOCATION_OUTCOME:-empty}', not 'succeeded'."
+          else
+            # A mention run may have pushed a fix, so read the head as it is now.
+            HEAD_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}" --jq '.head.sha')
+            [ -n "${HEAD_SHA}" ] || fail "could not resolve the head of PR #${PR}."
+          fi
 
           reviews=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR}/reviews?per_page=100" | jq -s 'add // []')
 
@@ -346,15 +397,19 @@ jobs:
           set -euo pipefail
           autoheal_date="$(date -u +%Y-%m-%d)"
           run_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          # The agent's write tools may only reach RUNNER_TEMP/fro-bot-response/.
+          findings="${RUNNER_TEMP}/fro-bot-response/autoheal/findings.md"
+          mkdir -p "$(dirname "${findings}")"
           {
             echo "AUTOHEAL_DATE=${autoheal_date}"
             echo "RUN_STARTED_AT=${run_started_at}"
+            echo "AUTOHEAL_FINDINGS=${findings}"
           } >> "${GITHUB_ENV}"
           {
             echo "prompt<<FRO_BOT_PROMPT_EOF"
             printf '%s\n' "RUN IDENTITY (trusted; frozen before the agent step)"
             printf -- '- AUTOHEAL_DATE: %s\n' "${autoheal_date}"
-            printf -- '- Findings file: %s/findings.md\n' "${RUNNER_TEMP}"
+            printf -- '- Findings file: %s\n' "${findings}"
             printf -- '- Findings first line (verbatim): <!-- autoheal:%s -->\n' "${autoheal_date}"
             echo
             printf '%s\n' "${AUTOHEAL_PROMPT}"

@@ -4,10 +4,10 @@
 # Invalid findings: comment on the newest open autoheal issue and leave it open.
 set -Eeuo pipefail
 
-: "${GH_TOKEN:?}" "${GITHUB_REPOSITORY:?}" "${AUTOHEAL_DATE:?}" "${RUNNER_TEMP:?}"
+: "${GH_TOKEN:?}" "${GITHUB_REPOSITORY:?}" "${AUTOHEAL_DATE:?}" "${AUTOHEAL_FINDINGS:?}" "${RUNNER_TEMP:?}"
 
 repo="$GITHUB_REPOSITORY"
-findings="${RUNNER_TEMP}/findings.md"
+findings="$AUTOHEAL_FINDINGS"
 prefix='Fro Bot Autoheal — '
 title="${prefix}${AUTOHEAL_DATE}"
 marker="<!-- autoheal:${AUTOHEAL_DATE} -->"
