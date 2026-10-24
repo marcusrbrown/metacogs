@@ -1,5 +1,5 @@
 /**
- * Thin, synchronous git wrapper: repo root, HEAD, and the dirty-skill check. Read-only: nothing
+ * Thin, synchronous git wrapper: repo root, HEAD, worktree status, and the tracked-file check. Read-only: nothing
  * here stages, commits, tags, or moves refs.
  */
 import { spawnSync } from 'node:child_process'
@@ -51,6 +51,11 @@ export class Git {
   /** `git status --porcelain` for the given paths; empty string when clean. */
   porcelain(paths: readonly string[]): string {
     return this.run(['status', '--porcelain', '--untracked-files=all', '--', ...paths]).stdout.trim()
+  }
+
+  /** True when `path` is in the index (`git ls-files --error-unmatch`). */
+  isTracked(path: string): boolean {
+    return this.run(['ls-files', '--error-unmatch', '--', path], { allowFailure: true }).status === 0
   }
 
   head(): string | null {

@@ -95,7 +95,7 @@ describe('review and rejudge', () => {
     const { writeManifest } = await import('./manifest')
     const runDir = join(repo.dir, 'evals', 'runs', 'demo-red-1', '001-dev-d1-baseline-r1')
     require('node:fs').mkdirSync(runDir, { recursive: true })
-    writeManifest(runDir, { schema_version: 1, run_id: '001-dev-d1-baseline-r1', campaign_id: 'demo-red-1', status: 'completed', outcome: 'fail', reasons: [], method: 'demo', condition: 'baseline', fixture: { id: 'd1', kind: 'dev', hash: 'h' } } as never)
+    writeManifest(runDir, { schema_version: 1, run_id: '001-dev-d1-baseline-r1', campaign_id: 'demo-red-1', status: 'completed', outcome: 'fail', reasons: [], method: 'demo', condition: 'baseline', fixture: { id: 'd1', kind: 'dev', hash: 'h' }, prereg: { content_hash: 'a'.repeat(64), epoch: 1 } } as never)
     require('node:fs').writeFileSync(join(runDir, 'judge.json'), JSON.stringify({ redacted_input_sha256: null, model_pinned: 'm', model_returned: ['m'], criteria: [{ id: 'CF1', verdict: 'fail', quotes: ['q'] }], attempts: 1 }))
     const t = io()
     expect(await main(['review', '--campaign', 'demo-red-1', '--repo', repo.dir], t.io)).toBe(EXIT.OK)
@@ -204,6 +204,17 @@ describe('refusals happen before anything launches', () => {
     t.io.env.METACOGS_HELDOUT_DIR = heldout
     expect(await main(['green', '--method', 'demo', '--repo', repo.dir, ...LIVE], t.io)).toBe(EXIT.REFUSED)
     expect(t.lines.err.join('\n')).toContain('skill_dirty')
+    expect(existsSync(join(t.stateHome, 'metacogs', 'heldout'))).toBe(false)
+  })
+
+  test('a GREEN read with no committed skill is refused as skill_missing and claims nothing', async () => {
+    const { repo, heldout, scaffold } = chainRepo()
+    writePrereg(repo, scaffold)
+    repo.commit('fixtures and prereg', [...scaffold.fixturePaths, scaffold.preregPath])
+    const t = io()
+    t.io.env.METACOGS_HELDOUT_DIR = heldout
+    expect(await main(['green', '--method', 'demo', '--repo', repo.dir, ...LIVE], t.io)).toBe(EXIT.REFUSED)
+    expect(t.lines.err.join('\n')).toContain('[skill_missing]')
     expect(existsSync(join(t.stateHome, 'metacogs', 'heldout'))).toBe(false)
   })
 
@@ -335,6 +346,17 @@ describe('report', () => {
     const t = io()
     expect(await main(['report', '--method', 'demo', '--repo', repo.dir], t.io)).toBe(EXIT.REFUSED)
     expect(t.lines.err.join('\n')).toContain('not produced under')
+  })
+
+  test('a campaign of legacy-format manifests (prereg.tag/commit_sha) is refused with the format message', async () => {
+    const { repo } = reportRepo()
+    const { writeFileSync: write, mkdirSync: mk } = require('node:fs')
+    const dir = join(repo.dir, 'evals', 'runs', 'demo-red-2026-10-22T16-00-00-000Z', '001-dev-d1-baseline-r1')
+    mk(dir, { recursive: true })
+    write(join(dir, 'manifest.json'), JSON.stringify({ ...manifest('001-dev-d1-baseline-r1', 'd1', 'dev', 'a'.repeat(64)), prereg: { tag: 'prereg/demo/1', commit_sha: 'f'.repeat(40), epoch: 1 } }))
+    const t = io()
+    expect(await main(['report', '--method', 'demo', '--repo', repo.dir], t.io)).toBe(EXIT.REFUSED)
+    expect(t.lines.err.join('\n')).toContain('manifest predates the content-contract format')
   })
 
   test('editing prereg.json after the campaign ran voids its manifests: the report is refused', async () => {
@@ -560,7 +582,7 @@ describe('review --reconcile', () => {
     const { writeManifest } = await import('./manifest')
     for (const [id, fixture, condition] of runs) {
       mkdirSync(join(campaign, id), { recursive: true })
-      writeManifest(join(campaign, id), { schema_version: 1, run_id: id, campaign_id: campaignId, status: 'completed', reasons: [], method: 'synthesis', condition, fixture: { id: fixture, kind: 'heldout', hash: 'h' } } as never)
+      writeManifest(join(campaign, id), { schema_version: 1, run_id: id, campaign_id: campaignId, status: 'completed', reasons: [], method: 'synthesis', condition, fixture: { id: fixture, kind: 'heldout', hash: 'h' }, prereg: { content_hash: 'a'.repeat(64), epoch: 1 } } as never)
     }
     const keyRows = (verdict: (i: number) => string) => criteria.map((c, i) => `| ${c} | ${verdict(i)} | "q" |`).join('\n')
     const header = (id: string, condition: string) => `## ${id}\n\n- fixture: sy-h5 (heldout)\n- condition: ${condition}\n- recorded outcome: pass\n\n| criterion | judge | quotes |\n| --- | --- | --- |\n`

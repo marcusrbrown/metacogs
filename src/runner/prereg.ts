@@ -118,7 +118,9 @@ export function parsePrereg(text: string): PreregParse {
   }
 
   for (const key of Object.keys(raw)) {
-    if (!(TOP_LEVEL_KEYS as readonly string[]).includes(key)) errors.push(`${key}: unknown field`)
+    if (key === 'prev_epoch_closing_commit') {
+      errors.push('prev_epoch_closing_commit: removed in the content-contract format; delete it and re-commit the prereg (the content hash changes)')
+    } else if (!(TOP_LEVEL_KEYS as readonly string[]).includes(key)) errors.push(`${key}: unknown field`)
   }
   need(raw.schema_version === PREREG_SCHEMA_VERSION, `schema_version: must be ${PREREG_SCHEMA_VERSION}`)
   need(typeof raw.method === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(raw.method), 'method: must match ^[a-z][a-z0-9-]{0,63}$')
@@ -303,7 +305,7 @@ export function verifyPreregContent(prereg: Prereg, paths: PreregPaths, options:
 
 // ── enforcement ────────────────────────────────────────────────────────────
 
-export type ViolationCode = 'prereg_missing' | 'prereg_invalid' | 'content_hash_mismatch' | 'skill_dirty'
+export type ViolationCode = 'prereg_missing' | 'prereg_invalid' | 'content_hash_mismatch' | 'skill_missing' | 'skill_dirty'
 
 export interface Violation {
   code: ViolationCode
@@ -362,8 +364,15 @@ export function enforcePrereg(input: EnforceInput): PreregVerification {
   const contentHash = preregContentHash(prereg)
 
   if (mode === 'green') {
-    if (git.porcelain([`skills/${method}`])) {
-      throw new PreregRefusal([{ code: 'skill_dirty', message: `skills/${method} has uncommitted changes; the run must use a committed skill` }], `prereg for ${method} epoch ${prereg.epoch}`)
+    const skillFile = `skills/${method}/SKILL.md`
+    if (!existsSync(join(repoRoot, skillFile)) || !git.isTracked(skillFile)) {
+      throw new PreregRefusal([{ code: 'skill_missing', message: `${skillFile} is absent or not tracked; GREEN needs a committed skill` }], `prereg for ${method} epoch ${prereg.epoch}`)
+    }
+    if (git.porcelain([`skills/${method}`, preregRelPath(method)])) {
+      throw new PreregRefusal(
+        [{ code: 'skill_dirty', message: `skills/${method} or ${preregRelPath(method)} has uncommitted changes; the run must use a committed skill and prereg` }],
+        `prereg for ${method} epoch ${prereg.epoch}`,
+      )
     }
     input.beforeHeldoutRead?.({ prereg, contentHash })
   }

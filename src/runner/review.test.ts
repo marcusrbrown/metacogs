@@ -70,6 +70,7 @@ function manifest(id: string, over: Partial<RunManifest> = {}): RunManifest {
     method: 'demo',
     condition: 'baseline',
     fixture: { id: 'd1', kind: 'dev', hash: sha256('d1') },
+    prereg: { content_hash: 'a'.repeat(64), epoch: 1 },
     check_failures: [],
     records: [],
     artifacts: {},

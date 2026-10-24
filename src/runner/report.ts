@@ -143,6 +143,12 @@ function assertAllJudged(runs: readonly LoadedRun[]): void {
   }
 }
 
+/** Every manifest must have run under the prereg being reported; a report never mixes contracts. */
+function assertContentHash(runs: readonly LoadedRun[], contentHash: string): void {
+  const foreign = runs.filter((r) => r.manifest.prereg.content_hash !== contentHash)
+  if (foreign.length) throw new Error(`${foreign.length} manifest(s) were not produced under prereg ${contentHash.slice(0, 12)} (${foreign.slice(0, 3).map((r) => r.manifest.run_id).join(', ')})`)
+}
+
 /** One manifest → exactly one bucket. */
 export function bucketOf(m: Pick<RunManifest, 'status' | 'outcome' | 'reasons' | 'verdict_basis' | 'fixture'>): Bucket {
   if (m.status === 'infra_error') return 'infra_error'
@@ -219,6 +225,7 @@ export function buildRedReport(input: RedReportInput): RedReport {
   const { prereg, contentHash, runs } = input
   if (runs.length === 0) throw new Error('no run manifests to report')
   assertAllJudged(runs)
+  assertContentHash(runs, contentHash)
   const bar = prereg.red_bar
 
   const byFixture = new Map<string, { id: string; kind: 'dev' | 'negative'; hash: string; runs: LoadedRun[] }>()
@@ -671,6 +678,7 @@ export function buildDevReport(input: DevReportInput): DevReport {
   const { prereg, contentHash, runs } = input
   if (runs.length === 0) throw new Error('no run manifests to report')
   assertAllJudged(runs)
+  assertContentHash(runs, contentHash)
   const devBar = devBarOf(prereg)
 
   const byFixture = new Map<string, { id: string; kind: 'dev' | 'negative'; hash: string; runs: LoadedRun[] }>()
@@ -1154,6 +1162,7 @@ export function buildGreenReport(input: GreenReportInput): GreenReport {
   const { prereg, contentHash, runs } = input
   if (runs.length === 0) throw new Error('no run manifests to report')
   assertAllJudged(runs)
+  assertContentHash(runs, contentHash)
 
   type Group = { id: string; hash: string; baseline: LoadedRun[]; skill: LoadedRun[] }
   const heldout = new Map<string, Group>()

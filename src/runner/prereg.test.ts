@@ -84,7 +84,7 @@ describe('parsePrereg', () => {
     expect(parsePrereg(JSON.stringify({ ...prereg, epoch: 0 })).ok).toBe(false)
     const old = parsePrereg(JSON.stringify({ ...prereg, prev_epoch_closing_commit: null }))
     expect(old.ok).toBe(false)
-    if (!old.ok) expect(old.errors.join('\n')).toContain('prev_epoch_closing_commit: unknown field')
+    if (!old.ok) expect(old.errors.join('\n')).toContain('prev_epoch_closing_commit: removed in the content-contract format')
   })
 
   test('dev_bar is optional; when present it needs two in-range counts and no other keys', () => {
@@ -225,7 +225,15 @@ describe('enforcePrereg (temp git repo)', () => {
       const absent = join(heldout, 'does-not-exist')
       const verified = enforce(repo, absent, 'dev')
       expect(verified.content.fixtures.heldout).toEqual([])
-      expect(() => enforce(repo, absent, 'green')).toThrow(PreregRefusal)
+      expect(codes(refusalOf(() => enforce(repo, absent, 'green')).violations)).toEqual(['skill_dirty'])
+    })
+
+    test('GREEN with a committed skill and an absent held-out dir is refused as a hash mismatch', () => {
+      const { repo, heldout } = setup()
+      const scaffold = scaffoldMethod(repo, 'demo', { heldoutDir: heldout })
+      buildHappyChain(repo, scaffold)
+      const absent = join(heldout, 'does-not-exist')
+      expect(codes(refusalOf(() => enforce(repo, absent, 'green')).violations)).toEqual(['content_hash_mismatch'])
     })
 
     test('an extra fixture file is refused like a changed one', () => {
@@ -247,6 +255,39 @@ describe('enforcePrereg (temp git repo)', () => {
       )
       expect(codes(refusal.violations)).toEqual(['skill_dirty'])
       expect(hooked).toBe(false)
+    })
+
+    test('GREEN without skills/<m>/SKILL.md on disk or in the index is refused before the held-out hook', () => {
+      const { repo, heldout } = setup()
+      const scaffold = scaffoldMethod(repo, 'demo', { heldoutDir: heldout })
+      writePrereg(repo, scaffold)
+      repo.commit('fixtures and prereg', [...scaffold.fixturePaths, scaffold.preregPath])
+      const green = (): PreregRefusal => {
+        hooked = false
+        return refusalOf(() => enforcePrereg({ git: repo.git, repoRoot: repo.dir, method: 'demo', mode: 'green', heldoutDir: heldout, beforeHeldoutRead: () => (hooked = true) }))
+      }
+      let hooked = false
+      expect(codes(green().violations)).toEqual(['skill_missing'])
+      expect(hooked).toBe(false)
+      // present on disk but never added to git
+      repo.write('skills/demo/SKILL.md', 'untracked\n')
+      expect(codes(green().violations)).toEqual(['skill_missing'])
+      expect(hooked).toBe(false)
+    })
+
+    test('an uncommitted edit to prereg.json refuses GREEN before the held-out hook', () => {
+      const { repo, heldout } = setup()
+      const scaffold = scaffoldMethod(repo, 'demo', { heldoutDir: heldout })
+      buildHappyChain(repo, scaffold)
+      writePrereg(repo, scaffold, { ...scaffold.prereg, runs_per_condition: scaffold.prereg.runs_per_condition + 1 })
+      let hooked = false
+      const refusal = refusalOf(() =>
+        enforcePrereg({ git: repo.git, repoRoot: repo.dir, method: 'demo', mode: 'green', heldoutDir: heldout, beforeHeldoutRead: () => (hooked = true) }),
+      )
+      expect(codes(refusal.violations)).toEqual(['skill_dirty'])
+      expect(refusal.message).toContain('evals/demo/prereg.json')
+      expect(hooked).toBe(false)
+      expect(() => enforce(repo, heldout, 'red')).not.toThrow()
     })
 
     test('the held-out hook receives the prereg content hash', () => {

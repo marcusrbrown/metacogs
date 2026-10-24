@@ -61,10 +61,6 @@ export class TestRepo {
     return this.sh(['rev-parse', 'HEAD'])
   }
 
-  head(): string {
-    return this.sh(['rev-parse', 'HEAD'])
-  }
-
   destroy(): void {
     rmSync(this.dir, { recursive: true, force: true })
   }
@@ -88,9 +84,8 @@ const RUBRIC_TEXT = '# Rubric\n\n1. names an assumption\n'
 export function scaffoldMethod(
   repo: TestRepo,
   method: string,
-  options: { epoch?: number; heldoutDir: string; overrides?: Partial<Prereg> },
+  options: { heldoutDir: string; overrides?: Partial<Prereg> },
 ): MethodScaffold {
-  const epoch = options.epoch ?? 1
   const dir = `evals/${method}`
   const files: Record<string, string> = {
     [`${dir}/fixtures/dev/d1.md`]: DEV_TEXT,
@@ -106,7 +101,7 @@ export function scaffoldMethod(
   const prereg: Prereg = {
     schema_version: 1,
     method,
-    epoch,
+    epoch: 1,
     salt: TEST_SALT,
     fixture_hashes: { dev: { d1: h(DEV_TEXT) }, negative: { n1: h(NEG_TEXT) }, heldout: { h1: h(HELD_TEXT) } },
     rubric_hash: h(RUBRIC_TEXT),
@@ -141,9 +136,8 @@ export function writePrereg(repo: TestRepo, scaffold: MethodScaffold, prereg: Pr
 /** The happy path: fixtures, rubric and prereg committed, then the skill. */
 export function buildHappyChain(repo: TestRepo, scaffold: MethodScaffold, extraSkillFiles: Record<string, string> = {}) {
   writePrereg(repo, scaffold)
-  const preregCommit = repo.commit('test: fixtures, rubric and prereg', [...scaffold.fixturePaths, scaffold.preregPath])
+  repo.commit('test: fixtures, rubric and prereg', [...scaffold.fixturePaths, scaffold.preregPath])
   repo.write(`skills/${scaffold.method}/SKILL.md`, `---\nname: ${scaffold.method}\ndescription: test skill\n---\n\nbody\n`)
   for (const [rel, content] of Object.entries(extraSkillFiles)) repo.write(`skills/${scaffold.method}/${rel}`, content)
-  const skillCommit = repo.commit('test: skill', [`skills/${scaffold.method}`])
-  return { preregCommit, skillCommit }
+  repo.commit('test: skill', [`skills/${scaffold.method}`])
 }

@@ -16,7 +16,7 @@ import { findNearDuplicates, NEAR_DUPLICATE_THRESHOLD } from './neardup'
 import { HUMAN_REVIEW_FILE, loadCampaignRuns, reconcileCampaign, rejudgeCampaign, writeReview } from './review'
 import { type HumanReview, humanReviewBlock, summarize } from './human-review'
 import { createJudge } from './judge'
-import { findStaleManifests } from './manifest'
+import { findStaleManifests, ManifestFormatError } from './manifest'
 import { removeLiveFixtures } from './env'
 import { killLiveGroups, opencodeAvailability } from './opencode'
 import { isLiveModel } from './scripted-provider'
@@ -363,7 +363,14 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
     a.err(`no campaign directory found for ${a.campaign}`)
     return EXIT.ERROR
   }
-  const runs = loadCampaignRuns(campaignDir)
+  let runs: ReturnType<typeof loadCampaignRuns>
+  try {
+    runs = loadCampaignRuns(campaignDir)
+  } catch (e) {
+    if (!(e instanceof ManifestFormatError)) throw e
+    a.err(`REFUSED: ${campaignDir}: ${e.message}`)
+    return EXIT.REFUSED
+  }
   if (runs.length === 0) {
     a.err(`no run manifests in ${a.campaign}`)
     return EXIT.ERROR
@@ -520,7 +527,14 @@ function reportMain(a: ReportArgs): number {
     a.err(`no ${kind === 'red' ? 'RED' : kind} campaign found for ${a.method}; pass --campaign <id|dir>`)
     return EXIT.ERROR
   }
-  const runs = loadCampaignManifests(campaignDir)
+  let runs: ReturnType<typeof loadCampaignManifests>
+  try {
+    runs = loadCampaignManifests(campaignDir)
+  } catch (e) {
+    if (!(e instanceof ManifestFormatError)) throw e
+    a.err(`REFUSED: ${campaignDir}: ${e.message}`)
+    return EXIT.REFUSED
+  }
   const stale = runs.filter((r) => r.manifest.prereg.content_hash !== verification.contentHash || r.manifest.method !== a.method)
   if (stale.length) {
     a.err(`REFUSED: ${stale.length} manifest(s) in ${campaignDir} were not produced under prereg ${verification.contentHash.slice(0, 12)}`)

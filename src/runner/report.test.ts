@@ -274,6 +274,12 @@ describe('buildRedReport', () => {
     expect(() => buildRedReport({ prereg: prereg(), contentHash: CONTENT_HASH, headSha: HEAD, runs, plannedRuns: 2 })).toThrow('no judge verdict')
   })
 
+  test('refuses a manifest produced under another prereg content hash', () => {
+    const runs = loadCampaignManifests(campaign([['dev', 'd1-x', ['judge_fail']], ['dev', 'd2-y', ['pass']]]))
+    runs[1]!.manifest.prereg.content_hash = 'e'.repeat(64)
+    expect(() => buildRedReport({ prereg: prereg(), contentHash: CONTENT_HASH, headSha: HEAD, runs, plannedRuns: 2 })).toThrow('were not produced under')
+  })
+
   test('refuses a skill-condition manifest', () => {
     const d = campaign([['dev', 'd1-x', ['pass']]])
     const m = loadCampaignManifests(d)
@@ -561,6 +567,12 @@ describe('buildDevReport (skill condition, dev + negative fixtures)', () => {
     expect(() => buildDevReport({ prereg: prereg(), contentHash: CONTENT_HASH, headSha: HEAD, runs, plannedRuns: 3, skillSha256: SKILL })).toThrow('no judge verdict')
   })
 
+  test('a manifest produced under another prereg content hash is refused', () => {
+    const runs = runsFor([['dev', 'd1-x', ['pass', 'pass']], ['negative', 'n1-z', ['pass']]])
+    runs[0]!.manifest.prereg.content_hash = 'e'.repeat(64)
+    expect(() => buildDevReport({ prereg: prereg(), contentHash: CONTENT_HASH, headSha: HEAD, runs, plannedRuns: 3, skillSha256: SKILL })).toThrow('were not produced under')
+  })
+
   describe('recomputeDevRegression', () => {
     const dr = (): Prereg => ({ ...prereg(), fixture_hashes: { dev: { 'd1-x': sha256('d1-x'), 'd2-y': sha256('d2-y') }, negative: { 'n1-z': sha256('n1-z') }, heldout: {} } })
     const all = (): ReturnType<typeof runsFor> =>
@@ -650,7 +662,7 @@ describe('committed dev reports', () => {
   const REPO_ROOT = join(import.meta.dir, '..', '..')
   for (const method of ['counterfactual', 'synthesis']) {
     const path = devReportPath(REPO_ROOT, method)
-    test.skipIf(!existsSync(path))(`evals/reports/${method}/green-dev.json is allowlist-only, names the epoch-2 tag, and leaves held-out untouched`, () => {
+    test.skipIf(!existsSync(path))(`evals/reports/${method}/green-dev.json is allowlist-only, carries a prereg content hash, and leaves held-out untouched`, () => {
       const report = JSON.parse(readFileSync(path, 'utf8')) as DevReport
       expect(validateDevReport(report)).toEqual([])
       expect(report.method).toBe(method)
@@ -813,6 +825,12 @@ describe('buildGreenReport (held-out, both conditions)', () => {
     const runs = runsFor(good)
     runs.find((r) => r.manifest.fixture.kind === 'heldout' && r.manifest.outcome === 'pass')!.manifest.verdict_basis = 'deterministic'
     expect(() => buildGreenReport({ prereg: greenPrereg(), contentHash: CONTENT_HASH, headSha: HEAD, runs, plannedRuns: 25, skillSha256: SKILL, devReport: devOk, nearDuplicate: 'pass' })).toThrow('no judge verdict')
+  })
+
+  test('a manifest produced under another prereg content hash is refused', () => {
+    const runs = runsFor(good)
+    runs[3]!.manifest.prereg.content_hash = 'e'.repeat(64)
+    expect(() => build(good, { runs })).toThrow('were not produced under')
   })
 
   test('a near-duplicate held-out fixture misses; only pass/fail is reported', () => {
