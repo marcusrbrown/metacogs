@@ -1,0 +1,47 @@
+---
+# Renovate this repository if Renovate-specific tasks are checked, if this workflow file or the Renovate configuration file is changed, or if dispatched.
+name: Renovate
+
+on:
+  issues:
+    types: [edited]
+  pull_request:
+    types: [edited]
+  push:
+    branches-ignore: [main]
+  workflow_dispatch:
+    inputs:
+      log-level:
+        description: Log level for Renovate
+        required: false
+        type: string
+        default: debug
+      print-config:
+        description: Log the fully-resolved Renovate config for each repository, plus fully-resolved presets.
+        required: false
+        type: boolean
+        default: false
+  workflow_run:
+    branches: [main]
+    types: [completed]
+    workflows: [CI]
+
+permissions:
+  contents: read
+
+jobs:
+  renovate:
+    # Edits require a non-bot actor; pushes and dispatches always run;
+    # workflow_run requires a successful CI run.
+    if: >
+      (github.event.action == 'edited' && !contains(github.actor, '[bot]')) ||
+      (github.event.action != 'edited' && github.event_name != 'workflow_run') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    name: Renovate
+    secrets:
+      APPLICATION_ID: ${{ secrets.APPLICATION_ID }}
+      APPLICATION_PRIVATE_KEY: ${{ secrets.APPLICATION_PRIVATE_KEY }}
+    uses: bfra-me/.github/.github/workflows/renovate.yaml@e6a1ab17bb68213940f63de91bd0450acdf9fff4 # v4.43.0
+    with:
+      log-level: ${{ inputs.log-level || (github.event_name == 'pull_request' || github.ref_name != github.event.repository.default_branch) && 'debug' || 'info' }}
+      print-config: ${{ inputs.print-config || false }}

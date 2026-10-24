@@ -1,0 +1,23 @@
+---
+name: Renovate Changesets
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  renovate-changesets:
+    name: Create Renovate Changeset
+    if: >-
+      github.event.pull_request.head.repo.fork == false &&
+      (github.actor == 'renovate[bot]' || github.actor == 'mrbro-bot[bot]')
+    secrets:
+      APPLICATION_ID: ${{ secrets.APPLICATION_ID }}
+      APPLICATION_PRIVATE_KEY: ${{ secrets.APPLICATION_PRIVATE_KEY }}
+    uses: bfra-me/.github/.github/workflows/renovate-changeset.yaml@e6a1ab17bb68213940f63de91bd0450acdf9fff4 # v4.43.0
+    with:
+      target-package: metacogs
