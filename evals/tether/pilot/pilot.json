@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "method": "tether",
+  "prereg_content_hash": "a190e0d51f8fb86e690c3b616e947af0e1309248ffc0c6ae6d8be8b69b47bd22",
+  "agent_model_id": "openai/gpt-6-luna",
+  "judge_model_id": "anthropic/claude-haiku-5-5",
+  "arms": [
+    "baseline"
+  ],
+  "tally": {
+    "baseline": {
+      "te-d1-nightly-export-retries": {
+        "runs": 5,
+        "te1_pass": 5,
+        "te2_pass": 5,
+        "both_pass": 5,
+        "over_limit": 0,
+        "empty": 0,
+        "skill_loaded": 0,
+        "instruction_present": 0
+      },
+      "te-d2-reset-email-rate-limit": {
+        "runs": 5,
+        "te1_pass": 5,
+        "te2_pass": 5,
+        "both_pass": 5,
+        "over_limit": 0,
+        "empty": 0,
+        "skill_loaded": 0,
+        "instruction_present": 0
+      }
+    }
+  }
+}

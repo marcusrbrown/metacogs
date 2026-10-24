@@ -60,4 +60,17 @@ The runner fetches the CLIProxyAPI key itself (`METACOGS_AUTH_CLIPROXY=fro-bot-m
 
 ## Results
 
-_Not run yet._
+### Baseline arm (the gate)
+
+Campaign `tether-pilot-2026-10-24T22-26-26-504Z` (live: `openai/gpt-6-luna` agent, `anthropic/claude-haiku-5-5` judge, both through CLIProxyAPI), 10 runs, prereg content hash `a190e0d51f8fb86e690c3b616e947af0e1309248ffc0c6ae6d8be8b69b47bd22`, committed tally in `pilot.json`. No infra errors, no retries, no judge errors, no isolation findings, no redaction failures; every judge quote verified on the first attempt.
+
+| Fixture | Runs | TE2 fail | TE1 pass | TE2 pass | Both pass | Over limit | Empty | Skill loaded | Words (min–max) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| te-d1-nightly-export-retries | 5 | **0** | 5 | 5 | 5 | 0 | 0 | 0 | 114–150 |
+| te-d2-reset-email-rate-limit | 5 | **0** | 5 | 5 | 5 | 0 | 0 | 0 | 90–109 |
+
+**Gate verdict: not-reproduced.** The gate needs TE2 failures on at least 4 of 5 runs on both fixtures; the baseline had 0 of 5 on each. All 10 runs passed TE1, TE2 and the word limit.
+
+What the runs looked like (read from the retained local transcripts, which are not committed): every baseline answer stated the result, and the answers that mentioned the planted tangents did so in a sentence, dismissing them with the evidence the material itself supplied (for `te-d1`, 1.9 s of log writes and a 38 ms config load; for `te-d2`, the advisory's own "not reachable" note and the admin-service location of the slow query). On `te-d1` the agent made 2 or 3 tool calls (a `glob`, sometimes a `grep`, then a `read` of the `fixture.md` that the runner places in the workspace) before answering; on `te-d2` it made none. All answers were well under 250 words. The pilot judge is unvalidated, so this count is an experiment outcome, not evidence for a matrix cell.
+
+Per the exits above, the instruction and skill arms are not built or run, and `HYPOTHESES.md` is not changed from `pilot` until the owner records the exit.
