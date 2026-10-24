@@ -3,7 +3,7 @@
   "kind": "red",
   "method": "counterfactual",
   "prereg": {
-    "content_hash": "152c5889db5bc7a029c802a0365b19bc22c613def222512c31d62a377b8a6fa4",
+    "content_hash": "6f0048ac3a48d5e6ae69c31794e0b2262b57e0862c6b88d7685c7d36be5b608e",
     "epoch": 2,
     "rubric_hash": "4dbd235645f66aba120e5b87c151188ae3b90e6ce4d0f6e23ff7bd60a48a367b",
     "runs_per_condition": 5,

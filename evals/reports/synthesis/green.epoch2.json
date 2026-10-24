@@ -3,7 +3,7 @@
   "kind": "green",
   "method": "synthesis",
   "prereg": {
-    "content_hash": "7cf14e1b617452de157593316cdc45a9bacf4a6828242024d90ee6faf2599b81",
+    "content_hash": "74b16228c720f75e5db8cd0c3c5f76abbb52881a262a773c68c640b3de969e27",
     "epoch": 2,
     "rubric_hash": "2701141a85847fe1ca78a32bc3fbcc359ef8c196d6f15538963ba76ad8b0180c",
     "runs_per_condition": 5,

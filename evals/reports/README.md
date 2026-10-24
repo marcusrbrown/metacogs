@@ -6,7 +6,7 @@ Regenerate with `bun run eval report --method <m>` (newest `evals/runs/<m>-red-*
 
 ## Reading `red.json`
 
-- `prereg`: `content_hash` (sha256 of the RFC 8785 canonical form of `prereg.json`) the runs were enforced against, plus `epoch` and the rubric hash. `repo.head_sha` is the checkout that produced the report. Reports before 2026-10-24 were re-keyed from tag identifiers to content hashes: each carries the content hash of the `prereg.json` as committed on that date, which for an earlier epoch is the current file, not that epoch's own.
+- `prereg`: `content_hash` (sha256 of the RFC 8785 canonical form of `prereg.json`) the runs were enforced against, plus `epoch` and the rubric hash. `repo.head_sha` is the checkout that produced the report. Reports before 2026-10-24 were re-keyed from tag identifiers to content hashes: each carries the hash of its own epoch's prereg content (the `prereg.json` of that epoch, minus the removed `prev_epoch_closing_commit` field).
 - `fixtures[]`: one entry per fixture.
   - `fail_over_total` is `fail/attempted`. `attempted` is `pass + fail`; `infra_error` and `non_isolated` runs are reported but are in no denominator. Timeouts, budget breaches, host crashes, and `judge_error` are FAILs.
   - `fail_rate_wilson95` is the 95% Wilson interval for the fail rate. At N=5, 5/5 is `[0.5655, 1]`: it rules out a true fail rate below about 57%, nothing more.

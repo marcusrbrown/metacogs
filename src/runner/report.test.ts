@@ -331,16 +331,20 @@ describe('allowlist projection', () => {
 describe('committed reports', () => {
   const REPO_ROOT = join(import.meta.dir, '..', '..')
   for (const method of ['counterfactual', 'synthesis']) {
-    test(`evals/reports/${method}: a report of the current epoch carries the content hash of the committed prereg.json`, () => {
+    test(`evals/reports/${method}: current-epoch reports carry the committed prereg's content hash; older epochs carry a different one`, () => {
       const parsed = parsePrereg(readFileSync(join(REPO_ROOT, 'evals', method, 'prereg.json'), 'utf8'))
       if (!parsed.ok) throw new Error(parsed.errors.join('; '))
+      const hash = preregContentHash(parsed.prereg)
       const dir = join(REPO_ROOT, 'evals', 'reports', method)
-      const current = readdirSync(dir)
+      const reports = readdirSync(dir)
         .filter((f) => f.endsWith('.json'))
         .map((f) => JSON.parse(readFileSync(join(dir, f), 'utf8')) as { prereg: { content_hash: string; epoch: number } })
-        .filter((r) => r.prereg.epoch === parsed.prereg.epoch)
+      const current = reports.filter((r) => r.prereg.epoch === parsed.prereg.epoch)
+      const older = reports.filter((r) => r.prereg.epoch < parsed.prereg.epoch)
       expect(current.length).toBeGreaterThan(0)
-      for (const r of current) expect(r.prereg.content_hash).toBe(preregContentHash(parsed.prereg))
+      expect(older.length).toBeGreaterThan(0)
+      for (const r of current) expect(r.prereg.content_hash).toBe(hash)
+      for (const r of older) expect(r.prereg.content_hash).not.toBe(hash)
     })
   }
 
