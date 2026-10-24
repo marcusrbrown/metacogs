@@ -15,14 +15,14 @@ import { Git } from './git'
 import { findNearDuplicates, NEAR_DUPLICATE_THRESHOLD } from './neardup'
 import { HUMAN_REVIEW_FILE, reconcileCampaign, rejudgeCampaign, writeReview } from './review'
 import { type HumanReview, humanReviewBlock, summarize } from './human-review'
-import { createJudge, parseDeclarations } from './judge'
+import { createJudge, parseDeclarations, parseRubric } from './judge'
 import { findStaleManifests, loadCampaignRuns, ManifestFormatError } from './manifest'
 import { removeLiveFixtures } from './env'
 import { killLiveGroups, opencodeAvailability } from './opencode'
 import { isLiveModel } from './scripted-provider'
 import { enforcePrereg, heldoutFingerprints, parsePrereg, type Prereg, preregRelPath, PreregRefusal } from './prereg'
 import { buildDevReport, buildGreenReport, buildRedReport, type DevReport, type DevRegressionSource, type GreenReport, greenReportPath, loadCampaignManifests, recomputeDevRegression, validateDevReport, validateGreenReport, writeDevReport, writeGreenReport, writeReport } from './report'
-import { isPilotArm, armRefusal, PILOT_ARMS, pilotPreregRel, planPilot, tallyPilotCampaign, writePilotTally } from './pilot'
+import { isPilotArm, pilotPreregRel, planPilot, tallyPilotCampaign, writePilotTally } from './pilot'
 import { planRuns, type ProviderMode, runCampaign, tallyKey } from './run'
 import { claimHeldoutRead, CustodyError, hashSkillDir, heldoutDir, heldoutReadMarkerPath, resolveOutputDir, stateRoot } from './workspace'
 
@@ -150,15 +150,10 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
   }
   const armFlag = parsed.values.arm ?? 'baseline'
   if (isPilot && !isPilotArm(armFlag)) {
-    err(`--arm must be one of ${PILOT_ARMS.join(', ')}\n${USAGE}`)
-    return EXIT.USAGE
-  }
-  const arm = isPilotArm(armFlag) ? armFlag : 'baseline'
-  const armRefused = isPilot ? armRefusal(arm) : undefined
-  if (armRefused) {
-    err(`REFUSED: ${armRefused}`)
+    err(`REFUSED: --arm ${armFlag}: this runner supports the baseline arm only; see evals/${method}/pilot/README.md`)
     return EXIT.REFUSED
   }
+  const arm = 'baseline' as const
   // A pilot is a live experiment: a scripted run answers from a stub, so there is nothing to compare, and it would overwrite a real tally.
   // Refused before any credential is fetched or the prereg is read.
   if (isPilot && provider !== 'live') {
@@ -398,6 +393,7 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
       prereg_content_hash: verification.contentHash,
       agent_model_id: prereg.agent_model_id,
       judge_model_id: prereg.judge_model_id,
+      criteria: pilotCriteria(repoRoot, method),
     })
     out(`wrote ${writePilotTally(repoRoot, pilotTally, out).slice(repoRoot.length + 1)} (arms: ${pilotTally.arms.join(', ')})`)
   }
@@ -427,6 +423,9 @@ interface CampaignToolArgs {
   availability: typeof opencodeAvailability
   makeJudge: typeof createJudge
 }
+
+/** The judge criterion ids the pilot tally counts: the rubric's, which the prereg's `rubric_hash` has already pinned. */
+const pilotCriteria = (repoRoot: string, method: string): string[] => parseRubric(readFileSync(join(repoRoot, 'evals', method, 'rubric.md'), 'utf8')).criteria.map((c) => c.id)
 
 /** `--campaign` is a directory, or a campaign id under `evals/runs/` (then the state root's `runs/`, where held-out campaigns live). */
 export function resolveCampaignDir(value: string, repoRoot: string, cwd: string, env: Record<string, string | undefined>): string | undefined {
@@ -473,6 +472,10 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
   if (a.mode === 'rejudge') {
     // A pilot campaign (its manifests carry an arm) was run under the pilot prereg, not evals/<m>/prereg.json.
     const isPilotCampaign = runs.some((r) => r.manifest.arm !== undefined)
+    if (isPilotCampaign && runs.some((r) => r.manifest.arm === undefined)) {
+      a.err(`REFUSED: ${campaignDir} mixes pilot manifests (with an arm) and ordinary ones; a campaign is one or the other`)
+      return EXIT.REFUSED
+    }
     if (a.tallyOnly && !isPilotCampaign) {
       a.err(`--tally-only applies to a pilot campaign only; ${a.campaign} carries no arm\n${USAGE}`)
       return EXIT.USAGE
@@ -522,7 +525,7 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
         // A rejudge rewrites judge.json under this prereg and leaves the manifests (and the hash they were run under) alone.
         tally = tallyPilotCampaign(
           campaignDir,
-          { method, prereg_content_hash: verification.contentHash, agent_model_id: verification.prereg.agent_model_id, judge_model_id: verification.prereg.judge_model_id },
+          { method, prereg_content_hash: verification.contentHash, agent_model_id: verification.prereg.agent_model_id, judge_model_id: verification.prereg.judge_model_id, criteria: pilotCriteria(repoRoot, method) },
           { allowRejudged: true },
         )
       } catch (e) {

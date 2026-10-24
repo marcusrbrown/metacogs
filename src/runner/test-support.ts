@@ -80,6 +80,36 @@ const NEG_TEXT = 'Negative fixture: fix the typo in README.\n'
 const HELD_TEXT = 'Held-out fixture: pick a queue.\n'
 const RUBRIC_TEXT = '# Rubric\n\n1. names an assumption\n'
 
+/** A rubric `parseRubric` accepts: two judge criteria, TE1 and TE2. Pass it as `scaffoldMethod`'s `rubric` when a test reads criterion ids. */
+export const JUDGED_RUBRIC_TEXT = [
+  '# Rubric',
+  '',
+  '## What is being measured',
+  '',
+  'Whether the answer states the result.',
+  '',
+  '## Criteria',
+  '',
+  '### TE1: Result stated',
+  '',
+  '- `id`: TE1',
+  '- `check`: judge',
+  '- **Pass anchor**: The answer states the result.',
+  '- **Fail anchor**: It does not.',
+  '',
+  '### TE2: Nothing extra',
+  '',
+  '- `id`: TE2',
+  '- `check`: judge',
+  '- **Pass anchor**: Nothing unrelated is developed.',
+  '- **Fail anchor**: Something unrelated is developed.',
+  '',
+  '## Judge instructions',
+  '',
+  '1. Grade the answer.',
+  '',
+].join('\n')
+
 /**
  * Writes fixtures, rubric, and held-out content for `method`; returns a prereg that matches them.
  * `expectations` (id → sidecar JSON) writes `<id>.expectation.json` beside the dev fixture or the held-out fixture and hashes it
@@ -91,14 +121,17 @@ export function scaffoldMethod(
   options: {
     heldoutDir: string
     overrides?: Partial<Prereg>
+    /** The rubric text (default: a one-line stub that `parseRubric` rejects). */
+    rubric?: string
     expectations?: { dev?: Record<string, unknown>; heldout?: Record<string, unknown> }
   },
 ): MethodScaffold {
   const dir = `evals/${method}`
+  const rubricText = options.rubric ?? RUBRIC_TEXT
   const files: Record<string, string> = {
     [`${dir}/fixtures/dev/d1.md`]: DEV_TEXT,
     [`${dir}/fixtures/negative/n1.md`]: NEG_TEXT,
-    [`${dir}/rubric.md`]: RUBRIC_TEXT,
+    [`${dir}/rubric.md`]: rubricText,
     [`${dir}/redact.json`]: '{"tokens":[]}\n',
   }
   for (const [path, content] of Object.entries(files)) repo.write(path, content)
@@ -128,7 +161,7 @@ export function scaffoldMethod(
     epoch: 1,
     salt: TEST_SALT,
     fixture_hashes: { dev: { d1: h(DEV_TEXT) }, negative: { n1: h(NEG_TEXT) }, heldout: { h1: h(HELD_TEXT) } },
-    rubric_hash: h(RUBRIC_TEXT),
+    rubric_hash: h(rubricText),
     runs_per_condition: 2,
     red_bar: { min_baseline_fails_per_fixture: 4, min_fixtures: 2 },
     green_bar: { skill_pooled_pass_min: 17, skill_per_fixture_pass_min: 3, baseline_pooled_pass_max: 10 },

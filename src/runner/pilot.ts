@@ -1,10 +1,11 @@
 /**
- * `eval pilot`: a dev-only, unreported campaign that compares arms on the pilot prereg (`evals/<m>/pilot/prereg.json`).
+ * `eval pilot`: a dev-only, unreported campaign on the pilot prereg (`evals/<m>/pilot/prereg.json`).
  *
- * - `planPilot` plans one arm over the dev fixtures only: no negatives, no held-out. `instruction` runs under condition
- *   `baseline`; `skill` under `skill`. Every planned run carries its `arm`, which lands on the manifest.
+ * - `planPilot` plans the baseline arm over the dev fixtures only: no negatives, no held-out. Every planned run carries its `arm`,
+ *   which lands on the manifest and marks the campaign as a pilot.
  * - Reports refuse any manifest that carries an `arm`, so the only projection of a pilot is `pilot.json`, written by a fixed-key
- *   writer: counts, model ids, the prereg content hash, the arms present. No stdout, stderr, env, quotes or transcript text.
+ *   writer: counts, model ids, the prereg content hash, the arms present and their campaign ids. No stdout, stderr, env, quotes or
+ *   transcript text.
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 
@@ -15,22 +16,10 @@ import { readJudgeRecord } from './judge-record'
 import { loadCampaignRuns, PILOT_ARMS, type PilotArm, type RunManifest } from './manifest'
 import type { LoadedFixture } from './prereg'
 import type { PlannedRun } from './run'
-import type { Condition } from './workspace'
 
 export { PILOT_ARMS, type PilotArm }
 
-/** The arms this build can run. The others are named so a refusal can say what is missing. */
-export const RUNNABLE_ARMS: readonly PilotArm[] = ['baseline']
-
 export const isPilotArm = (value: string): value is PilotArm => (PILOT_ARMS as readonly string[]).includes(value)
-
-/** Why `arm` cannot run yet, or `undefined` when it can. */
-export function armRefusal(arm: PilotArm): string | undefined {
-  if (RUNNABLE_ARMS.includes(arm)) return undefined
-  return `--arm ${arm} is not available yet: this build runs the baseline arm only (the instruction and skill arms are Unit 6 of docs/plans/2026-10-24-001-feat-tether-method-plan.md)`
-}
-
-export const conditionOfArm = (arm: PilotArm): Condition => (arm === 'skill' ? 'skill' : 'baseline')
 
 export interface PilotPlanInput {
   arm: PilotArm
@@ -49,7 +38,7 @@ export function planPilot(input: PilotPlanInput): PlannedRun[] {
     for (const f of selected) {
       plan.push({
         fixture: { id: f.id, kind: 'dev', text: f.text, hash: f.hash, ...(f.expectation ? { expectation: f.expectation } : {}) },
-        condition: conditionOfArm(input.arm),
+        condition: 'baseline',
         arm: input.arm,
         index,
       })
@@ -60,24 +49,19 @@ export function planPilot(input: PilotPlanInput): PlannedRun[] {
 
 // ── tally projection ───────────────────────────────────────────────────────
 
-export const PILOT_SCHEMA_VERSION = 2 as const
-
-/** Judge criteria the tether pilot reads; `TE3m` is mechanical and shows up as `over_limit`. */
-const TE1 = 'TE1'
-const TE2 = 'TE2'
+export const PILOT_SCHEMA_VERSION = 3 as const
 
 export interface PilotCell {
   /** Runs that reached a verdict or a failure of their own: infra errors, isolation breaches and interrupted runs are left out. */
   runs: number
-  te1_pass: number
-  te2_pass: number
-  both_pass: number
+  /** Judge criterion id (read from the rubric) → runs that passed it. Mechanical criteria show up as `over_limit` instead. */
+  criteria: Record<string, number>
+  /** Runs that passed every judge criterion. */
+  all_pass: number
   over_limit: number
   empty: number
-  /** Runs whose transcript shows a skill's content being loaded. A baseline or instruction arm with any is contaminated. */
+  /** Runs whose transcript shows a skill's content being loaded. The baseline arm gets no skill, so any is contamination. */
   skill_loaded: number
-  /** Runs of the `instruction` arm (the runner adds the instruction to every one of them). */
-  instruction_present: number
 }
 
 export interface PilotTally {
@@ -94,22 +78,23 @@ export interface PilotTally {
   tally: Partial<Record<PilotArm, Record<string, PilotCell>>>
 }
 
-const emptyCell = (): PilotCell => ({ runs: 0, te1_pass: 0, te2_pass: 0, both_pass: 0, over_limit: 0, empty: 0, skill_loaded: 0, instruction_present: 0 })
+const emptyCell = (criteria: readonly string[]): PilotCell => ({ runs: 0, criteria: Object.fromEntries(criteria.map((id) => [id, 0])), all_pass: 0, over_limit: 0, empty: 0, skill_loaded: 0 })
 
-const CELL_KEYS = ['runs', 'te1_pass', 'te2_pass', 'both_pass', 'over_limit', 'empty', 'skill_loaded', 'instruction_present'] as const satisfies readonly (keyof PilotCell)[]
+const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0
 
-/** Rebuilds a cell with exactly the allowlisted keys, whatever the value passed in carried. */
+const COUNT_KEYS = ['runs', 'all_pass', 'over_limit', 'empty', 'skill_loaded'] as const satisfies readonly (keyof PilotCell)[]
+const CELL_KEYS = ['runs', 'criteria', 'all_pass', 'over_limit', 'empty', 'skill_loaded'] as const satisfies readonly (keyof PilotCell)[]
+
+/** Rebuilds a cell with exactly the allowlisted keys, whatever the value passed in carried. A count that is not a non-negative integer is an error. */
 function fixedCell(cell: PilotCell): PilotCell {
-  return {
-    runs: cell.runs,
-    te1_pass: cell.te1_pass,
-    te2_pass: cell.te2_pass,
-    both_pass: cell.both_pass,
-    over_limit: cell.over_limit,
-    empty: cell.empty,
-    skill_loaded: cell.skill_loaded,
-    instruction_present: cell.instruction_present,
-  }
+  for (const key of COUNT_KEYS) if (!isCount(cell[key])) throw new Error(`${key} is not a non-negative integer`)
+  const criteria = Object.fromEntries(
+    Object.entries(cell.criteria).map(([id, passes]) => {
+      if (!isCount(passes)) throw new Error(`criteria.${id} is not a non-negative integer`)
+      return [id, passes]
+    }),
+  )
+  return { runs: cell.runs, criteria, all_pass: cell.all_pass, over_limit: cell.over_limit, empty: cell.empty, skill_loaded: cell.skill_loaded }
 }
 
 const COUNTED_STATUSES: readonly string[] = ['completed', 'timeout', 'budget_exceeded', 'host_crash']
@@ -139,6 +124,11 @@ export interface PilotContext {
   judge_model_id: string
 }
 
+export interface TallyContext extends PilotContext {
+  /** The rubric's judge criterion ids (`parseRubric(...).criteria`), in rubric order. Each gets a pass count per cell. */
+  criteria: readonly string[]
+}
+
 export interface TallyOptions {
   /**
    * Skip the check that every manifest was produced under `ctx.prereg_content_hash`. Only the rejudge path sets it: a rejudge
@@ -151,7 +141,7 @@ export interface TallyOptions {
  * Counts one pilot campaign into `arm → fixture → cell`. A manifest without an `arm` means this is not a pilot campaign, and a
  * manifest produced under another prereg content hash is refused unless `allowRejudged`: its verdicts are not the current prereg's.
  */
-export function tallyPilotCampaign(campaignDir: string, ctx: PilotContext, options: TallyOptions = {}): PilotTally {
+export function tallyPilotCampaign(campaignDir: string, ctx: TallyContext, options: TallyOptions = {}): PilotTally {
   const tally: PilotTally['tally'] = {}
   const campaignIds = new Set<string>()
   for (const { dir: runDir, manifest: m } of loadCampaignRuns(campaignDir)) {
@@ -161,24 +151,22 @@ export function tallyPilotCampaign(campaignDir: string, ctx: PilotContext, optio
     }
     campaignIds.add(m.campaign_id)
     if (!COUNTED_STATUSES.includes(m.status)) continue
-    const cell = ((tally[m.arm] ??= {})[m.fixture.id] ??= emptyCell())
+    const cell = ((tally[m.arm] ??= {})[m.fixture.id] ??= emptyCell(ctx.criteria))
     const verdicts = verdictsOf(runDir, m)
-    const te1 = passed(verdicts, TE1)
-    const te2 = passed(verdicts, TE2)
+    const passes = ctx.criteria.filter((id) => passed(verdicts, id))
     cell.runs += 1
-    if (te1) cell.te1_pass += 1
-    if (te2) cell.te2_pass += 1
-    if (te1 && te2) cell.both_pass += 1
+    for (const id of passes) cell.criteria[id] = (cell.criteria[id] ?? 0) + 1
+    if (passes.length === ctx.criteria.length) cell.all_pass += 1
     if (m.reasons.includes('answer_over_limit')) cell.over_limit += 1
     if (m.reasons.includes('answer_empty')) cell.empty += 1
     if (skillLoadedIn(runDir)) cell.skill_loaded += 1
-    if (m.arm === 'instruction') cell.instruction_present += 1
   }
   if (campaignIds.size > 1) throw new Error(`${campaignDir} holds manifests from more than one campaign (${[...campaignIds].sort().join(', ')})`)
   const campaigns: PilotTally['campaigns'] = {}
   const [campaignId] = campaignIds
   if (campaignId !== undefined) for (const arm of PILOT_ARMS) if (tally[arm] !== undefined) campaigns[arm] = campaignId
-  return projectPilot({ ...ctx, tally, campaigns })
+  const { criteria: _criteria, ...context } = ctx
+  return projectPilot({ ...context, tally, campaigns })
 }
 
 function assertKnownArm(arm: string, where: string): asserts arm is PilotArm {
@@ -212,7 +200,6 @@ export function projectPilot(input: PilotContext & { tally: PilotTally['tally'];
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
-const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0
 const sameKeys = (value: Record<string, unknown>, expected: readonly string[]): boolean => {
   const keys = Object.keys(value)
   return keys.length === expected.length && expected.every((k) => keys.includes(k))
@@ -241,11 +228,17 @@ export function parsePilotTally(value: unknown): PilotTally {
   if (JSON.stringify(arms) !== JSON.stringify(expectedArms)) throw new Error(`arms ${JSON.stringify(arms)} do not match the tallied arms ${JSON.stringify(expectedArms)}`)
   if (!sameKeys(campaigns, expectedArms)) throw new Error('campaigns does not name exactly the tallied arms')
   for (const [arm, id] of Object.entries(campaigns)) if (typeof id !== 'string' || id === '') throw new Error(`campaigns.${arm} is not a campaign id`)
+  let criteriaIds: string | undefined
   for (const [arm, fixtures] of Object.entries(tally)) {
     if (!isRecord(fixtures)) throw new Error(`tally.${arm} is not an object`)
     for (const [id, cell] of Object.entries(fixtures)) {
       if (!isRecord(cell) || !sameKeys(cell, CELL_KEYS)) throw new Error(`tally.${arm}.${id} is not a record of exactly [${CELL_KEYS.join(', ')}]`)
-      for (const key of CELL_KEYS) if (!isCount(cell[key])) throw new Error(`tally.${arm}.${id}.${key} is not a non-negative integer`)
+      for (const key of COUNT_KEYS) if (!isCount(cell[key])) throw new Error(`tally.${arm}.${id}.${key} is not a non-negative integer`)
+      const counted = cell.criteria
+      if (!isRecord(counted) || Object.keys(counted).length === 0) throw new Error(`tally.${arm}.${id}.criteria is not a non-empty record`)
+      for (const [criterion, passes] of Object.entries(counted)) if (!isCount(passes)) throw new Error(`tally.${arm}.${id}.criteria.${criterion} is not a non-negative integer`)
+      const ids = Object.keys(counted).sort().join(',')
+      if ((criteriaIds ??= ids) !== ids) throw new Error(`tally.${arm}.${id} counts criteria [${ids}], other cells count [${criteriaIds}]`)
     }
   }
   return value as unknown as PilotTally
@@ -274,24 +267,23 @@ function readExisting(path: string): PilotTally | undefined {
 }
 
 /**
- * Writes `evals/<method>/pilot/pilot.json`. Arms run in separate campaigns, so an arm already tallied under the same prereg content
- * stays, and `incoming` replaces only its own arms (`log` hears which campaign each replaced); a different prereg content hash
- * starts the file over. An existing file that does not validate is an error and is left as it is.
+ * Writes `evals/<method>/pilot/pilot.json`. A rerun of an arm under the same prereg content replaces its tally, and `log` hears which
+ * campaign it replaced; a different prereg content hash starts the file over without a word, since nothing of the old file carries
+ * over. An existing file that does not validate is an error and is left as it is.
  */
 export function writePilotTally(repoRoot: string, incoming: PilotTally, log?: (line: string) => void): string {
   const path = pilotTallyPath(repoRoot, incoming.method)
   const existing = readExisting(path)
-  const keep = existing !== undefined && existing.prereg_content_hash === incoming.prereg_content_hash
-  const keptTally = keep ? existing.tally : {}
-  const keptCampaigns = keep ? existing.campaigns : {}
-  for (const arm of incoming.arms) {
-    const replaced = keptCampaigns[arm]
-    if (replaced !== undefined) log?.(`replaced ${arm} tally from ${replaced}`)
+  if (existing !== undefined && existing.prereg_content_hash === incoming.prereg_content_hash) {
+    for (const arm of incoming.arms) {
+      const replaced = existing.campaigns[arm]
+      if (replaced !== undefined) log?.(`replaced ${arm} tally from ${replaced}`)
+    }
   }
-  const merged = projectPilot({ ...incoming, tally: { ...keptTally, ...incoming.tally }, campaigns: { ...keptCampaigns, ...incoming.campaigns } })
+  const projected = projectPilot(incoming)
   mkdirSync(pilotDir(repoRoot, incoming.method), { recursive: true })
   const tmp = `${path}.tmp`
-  writeFileSync(tmp, `${JSON.stringify(merged, null, 2)}\n`)
+  writeFileSync(tmp, `${JSON.stringify(projected, null, 2)}\n`)
   renameSync(tmp, path)
   return path
 }

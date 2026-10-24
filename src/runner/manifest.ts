@@ -59,8 +59,8 @@ export interface JudgeEvidence {
   wall_ms: number
 }
 
-/** The arms of an `eval pilot` campaign. `instruction` runs under condition `baseline`; `skill` under condition `skill`. */
-export const PILOT_ARMS = ['baseline', 'instruction', 'skill'] as const
+/** The arms of an `eval pilot` campaign. Only `baseline` runs, under condition `baseline`; a manifest naming any other arm is refused. */
+export const PILOT_ARMS = ['baseline'] as const
 export type PilotArm = (typeof PILOT_ARMS)[number]
 
 export interface RunManifest {
