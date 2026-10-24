@@ -467,6 +467,8 @@ export interface EnforceInput {
   /** `dev` and `red` are authoring-time and measurement runs: no held-out read, and an uncommitted skill is fine. */
   mode: 'red' | 'green' | 'dev'
   heldoutDir: string
+  /** Repo-relative prereg file to enforce. Default `evals/<method>/prereg.json`; `eval pilot` names `evals/<method>/pilot/prereg.json`. */
+  preregPath?: string
   /**
    * GREEN only: runs once the prereg parses, the skill and prereg are committed, and the fixtures and rubric re-hash clean, with the
    * verified held-out set in hand and before the runner hands it to any agent or judge. May throw to refuse.
@@ -487,8 +489,9 @@ export interface PreregVerification {
  */
 export function enforcePrereg(input: EnforceInput): PreregVerification {
   const { git, repoRoot, method, mode } = input
-  const path = join(repoRoot, preregRelPath(method))
-  if (!existsSync(path)) throw new PreregRefusal([{ code: 'prereg_missing', message: `${preregRelPath(method)} does not exist` }], `prereg for ${method}`)
+  const rel = input.preregPath ?? preregRelPath(method)
+  const path = join(repoRoot, rel)
+  if (!existsSync(path)) throw new PreregRefusal([{ code: 'prereg_missing', message: `${rel} does not exist` }], `prereg for ${method}`)
   const parsed = parsePrereg(readFileSync(path, 'utf8'))
   if (!parsed.ok) throw new PreregRefusal(parsed.errors.map((message) => ({ code: 'prereg_invalid' as const, message })), `prereg for ${method} is invalid`)
   const { prereg } = parsed

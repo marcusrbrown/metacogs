@@ -135,6 +135,18 @@ export function lacksJudgeVerdict(m: Pick<RunManifest, 'outcome' | 'verdict_basi
   return m.fixture.kind !== 'negative' && m.verdict_basis !== 'judge' && (m.outcome === 'pass' || m.verdict_basis === 'pending-judge')
 }
 
+/**
+ * Pilot manifests (`eval pilot`) never feed a report: they ran a different plan (arms, no negatives) under a pilot prereg, and a
+ * RED/dev/GREEN read built from them would claim evidence nobody pre-registered. `pilot.json` is their only projection.
+ */
+function assertNoPilotArms(runs: readonly LoadedRun[]): void {
+  const piloted = runs.filter((r) => r.manifest.arm !== undefined)
+  if (piloted.length) {
+    const first = piloted[0]!.manifest
+    throw new Error(`${piloted.length} manifest(s) belong to a pilot campaign (${first.run_id} carries arm "${first.arm}"); pilot runs are not reportable`)
+  }
+}
+
 /** Reports count judged results only: an unjudged positive-fixture run is a reason to stop, not a number to average in. */
 function assertAllJudged(runs: readonly LoadedRun[]): void {
   const unjudged = runs.filter((r) => lacksJudgeVerdict(r.manifest))
@@ -224,6 +236,7 @@ const sorted = <T>(values: Iterable<T>): T[] => [...new Set(values)].sort()
 export function buildRedReport(input: RedReportInput): RedReport {
   const { prereg, contentHash, runs } = input
   if (runs.length === 0) throw new Error('no run manifests to report')
+  assertNoPilotArms(runs)
   assertAllJudged(runs)
   assertContentHash(runs, contentHash)
   const bar = prereg.red_bar
@@ -677,6 +690,7 @@ export interface DevReportInput {
 export function buildDevReport(input: DevReportInput): DevReport {
   const { prereg, contentHash, runs } = input
   if (runs.length === 0) throw new Error('no run manifests to report')
+  assertNoPilotArms(runs)
   assertAllJudged(runs)
   assertContentHash(runs, contentHash)
   const devBar = devBarOf(prereg)
@@ -849,6 +863,7 @@ export interface DevRegressionInput {
 export function recomputeDevRegression(input: DevRegressionInput): DevRegressionSource {
   const { prereg, contentHash, runs } = input
   if (runs.length === 0) throw new Error('the dev campaign has no run manifests')
+  assertNoPilotArms(runs)
   const foreign = runs.filter((r) => r.manifest.prereg.content_hash !== contentHash)
   if (foreign.length) throw new Error(`${foreign.length} dev manifest(s) were not produced under prereg ${contentHash.slice(0, 12)}`)
   const skills = new Set(runs.map((r) => r.manifest.skill?.sha256))
@@ -1161,6 +1176,7 @@ const deltaOf = (skill: { pass: number; attempted: number }, baseline: { pass: n
 export function buildGreenReport(input: GreenReportInput): GreenReport {
   const { prereg, contentHash, runs } = input
   if (runs.length === 0) throw new Error('no run manifests to report')
+  assertNoPilotArms(runs)
   assertAllJudged(runs)
   assertContentHash(runs, contentHash)
 

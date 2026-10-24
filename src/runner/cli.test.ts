@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, spyOn, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { defaultInstallSignalHandlers, EXIT, main } from './cli'
 import { createFixture, destroyFixture } from './env'
@@ -355,6 +355,30 @@ describe('report', () => {
     expect(t.lines.out.join('\n')).toContain('dev/d1: fail 1/1')
   })
 
+  test('report --campaign <pilot dir> is refused even when the pilot ran under the same prereg content', async () => {
+    const { repo, prereg } = reportRepo()
+    const { writeManifest } = await import('./manifest')
+    const dir = join(repo.dir, 'evals', 'runs', 'demo-pilot-2026-10-22T16-00-00-000Z', '001-dev-d1-baseline-r1')
+    mkdirSync(dir, { recursive: true })
+    writeManifest(dir, { ...manifest('001-dev-d1-baseline-r1', 'd1', 'dev', prereg), campaign_id: 'demo-pilot-2026-10-22T16-00-00-000Z', arm: 'baseline' } as never)
+    const t = io()
+    expect(await main(['report', '--method', 'demo', '--repo', repo.dir, '--campaign', dirname(dir)], t.io)).toBe(EXIT.REFUSED)
+    expect(t.lines.err.join('\n')).toContain('pilot')
+    expect(existsSync(join(repo.dir, 'evals', 'reports', 'demo', 'red.json'))).toBe(false)
+  })
+
+  test('latestCampaign ignores pilot directories: a newer pilot never shadows the newest RED campaign', async () => {
+    const { repo, prereg } = reportRepo()
+    await plant(repo, prereg)
+    const { writeManifest } = await import('./manifest')
+    const dir = join(repo.dir, 'evals', 'runs', 'demo-pilot-2099-01-01T00-00-00-000Z', '001-dev-d1-baseline-r1')
+    mkdirSync(dir, { recursive: true })
+    writeManifest(dir, { ...manifest('001-dev-d1-baseline-r1', 'd1', 'dev', prereg), arm: 'baseline' } as never)
+    const t = io()
+    expect(await main(['report', '--method', 'demo', '--repo', repo.dir], t.io)).toBe(EXIT.OK)
+    expect(t.lines.out.join('\n')).toContain('dev/d1: fail 1/1')
+  })
+
   test('refuses manifests produced under a different prereg content hash', async () => {
     const { repo } = reportRepo()
     await plant(repo, 'e'.repeat(64))
@@ -527,6 +551,92 @@ describe.skipIf(!opencodeAvailability().available)('scripted end-to-end', () => 
     await main(['red', '--runs', '1', '--fixture', 'n1', '--method', 'demo', '--repo', repo.dir, '--out', out], t.io)
     expect(t.lines.err.join('\n')).toContain('stale "running" manifest')
   }, 180_000)
+})
+
+describe('pilot', () => {
+  const PILOT_PREREG = 'evals/demo/pilot/prereg.json'
+  function pilotRepo(prereg?: object) {
+    const { repo, heldout, scaffold } = chainRepo()
+    repo.write(PILOT_PREREG, `${JSON.stringify(prereg ?? scaffold.prereg, null, 2)}\n`)
+    return { repo, heldout, scaffold }
+  }
+
+  test('usage: a bad --arm, --arm/--prereg outside pilot, and pilot-incompatible flags', async () => {
+    for (const argv of [
+      ['pilot', '--method', 'demo', '--arm', 'bogus'],
+      ['red', '--method', 'demo', '--arm', 'baseline'],
+      ['green', '--method', 'demo', '--prereg', PILOT_PREREG],
+      ['pilot', '--method', 'demo', '--dev-only'],
+      ['pilot', '--method', 'demo', '--rehearsal'],
+      ['pilot'],
+    ]) {
+      const t = io()
+      expect(await main(argv, t.io)).toBe(EXIT.USAGE)
+    }
+  })
+
+  test('--arm instruction and --arm skill are refused with a pointer to Unit 6, before any repo work', async () => {
+    for (const arm of ['instruction', 'skill']) {
+      const t = io()
+      expect(await main(['pilot', '--method', 'demo', '--arm', arm, '--repo', '/nonexistent'], t.io)).toBe(EXIT.REFUSED)
+      expect(t.lines.err.join('\n')).toContain('Unit 6')
+    }
+  })
+
+  test('a missing pilot prereg is refused, naming the pilot path and not evals/<m>/prereg.json', async () => {
+    const { repo, scaffold } = chainRepo()
+    writePrereg(repo, scaffold) // the production prereg exists; the pilot one does not
+    const t = io()
+    expect(await main(['pilot', '--method', 'demo', '--repo', repo.dir], t.io)).toBe(EXIT.REFUSED)
+    expect(t.lines.err.join('\n')).toContain('evals/demo/pilot/prereg.json does not exist')
+  })
+
+  test('--prereg must stay inside the repository', async () => {
+    const { repo } = pilotRepo()
+    const t = io()
+    expect(await main(['pilot', '--method', 'demo', '--repo', repo.dir, '--prereg', '../elsewhere/prereg.json'], t.io)).toBe(EXIT.REFUSED)
+    expect(t.lines.err.join('\n')).toContain('outside the repository')
+  })
+
+  test('the pilot prereg is enforced like any other: an edited fixture voids it', async () => {
+    const { repo } = pilotRepo()
+    repo.write('evals/demo/fixtures/dev/d1.md', 'edited after the prereg\n')
+    const t = io()
+    expect(await main(['pilot', '--method', 'demo', '--repo', repo.dir], t.io)).toBe(EXIT.REFUSED)
+    expect(t.lines.err.join('\n')).toContain('dev/d1 mismatch')
+  })
+
+  test('--prereg names another repo-relative prereg file', async () => {
+    const { repo, scaffold } = chainRepo()
+    repo.write('evals/demo/pilot/other.json', `${JSON.stringify(scaffold.prereg)}\n`)
+    const t = io()
+    expect(await main(['pilot', '--method', 'demo', '--repo', repo.dir, '--prereg', 'evals/demo/pilot/missing.json'], t.io)).toBe(EXIT.REFUSED)
+    expect(t.lines.err.join('\n')).toContain('evals/demo/pilot/missing.json does not exist')
+  })
+
+  describe.skipIf(!opencodeAvailability().available)('scripted end-to-end', () => {
+    test(
+      'pilot --arm baseline plans dev fixtures only, tags manifests with the arm, writes pilot.json, and leaves RED/GREEN untouched',
+      async () => {
+        const { repo } = pilotRepo()
+        const out = tmp('metacogs-cliout-')
+        const t = io()
+        const code = await main(['pilot', '--arm', 'baseline', '--provider', 'scripted', '--runs', '1', '--method', 'demo', '--repo', repo.dir, '--out', out], t.io)
+        expect(code).toBe(EXIT.OK)
+        const [campaign] = readdirSync(out)
+        expect(campaign).toStartWith('demo-pilot-')
+        expect(readdirSync(join(out, campaign!)).filter((d) => d !== 'summary.json')).toEqual(['001-dev-d1-baseline-r1'])
+        const manifest = JSON.parse(readFileSync(join(out, campaign!, '001-dev-d1-baseline-r1', 'manifest.json'), 'utf8')) as { arm: string }
+        expect(manifest.arm).toBe('baseline')
+        const written = JSON.parse(readFileSync(join(repo.dir, 'evals', 'demo', 'pilot', 'pilot.json'), 'utf8')) as { arms: string[]; tally: Record<string, Record<string, { runs: number }>> }
+        expect(written.arms).toEqual(['baseline'])
+        expect(written.tally.baseline!.d1!.runs).toBe(1)
+        expect(t.lines.out.join('\n')).toContain('dev/d1/baseline: pass 0/0 (planned 1)')
+        expect(existsSync(join(repo.dir, 'evals', 'reports'))).toBe(false)
+      },
+      180_000,
+    )
+  })
 })
 
 describe('defaultInstallSignalHandlers', () => {

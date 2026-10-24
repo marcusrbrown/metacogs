@@ -23,6 +23,7 @@ import {
   type JudgeEvidence,
   MANIFEST_SCHEMA_VERSION,
   type Needle,
+  type PilotArm,
   type RunManifest,
   type RunOutcomeName,
   scanForLeaks,
@@ -58,6 +59,8 @@ export interface PlannedRun {
   /** `expectation` is evaluator-only (judge input); it never reaches the agent workspace or the manifest. */
   fixture: { id: string; kind: FixtureKind; text: string; hash: string; expectation?: Expectation }
   condition: Condition
+  /** `eval pilot` only: the arm this run belongs to. Reports refuse manifests that carry one. */
+  arm?: PilotArm
   /** 1-based repetition for this fixture and condition. */
   index: number
 }
@@ -215,6 +218,7 @@ export interface RunResult {
   fixtureId: string
   kind: FixtureKind
   condition: Condition
+  arm?: PilotArm
   index: number
   attempt: number
   status: FinalStatus
@@ -244,9 +248,12 @@ export interface CampaignResult {
 
 const LEAK_NEEDLES: Needle[] = [{ label: 'scripted_placeholder_api_key', value: PLACEHOLDER_API_KEY }]
 
+/** `kind/fixture/condition`; a pilot run's arm stands in for the condition, since two arms can share one. */
+export const tallyKey = (r: { kind: FixtureKind; fixtureId: string; condition: Condition; arm?: PilotArm }): string => `${r.kind}/${r.fixtureId}/${r.arm ?? r.condition}`
+
 export function tallyResults(results: readonly RunResult[], infraErrors: readonly RunResult[] = []): Record<string, Tally> {
   const tallies: Record<string, Tally> = {}
-  const tallyFor = (r: RunResult) => (tallies[`${r.kind}/${r.fixtureId}/${r.condition}`] ??= { attempted: 0, pass: 0, fail: 0, infra_error: 0, non_isolated: 0 })
+  const tallyFor = (r: RunResult) => (tallies[tallyKey(r)] ??= { attempted: 0, pass: 0, fail: 0, infra_error: 0, non_isolated: 0 })
   for (const r of results) {
     const t = tallyFor(r)
     if (r.outcome === 'pass') t.pass += 1
@@ -432,7 +439,7 @@ function isolationViolated(evidence: IsolationEvidence, completed: boolean): boo
 async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, attempt: number): Promise<RunResult> {
   const { verification } = c
   const prereg = verification.prereg
-  const runId = `${pad(seq)}-${run.fixture.kind}-${run.fixture.id}-${run.condition}-r${run.index}${attempt > 1 ? `-a${attempt}` : ''}`
+  const runId = `${pad(seq)}-${run.fixture.kind}-${run.fixture.id}-${run.arm ?? run.condition}-r${run.index}${attempt > 1 ? `-a${attempt}` : ''}`
   const runDir = join(c.campaignDir, runId)
   mkdirSync(runDir, { recursive: true, mode: 0o700 })
 
@@ -455,6 +462,7 @@ async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, at
     verdict_basis: 'deterministic',
     method: c.method,
     condition: run.condition,
+    ...(run.arm ? { arm: run.arm } : {}),
     fixture: { id: run.fixture.id, kind: run.fixture.kind, hash: run.fixture.hash },
     attempt,
     skill: null,
@@ -488,6 +496,7 @@ async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, at
     fixtureId: run.fixture.id,
     kind: run.fixture.kind,
     condition: run.condition,
+    ...(run.arm ? { arm: run.arm } : {}),
     index: run.index,
     attempt,
     status,

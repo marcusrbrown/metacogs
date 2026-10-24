@@ -59,6 +59,10 @@ export interface JudgeEvidence {
   wall_ms: number
 }
 
+/** The arms of an `eval pilot` campaign. `instruction` runs under condition `baseline`; `skill` under condition `skill`. */
+export const PILOT_ARMS = ['baseline', 'instruction', 'skill'] as const
+export type PilotArm = (typeof PILOT_ARMS)[number]
+
 export interface RunManifest {
   schema_version: typeof MANIFEST_SCHEMA_VERSION
   run_id: string
@@ -72,6 +76,8 @@ export interface RunManifest {
   verdict_basis: 'deterministic' | 'judge' | 'pending-judge'
   method: string
   condition: Condition
+  /** Pilot campaigns only. Production `condition` is unchanged; reports refuse any manifest that carries an arm. */
+  arm?: PilotArm
   fixture: { id: string; kind: FixtureKind; hash: string }
   /** 1 for the first launch; infra retries increment. */
   attempt: number

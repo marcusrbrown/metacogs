@@ -7,7 +7,7 @@
  */
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
-import { join, resolve } from 'node:path'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 
 import { AuthPassthroughError, DEFAULT_PASSTHROUGH, needlesOf, type PassthroughAuth, parseAuthPassthrough, PASSTHROUGH_PROVIDERS, readPassthroughAuth } from './auth'
 import { CliproxyAuthError, cliproxyModelMismatch, type ResolvedCliproxy, resolveCliproxy } from './cliproxy'
@@ -22,12 +22,16 @@ import { killLiveGroups, opencodeAvailability } from './opencode'
 import { isLiveModel } from './scripted-provider'
 import { enforcePrereg, heldoutFingerprints, parsePrereg, type Prereg, preregRelPath, PreregRefusal } from './prereg'
 import { buildDevReport, buildGreenReport, buildRedReport, type DevReport, type DevRegressionSource, type GreenReport, greenReportPath, loadCampaignManifests, recomputeDevRegression, validateDevReport, validateGreenReport, writeDevReport, writeGreenReport, writeReport } from './report'
-import { planRuns, type ProviderMode, runCampaign } from './run'
+import { isPilotArm, armRefusal, PILOT_ARMS, planPilot, tallyPilotCampaign, writePilotTally } from './pilot'
+import { planRuns, type ProviderMode, runCampaign, tallyKey } from './run'
 import { claimHeldoutRead, CustodyError, hashSkillDir, heldoutDir, heldoutReadMarkerPath, resolveOutputDir, stateRoot } from './workspace'
 
 export const EXIT = { OK: 0, ERROR: 1, USAGE: 64, REFUSED: 3, CREDENTIAL_LEAK: 4, INTERRUPTED: 130 } as const
 
 const USAGE = `usage: bun run eval <red|green> --method <name> [options]
+       bun run eval pilot --method <name> [--arm baseline] [--prereg <repo-relative file>]
+                                                                    dev-only comparison of arms on evals/<m>/pilot/prereg.json; writes evals/<m>/pilot/pilot.json.
+                                                                    Never reported: report refuses its campaigns. Only --arm baseline runs in this build
        bun run eval report --method <name> [--campaign <dir>]
        bun run eval review --campaign <id|dir>                     write the blind review.md (fixture prompt, expected-answer notes, answer, record, an unmarked
                                                                    scoring table) and review-key.md (judge verdicts and quotes) into the campaign dir
@@ -114,9 +118,29 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
     return campaignToolMain({ mode, campaign: parsed.values.campaign, repo, reconcile: parsed.values.reconcile === true, authFlag: parsed.values['auth-passthrough'], cliproxyFlag: parsed.values['auth-cliproxy'], cwd, env, out, err })
   }
   if (mode === 'report' && !extra.length && method) return reportMain({ method, repo, campaign: parsed.values.campaign, devOnly, green: parsed.values.green === true, cliproxyFlag: parsed.values['auth-cliproxy'], cwd, env, out, err })
-  if ((mode !== 'red' && mode !== 'green') || extra.length || !method) {
+  if ((mode !== 'red' && mode !== 'green' && mode !== 'pilot') || extra.length || !method) {
     err(USAGE)
     return EXIT.USAGE
+  }
+  const isPilot = mode === 'pilot'
+  if (!isPilot && (parsed.values.arm !== undefined || parsed.values.prereg !== undefined)) {
+    err(`--arm and --prereg apply to pilot only\n${USAGE}`)
+    return EXIT.USAGE
+  }
+  if (isPilot && (devOnly || parsed.values.rehearsal === true || parsed.values['include-dev'])) {
+    err(`--dev-only, --rehearsal and --include-dev do not apply to pilot\n${USAGE}`)
+    return EXIT.USAGE
+  }
+  const armFlag = parsed.values.arm ?? 'baseline'
+  if (isPilot && !isPilotArm(armFlag)) {
+    err(`--arm must be one of ${PILOT_ARMS.join(', ')}\n${USAGE}`)
+    return EXIT.USAGE
+  }
+  const arm = isPilotArm(armFlag) ? armFlag : 'baseline'
+  const armRefused = isPilot ? armRefusal(arm) : undefined
+  if (armRefused) {
+    err(`REFUSED: ${armRefused}`)
+    return EXIT.REFUSED
   }
   if (devOnly && mode !== 'green') {
     err(`--dev-only applies to green (and report) only\n${USAGE}`)
@@ -146,7 +170,7 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
     return EXIT.REFUSED
   }
   // The dev-only green and the rehearsal are separate runner modes: they can never plan, load, or hash held-out content.
-  const runMode = devOnly || rehearsal ? 'dev' : mode
+  const runMode = devOnly || rehearsal || isPilot ? 'dev' : mode
   const providerMode: ProviderMode = provider === 'live' ? 'live' : 'scripted'
   let auth: PassthroughAuth = {}
   let cliproxy: ResolvedCliproxy | undefined
@@ -168,6 +192,12 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
 
   const repoRoot = new Git(repo ?? cwd).toplevel()
   const git = new Git(repoRoot)
+  // The pilot prereg is a repo-relative file; a path that leaves the repository is not a committed contract.
+  const pilotPreregPath = relative(repoRoot, resolve(repoRoot, parsed.values.prereg ?? join('evals', method, 'pilot', 'prereg.json')))
+  if (isPilot && (pilotPreregPath.startsWith('..') || isAbsolute(pilotPreregPath))) {
+    err(`REFUSED: --prereg ${parsed.values.prereg} is outside the repository`)
+    return EXIT.REFUSED
+  }
 
   const stale = findStaleManifests([join(repoRoot, 'evals', 'runs'), join(stateRoot(env), 'runs')])
   for (const s of stale) err(`warning: stale "running" manifest (a previous runner did not finish): ${s.path}`)
@@ -182,7 +212,7 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
     return EXIT.REFUSED
   }
 
-  const campaignId = `${method}-${rehearsal ? 'rehearsal' : runMode}-${new Date().toISOString().replace(/[:.]/g, '-')}`
+  const campaignId = `${method}-${rehearsal ? 'rehearsal' : isPilot ? 'pilot' : runMode}-${new Date().toISOString().replace(/[:.]/g, '-')}`
 
   const controller = new AbortController()
   const runsPerConditionOf = (p: Prereg) => runsOverride ?? p.runs_per_condition
@@ -192,12 +222,14 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
    */
   const preflight = (p: Prereg): number | string => {
     const ids = (set: Record<string, string>) => Object.entries(set).map(([id, hash]) => ({ id, text: '', hash }))
-    const shape = planRuns({
-      mode: runMode,
-      fixtures: { dev: ids(p.fixture_hashes.dev), negative: ids(p.fixture_hashes.negative), heldout: ids(p.fixture_hashes.heldout) },
-      runsPerCondition: runsPerConditionOf(p),
-      onlyFixture: fixture,
-    })
+    const shape = isPilot
+      ? planPilot({ arm, fixtures: ids(p.fixture_hashes.dev), runsPerCondition: runsPerConditionOf(p), onlyFixture: fixture })
+      : planRuns({
+          mode: runMode,
+          fixtures: { dev: ids(p.fixture_hashes.dev), negative: ids(p.fixture_hashes.negative), heldout: ids(p.fixture_hashes.heldout) },
+          runsPerCondition: runsPerConditionOf(p),
+          onlyFixture: fixture,
+        })
     if (shape.length === 0) {
       err(`nothing to run: the ${mode} plan for ${method} is empty (no fixtures?)`)
       return EXIT.ERROR
@@ -247,6 +279,7 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
       method,
       mode: runMode,
       heldoutDir: heldoutDir(method, env, undefined, repoRoot),
+      ...(isPilot ? { preregPath: pilotPreregPath } : {}),
       // The marker is claimed once the prereg, skill, fixtures and rubric have all verified and before anything is handed to an agent or
       // judge, so any later outcome (a crash, an interrupt) still leaves the read on record, and a refusal that has nothing to do with the
       // held-out set cannot burn it. A directory that does not exist has nothing to burn.
@@ -282,12 +315,14 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
   if (typeof preflighted === 'number') return preflighted
   const campaignDir = preflighted
   const runsPerCondition = runsPerConditionOf(prereg)
-  const plan = planRuns({
-    mode: runMode,
-    fixtures: verification.content.fixtures,
-    runsPerCondition,
-    onlyFixture: fixture,
-  })
+  const plan = isPilot
+    ? planPilot({ arm, fixtures: verification.content.fixtures.dev, runsPerCondition, onlyFixture: fixture })
+    : planRuns({
+        mode: runMode,
+        fixtures: verification.content.fixtures,
+        runsPerCondition,
+        onlyFixture: fixture,
+      })
 
   const judge = providerMode === 'live' ? createJudge({ repoRoot, method, model: prereg.judge_model_id, auth, signal: controller.signal }) : undefined
 
@@ -320,7 +355,10 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
 
   out(`\nsummary: ${result.summaryPath}`)
   const planned: Record<string, number> = {}
-  for (const r of plan) planned[`${r.fixture.kind}/${r.fixture.id}/${r.condition}`] = (planned[`${r.fixture.kind}/${r.fixture.id}/${r.condition}`] ?? 0) + 1
+  for (const r of plan) {
+    const key = tallyKey({ kind: r.fixture.kind, fixtureId: r.fixture.id, condition: r.condition, ...(r.arm ? { arm: r.arm } : {}) })
+    planned[key] = (planned[key] ?? 0) + 1
+  }
   for (const key of new Set([...Object.keys(planned), ...Object.keys(result.tallies)])) {
     const t = result.tallies[key] ?? { attempted: 0, pass: 0, fail: 0, infra_error: 0, non_isolated: 0 }
     out(`  ${key}: pass ${t.pass}/${t.attempted} (planned ${planned[key] ?? 0})${t.infra_error ? ` · infra_error ${t.infra_error}` : ''}${t.non_isolated ? ` · non_isolated ${t.non_isolated}` : ''}`)
@@ -330,6 +368,15 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
   if (result.aborted === 'credential_leak') {
     err('ABORTED: credential_leak. Artifacts for that run were purged; see its manifest.')
     return EXIT.CREDENTIAL_LEAK
+  }
+  if (isPilot) {
+    const pilotTally = tallyPilotCampaign(campaignDir, {
+      method,
+      prereg_content_hash: verification.contentHash,
+      agent_model_id: prereg.agent_model_id,
+      judge_model_id: prereg.judge_model_id,
+    })
+    out(`wrote ${writePilotTally(repoRoot, pilotTally).slice(repoRoot.length + 1)} (arms: ${pilotTally.arms.join(', ')})`)
   }
   if (result.aborted === 'provider_outage') {
     err('ABORTED: provider_outage. Three rate-limited attempts in a row; no further runs were launched. The summary lists what ran.')
@@ -733,6 +780,8 @@ const OPTIONS = {
   runs: { type: 'string' },
   provider: { type: 'string' },
   fixture: { type: 'string' },
+  arm: { type: 'string' },
+  prereg: { type: 'string' },
   repo: { type: 'string' },
   out: { type: 'string' },
   campaign: { type: 'string' },
