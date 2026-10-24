@@ -133,6 +133,8 @@ export interface HeldoutReadMarker {
   campaign_id: string
   started_at: string
   prereg_content_hash: string
+  /** `heldoutFingerprints` of the set this read loaded; markers from before the field have none. */
+  heldout_fingerprints: string[]
 }
 
 /** `<state root>/heldout/<method>/<epoch>.read.json`: exists once an epoch's held-out set has been loaded for a GREEN read. */
@@ -147,10 +149,27 @@ export function heldoutReadMarkerPath(
 
 /**
  * Claims the one-shot read: creates the marker exclusively (`wx`), so two readers cannot both succeed. An existing
- * marker means the set was already loaded for this epoch, whatever became of that run; only a new epoch gets past it.
+ * marker means the set was already loaded for this epoch, whatever became of that run; only a new epoch gets past it,
+ * and only with a set that shares no fixture content with one a marker in the same directory already records.
  */
 export function claimHeldoutRead(path: string, marker: HeldoutReadMarker): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+  for (const name of readdirSync(dirname(path)).sort()) {
+    if (!name.endsWith('.read.json') || join(dirname(path), name) === path) continue
+    let prior: Partial<HeldoutReadMarker>
+    try {
+      prior = JSON.parse(readFileSync(join(dirname(path), name), 'utf8')) as Partial<HeldoutReadMarker>
+    } catch {
+      continue // an unreadable marker records no fingerprints
+    }
+    const seen = new Set(Array.isArray(prior.heldout_fingerprints) ? prior.heldout_fingerprints : [])
+    const shared = marker.heldout_fingerprints.filter((f) => seen.has(f))
+    if (shared.length) {
+      throw new CustodyError(
+        `the held-out set for ${marker.prereg_content_hash.slice(0, 12)} shares ${shared.length} fixture(s) with the set already read in epoch ${name.slice(0, -'.read.json'.length)} (campaign ${prior.campaign_id ?? '(unknown)'}); a new epoch needs a held-out set with no fixture in common`,
+      )
+    }
+  }
   try {
     writeFileSync(path, `${JSON.stringify(marker, null, 2)}\n`, { flag: 'wx', mode: 0o600 })
   } catch (e) {

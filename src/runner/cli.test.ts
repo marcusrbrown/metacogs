@@ -7,6 +7,7 @@ import { defaultInstallSignalHandlers, EXIT, main } from './cli'
 import { createFixture, destroyFixture } from './env'
 import { opencodeAvailability, spawnCapture } from './opencode'
 import { preregContentHash } from './prereg'
+import { sha256 } from './workspace'
 import { buildHappyChain, scaffoldMethod, TestRepo, writePrereg } from './test-support'
 
 const cleanup: (() => void)[] = []
@@ -169,22 +170,36 @@ describe('refusals happen before anything launches', () => {
     expect(existsSync(join(outside.stateHome, 'metacogs', 'heldout'))).toBe(false)
   })
 
-  test('once the marker is claimed (here: a hash mismatch after the claim), the next attempt names it and is refused', async () => {
+  test('a content mismatch (here a missing held-out file) is refused before the marker is claimed', async () => {
     const { repo, heldout, scaffold } = chainRepo()
     buildHappyChain(repo, scaffold)
-    rmSync(join(heldout, 'h1.md')) // the first attempt loads the set, finds a hash mismatch, and stops
+    rmSync(join(heldout, 'h1.md'))
+    const t = io()
+    t.io.env.METACOGS_HELDOUT_DIR = heldout
+    expect(await main(['green', '--method', 'demo', '--repo', repo.dir, ...LIVE], t.io)).toBe(EXIT.REFUSED)
+    expect(existsSync(join(t.stateHome, 'metacogs', 'heldout'))).toBe(false)
+  })
+
+  test('once the marker is claimed (here: a near-duplicate refusal after the claim), the next attempt names it and is refused', async () => {
+    const base = chainRepo()
+    const { repo, heldout } = base
+    // the held-out file is a copy of the dev fixture: every hash verifies, then the near-duplicate gate stops the run after the claim
+    const fixtureHashes = base.scaffold.prereg.fixture_hashes
+    const scaffold = { ...base.scaffold, prereg: { ...base.scaffold.prereg, fixture_hashes: { ...fixtureHashes, heldout: { h1: fixtureHashes.dev.d1! } } } }
+    writeFileSync(join(heldout, 'h1.md'), readFileSync(join(repo.dir, 'evals', 'demo', 'fixtures', 'dev', 'd1.md')))
+    buildHappyChain(repo, scaffold)
     const first = io()
     first.io.env.METACOGS_HELDOUT_DIR = heldout
     expect(await main(['green', '--method', 'demo', '--repo', repo.dir, ...LIVE], first.io)).toBe(EXIT.REFUSED)
-    expect(first.lines.err.join('\n')).toContain('heldout/h1 missing')
+    expect(first.lines.err.join('\n')).toContain('near-duplicate')
     const markerPath = join(first.stateHome, 'metacogs', 'heldout', 'demo', '1.read.json')
-    const marker = JSON.parse(readFileSync(markerPath, 'utf8')) as { campaign_id: string; started_at: string; prereg_content_hash: string }
+    const marker = JSON.parse(readFileSync(markerPath, 'utf8')) as { campaign_id: string; started_at: string; prereg_content_hash: string; heldout_fingerprints: string[] }
     expect(marker.prereg_content_hash).toBe(preregContentHash(scaffold.prereg))
     expect(marker.campaign_id).toMatch(/^demo-green-/)
     expect(Number.isNaN(Date.parse(marker.started_at))).toBe(false)
+    expect(marker.heldout_fingerprints).toEqual([sha256(readFileSync(join(heldout, 'h1.md'), 'utf8'))])
 
-    // same state root, restored set: the marker, not green.json, stops the second read
-    writeFileSync(join(heldout, 'h1.md'), 'Held-out fixture: pick a queue.\n')
+    // same state root: the marker, not green.json, stops the second read
     const second = io()
     second.io.env.METACOGS_HELDOUT_DIR = heldout
     second.io.env.XDG_STATE_HOME = first.stateHome

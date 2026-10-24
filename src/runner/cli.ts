@@ -20,7 +20,7 @@ import { findStaleManifests, ManifestFormatError } from './manifest'
 import { removeLiveFixtures } from './env'
 import { killLiveGroups, opencodeAvailability } from './opencode'
 import { isLiveModel } from './scripted-provider'
-import { enforcePrereg, parsePrereg, type Prereg, preregRelPath, PreregRefusal } from './prereg'
+import { enforcePrereg, heldoutFingerprints, parsePrereg, type Prereg, preregRelPath, PreregRefusal } from './prereg'
 import { buildDevReport, buildGreenReport, buildRedReport, type DevReport, type DevRegressionSource, type GreenReport, greenReportPath, loadCampaignManifests, recomputeDevRegression, validateDevReport, validateGreenReport, writeDevReport, writeGreenReport, writeReport } from './report'
 import { planRuns, type ProviderMode, runCampaign } from './run'
 import { claimHeldoutRead, CustodyError, hashSkillDir, heldoutDir, heldoutReadMarkerPath, resolveOutputDir, stateRoot } from './workspace'
@@ -247,11 +247,17 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
       method,
       mode: runMode,
       heldoutDir: heldoutDir(method, env, undefined, repoRoot),
-      // The marker is claimed after the prereg parses and the skill is committed and before the set is loaded, so any later outcome (a hash
-      // mismatch, a crash, an interrupt) still leaves the read on record. A directory that does not exist has nothing to burn.
-      beforeHeldoutRead: ({ prereg: p, contentHash }) => {
+      // The marker is claimed once the prereg, skill, fixtures and rubric have all verified and before anything is handed to an agent or
+      // judge, so any later outcome (a crash, an interrupt) still leaves the read on record, and a refusal that has nothing to do with the
+      // held-out set cannot burn it. A directory that does not exist has nothing to burn.
+      beforeHeldoutRead: ({ prereg: p, contentHash, heldout }) => {
         if (!existsSync(heldoutDir(method, env, undefined, repoRoot))) return
-        claimHeldoutRead(heldoutReadMarkerPath(method, p.epoch, env), { campaign_id: campaignId, started_at: new Date().toISOString(), prereg_content_hash: contentHash })
+        claimHeldoutRead(heldoutReadMarkerPath(method, p.epoch, env), {
+          campaign_id: campaignId,
+          started_at: new Date().toISOString(),
+          prereg_content_hash: contentHash,
+          heldout_fingerprints: heldoutFingerprints(heldout),
+        })
       },
     })
   } catch (e) {

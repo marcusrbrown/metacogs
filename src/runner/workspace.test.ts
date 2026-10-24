@@ -4,11 +4,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { createFixture, destroyFixture } from './env'
+import { heldoutFingerprints } from './prereg'
 import { toolUses } from './events'
 import { opencodeAvailability } from './opencode'
 import { plantSkill, runOpencode } from './spike/isolation'
 import {
   assertInstalledSkills,
+  claimHeldoutRead,
   copySkillDir,
   createRunWorkspace,
   CustodyError,
@@ -18,6 +20,7 @@ import {
   permissionFor,
   type RunWorkspace,
   resolveOutputDir,
+  sha256,
   stateRoot,
 } from './workspace'
 
@@ -224,6 +227,45 @@ describe('custody', () => {
     expect(heldoutDir('m', { METACOGS_HELDOUT_DIR: join(outside, 'h') }, '/home/u', root)).toBe(join(outside, 'h'))
     // without a repo root there is nothing to compare against
     expect(heldoutDir('m', { METACOGS_HELDOUT_DIR: join(root, 'h') }, '/home/u')).toBe(join(root, 'h'))
+  })
+
+  describe('held-out read marker', () => {
+    const markerIn = (dir: string, epoch: number) => join(dir, 'heldout', 'm', `${epoch}.read.json`)
+    const marker = (campaign: string, texts: string[]) => ({
+      campaign_id: campaign,
+      started_at: '2026-10-23T00:00:00.000Z',
+      prereg_content_hash: 'a'.repeat(64),
+      heldout_fingerprints: heldoutFingerprints(texts.map((text) => ({ text }))),
+    })
+
+    test('fingerprints are sorted, unsalted sha256 of the canonical text', () => {
+      expect(heldoutFingerprints([{ text: 'b\r\n' }, { text: 'a' }])).toEqual([sha256('a\n'), sha256('b\n')].sort())
+    })
+
+    test('a new epoch that reuses one held-out file is refused, naming the prior epoch; a disjoint set is claimed', () => {
+      const state = tmp()
+      claimHeldoutRead(markerIn(state, 1), marker('c1', ['one\n', 'two\n']))
+      expect(() => claimHeldoutRead(markerIn(state, 2), marker('c2', ['two\n', 'three\n']))).toThrow(/epoch 1 \(campaign c1\)/)
+      expect(existsSync(markerIn(state, 2))).toBe(false)
+      claimHeldoutRead(markerIn(state, 2), marker('c2', ['three\n', 'four\n']))
+      expect(JSON.parse(readFileSync(markerIn(state, 2), 'utf8')).heldout_fingerprints).toEqual(heldoutFingerprints([{ text: 'three\n' }, { text: 'four\n' }]))
+    })
+
+    test('a marker without the field (legacy) records no fingerprints but still blocks its own epoch', () => {
+      const state = tmp()
+      mkdirSync(join(state, 'heldout', 'm'), { recursive: true })
+      writeFileSync(markerIn(state, 1), JSON.stringify({ campaign_id: 'old', started_at: '2026-10-22T00:00:00.000Z', prereg_content_hash: 'b'.repeat(64) }))
+      claimHeldoutRead(markerIn(state, 2), marker('c2', ['one\n']))
+      expect(() => claimHeldoutRead(markerIn(state, 1), marker('c3', ['zzz\n']))).toThrow(/already read/)
+    })
+
+    test('a marker for the same method elsewhere does not count, and an unreadable sibling is ignored', () => {
+      const state = tmp()
+      claimHeldoutRead(join(state, 'heldout', 'other', '1.read.json'), marker('c1', ['one\n']))
+      mkdirSync(join(state, 'heldout', 'm'), { recursive: true })
+      writeFileSync(markerIn(state, 1), '{broken')
+      claimHeldoutRead(markerIn(state, 2), marker('c2', ['one\n']))
+    })
   })
 
   test('held-out output defaults under the state root', () => {

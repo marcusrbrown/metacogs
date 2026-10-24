@@ -227,6 +227,11 @@ export function saltedHash(salt: string, canonicalText: string): string {
   return sha256(`${salt}\0${canonicalText}`)
 }
 
+/** Sorted sha256 of each fixture's canonical text, unsalted: names a held-out file's content across epochs, whatever the salt. */
+export function heldoutFingerprints(fixtures: readonly { text: string }[]): string[] {
+  return fixtures.map((f) => sha256(canonicalizeText(f.text))).sort()
+}
+
 export interface LoadedFixture {
   id: string
   /** Canonical text; also the prompt the agent receives. */
@@ -336,8 +341,11 @@ export interface EnforceInput {
   /** `dev` and `red` are authoring-time and measurement runs: no held-out read, and an uncommitted skill is fine. */
   mode: 'red' | 'green' | 'dev'
   heldoutDir: string
-  /** GREEN only: runs once the prereg parses and the skill is committed, immediately before held-out content is loaded. May throw to refuse. */
-  beforeHeldoutRead?: (read: { prereg: Prereg; contentHash: string }) => void
+  /**
+   * GREEN only: runs once the prereg parses, the skill and prereg are committed, and the fixtures and rubric re-hash clean, with the
+   * verified held-out set in hand and before the runner hands it to any agent or judge. May throw to refuse.
+   */
+  beforeHeldoutRead?: (read: { prereg: Prereg; contentHash: string; heldout: readonly LoadedFixture[] }) => void
 }
 
 export interface PreregVerification {
@@ -374,7 +382,6 @@ export function enforcePrereg(input: EnforceInput): PreregVerification {
         `prereg for ${method} epoch ${prereg.epoch}`,
       )
     }
-    input.beforeHeldoutRead?.({ prereg, contentHash })
   }
   const content = verifyPreregContent(prereg, { evalDir: join(repoRoot, 'evals', method), heldoutDir: input.heldoutDir }, { includeHeldout: mode === 'green' })
   if (content.problems.length) {
@@ -384,5 +391,6 @@ export function enforcePrereg(input: EnforceInput): PreregVerification {
       `prereg content for ${method}`,
     )
   }
+  if (mode === 'green') input.beforeHeldoutRead?.({ prereg, contentHash, heldout: content.fixtures.heldout })
   return { prereg, contentHash, content }
 }
