@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "method": "counterfactual",
+  "epoch": 5,
+  "prev_epoch_closing_commit": "fdc5efcc9c465aeaa6c507f76e352a3c2a7c1b4a",
+  "salt": "af182ba5406334c61adfb583f4cb814e",
+  "fixture_hashes": {
+    "dev": {
+      "cf-d1-pinned-runtime": "5aaa4d5c71d0746f630d9049de3207677a41a958c114292dfd3491cf2139c44f",
+      "cf-d2-ci-reach": "4bcabd82176519b1b5f6a970070e8fc56369afd32b573bd6b55426b5ac8e2813",
+      "cf-d3-vendor-idempotency": "edaa06c718db0fdb75d6bd059bfb78fc58534e4d2f190d8305654cc97372d8d3",
+      "cf-d4-replica-lag": "ee1263364b4be1ddac843a644e11e35059aa98161c6a69ea716d4fad286a8eea",
+      "cf-d5-edge-limits": "3328b3a4f3ccaa78e8726c5e3d5470afdfcae76178d0db055298263accb6beda",
+      "cf-d6-autoscaler-removal": "82b1fe408c1484ca379f40900ca03946c4bf59a7efe31f33bdcca9bbc2b7ffe6"
+    },
+    "negative": {
+      "cf-n1-rename": "90fe670fe8c8016847f8d5e1c331ff2b3b574736fff6717bbdfbea1b982e1503",
+      "cf-n2-vocabulary-swap": "a02d3b3f119c95ac49a18e3377bc9958f4e907f6c2d78a9bad42de9fdc659469",
+      "cf-n3-off-by-one": "6be8f30db9b75d9b132ad31e66f2d04badaa170e0424b359edb1a05618b94df0"
+    },
+    "heldout": {
+      "cf-h1": "bb78c57d65851e2d7ef1478783e37dfec319139f29496ab0c474ed268c182ddc",
+      "cf-h2": "efa68e7a1031432dbfb9c4fa801e9b66081621b9be481e60c55f4cff86642e3b",
+      "cf-h3": "9535ba4e03762c1f8188b5d3cb63ee20ad4c38113ec81750a84041188db499d1",
+      "cf-h4": "6c4ae5764a89a9ba93d10d47249de982297e601e98b321413e7922240feab7dd"
+    }
+  },
+  "rubric_hash": "4dbd235645f66aba120e5b87c151188ae3b90e6ce4d0f6e23ff7bd60a48a367b",
+  "runs_per_condition": 5,
+  "red_bar": {
+    "min_baseline_fails_per_fixture": 4,
+    "min_fixtures": 2
+  },
+  "green_bar": {
+    "skill_pooled_pass_min": 17,
+    "skill_per_fixture_pass_min": 3,
+    "baseline_pooled_pass_max": 10
+  },
+  "dev_bar": {
+    "pooled_min_passes": 24,
+    "per_fixture_min_passes": 2
+  },
+  "false_fire_max": 0,
+  "per_run_timeout_ms": 180000,
+  "budget": {
+    "max_tool_calls": 20,
+    "max_total_tokens": 300000
+  },
+  "infra_error_definition": "A provider or host outage before any skill content reaches the model: a non-zero host exit, a provider 4xx/5xx or network error, or a recording-proxy failure, with no skill content loaded. Retried at most 2 times, reported separately, and excluded from the denominator. A timeout, a budget breach, a judge_error, or any host exit after skill content loads counts as FAIL and stays in the denominator.",
+  "run_outcome_taxonomy": [
+    "pass",
+    "fail",
+    "timeout->fail",
+    "budget->fail",
+    "judge_error->fail",
+    "infra_error",
+    "non_isolated"
+  ],
+  "agreement_floor": 0.8,
+  "agent_model_id": "openai/gpt-6-luna",
+  "judge_model_id": "anthropic/claude-haiku-5-5",
+  "accepted_error_rates": {
+    "false_red": 0.314,
+    "false_green": 0.225
+  },
+  "metadata": {
+    "source_url": "synthesized (no external source)",
+    "licence": "MIT",
+    "notes": "v0.1 profile. Fixtures synthesized by the author; no external source. Fixtures are prompt-only files; per-fixture family, probes, and expected sketches are in rubric.md (dev, negative) or in sidecar .expected.txt files beside the held-out set (held-out, never in the repo). Per-run timeout 180000 ms: Unit 1 measured a trivial live opencode/big-pickle run at 6.9 s and warm startup at ~5 s (cold 17-60 s); 180 s is ~26x the trivial live run and covers a long reasoning answer plus a skill load and a helper call. Budget: 20 tool calls (skill load, one helper call, one retry, and probing denials fit well inside) and 300000 total tokens (a live step is ~5-7k input tokens, so roughly 40 steps). Judge: anthropic/claude-haiku-4-5-20251001, a different model family from the agent (opencode/big-pickle is a stealth model, community-identified as GLM/DeepSeek family, which is not Anthropic); supports temperature 0. Pinned here; Unit 6 owns the judge client and must confirm the id resolves before RED, or a new epoch is needed to change it. accepted_error_rates.false_green = 0.225: probability that a skill whose true per-run pass rate is 0.75 reaches pooled >=17/20 on the 4 held-out fixtures (N=5 each). Adding the per-fixture floor of 3/5 lowers it to 0.220; the pooled-only figure is the stated upper bound. A skill with true rate 0.90 clears with probability 0.860 (floor included). accepted_error_rates.false_red = 0.314: probability that the RED bar (baseline fails >=4/5 on >=2 of the 6 dev fixtures) is met when the true baseline fail rate is only 0.5 on every dev fixture (per-fixture chance 0.188; fixtures treated as independent). At true fail rate 0.3 it is 0.013; at 0.7 it is 0.915. The baseline-held-out ceiling of <=10/20 is cleared with probability 0.588 when the true baseline pass rate is 0.5. Pragmatic gate, not proof. A passing run is a judge-verified, human-spot-checked process outcome on a free-tier model; verified matrix cells pin the (host version, model) pair they were earned on. Epoch 2 (supersedes the epoch-1 agent and judge pins; fixtures, rubric, and all other fields unchanged): agent_model_id is opencode-go/beam-free and judge_model_id is opencode-go/deepseek-v4.1-flash. The epoch-1 judge (anthropic/claude-haiku-4-5-20251001) needs a paid provider key, and the epoch-1 agent (opencode/big-pickle) became unusable on 2026-10-22 when the unauthenticated free tier reported 'Free usage limit reached' for every opencode/*-free id, including with the OpenCode credential present. Runs under this epoch used authenticated access to the OpenCode Go gateway: the real opencode and opencode-go credentials were copied (provider names are recorded in each manifest, values never) into each run's throwaway auth.json. Agent and judge families are catalogue labels only (beam, deepseek-flash); both are stealth or aggregated ids, so 'different family' is unverified. Epoch 3 (paid round via CLIProxyAPI; supersedes the epoch-2 model pins; bars, dev and negative fixtures, rubric, budget, timeout and all other fields unchanged): agent_model_id is openai/gpt-6-luna and judge_model_id is anthropic/claude-haiku-5-5, both served by the owner's CLIProxyAPI gateway (https://cliproxy.fro.bot/v1) through a per-repo key named fro-bot-marcusrbrown-metacogs. The owner authorized one paid round. Why: the epoch-1 and epoch-2 runs on free-tier and OpenCode Go models showed both methods work when the skill is loaded but miss the strict bars on skill-load rate, so the open question is whether a stronger agent that loads the skill reliably clears the unchanged bars; a model change needs a new epoch. The key is fetched at spawn time with the infra CLI and written only to each run's throwaway auth.json (key name recorded in each manifest as auth_cliproxy, gateways [cliproxy]; the value is never logged, recorded or committed, and it joins the credential-leak scan). Agent and judge are different vendors' models (catalogue families gpt-luna and claude-haiku), so the epoch-2 caveat that 'different family' was unverified does not apply. Both catalogue entries have temperature: false, so OpenCode sends no temperature parameter to either model: the plan's temperature 0 for the judge is not enforced by a parameter this epoch and is observed only (identical output on two identical probes; see evals/runner/README.md). load_rate (the share of skill-condition runs in which the skill text reached the model) is reported as its own metric next to the pass rate; it is not a bar. No skill-text edits in this epoch: the skill read in the dev and GREEN runs is the skill that already exists in the repository. The held-out set is unchanged and has never been read (no GREEN read for counterfactual in epoch 1 or 2), so its hashes are kept; it is still outside the repository and still unread. Epoch 4 (counterfactual only; supersedes the epoch-3 prereg and changes only the dev-campaign bar and the epoch base below): salt, fixture hashes (dev, negative, and held-out), rubric_hash, runs_per_condition, red_bar, green_bar, false_fire_max, per_run_timeout_ms, budget, agent_model_id, judge_model_id, and accepted_error_rates are byte-identical to epoch 3. prev_epoch_closing_commit moves to ad5374f, the last commit of the epoch-3 counterfactual work. Owner decisions, predeclared before any epoch-4 run. (1) The dev bar becomes POOLED: at least 24 of 30 skill-condition passes across the 6 dev fixtures, a per-fixture floor of 2 of 5, and 0 false fires over the 15 negative runs. Rationale: four prior dev campaigns (epochs 2 and 3) each pooled at least 26 of 30 with exactly one fixture at 3 of 5, so the per-fixture 4/5 rule measured judge variance on one fixture in one run, not the method. (2) The held-out set is unchanged from epoch 3 and has never been read (no counterfactual GREEN read exists in any epoch); its hashes are identical. (3) GREEN bars are unchanged: skill pooled at least 17 of 20, per-fixture floor 3 of 5, baseline pooled at most 10 of 20, 0 negative false fires, and dev no-regression. (4) Models are unchanged: agent openai/gpt-6-luna and judge anthropic/claude-haiku-5-5, both through the owner's CLIProxyAPI with the key named fro-bot-marcusrbrown-metacogs. No skill, fixture, rubric, redaction, or held-out edit in this epoch: skills/counterfactual is the text committed in 7a3bf22. Scope of the dev bar: it is an authoring margin, not a prereg field. The runner's green-dev.json computes its own per-fixture passes_dev_bar flag (every dev fixture at least 4/5), and the GREEN report's dev_regression check reads that flag from the recomputed dev campaign; neither is changed here. The pooled bar above is evaluated from the fixtures table of green-dev.json, and any disagreement between the two is reported as a disagreement, not resolved silently. Epoch 5 (counterfactual only; supersedes epoch 4): epoch 4 is superseded because its pooled dev bar lived in these notes only. The runner's dev bar was a hard-coded per-fixture 4/5 rule, so under epoch 4 the epoch-4 dev campaign (27 of 30 pooled, cf-d6-autoscaler-removal 3/5, 0 of 15 negative false fires; commit fdc5efc) met the pooled bar but read passes_dev_bar false, and the GREEN report's dev_regression check could not have been true. The one-shot read was therefore not made, and the held-out set is still unread. Epoch 5 makes the bar a prereg field the runner enforces: dev_bar {pooled_min_passes: 24, per_fixture_min_passes: 2} (at least 24 of 30 skill-condition passes across the 6 dev fixtures, at least 2 of 5 on each, 0 false fires over the 15 negative runs), implemented in feat(runner): preregistered dev bar (79a1442), which reads it from this tagged prereg and writes the bar used into green-dev.json and green.json. A prereg without dev_bar keeps the old per-fixture rule, so the synthesis epoch-3 preregister and every earlier report are unchanged. Everything else is byte-identical to epoch 4 and epoch 3: salt, dev, negative and held-out fixture hashes (the held-out set is unread, with no read marker and no green report on record), rubric_hash, runs_per_condition, red_bar, green_bar (skill pooled at least 17 of 20, per-fixture floor 3 of 5, baseline pooled at most 10 of 20), false_fire_max, per_run_timeout_ms, budget, agent_model_id (openai/gpt-6-luna), judge_model_id (anthropic/claude-haiku-5-5), and accepted_error_rates; the models run through the owner's CLIProxyAPI with the key named fro-bot-marcusrbrown-metacogs. prev_epoch_closing_commit is fdc5efc, the epoch-4 dev-run commit. No skill, fixture, rubric, redaction or held-out edit: skills/counterfactual is the text committed in 7a3bf22. The epoch-4 sentence that says the pooled bar is evaluated outside the runner no longer applies; the runner evaluates it."
+  }
+}

@@ -1,0 +1,764 @@
+{
+  "schema_version": 1,
+  "kind": "red",
+  "method": "synthesis",
+  "prereg": {
+    "tag": "prereg/synthesis/2",
+    "tag_object_sha": "607ebfaf713afc9b3accc7ccfbee69de05ac15cd",
+    "commit_sha": "4954a74285c5b7bc734470c5b52af340582adf9b",
+    "blob_sha": "803447fcb30fa109c4938a0dda1d6dbef8841038",
+    "epoch": 2,
+    "rubric_hash": "2701141a85847fe1ca78a32bc3fbcc359ef8c196d6f15538963ba76ad8b0180c",
+    "runs_per_condition": 5,
+    "per_run_timeout_ms": 180000,
+    "red_bar": {
+      "min_baseline_fails_per_fixture": 4,
+      "min_fixtures": 2
+    }
+  },
+  "repo": {
+    "head_sha": "5e3cc06110aaf41524be100816c12848f4ad79fd"
+  },
+  "opencode": {
+    "package": "opencode-ai",
+    "version": "1.19.4"
+  },
+  "models": {
+    "agent_pinned": "opencode-go/beam-free",
+    "agent_returned": [
+      "beam-free"
+    ],
+    "judge_pinned": "opencode-go/deepseek-v4.1-flash",
+    "judge_returned": [
+      "deepseek-v4.1-flash"
+    ]
+  },
+  "judge": {
+    "system_prompt_sha256": [
+      "77adfebfc05707a441fb2a9a9afbf106f6f70fa7ace66f08caa78a9754ecb6cb"
+    ],
+    "judged_runs": 30,
+    "judge_error_runs": 0,
+    "temperature_observed": [
+      0
+    ]
+  },
+  "campaign": {
+    "id": "synthesis-red-2026-10-22T18-49-42-701Z",
+    "started_at": "2026-10-22T18:49:42.964Z",
+    "finished_at": "2026-10-22T19:07:21.423Z",
+    "planned_runs": 45,
+    "executed_manifests": 45,
+    "incomplete_manifests": 0
+  },
+  "totals": {
+    "attempted": 45,
+    "taxonomy": {
+      "pass": 15,
+      "fail": 30,
+      "timeout->fail": 0,
+      "budget->fail": 0,
+      "judge_error->fail": 0,
+      "infra_error": 0,
+      "non_isolated": 0
+    },
+    "wall_clock_ms": 278805,
+    "tokens": {
+      "input": 208765,
+      "output": 4244,
+      "reasoning": 22459
+    }
+  },
+  "fixtures": [
+    {
+      "id": "sy-d1-kafka-consensus",
+      "kind": "dev",
+      "fixture_hash": "8822634ff244560448d217fb7d934b541d3760956e261b0eb2ae866f2e40f1da",
+      "attempted": 5,
+      "pass": 0,
+      "fail": 5,
+      "fail_over_total": "5/5",
+      "fail_rate_wilson95": [
+        0.5655,
+        1
+      ],
+      "outcomes": {
+        "pass": 0,
+        "fail_judge_verdict": 5,
+        "fail_check": 0,
+        "fail_timeout": 0,
+        "fail_budget": 0,
+        "fail_host_crash": 0,
+        "fail_judge_error": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "taxonomy": {
+        "pass": 0,
+        "fail": 5,
+        "timeout->fail": 0,
+        "budget->fail": 0,
+        "judge_error->fail": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "criteria": {
+        "SY1": {
+          "pass": 0,
+          "fail_quoted": 5,
+          "fail_absent": 0
+        },
+        "SY2": {
+          "pass": 1,
+          "fail_quoted": 4,
+          "fail_absent": 0
+        },
+        "SY3": {
+          "pass": 1,
+          "fail_quoted": 1,
+          "fail_absent": 3
+        },
+        "SY4": {
+          "pass": 4,
+          "fail_quoted": 1,
+          "fail_absent": 0
+        },
+        "SY5": {
+          "pass": 4,
+          "fail_quoted": 1,
+          "fail_absent": 0
+        }
+      },
+      "meets_red_bar": true,
+      "fail_excluding_judge_error": {
+        "fail": 5,
+        "attempted": 5,
+        "meets_red_bar": true
+      },
+      "retained": [
+        {
+          "run_id": "001-dev-sy-d1-kafka-consensus-baseline-r1",
+          "manifest_sha256": "408082fa3ad9658f558be8b12a143772bc6f901a0586168061ee133a415b554a",
+          "stdout_sha256": "ab3eb33d7bbbf0cda938e714880e329f33f65c436b427b4efe774b4264420a30"
+        },
+        {
+          "run_id": "010-dev-sy-d1-kafka-consensus-baseline-r2",
+          "manifest_sha256": "f481177c3ba31c6031723ce538a9e0081477a2532d3dc5f4a6efafcbe41e3607",
+          "stdout_sha256": "da868f77949850c842770c374d65cefc8053667f24370d72400aa7d60f725a4f"
+        },
+        {
+          "run_id": "019-dev-sy-d1-kafka-consensus-baseline-r3",
+          "manifest_sha256": "cc49111ef6bc7be0184d71ece1e55d98914709484b330083ba0326346ec9e8a9",
+          "stdout_sha256": "fc546419538d36487b4de0c0ff351984e98b23615840c5f95b887ac3ec01437d"
+        },
+        {
+          "run_id": "028-dev-sy-d1-kafka-consensus-baseline-r4",
+          "manifest_sha256": "6eac51b1e3df03adb41c1880ef79227741899f318a80e8ac5874fbcd9b1683c8",
+          "stdout_sha256": "4051dbc1c969896b343aaeba0c71625fb903f090e5e07d12967f13e7d2332c3b"
+        },
+        {
+          "run_id": "037-dev-sy-d1-kafka-consensus-baseline-r5",
+          "manifest_sha256": "b3a55c9ff1dfed2a7ef04f86e481f0c7ef795ed4d6b867860a56cdac8dc8f2c3",
+          "stdout_sha256": "db349eb547dadb3b52cb6b4f92651072bfdebd7cf604107bd7abdb9ef73eedb3"
+        }
+      ]
+    },
+    {
+      "id": "sy-d2-stale-service-map",
+      "kind": "dev",
+      "fixture_hash": "905929187f82e20f173ef9be27ef7428a940dcd46b5069a3a090a3128b91ee9a",
+      "attempted": 5,
+      "pass": 0,
+      "fail": 5,
+      "fail_over_total": "5/5",
+      "fail_rate_wilson95": [
+        0.5655,
+        1
+      ],
+      "outcomes": {
+        "pass": 0,
+        "fail_judge_verdict": 5,
+        "fail_check": 0,
+        "fail_timeout": 0,
+        "fail_budget": 0,
+        "fail_host_crash": 0,
+        "fail_judge_error": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "taxonomy": {
+        "pass": 0,
+        "fail": 5,
+        "timeout->fail": 0,
+        "budget->fail": 0,
+        "judge_error->fail": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "criteria": {
+        "SY1": {
+          "pass": 0,
+          "fail_quoted": 5,
+          "fail_absent": 0
+        },
+        "SY2": {
+          "pass": 2,
+          "fail_quoted": 3,
+          "fail_absent": 0
+        },
+        "SY3": {
+          "pass": 2,
+          "fail_quoted": 3,
+          "fail_absent": 0
+        },
+        "SY4": {
+          "pass": 4,
+          "fail_quoted": 1,
+          "fail_absent": 0
+        },
+        "SY5": {
+          "pass": 0,
+          "fail_quoted": 5,
+          "fail_absent": 0
+        }
+      },
+      "meets_red_bar": true,
+      "fail_excluding_judge_error": {
+        "fail": 5,
+        "attempted": 5,
+        "meets_red_bar": true
+      },
+      "retained": [
+        {
+          "run_id": "002-dev-sy-d2-stale-service-map-baseline-r1",
+          "manifest_sha256": "891931ef4d993399b078066177f3bfd14019cd80e2f58cf03277e89f80f5d38a",
+          "stdout_sha256": "1e86b48a132fafff64da5ef73b6520f79944f9fbc01d2eef18ce4219ad50f867"
+        },
+        {
+          "run_id": "011-dev-sy-d2-stale-service-map-baseline-r2",
+          "manifest_sha256": "2251d95d75f5df39141f8ad0fef7774395c0dec6bcb1ee4d54994ac5a76b995d",
+          "stdout_sha256": "e82f3f9cde25de5bf4cefde0451e771cd09595de899ba4f213c08c363af9aade"
+        },
+        {
+          "run_id": "020-dev-sy-d2-stale-service-map-baseline-r3",
+          "manifest_sha256": "99638d5739aa144d4a04e3a7481209dc2beb179900d5e4ecd4ba1031cc5288a0",
+          "stdout_sha256": "03b1eef680dae12598c2e4a80387688d4c68ea49927f18a3960322bc09470a9d"
+        },
+        {
+          "run_id": "029-dev-sy-d2-stale-service-map-baseline-r4",
+          "manifest_sha256": "97544e819bad6fa8335b7c69fedb59db4668df44fb802fcabf560adc6d98511d",
+          "stdout_sha256": "f37bc68a52229e09f3543f30db8147a830c385bedc724b55b2a70bf84eb0c36e"
+        },
+        {
+          "run_id": "038-dev-sy-d2-stale-service-map-baseline-r5",
+          "manifest_sha256": "2d7301faee0812facc5cfd8e5c5e8b0f3106334fc73538cc8fd21b7fa87863e7",
+          "stdout_sha256": "fc4297a90f29e66e4dcb47f9668e24e0247f2bd52eacbfb52b3510de02110a26"
+        }
+      ]
+    },
+    {
+      "id": "sy-d3-cache-tenancy",
+      "kind": "dev",
+      "fixture_hash": "f81b148c1453e60bd3c9ea75f1050158415b6647eac94d34f7fa7862648dc061",
+      "attempted": 5,
+      "pass": 0,
+      "fail": 5,
+      "fail_over_total": "5/5",
+      "fail_rate_wilson95": [
+        0.5655,
+        1
+      ],
+      "outcomes": {
+        "pass": 0,
+        "fail_judge_verdict": 5,
+        "fail_check": 0,
+        "fail_timeout": 0,
+        "fail_budget": 0,
+        "fail_host_crash": 0,
+        "fail_judge_error": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "taxonomy": {
+        "pass": 0,
+        "fail": 5,
+        "timeout->fail": 0,
+        "budget->fail": 0,
+        "judge_error->fail": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "criteria": {
+        "SY1": {
+          "pass": 1,
+          "fail_quoted": 4,
+          "fail_absent": 0
+        },
+        "SY2": {
+          "pass": 0,
+          "fail_quoted": 5,
+          "fail_absent": 0
+        },
+        "SY3": {
+          "pass": 0,
+          "fail_quoted": 3,
+          "fail_absent": 2
+        },
+        "SY4": {
+          "pass": 3,
+          "fail_quoted": 2,
+          "fail_absent": 0
+        },
+        "SY5": {
+          "pass": 2,
+          "fail_quoted": 3,
+          "fail_absent": 0
+        }
+      },
+      "meets_red_bar": true,
+      "fail_excluding_judge_error": {
+        "fail": 5,
+        "attempted": 5,
+        "meets_red_bar": true
+      },
+      "retained": [
+        {
+          "run_id": "003-dev-sy-d3-cache-tenancy-baseline-r1",
+          "manifest_sha256": "08551bd30822a8b5e2f6e2bea5d5c9c1e7975efc413a53761c7d4d5034dab478",
+          "stdout_sha256": "215e077a1e25ecc2133ef49d958c52a8bf248063771595f690b3d76c715b468c"
+        },
+        {
+          "run_id": "012-dev-sy-d3-cache-tenancy-baseline-r2",
+          "manifest_sha256": "dd4e592bd25fc81873aa816b22489e31b4fab2b41a42e1f972bd6014a7a07555",
+          "stdout_sha256": "3dd677c342216449154cc6b539404afc1fc17fbfefbd2247d13ec1b889957fdf"
+        },
+        {
+          "run_id": "021-dev-sy-d3-cache-tenancy-baseline-r3",
+          "manifest_sha256": "5af263a0034736e07b347fee469703303fbf05fde2ce06d65acecc62e4ea522a",
+          "stdout_sha256": "4a23b49086be1ae005c90e95a14415e870ed2e9bf316cb3fe459d73f88f74123"
+        },
+        {
+          "run_id": "030-dev-sy-d3-cache-tenancy-baseline-r4",
+          "manifest_sha256": "73e29da504c6a9416748e2b078bfce8da76a9e1805b1514db24262b49a91ccca",
+          "stdout_sha256": "ca110900fb43f32d45938822d2e5b44ced32e564c2320e9db91248ae4d7015c9"
+        },
+        {
+          "run_id": "039-dev-sy-d3-cache-tenancy-baseline-r5",
+          "manifest_sha256": "a890f00e6d80904b55136b8ff7f7b7829556f94f3decf4189e6ea84694b1956f",
+          "stdout_sha256": "fc48122a220857b58b7f21ce6dc3f5c045bf5b979d72a157dac2f9b818f687a8"
+        }
+      ]
+    },
+    {
+      "id": "sy-d4-parser-vote",
+      "kind": "dev",
+      "fixture_hash": "d907412d77ba2f51fbca1c589fb54c2c20b6632cef63ac169c3567253b2308c6",
+      "attempted": 5,
+      "pass": 0,
+      "fail": 5,
+      "fail_over_total": "5/5",
+      "fail_rate_wilson95": [
+        0.5655,
+        1
+      ],
+      "outcomes": {
+        "pass": 0,
+        "fail_judge_verdict": 5,
+        "fail_check": 0,
+        "fail_timeout": 0,
+        "fail_budget": 0,
+        "fail_host_crash": 0,
+        "fail_judge_error": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "taxonomy": {
+        "pass": 0,
+        "fail": 5,
+        "timeout->fail": 0,
+        "budget->fail": 0,
+        "judge_error->fail": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "criteria": {
+        "SY1": {
+          "pass": 0,
+          "fail_quoted": 5,
+          "fail_absent": 0
+        },
+        "SY2": {
+          "pass": 0,
+          "fail_quoted": 5,
+          "fail_absent": 0
+        },
+        "SY3": {
+          "pass": 0,
+          "fail_quoted": 5,
+          "fail_absent": 0
+        },
+        "SY4": {
+          "pass": 5,
+          "fail_quoted": 0,
+          "fail_absent": 0
+        },
+        "SY5": {
+          "pass": 0,
+          "fail_quoted": 5,
+          "fail_absent": 0
+        }
+      },
+      "meets_red_bar": true,
+      "fail_excluding_judge_error": {
+        "fail": 5,
+        "attempted": 5,
+        "meets_red_bar": true
+      },
+      "retained": [
+        {
+          "run_id": "004-dev-sy-d4-parser-vote-baseline-r1",
+          "manifest_sha256": "2921c1b88f16743698140e4079696a7a32cc68b9eac86fdd2755301178ffe34d",
+          "stdout_sha256": "0bb751d1cf06e07f7a756a15407c4e5cffceb59ab7c3fabb801ac79c7084aef4"
+        },
+        {
+          "run_id": "013-dev-sy-d4-parser-vote-baseline-r2",
+          "manifest_sha256": "c70ebc0a72083372ebe8cdebe37ee42dbdec6894a057db23142388965c49c2be",
+          "stdout_sha256": "4014a653d18893ddf88cd24a1afea99d9b7611a7e1fd023f8e674bf69ad8df17"
+        },
+        {
+          "run_id": "022-dev-sy-d4-parser-vote-baseline-r3",
+          "manifest_sha256": "5deecdfc44872b3ca629cac9facef1cca43d9992e2846f1675df655c84513745",
+          "stdout_sha256": "3875babcfc4149dacc08d46b2e65499b4e0303da2c69f7f6cd56c53af537f27d"
+        },
+        {
+          "run_id": "031-dev-sy-d4-parser-vote-baseline-r4",
+          "manifest_sha256": "1f572144b924840e3b086857da3610a9c611e850e0a4c76df414a99cb3304be7",
+          "stdout_sha256": "4a6a189d55ea594b070417b620af3e3af94c936d65015d727569a3354c799b39"
+        },
+        {
+          "run_id": "040-dev-sy-d4-parser-vote-baseline-r5",
+          "manifest_sha256": "aae55f3d9bad330895534631a1bd9e8cde78483e8c81415ecd5cc9ca5eedaa0d",
+          "stdout_sha256": "b3b379eb47a42689d4378cb550483ba8c04ce753967f7a3dd5873597f76d7acb"
+        }
+      ]
+    },
+    {
+      "id": "sy-d5-sdk-migration",
+      "kind": "dev",
+      "fixture_hash": "b86334bbb06eb0db718028bb50612b7ed56ee1c9d284fd91c4f54ef8b12acbfb",
+      "attempted": 5,
+      "pass": 0,
+      "fail": 5,
+      "fail_over_total": "5/5",
+      "fail_rate_wilson95": [
+        0.5655,
+        1
+      ],
+      "outcomes": {
+        "pass": 0,
+        "fail_judge_verdict": 5,
+        "fail_check": 0,
+        "fail_timeout": 0,
+        "fail_budget": 0,
+        "fail_host_crash": 0,
+        "fail_judge_error": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "taxonomy": {
+        "pass": 0,
+        "fail": 5,
+        "timeout->fail": 0,
+        "budget->fail": 0,
+        "judge_error->fail": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "criteria": {
+        "SY1": {
+          "pass": 0,
+          "fail_quoted": 5,
+          "fail_absent": 0
+        },
+        "SY2": {
+          "pass": 3,
+          "fail_quoted": 2,
+          "fail_absent": 0
+        },
+        "SY3": {
+          "pass": 3,
+          "fail_quoted": 0,
+          "fail_absent": 2
+        },
+        "SY4": {
+          "pass": 4,
+          "fail_quoted": 1,
+          "fail_absent": 0
+        },
+        "SY5": {
+          "pass": 5,
+          "fail_quoted": 0,
+          "fail_absent": 0
+        }
+      },
+      "meets_red_bar": true,
+      "fail_excluding_judge_error": {
+        "fail": 5,
+        "attempted": 5,
+        "meets_red_bar": true
+      },
+      "retained": [
+        {
+          "run_id": "005-dev-sy-d5-sdk-migration-baseline-r1",
+          "manifest_sha256": "3df2713c0009d0fab4986d7b7f4f1235a2c837a4ab93798e8413680f36c68256",
+          "stdout_sha256": "8617aae0160a1401ca423a484020c1e58c5e70afb821cc12834fc6c61f18d74a"
+        },
+        {
+          "run_id": "014-dev-sy-d5-sdk-migration-baseline-r2",
+          "manifest_sha256": "b243dda02df3365de33f1a85a9615990acfd33d58a2f6e6d17eb6b6769c408bf",
+          "stdout_sha256": "eecf8fe54916b1f065561ddf061c8fa38f09f801760898149fd547e267df1602"
+        },
+        {
+          "run_id": "023-dev-sy-d5-sdk-migration-baseline-r3",
+          "manifest_sha256": "c345ca2f6edcd046bc1abaeb0fa2bf0fc7147605f105cbedde1afba1cfb99462",
+          "stdout_sha256": "93ffd4c094a395fad069e55325daad3223f467d88c7a2e44b876bbb8745f793e"
+        },
+        {
+          "run_id": "032-dev-sy-d5-sdk-migration-baseline-r4",
+          "manifest_sha256": "312b2e39e615fdc79d7f508e26f727a42de643b6e2f6db693820debf851501c3",
+          "stdout_sha256": "3b43046d4092adac0e91a5fa971d0be90a9044ab44e982ca9f6fecc94db645dc"
+        },
+        {
+          "run_id": "041-dev-sy-d5-sdk-migration-baseline-r5",
+          "manifest_sha256": "cd662f106ae5e83793026cfb8d315fea097e9159656bec61838eb62096dfc84e",
+          "stdout_sha256": "f1ecb6ffaf8f82255642220d08a92fadbba4fb27ea51e442787817a033458080"
+        }
+      ]
+    },
+    {
+      "id": "sy-d6-log-redaction",
+      "kind": "dev",
+      "fixture_hash": "750ce74926c02623473f8bd0a0c0c2388304aacaf872416f2aeee0e11e00698f",
+      "attempted": 5,
+      "pass": 0,
+      "fail": 5,
+      "fail_over_total": "5/5",
+      "fail_rate_wilson95": [
+        0.5655,
+        1
+      ],
+      "outcomes": {
+        "pass": 0,
+        "fail_judge_verdict": 5,
+        "fail_check": 0,
+        "fail_timeout": 0,
+        "fail_budget": 0,
+        "fail_host_crash": 0,
+        "fail_judge_error": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "taxonomy": {
+        "pass": 0,
+        "fail": 5,
+        "timeout->fail": 0,
+        "budget->fail": 0,
+        "judge_error->fail": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "criteria": {
+        "SY1": {
+          "pass": 1,
+          "fail_quoted": 4,
+          "fail_absent": 0
+        },
+        "SY2": {
+          "pass": 0,
+          "fail_quoted": 5,
+          "fail_absent": 0
+        },
+        "SY3": {
+          "pass": 0,
+          "fail_quoted": 3,
+          "fail_absent": 2
+        },
+        "SY4": {
+          "pass": 5,
+          "fail_quoted": 0,
+          "fail_absent": 0
+        },
+        "SY5": {
+          "pass": 0,
+          "fail_quoted": 5,
+          "fail_absent": 0
+        }
+      },
+      "meets_red_bar": true,
+      "fail_excluding_judge_error": {
+        "fail": 5,
+        "attempted": 5,
+        "meets_red_bar": true
+      },
+      "retained": [
+        {
+          "run_id": "006-dev-sy-d6-log-redaction-baseline-r1",
+          "manifest_sha256": "2fa814beb1a864dd10da253a66a4571ed0ba340311878d69e3949ccfe807d6da",
+          "stdout_sha256": "a4cfb4d1a7054d4a19586acc330f403300c18375838461a120d4a0c95f43a159"
+        },
+        {
+          "run_id": "015-dev-sy-d6-log-redaction-baseline-r2",
+          "manifest_sha256": "71f046fdaeb9ee9bad7f4fac5850e7ee6ffdf6684d950d9108b26965a6849c8c",
+          "stdout_sha256": "9fc36db715937d45df3c2c53acc23c8712635f6c19c5e559aeb7ad983c1744ae"
+        },
+        {
+          "run_id": "024-dev-sy-d6-log-redaction-baseline-r3",
+          "manifest_sha256": "49d7ff4244e85a17ca9a15f37072524eb5c126b8098b1b755fad880d539d3277",
+          "stdout_sha256": "dddc5fd7f496e1aa1e1b84252da46f873b63010dd3d05ad9f27a44ccbb529bd5"
+        },
+        {
+          "run_id": "033-dev-sy-d6-log-redaction-baseline-r4",
+          "manifest_sha256": "7e3a93aeee78c63be2e488e0561cd7abfe967ace9d000cb17d85e08d00292200",
+          "stdout_sha256": "374be92a49b41f1484386af27de351d9a5306ce323156a0886c8902eeba56793"
+        },
+        {
+          "run_id": "042-dev-sy-d6-log-redaction-baseline-r5",
+          "manifest_sha256": "c356bbecac88f1e6d166d05db6db78e14e82c7f1fcf3e92faf4e56a5ea29e5eb",
+          "stdout_sha256": "e23cc6db48d88876084b32d64ca7f634fe4b3b44af0f4f449a724e13ca9134ca"
+        }
+      ]
+    },
+    {
+      "id": "sy-n1-sort-imports",
+      "kind": "negative",
+      "fixture_hash": "b1f9fd038c1783753d30db56d4e4de309c9fd237c50bd74f1a19bb1fbd11622d",
+      "attempted": 5,
+      "pass": 5,
+      "fail": 0,
+      "fail_over_total": "0/5",
+      "fail_rate_wilson95": [
+        0,
+        0.4345
+      ],
+      "outcomes": {
+        "pass": 5,
+        "fail_judge_verdict": 0,
+        "fail_check": 0,
+        "fail_timeout": 0,
+        "fail_budget": 0,
+        "fail_host_crash": 0,
+        "fail_judge_error": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "taxonomy": {
+        "pass": 5,
+        "fail": 0,
+        "timeout->fail": 0,
+        "budget->fail": 0,
+        "judge_error->fail": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "criteria": {},
+      "meets_red_bar": false,
+      "fail_excluding_judge_error": {
+        "fail": 0,
+        "attempted": 5,
+        "meets_red_bar": false
+      },
+      "retained": []
+    },
+    {
+      "id": "sy-n2-wording-swap",
+      "kind": "negative",
+      "fixture_hash": "a63107da636c15215c37b40e206b21a902584bae7b6f7cc329b8d07cd34c3176",
+      "attempted": 5,
+      "pass": 5,
+      "fail": 0,
+      "fail_over_total": "0/5",
+      "fail_rate_wilson95": [
+        0,
+        0.4345
+      ],
+      "outcomes": {
+        "pass": 5,
+        "fail_judge_verdict": 0,
+        "fail_check": 0,
+        "fail_timeout": 0,
+        "fail_budget": 0,
+        "fail_host_crash": 0,
+        "fail_judge_error": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "taxonomy": {
+        "pass": 5,
+        "fail": 0,
+        "timeout->fail": 0,
+        "budget->fail": 0,
+        "judge_error->fail": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "criteria": {},
+      "meets_red_bar": false,
+      "fail_excluding_judge_error": {
+        "fail": 0,
+        "attempted": 5,
+        "meets_red_bar": false
+      },
+      "retained": []
+    },
+    {
+      "id": "sy-n3-compose-indent",
+      "kind": "negative",
+      "fixture_hash": "1722f92b2238180e98f0db6dc4dc56ac95a114966c0f1aea085fa3cda1f0b86d",
+      "attempted": 5,
+      "pass": 5,
+      "fail": 0,
+      "fail_over_total": "0/5",
+      "fail_rate_wilson95": [
+        0,
+        0.4345
+      ],
+      "outcomes": {
+        "pass": 5,
+        "fail_judge_verdict": 0,
+        "fail_check": 0,
+        "fail_timeout": 0,
+        "fail_budget": 0,
+        "fail_host_crash": 0,
+        "fail_judge_error": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "taxonomy": {
+        "pass": 5,
+        "fail": 0,
+        "timeout->fail": 0,
+        "budget->fail": 0,
+        "judge_error->fail": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "criteria": {},
+      "meets_red_bar": false,
+      "fail_excluding_judge_error": {
+        "fail": 0,
+        "attempted": 5,
+        "meets_red_bar": false
+      },
+      "retained": []
+    }
+  ],
+  "red": {
+    "dev_fixtures_meeting_bar": 6,
+    "min_fixtures": 2,
+    "green_eligible": true,
+    "sensitivity_excluding_judge_error": {
+      "dev_fixtures_meeting_bar": 6,
+      "green_eligible": true
+    }
+  }
+}

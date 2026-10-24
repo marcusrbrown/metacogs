@@ -1,3 +1,8 @@
 node_modules/
 .DS_Store
 .context/
+evals/runs/
+.agents/skills/
+
+# Local handoffs and session context
+.context/

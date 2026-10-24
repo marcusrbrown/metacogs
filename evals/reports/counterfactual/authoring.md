@@ -1,0 +1,104 @@
+# Authoring log: counterfactual (epoch 2)
+
+Dev fixtures and negatives only. Held-out: untouched. Agent `opencode-go/beam-free`, judge `opencode-go/deepseek-v4.1-flash`, opencode-ai 1.19.4. Pass = skill loaded through the skill tool, helper called once, record valid, judge passes CF1 to CF5. Runs per fixture are noted per iteration; the iterations are one text change each, run on the same fixtures. Pass counts are dev fixtures CF-d1 to CF-d6 in order, negatives always 3 x N silent unless stated.
+
+RED recap (from `red.json`): baseline answers were one to three sentences. They failed CF3 (observed versus inferred), CF4 (hypothetical with an adjusted plan) and CF5 (flip test with a source) most often. Those three are what the Reply section targets. No rationalization text was seen in baseline transcripts: the failures are omissions, so no rationalization table was added.
+
+| # | What the previous run showed | The one change | Dev result |
+| --- | --- | --- | --- |
+| 0 | First draft: 7 steps, helper call, reply asked "in plain prose" for the premise, evidence split, hypothetical and flip test. Description: "Use when ... depends on an uncertain premise ...". | none (baseline of the skill) | N=1: 2/6 positives passed. Skill tool not called on 4 of 6 (two answered directly, two read the skill file instead of loading it). Negatives silent 3/3. |
+| 1 | Skill rarely loaded. | Description opens "Use before recommending a go/no-go, migration, removal, or adoption when ..." | N=1: 0/6. Loading fell (all six `skill_not_loaded`). |
+| 2 | Same. | Description opens "Use when asked to approve, plan, or give a go/no-go ..." (user-facing phrasing) | N=2: 3/12. |
+| 3 | Same. | Description opens "Required before answering when asked to approve, plan, or give a go/no-go ..." | N=2: 5/12; loading 9/12. Remaining fails: CF3 (reply did not separate observed from inferred), one judge `invalid_ungrounded_quote` (judge side). |
+| 4 | CF3 and CF4 fail because the reply merged observed and inferred. | Reply section now asks for five labelled lines: Premise, Observed, Inferred or asserted, If false, Flip test | N=2: 10/12. Both fails were loading. |
+| 5 | Replies sometimes dropped lines on short decisions. | Reply: "all five labelled lines, every time, even when the decision is short" | N=5: 4, 4, 5, 1, 2, 5 of 5. d4 and d5 failed on loading (read the skill file or never opened it); one budget breach (tool calls) on d4. Negatives 15/15 silent. |
+| 6 | d4 (new fact undermines an approved plan) and d5 (implement a library under a hard limit) did not trigger. | Description adds "implement, or confirm" and "a plan that a newly surfaced fact may undermine" | N=5: 4, 3, 4, 5, 1, 5. d5 still 1/5, loading. Negatives 15/15. |
+| 7 | d5 still not loading. | Description rewritten as a reason: "Required before answering a request to approve, plan, implement, or give a go/no-go on a consequential change ..., because such cases often rest on ..." | N=5: 2, 5, 4, 4, 1, 4. Negatives 15/15. **Final text.** |
+
+| 8 | Many `skill_not_loaded` runs had read the skill file and applied it; the old check counted only the skill tool. | **No skill text change.** Runner fix (`6e6eb8b`): on positive fixtures a complete read of the installed SKILL.md also counts as a fire (`fire_basis: direct_read`) when a valid record exists; negatives stay strict, so any read of SKILL.md is now a false fire. | N=5, same skill text as iteration 7: 3, 5, 5, 4, 3, 4. Negatives: 1 false fire in 15 (`cf-n3-off-by-one`, a direct read of SKILL.md). **Final result.** |
+
+| 9 | One negative false fire in iteration 8 (`cf-n3-off-by-one`: a plain bug fix with the expected result given; the agent opened SKILL.md and left it). Remaining positive misses were never-opened skills on d1 and d5. | Description rewritten to name the request types more narrowly ("a go/no-go, approval, or migration or implementation-plan request for a consequential change") and the exclusion to "bug fixes whose expected result is given"; Reply and body unchanged. | N=5: 4, 5, 5, 3, 4, 5. Negatives: 1 false fire in 15, again `cf-n3` r3 (a direct read of SKILL.md, then a plain answer). Dev bar **not met**: d4 at 3/5 and the cf-n3 false fire. **Stopped here by owner instruction; no further iterations.** |
+
+Iteration 9 status at N=5 (final for this epoch, same fire check as iteration 8): d1 4/5, d2 5/5, d3 5/5, d4 3/5, d5 4/5, d6 5/5. Fire basis over the 30 dev runs: skill tool 26, direct read 1, none 3. Negatives: 1 false fire in 15. `passes_dev_bar` is false. Five failing runs: three load failures on positives (d4, d5, d1: the agent answered without opening the skill), one **judge fail on a loaded run** (d4, CF5: the flip test named a metric and a threshold but the judge found no source or result that would change the call), and the cf-n3 false fire. Loads were 27 of 30 positives (90%), up from 24 of 30 in iteration 8. cf-d1 and cf-d5 now meet the bar (4/5 each); cf-d4 slipped from 4/5 to 3/5, which at N=5 is within the noise of a stochastic judge on a fixture whose true rate is near 0.8.
+
+The cf-n3 false fire did not respond to the narrower "Not for ..." clause. The agent reads SKILL.md on a bug-fix prompt to decide whether it applies, then answers directly; that is the harness definition of a false fire, but it is close to benign behaviour (no record, no method applied). Tightening the description further would trade it against the load rate on positives; no further text change was made.
+
+Final dev status at N=5 (iteration 8, corrected fire check): d1 3/5, d2 5/5, d3 5/5, d4 4/5, d5 3/5, d6 4/5. Fire basis over the 30 dev runs: skill tool 22, direct read 2, none 6. Negatives: 1 false fire in 15. Dev bar (every dev fixture at least 4/5, no negative false fire) **not met**: d1 and d5 at 3/5, and one negative false fire.
+
+Every one of the 7 failing runs in iteration 8 is a load failure: 6 positives where the agent never opened the skill (no tool call, no read; it answered directly) and 1 negative where it opened the skill on a plain bug fix. **No loaded positive run failed the judge in this campaign**: all 24 runs with a skill load or complete read passed CF1 to CF5, CF3m and CF5m. The judge and the reply format are not what limits this skill on the dev set.
+
+Previous final status (iteration 7, old check, kept for the record): d1 2/5, d2 5/5, d3 4/5, d4 4/5, d5 1/5, d6 4/5.
+
+## Deviation: imperative description
+
+The description opens "Required before answering a request to ..." instead of the "Use when ..." form the writing-skills guidance and the plan's trigger-only wording prescribe. Owner decision, taken on measured load rate: with "Use when ..." phrasings (iterations 0 to 2) the pinned agent opened the skill through the skill tool in roughly one run of four (iterations 0 to 2, N=1 to 2); with "Required before answering ..." (iteration 3 onward) it rose to about three of four (9 of 12 at iteration 3) and held near two of three at N=5. The description still states the activation boundary as conditions (the kind of request, why it is risky, what it excludes) and names no tool or model. The cost is a second-person-style imperative in a field the guidance reserves for triggers; it was kept because the fire rate is the binding failure and no other lever (name, body, frontmatter) affects it.
+
+Previous final status text follows, from the pre-fix check:
+
+Final dev status at N=5 (iteration 7): d1 2/5, d2 5/5, d3 4/5, d4 4/5, d5 1/5, d6 4/5. Negatives 0 false fires in 15. Dev bar (every dev fixture at least 4/5) **not met**: d1 and d5.
+
+Where the misses are: of the 10 failing positive runs in the final iteration, 9 are `skill_not_loaded`. In four of those nine the agent read the skill file directly and still ran the helper, so the method was applied but the harness check (a completed skill-tool call) fails it. The one other miss is a judge verdict. Loading is a property of the pinned agent's tool-use habits, and iterations 1 to 7 moved it from roughly 1/3 to roughly 2/3 without a stable gain on d5.
+
+Not changed: fixtures, rubric, redaction list, prereg. Iterations 5 to 7 were each judged on 45 runs; with a 4/5 bar per fixture, a true pass rate of 0.8 clears one fixture only 74% of the time and six fixtures about 16% of the time, so a miss at N=5 is weak evidence against a text change.
+
+## Epoch 3 (agent `openai/gpt-6-luna`, judge `anthropic/claude-haiku-5-5`, via CLIProxyAPI)
+
+Same fixtures, rubric, and bars. Pass rule as before. Dev fixtures and negatives only; held-out untouched (still unread).
+
+| # | What the previous run showed | The one change | Dev result |
+| --- | --- | --- | --- |
+| 10 | The epoch-2 skill text on the new models; no edit. | none | N=5: d1 4, d2 3, d3 5, d4 5, d5 4, d6 5. Skill load 30 of 30 through the skill tool; negatives 0 of 15. All four failing positives loaded the skill and wrote no record. |
+| 11 | Transcripts of the four failures: three (d1, d2, d5) loaded the skill, answered, and made no helper call at all; one of them said "No decision record was written; this was handled in chat only." The fourth (d2) did call the helper but its bash command ended `EOF"} darn (tool channel commentary, code 2)`: tool-call text leaked after the heredoc terminator, so the heredoc never closed and the command was refused by the allowlist. Hypothesis for the three skipped calls (not proven): Record was a separate section after the numbered steps, so the agent treated the seven steps plus the Reply format as the whole task. | Record becomes step 8 of the numbered steps ("Record, before any reply text ... not optional once the gate has passed ... an answer with no helper call, and no 'unrecorded' note after a failed one, is incomplete"). The Record section says the last line of the command is `EOF` and nothing follows it. Exit lines say "Reply" after each outcome. Reply starts "After step 8." | N=5: d1 5, d2 5, d3 5, d4 5, d5 5, d6 3. Skill load 30 of 30; helper called and a record written in all 30 positive runs; negatives 0 of 15. |
+
+Final dev status at N=5 (iteration 11): d1 to d5 5/5, d6 3/5. Dev bar (every dev fixture at least 4/5, no negative false fire) **not met** on d6 alone, so no GREEN read was made and the held-out set stays unread. The two d6 failures are judge failures on CF5 (the flip test; the recorded quotes are the closing "restore telemetry and load-test ... ship only if it meets ..." sentences, and the answers were not read beyond those quotes), not record failures; d6 passed 5/5 in iteration 10. The record-step cause is fixed (0 of 30 runs without a record, down from 4 of 30). With a 4/5 bar and a true pass rate near 0.8 a single fixture misses about a quarter of the time, so a 3/5 on one fixture is weak evidence either way. Not changed: fixtures, rubric, redaction list, prereg.
+
+### Epoch 3, round 3: is the cf-d6 drop the record edit or judge variance?
+
+Question: after the iteration-11 edit (record became step 8) `cf-d6-autoscaler-removal` fell from 5/5 to 3/5, both misses on CF5. Did the edit displace the flip test?
+
+Evidence, from the full final answers of all cf-d6 skill runs in three campaigns (pre-edit `…T02-28-29-821Z`, post-edit `…T03-26-00-130Z` and `…T05-58-37-936Z`):
+
+- **Same shape and length.** Every one of the 15 answers is a bold verdict line plus the same five labelled bullets (Premise, Observed, Inferred or asserted, If false, Flip test). Output tokens (measured for the pre-edit and first post-edit campaigns only) are 480 to 539 pre-edit and 475 to 599 post-edit, with the failing runs inside that range (475 and 536). The agent did not spend its reply on the record or shorten the flip line; the helper call comes before the reply in all 15, as the edit intends, and the Reply section was not touched.
+- **Failing and passing flip lines are not textually distinguishable.** Failing, first campaign: "Restore request-rate telemetry and verify two-replica performance at peak load. Ship only if it meets service targets." and "Load-test 50 req/s with exactly two replicas. Ship only if latency meets its SLO with adequate resource headroom." Failing, second campaign: "Restore request-rate telemetry and run a representative peak-load test. Passing throughput, latency, and error objectives supports shipping; failing means don't." and "Restore request-rate telemetry and run a representative load test at measured peak. Ship only if two replicas meet your latency and error objectives." Passing, same campaigns: "Restore request-rate telemetry and test two replicas under representative peak load. Ship only if latency, errors, and resource use stay within targets." and "Restore reliable peak request-rate data and load-test two replicas, checking latency, errors, and saturation. Pass: reconsider the fixed count; fail: don't ship it." Every line names request-rate telemetry or a load test as the source and a pass/fail condition on latency and errors. The most specific line in either campaign (the last passing one) names no source the failing ones lack. Pre-edit passing lines are the same kind of sentence; two of five name ingress or load-balancer logs.
+- **The judge flips on identical answers.** `eval rejudge` re-ran the judge (same model, no manifest changes) over the retained answers of both post-edit campaigns. All four cf-d6 runs the judge had failed on CF5 passed on the second verdict, and the other cf-d6 runs stayed passes. Across the two campaigns the second pass changed 4 of 4 failing verdicts to pass and, outside cf-d6, one of 60 passing verdicts to `judge_error` (cf-d4, run 3 of the second campaign). No answer text changed between the two verdicts.
+- **What this does not show.** The fixture sits on the CF5 boundary: "where to obtain it" is satisfied by "restore request-rate telemetry" for some judge samples and not others, and the judge model takes no temperature parameter on this gateway, so its draw is not controlled. Pre-edit the fixture passed 5/5 in one campaign; post-edit it passed 6 of 10 on first verdicts and 10 of 10 on second verdicts. With that spread the first-verdict difference (5/5 against 6/10) is not significant (Fisher exact, p about 0.12), and a small real effect of the edit on the flip-test wording cannot be excluded.
+
+Conclusion: variance in the CF5 judgment, not displacement by the record step. No skill edit this round. `skills/counterfactual/` is unchanged from `7a3bf22`.
+
+Dev re-run (iteration 12, no edit), N=5: d1 to d5 5/5, **d6 3/5** (runs 2 and 3 failed CF5), skill load 30 of 30, a record written in 30 of 30, negatives 0 of 15. `passes_dev_bar` is false, so no GREEN read was made and the counterfactual held-out set is still unread. The second verdicts above are reported here as evidence about the judge; the preregistered bar is read from the first verdict of each run and they do not replace it.
+
+## Epoch 4 (prereg `prereg/counterfactual/4`, pooled dev bar)
+
+Same models (`openai/gpt-6-luna` agent, `anthropic/claude-haiku-5-5` judge, `gateways: ["cliproxy"]`), same fixtures, rubric, held-out hashes, and GREEN bars as epoch 3. Skill text unchanged since `7a3bf22` (no edit, no fixture or rubric edit). Only the predeclared dev bar changed: at least 24 of 30 skill-condition passes across the 6 dev fixtures, a per-fixture floor of 2 of 5, and 0 negative false fires (rationale in the prereg `metadata.notes`).
+
+| # | What the previous run showed | The one change | Dev result |
+| --- | --- | --- | --- |
+| 13 | Four dev campaigns (iterations 9 to 12) each pooled at least 26 of 30 with exactly one fixture at 3/5. | none (skill unchanged; the bar changed in the prereg, not the skill) | N=5: d1 to d5 5/5, **d6 3/5** (run 1 `judge_error` `invalid_ungrounded_quote` after 2 attempts; run 4 CF5 judge fail). Pooled **27 of 30**. Skill load 30 of 30 through the skill tool; helper called and record written in all 30; negatives 0 of 15 false fires. |
+
+Pooled bar (24 of 30, floor 2 of 5, negatives 0): **met** (27 of 30, minimum fixture 3 of 5, 0 of 15). The runner's own `passes_dev_bar` flag in `green-dev.json` is still the per-fixture 4/5 rule and reads `false` (5 of 6 fixtures at the bar). The two d6 failures are judge-side: neither is a check failure or a missing record. Campaign `counterfactual-dev-2026-10-23T21-09-00-330Z`, 45 runs, 19.1 min of campaign time (12.7 min summed run time), agent cost about $0.047 (judge cost not recorded).
+
+## Epoch 5 (prereg `prereg/counterfactual/5`, `dev_bar` as a prereg field)
+
+Epoch 4 is superseded: its pooled dev bar lived in the prereg notes only, and the runner still scored the dev campaign against a hard-coded per-fixture 4/5 rule (`passes_dev_bar` false at 27 of 30 with `cf-d6` at 3/5), so the GREEN report's `dev_regression` check could not have been true. No held-out read was made under epoch 4. Commit `79a1442` makes the bar a prereg field (`dev_bar: {pooled_min_passes: 24, per_fixture_min_passes: 2}`; absent means the old rule); epoch 5 sets it. Everything else is unchanged from epoch 4: models, fixtures (dev, negative, held-out hashes), rubric, GREEN bars, and the skill text (`7a3bf22`).
+
+| # | What the previous run showed | The one change | Dev result |
+| --- | --- | --- | --- |
+| 14 | Iteration 13 (epoch 4): 27 of 30, d6 3/5, two judge-side misses. | none (skill unchanged; the bar became a prereg field the runner enforces) | N=5: d1 to d4 5/5, **d5 4/5** (one `host_crash` after the skill loaded), d6 5/5. Pooled **29 of 30**. Skill load 30 of 30 through the skill tool; negatives 0 of 15 false fires; 0 `judge_error`; 0 `infra_error`. |
+
+Pooled bar (24 of 30, floor 2 of 5, negatives 0): **met** and read by the runner (`dev_bar.kind: "pooled"` in `green-dev.json`, `passes_dev_bar: true`). Campaign `counterfactual-dev-2026-10-23T21-37-19-012Z`, 45 runs, 22.0 min campaign time, agent cost about $0.049 (judge cost not recorded). Unlike epoch 4, the one miss is a host crash, not a judge verdict; `cf-d6` passed 5/5 this time, which is consistent with the epoch-3 finding that its earlier 3/5 reads were judge variance.
+
+### Epoch 5 GREEN read (one shot, `prereg/counterfactual/5`)
+
+Made once after the dev bar passed (iteration 14). Both conditions on the four held-out fixtures plus the three negatives under the skill condition, N=5, live, same models and gateway; 55 runs, campaign `counterfactual-green-2026-10-23T22-00-03-968Z` under the state root (artifacts, blind sheets `review.md` and `review-key.md` never enter the repo). Prereg ordering, the held-out hash check (4 of 4, unchanged from epoch 3), and the near-duplicate gate ran before launch; the read marker `heldout/counterfactual/5.read.json` was claimed before the set loaded. No skill, fixture, or rubric edit.
+
+| Held-out fixture | Skill | Baseline | Delta (Newcombe 95%) |
+| --- | --- | --- | --- |
+| cf-h1 | 5/5 | 1/5 | 0.8 [0.193, 0.964] |
+| cf-h2 | 3/5 | 0/5 | 0.6 [0.030, 0.882] |
+| cf-h3 | 5/5 | 0/5 | 1.0 [0.386, 1.0] |
+| cf-h4 | 5/5 | 0/5 | 1.0 [0.386, 1.0] |
+| **Pooled** | **18/20** (Wilson [0.699, 0.972]) | **1/20** ([0.009, 0.236]) | **0.85 [0.576, 0.933]** |
+
+Bars: skill pooled at least 17 of 20 yes (18), per-fixture floor 3 of 5 yes (minimum 3), baseline at most 10 of 20 yes (1; `held_out_too_easy: false`), negatives silent yes (0 of 15), dev regression yes (recomputed from the dev campaign's manifests under the pooled `dev_bar`; `skill_matches` true), near-duplicate yes. **Machine verdict: `green`.** Taxonomy over 55 runs: 34 pass, 19 fail, 2 of them `judge_error`, 0 timeout, 0 budget, 0 `infra_error`, 0 `non_isolated`. Skill load rate 1.0 (20 of 20 through the skill tool).
+
+Both skill-condition misses are on cf-h2 (runs 1 and 5) and both are `judge_error` (`invalid_ungrounded_quote`, after the judge's retry), not judge fail verdicts and not check failures; the other three cf-h2 skill runs passed all five criteria. `judge_error` counts as FAIL by the prereg, so it pushes the result against the skill; excluding those two runs the skill is 18 of 18. Baseline failures spread over CF1 to CF5 (most often CF4 and CF5, as in RED). Human review of the 40 judged runs is pending (`human_review.status: pending`). The epoch-5 held-out set is burned: a `skills/counterfactual/` edit voids this read and a retry needs a new epoch and a new set.

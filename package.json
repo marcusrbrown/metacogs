@@ -1,0 +1,24 @@
+{
+  "name": "metacogs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test --pass-with-no-tests",
+    "generate": "bun src/generate/bundle-helpers.ts",
+    "generate:check": "bun src/generate/check.ts",
+    "eval": "bun src/runner/cli.ts",
+    "matrix:check": "bun src/matrix/check.ts",
+    "matrix:render": "bun src/matrix/check.ts --render",
+    "scan:secrets": "bun src/scan/secrets.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.3",
+    "typescript": "^7.0.2"
+  }
+}

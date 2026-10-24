@@ -1,0 +1,868 @@
+{
+  "schema_version": 1,
+  "kind": "green",
+  "method": "synthesis",
+  "prereg": {
+    "tag": "prereg/synthesis/3",
+    "tag_object_sha": "80dcfcff6120a411a20975338134d1e9564e6335",
+    "commit_sha": "58372061efc4da666a32047c68df489948697e6d",
+    "blob_sha": "c914af88d613a7b4fdb65774b4f9932349021016",
+    "epoch": 3,
+    "rubric_hash": "2701141a85847fe1ca78a32bc3fbcc359ef8c196d6f15538963ba76ad8b0180c",
+    "runs_per_condition": 5,
+    "per_run_timeout_ms": 180000
+  },
+  "repo": {
+    "head_sha": "8079747abe263d8d4570c5a774147b1bbe0c30a6"
+  },
+  "skill": {
+    "sha256": "39e2f64a329c055a4951dc46156399281625ef6bd50a334d37f77ed1c47e454c",
+    "tree_sha": "25485f630eb53655c5d75489cd2e0e686e0ffe4e"
+  },
+  "opencode": {
+    "package": "opencode-ai",
+    "version": "1.19.4"
+  },
+  "models": {
+    "agent_pinned": "openai/gpt-6-luna",
+    "agent_returned": [
+      "gpt-6-luna"
+    ],
+    "judge_pinned": "anthropic/claude-haiku-5-5",
+    "judge_returned": [
+      "claude-haiku-5-5"
+    ],
+    "gateways": [
+      "cliproxy"
+    ]
+  },
+  "judge": {
+    "system_prompt_sha256": [
+      "77adfebfc05707a441fb2a9a9afbf106f6f70fa7ace66f08caa78a9754ecb6cb"
+    ],
+    "judged_runs": 39,
+    "judge_error_runs": 0,
+    "temperature_observed": []
+  },
+  "campaign": {
+    "id": "synthesis-green-2026-10-23T04-11-00-725Z",
+    "started_at": "2026-10-23T04:11:01.428Z",
+    "finished_at": "2026-10-23T04:32:36.634Z",
+    "planned_runs": 55,
+    "executed_manifests": 55,
+    "incomplete_manifests": 0
+  },
+  "totals": {
+    "attempted": 55,
+    "taxonomy": {
+      "pass": 37,
+      "fail": 18,
+      "timeout->fail": 0,
+      "budget->fail": 0,
+      "judge_error->fail": 0,
+      "infra_error": 0,
+      "non_isolated": 0
+    },
+    "wall_clock_ms": 797322,
+    "tokens": {
+      "input": 322801,
+      "output": 24278,
+      "reasoning": 3396
+    }
+  },
+  "bars": {
+    "skill_pooled_pass_min": 17,
+    "skill_per_fixture_pass_min": 3,
+    "baseline_pooled_pass_max": 10,
+    "false_fire_max": 0
+  },
+  "heldout": [
+    {
+      "id": "sy-h5",
+      "fixture_hash": "1adbf9278c37afc257e82f5c401cb536ce26005e1f1cce896207592d1722b068",
+      "skill": {
+        "attempted": 5,
+        "pass": 5,
+        "fail": 0,
+        "pass_over_total": "5/5",
+        "pass_rate_wilson95": [
+          0.5655,
+          1
+        ],
+        "outcomes": {
+          "pass": 5,
+          "fail_judge_verdict": 0,
+          "fail_check": 0,
+          "fail_timeout": 0,
+          "fail_budget": 0,
+          "fail_host_crash": 0,
+          "fail_judge_error": 0,
+          "infra_error": 0,
+          "non_isolated": 0
+        },
+        "taxonomy": {
+          "pass": 5,
+          "fail": 0,
+          "timeout->fail": 0,
+          "budget->fail": 0,
+          "judge_error->fail": 0,
+          "infra_error": 0,
+          "non_isolated": 0
+        },
+        "criteria": {
+          "SY1": {
+            "pass": 5,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          },
+          "SY2": {
+            "pass": 5,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          },
+          "SY3": {
+            "pass": 5,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          },
+          "SY4": {
+            "pass": 5,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          },
+          "SY5": {
+            "pass": 5,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          }
+        },
+        "check_codes": {},
+        "fire_basis": {
+          "skill_tool": 5,
+          "direct_read": 0,
+          "none": 0
+        },
+        "load_rate": 1
+      },
+      "baseline": {
+        "attempted": 5,
+        "pass": 2,
+        "fail": 3,
+        "pass_over_total": "2/5",
+        "pass_rate_wilson95": [
+          0.1176,
+          0.7693
+        ],
+        "outcomes": {
+          "pass": 2,
+          "fail_judge_verdict": 3,
+          "fail_check": 0,
+          "fail_timeout": 0,
+          "fail_budget": 0,
+          "fail_host_crash": 0,
+          "fail_judge_error": 0,
+          "infra_error": 0,
+          "non_isolated": 0
+        },
+        "taxonomy": {
+          "pass": 2,
+          "fail": 3,
+          "timeout->fail": 0,
+          "budget->fail": 0,
+          "judge_error->fail": 0,
+          "infra_error": 0,
+          "non_isolated": 0
+        },
+        "criteria": {
+          "SY1": {
+            "pass": 2,
+            "fail_quoted": 3,
+            "fail_absent": 0
+          },
+          "SY2": {
+            "pass": 5,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          },
+          "SY3": {
+            "pass": 4,
+            "fail_quoted": 1,
+            "fail_absent": 0
+          },
+          "SY4": {
+            "pass": 5,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          },
+          "SY5": {
+            "pass": 5,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          }
+        },
+        "check_codes": {},
+        "fire_basis": {
+          "skill_tool": 0,
+          "direct_read": 0,
+          "none": 5
+        },
+        "load_rate": 0
+      },
+      "delta": {
+        "value": 0.6,
+        "newcombe95": [
+          0.0298,
+          0.8824
+        ]
+      },
+      "meets_floor": true
+    },
+    {
+      "id": "sy-h6",
+      "fixture_hash": "21933f232301b2567f4602c123d3057fdefd61948901e2c57567e7d924bbe834",
+      "skill": {
+        "attempted": 5,
+        "pass": 4,
+        "fail": 1,
+        "pass_over_total": "4/5",
+        "pass_rate_wilson95": [
+          0.3755,
+          0.9638
+        ],
+        "outcomes": {
+          "pass": 4,
+          "fail_judge_verdict": 0,
+          "fail_check": 1,
+          "fail_timeout": 0,
+          "fail_budget": 0,
+          "fail_host_crash": 0,
+          "fail_judge_error": 0,
+          "infra_error": 0,
+          "non_isolated": 0
+        },
+        "taxonomy": {
+          "pass": 4,
+          "fail": 1,
+          "timeout->fail": 0,
+          "budget->fail": 0,
+          "judge_error->fail": 0,
+          "infra_error": 0,
+          "non_isolated": 0
+        },
+        "criteria": {
+          "SY1": {
+            "pass": 4,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          },
+          "SY2": {
+            "pass": 4,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          },
+          "SY3": {
+            "pass": 4,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          },
+          "SY4": {
+            "pass": 4,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          },
+          "SY5": {
+            "pass": 4,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          }
+        },
+        "check_codes": {
+          "helper_not_invoked": 1,
+          "record_missing": 1,
+          "skill_not_loaded": 1
+        },
+        "fire_basis": {
+          "skill_tool": 4,
+          "direct_read": 0,
+          "none": 1
+        },
+        "load_rate": 0.8
+      },
+      "baseline": {
+        "attempted": 5,
+        "pass": 1,
+        "fail": 4,
+        "pass_over_total": "1/5",
+        "pass_rate_wilson95": [
+          0.0362,
+          0.6245
+        ],
+        "outcomes": {
+          "pass": 1,
+          "fail_judge_verdict": 4,
+          "fail_check": 0,
+          "fail_timeout": 0,
+          "fail_budget": 0,
+          "fail_host_crash": 0,
+          "fail_judge_error": 0,
+          "infra_error": 0,
+          "non_isolated": 0
+        },
+        "taxonomy": {
+          "pass": 1,
+          "fail": 4,
+          "timeout->fail": 0,
+          "budget->fail": 0,
+          "judge_error->fail": 0,
+          "infra_error": 0,
+          "non_isolated": 0
+        },
+        "criteria": {
+          "SY1": {
+            "pass": 2,
+            "fail_quoted": 3,
+            "fail_absent": 0
+          },
+          "SY2": {
+            "pass": 5,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          },
+          "SY3": {
+            "pass": 5,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          },
+          "SY4": {
+            "pass": 5,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          },
+          "SY5": {
+            "pass": 4,
+            "fail_quoted": 1,
+            "fail_absent": 0
+          }
+        },
+        "check_codes": {},
+        "fire_basis": {
+          "skill_tool": 0,
+          "direct_read": 0,
+          "none": 5
+        },
+        "load_rate": 0
+      },
+      "delta": {
+        "value": 0.6,
+        "newcombe95": [
+          -0.0003,
+          0.8316
+        ]
+      },
+      "meets_floor": true
+    },
+    {
+      "id": "sy-h7",
+      "fixture_hash": "54a50fe5b9b0fb73f7650226317cd3d8d32bd95254999d85ac9fffdf83b5c6b1",
+      "skill": {
+        "attempted": 5,
+        "pass": 5,
+        "fail": 0,
+        "pass_over_total": "5/5",
+        "pass_rate_wilson95": [
+          0.5655,
+          1
+        ],
+        "outcomes": {
+          "pass": 5,
+          "fail_judge_verdict": 0,
+          "fail_check": 0,
+          "fail_timeout": 0,
+          "fail_budget": 0,
+          "fail_host_crash": 0,
+          "fail_judge_error": 0,
+          "infra_error": 0,
+          "non_isolated": 0
+        },
+        "taxonomy": {
+          "pass": 5,
+          "fail": 0,
+          "timeout->fail": 0,
+          "budget->fail": 0,
+          "judge_error->fail": 0,
+          "infra_error": 0,
+          "non_isolated": 0
+        },
+        "criteria": {
+          "SY1": {
+            "pass": 5,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          },
+          "SY2": {
+            "pass": 5,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          },
+          "SY3": {
+            "pass": 5,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          },
+          "SY4": {
+            "pass": 5,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          },
+          "SY5": {
+            "pass": 5,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          }
+        },
+        "check_codes": {},
+        "fire_basis": {
+          "skill_tool": 5,
+          "direct_read": 0,
+          "none": 0
+        },
+        "load_rate": 1
+      },
+      "baseline": {
+        "attempted": 5,
+        "pass": 0,
+        "fail": 5,
+        "pass_over_total": "0/5",
+        "pass_rate_wilson95": [
+          0,
+          0.4345
+        ],
+        "outcomes": {
+          "pass": 0,
+          "fail_judge_verdict": 5,
+          "fail_check": 0,
+          "fail_timeout": 0,
+          "fail_budget": 0,
+          "fail_host_crash": 0,
+          "fail_judge_error": 0,
+          "infra_error": 0,
+          "non_isolated": 0
+        },
+        "taxonomy": {
+          "pass": 0,
+          "fail": 5,
+          "timeout->fail": 0,
+          "budget->fail": 0,
+          "judge_error->fail": 0,
+          "infra_error": 0,
+          "non_isolated": 0
+        },
+        "criteria": {
+          "SY1": {
+            "pass": 0,
+            "fail_quoted": 5,
+            "fail_absent": 0
+          },
+          "SY2": {
+            "pass": 5,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          },
+          "SY3": {
+            "pass": 4,
+            "fail_quoted": 1,
+            "fail_absent": 0
+          },
+          "SY4": {
+            "pass": 1,
+            "fail_quoted": 4,
+            "fail_absent": 0
+          },
+          "SY5": {
+            "pass": 1,
+            "fail_quoted": 4,
+            "fail_absent": 0
+          }
+        },
+        "check_codes": {},
+        "fire_basis": {
+          "skill_tool": 0,
+          "direct_read": 0,
+          "none": 5
+        },
+        "load_rate": 0
+      },
+      "delta": {
+        "value": 1,
+        "newcombe95": [
+          0.3855,
+          1
+        ]
+      },
+      "meets_floor": true
+    },
+    {
+      "id": "sy-h8",
+      "fixture_hash": "166f5d501b141ad1331d2fc3c70686cb7aa216ef74a6ddb584191219dc122364",
+      "skill": {
+        "attempted": 5,
+        "pass": 5,
+        "fail": 0,
+        "pass_over_total": "5/5",
+        "pass_rate_wilson95": [
+          0.5655,
+          1
+        ],
+        "outcomes": {
+          "pass": 5,
+          "fail_judge_verdict": 0,
+          "fail_check": 0,
+          "fail_timeout": 0,
+          "fail_budget": 0,
+          "fail_host_crash": 0,
+          "fail_judge_error": 0,
+          "infra_error": 0,
+          "non_isolated": 0
+        },
+        "taxonomy": {
+          "pass": 5,
+          "fail": 0,
+          "timeout->fail": 0,
+          "budget->fail": 0,
+          "judge_error->fail": 0,
+          "infra_error": 0,
+          "non_isolated": 0
+        },
+        "criteria": {
+          "SY1": {
+            "pass": 5,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          },
+          "SY2": {
+            "pass": 5,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          },
+          "SY3": {
+            "pass": 5,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          },
+          "SY4": {
+            "pass": 5,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          },
+          "SY5": {
+            "pass": 5,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          }
+        },
+        "check_codes": {},
+        "fire_basis": {
+          "skill_tool": 5,
+          "direct_read": 0,
+          "none": 0
+        },
+        "load_rate": 1
+      },
+      "baseline": {
+        "attempted": 5,
+        "pass": 0,
+        "fail": 5,
+        "pass_over_total": "0/5",
+        "pass_rate_wilson95": [
+          0,
+          0.4345
+        ],
+        "outcomes": {
+          "pass": 0,
+          "fail_judge_verdict": 5,
+          "fail_check": 0,
+          "fail_timeout": 0,
+          "fail_budget": 0,
+          "fail_host_crash": 0,
+          "fail_judge_error": 0,
+          "infra_error": 0,
+          "non_isolated": 0
+        },
+        "taxonomy": {
+          "pass": 0,
+          "fail": 5,
+          "timeout->fail": 0,
+          "budget->fail": 0,
+          "judge_error->fail": 0,
+          "infra_error": 0,
+          "non_isolated": 0
+        },
+        "criteria": {
+          "SY1": {
+            "pass": 0,
+            "fail_quoted": 5,
+            "fail_absent": 0
+          },
+          "SY2": {
+            "pass": 3,
+            "fail_quoted": 2,
+            "fail_absent": 0
+          },
+          "SY3": {
+            "pass": 5,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          },
+          "SY4": {
+            "pass": 5,
+            "fail_quoted": 0,
+            "fail_absent": 0
+          },
+          "SY5": {
+            "pass": 3,
+            "fail_quoted": 2,
+            "fail_absent": 0
+          }
+        },
+        "check_codes": {},
+        "fire_basis": {
+          "skill_tool": 0,
+          "direct_read": 0,
+          "none": 5
+        },
+        "load_rate": 0
+      },
+      "delta": {
+        "value": 1,
+        "newcombe95": [
+          0.3855,
+          1
+        ]
+      },
+      "meets_floor": true
+    }
+  ],
+  "negatives": [
+    {
+      "id": "sy-n1-sort-imports",
+      "fixture_hash": "b1f9fd038c1783753d30db56d4e4de309c9fd237c50bd74f1a19bb1fbd11622d",
+      "attempted": 5,
+      "false_fires": 0,
+      "outcomes": {
+        "pass": 5,
+        "fail_judge_verdict": 0,
+        "fail_check": 0,
+        "fail_timeout": 0,
+        "fail_budget": 0,
+        "fail_host_crash": 0,
+        "fail_judge_error": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "taxonomy": {
+        "pass": 5,
+        "fail": 0,
+        "timeout->fail": 0,
+        "budget->fail": 0,
+        "judge_error->fail": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "check_codes": {},
+      "fire_basis": {
+        "skill_tool": 0,
+        "direct_read": 0,
+        "none": 5
+      },
+      "load_rate": 0
+    },
+    {
+      "id": "sy-n2-wording-swap",
+      "fixture_hash": "a63107da636c15215c37b40e206b21a902584bae7b6f7cc329b8d07cd34c3176",
+      "attempted": 5,
+      "false_fires": 0,
+      "outcomes": {
+        "pass": 5,
+        "fail_judge_verdict": 0,
+        "fail_check": 0,
+        "fail_timeout": 0,
+        "fail_budget": 0,
+        "fail_host_crash": 0,
+        "fail_judge_error": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "taxonomy": {
+        "pass": 5,
+        "fail": 0,
+        "timeout->fail": 0,
+        "budget->fail": 0,
+        "judge_error->fail": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "check_codes": {},
+      "fire_basis": {
+        "skill_tool": 0,
+        "direct_read": 0,
+        "none": 5
+      },
+      "load_rate": 0
+    },
+    {
+      "id": "sy-n3-compose-indent",
+      "fixture_hash": "1722f92b2238180e98f0db6dc4dc56ac95a114966c0f1aea085fa3cda1f0b86d",
+      "attempted": 5,
+      "false_fires": 0,
+      "outcomes": {
+        "pass": 5,
+        "fail_judge_verdict": 0,
+        "fail_check": 0,
+        "fail_timeout": 0,
+        "fail_budget": 0,
+        "fail_host_crash": 0,
+        "fail_judge_error": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "taxonomy": {
+        "pass": 5,
+        "fail": 0,
+        "timeout->fail": 0,
+        "budget->fail": 0,
+        "judge_error->fail": 0,
+        "infra_error": 0,
+        "non_isolated": 0
+      },
+      "check_codes": {},
+      "fire_basis": {
+        "skill_tool": 0,
+        "direct_read": 0,
+        "none": 5
+      },
+      "load_rate": 0
+    }
+  ],
+  "pooled": {
+    "skill": {
+      "pass": 19,
+      "attempted": 20,
+      "pass_rate_wilson95": [
+        0.7639,
+        0.9911
+      ]
+    },
+    "baseline": {
+      "pass": 3,
+      "attempted": 20,
+      "pass_rate_wilson95": [
+        0.0524,
+        0.3604
+      ]
+    },
+    "delta": {
+      "value": 0.8,
+      "newcombe95": [
+        0.5191,
+        0.9059
+      ]
+    }
+  },
+  "skill_load_rate": 0.95,
+  "dev_regression": {
+    "source_report_present": true,
+    "passes_dev_bar": true,
+    "skill_matches": true
+  },
+  "near_duplicate_check": "pass",
+  "checks": {
+    "skill_pooled": true,
+    "per_fixture_floor": true,
+    "baseline_ceiling": true,
+    "negatives_silent": true,
+    "dev_regression": true,
+    "near_duplicate": true
+  },
+  "verdict": "green",
+  "held_out_too_easy": false,
+  "human_review": {
+    "status": "complete",
+    "judged_runs": 39,
+    "reviewed": 39,
+    "agreement": {
+      "SY1": {
+        "n": 39,
+        "agree": 34,
+        "rate": 0.8718,
+        "kappa": 0.7424,
+        "demoted": false
+      },
+      "SY2": {
+        "n": 39,
+        "agree": 24,
+        "rate": 0.6154,
+        "kappa": 0.0299,
+        "demoted": true
+      },
+      "SY3": {
+        "n": 39,
+        "agree": 30,
+        "rate": 0.7692,
+        "kappa": 0.2419,
+        "demoted": true
+      },
+      "SY4": {
+        "n": 39,
+        "agree": 28,
+        "rate": 0.7179,
+        "kappa": 0.3092,
+        "demoted": true
+      },
+      "SY5": {
+        "n": 39,
+        "agree": 24,
+        "rate": 0.6154,
+        "kappa": 0.2892,
+        "demoted": true
+      }
+    },
+    "flipped_runs": [
+      "008-heldout-sy-h8-skill-r1",
+      "025-heldout-sy-h6-baseline-r3",
+      "026-heldout-sy-h6-skill-r3",
+      "034-heldout-sy-h5-baseline-r4",
+      "035-heldout-sy-h5-skill-r4",
+      "036-heldout-sy-h6-skill-r4",
+      "039-heldout-sy-h7-skill-r4",
+      "040-heldout-sy-h8-skill-r4",
+      "046-heldout-sy-h5-baseline-r5",
+      "048-heldout-sy-h6-skill-r5"
+    ],
+    "demoted_criteria": [
+      "SY2",
+      "SY3",
+      "SY4",
+      "SY5"
+    ],
+    "recomputed": {
+      "skill_pooled_pass": 19,
+      "baseline_pooled_pass": 1,
+      "per_fixture_skill_pass": {
+        "sy-h5": 5,
+        "sy-h6": 4,
+        "sy-h7": 5,
+        "sy-h8": 5
+      },
+      "checks": {
+        "skill_pooled": true,
+        "per_fixture_floor": true,
+        "baseline_ceiling": true
+      },
+      "verdict": "green"
+    }
+  },
+  "burn_rule": {
+    "one_shot_read": true,
+    "skill_edit_burns_set": true
+  }
+}

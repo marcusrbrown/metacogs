@@ -1,7 +1,7 @@
 ---
 title: "feat: metacogs v0.1 — skill pack, record helper, and evidence-gated eval harness"
 type: feat
-status: active
+status: complete
 date: 2026-10-22
 origin: docs/brainstorms/2026-10-22-metacogs-skill-pack-requirements.md
 deepened: 2026-10-22
@@ -113,15 +113,15 @@ None; `docs/solutions/` does not exist.
 - **Bun for development, Node 22+ for runtime.** Generated helpers execute under `node` with no `node_modules`; the runner, generators, and tests use Bun.
 - **The TypeScript validator is the record contract.** No JSON Schema artifacts at v0.1; the runner imports the same validator module the bundle is built from, so there is one source of truth. Fields: `schema_version`, `helper_version`, `method`, `method_version`, `objective`, `evidence[]`, `assumptions[]`, `alternatives[]`, `findings[]`, `next_action`, `reopen_condition`, `execution_mode` (enum incl. `sequential`, `delegated`, `unrecorded`), `status`. Helper rejects unknown `schema_version`; `method` must match `^[a-z][a-z0-9-]{0,63}$` and the shipped-method enum. (origin R6)
 - **Helper write contract.** Exit codes: `0` written; `2` validation failure (names the field, writes nothing); `3` I/O failure; `4` collision with different content; `64` usage. Output root: `--out-dir` → `METACOGS_RECORDS_DIR` → `$XDG_STATE_HOME/metacogs/records/` → `~/.local/state/metacogs/records/`; in-repo storage is an explicit opt-in documented with its `.gitignore` line. Canonical form is RFC 8785 JCS with `helper_version` excluded; filename `<method>-<16-hex-of-canonical-hash>.json`; the resolved path is asserted to sit inside the root. Write = complete temp file in the same directory, then `fs.link(tmp, final)`; on `EEXIST` byte-compare and return `0` (identical) or `4`; unlink temp in `finally`. Dirs 0700, files 0600. Evidence refs are opaque strings, never dereferenced.
-- **Runner transport is `opencode run --format json` in a `git init`'d temp workspace.** Child env is built from an allowlist: `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME` all point into the workspace; `OPENCODE_CONFIG` points at a generated settings file; `OPENCODE_DISABLE_CLAUDE_CODE=1`, `OPENCODE_DISABLE_DEFAULT_PLUGINS=1`; `METACOGS_*` unset except `METACOGS_RECORDS_DIR` (inside workspace); exactly one provider key passed through as an env var. Generated permissions: `edit: deny`, `external_directory: deny`, `shell: {"*": "deny", "node *scripts/record.mjs*": "allow"}`, `skill: {"*": "deny"}` for baseline or `{"*": "deny", "<method>": "allow"}` for GREEN. Never `--auto`. Credentials are never written to config, workspace, manifest, or transcript; the workspace is deleted on normal exit and in the signal handler. `opencode serve` is the fallback if `run` cannot expose tool-call events. Unit 1 proves this before anything else is built.
-- **Isolation is a pass criterion, not a label.** A run counts toward RED or GREEN only if the manifest shows: loaded-skill list (from the skill tool description via `/experimental/tool`) contains exactly the expected set; `opencode debug config` shows only the generated config; a sentinel `AGENTS.md` planted in the real HOME is not quotable; a canary secret at the real `auth.json` path and a canary file under the held-out dir do not appear in the transcript. Runs that fail any check are excluded and reported as `non_isolated`.
+- **Runner transport is `opencode run --format json` in a `git init`'d temp workspace, with two provider modes.** *Scripted mode* (isolation tests, CI-safe): a local OpenAI-compatible stub registered as a fake provider via `OPENCODE_CONFIG_CONTENT` with a placeholder key, zero cost, deterministic replies — mirrors Systematic's `withScriptedProvider`/`startScriptedModelServer`. *Live mode* (RED/GREEN): OpenCode's free-tier `opencode/*` models (e.g. `opencode/big-pickle`), pinned in prereg; no provider key is needed, so none is passed. The binary is pinned via `bunx opencode-ai@<version>`; `OPENCODE_DISABLE_AUTOUPDATE`, `_LSP_DOWNLOAD`, `_MODELS_FETCH`, `_PRUNE` are all `1`. Child env is built from an allowlist: `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME` all point into the workspace; `OPENCODE_CONFIG` points at a generated settings file (never combine with `OPENCODE_CONFIG_CONTENT`; both are honored and deep-merge); `HOME` and `XDG_*` dirs are siblings of the workspace, not inside it; `OPENCODE_DISABLE_CLAUDE_CODE=1`, `OPENCODE_DISABLE_DEFAULT_PLUGINS=1`; `METACOGS_*` unset except `METACOGS_RECORDS_DIR` (inside workspace); no API-key variables are forwarded in either mode. Generated permissions: `edit: deny`, `external_directory: deny`, `bash: {"*": "deny", "node *scripts/record.mjs*": "allow"}` (the key is `bash`, not `shell`), `skill: {"*": "deny"}` for baseline or `{"*": "deny", "<method>": "allow"}` for GREEN; no `ask` rules — headless `run` auto-rejects them with exit 0 and no follow-up turn, whereas an explicit `deny` gives the model a follow-up turn. Never `--auto`. `PATH` is inherited; the `bash` allowlist is the only control on what the agent can execute. Credentials are never written to config, workspace, manifest, or transcript; the workspace is deleted on normal exit and in the signal handler. `opencode serve` is the fallback if `run` cannot expose tool-call events. Unit 1 proves this before anything else is built.
+- **Isolation is a pass criterion, not a label.** A run counts toward RED or GREEN only if the manifest shows: the `<available_skills>` block in the system prompt (captured from the request body by the scripted stub, or by a recording proxy in live mode — `/experimental/tool` is unfiltered and lists denied tools) equals exactly the expected set (`customize-opencode` is built in and must be hidden by the deny-all rule); `opencode debug config` shows only the generated config; a sentinel `AGENTS.md` planted in a throwaway author home is not quotable; canaries at the author-home `auth.json` path and outside the workspace do not appear in stdout, stderr, or request bodies. The real HOME is never used, even as a control. Runs that fail any check are excluded and reported as `non_isolated`.
 - **Preregistration is a tagged commit the runner enforces, as an audit trail.** `evals/<method>/prereg.json` holds `epoch`, salted canonical hashes of dev, negative, and held-out fixtures and of the rubric (canonicalization: UTF-8, LF, final newline), N, RED bar, GREEN bar, false-fire threshold, per-run timeout, `infra_error` definition, run-outcome taxonomy, agreement floor, pinned agent model ID, judge model ID, and accepted false-RED/false-GREEN rates. Commit sequence: (1) fixtures + rubric commit; (2) prereg-only commit; annotated tag `prereg/<method>/<epoch>` on (2), pushed before any `skills/<method>/` commit. At GREEN the runner requires: tag is a strict ancestor (not equal) of the first `skills/<method>/` commit found by `git rev-list --reverse --topo-order <base>..HEAD -- skills/<method>` where `<base>` is the previous epoch's closing commit (epoch 1: root commit); commit (1) is an ancestor of (2); (2) touches only `prereg.json`; `git hash-object --path` of the working-tree prereg equals the tagged blob. The manifest records tag object SHA, tagged commit, and blob hash. README states this makes post-hoc edits visible, not impossible.
 - **Held-out custody is outside the repo until GREEN.** Content lives at `METACOGS_HELDOUT_DIR` (default `$XDG_STATE_HOME/metacogs/heldout/<method>/`, fallback `~/.local/state/...`), never in the working tree. Held-out run artifacts (transcripts, manifests) are written under the same state root, never under `evals/runs/`; the runner refuses a held-out run whose output resolves inside the repo. The runner verifies hashes before judging and runs a private near-duplicate check against dev fixtures whose only committed output is pass/fail. Content is committed after release. Burn rule: a GREEN report is a one-shot read; any `skills/<method>/` edit after it under the same epoch burns the set and requires a fresh set and a new epoch. Infra reruns do not burn.
 - **Eval defaults (v0.1 profile).** 5 runs per condition per fixture, interleaved order. RED qualifies when baseline fails ≥4/5 on at least two dev fixtures; the baseline pass criterion is rubric-only (record checks do not apply when no skill is loaded). GREEN is a one-shot read on the held-out set with both conditions: skill pooled ≥17/20 with per-fixture floor 3/5, baseline pooled ≤10/20, no dev regression, 0/3 negative false fires; paired per-fixture delta reported with a Wilson interval. 4 held-out + 6 dev + 3 negative fixtures per method, split by scenario family. Denominator fixed at attempted runs: timeouts, budget breaches, `judge_error`, and host exits after skill content loads count as FAIL; `infra_error` is only a provider/host outage before skill content loads, retried ≤2× and reported separately. Accepted error rates are stated in prereg (at N=5 a 0.75-true-rate skill clears 17/20 ~22% of the time; this is a pragmatic gate, not proof).
-- **Judge is a direct single-turn provider request.** Deterministic checks first (record present/absent as expected, validator passes, `execution_mode` correct, no false fire); survivors go to one HTTP request to a pinned different-family model: fixed system prompt, no tools, no agent loop. Input is the final answer and record JSON with `redact.json` tokens stripped (runner asserts redaction), wrapped in per-request random delimiters and framed as data; each verdict must quote supporting input. Temperature 0, strict JSON, one retry then `judge_error`. If the provider-returned model ID differs from the pinned ID the run fails. Human reviews 100% of held-out judgments plus any dev judgment within ±1 of threshold, blind to the judge verdict; raw agreement reported, κ only when both labels occur; below the prereg floor the criterion is demoted to advisory.
+- **Judge is a single-turn request through the authenticated OpenCode gateway (free-tier quota exhausted 2026-10-22; owner authorized `opencode`/`opencode-go` credential passthrough into the throwaway HOME only, with leak scans).** `read` is the only tool the gateway permits; the judge workspace is empty and `external_directory` is denied. Deterministic checks first (record present/absent as expected, validator passes, `execution_mode` correct, no false fire); survivors go to one HTTP request to a pinned different-family model: fixed system prompt, no tools, no agent loop. Input is the final answer and record JSON with `redact.json` tokens stripped (runner asserts redaction), wrapped in per-request random delimiters and framed as data; each verdict must quote supporting input. Temperature 0, strict JSON, one retry then `judge_error`. If the provider-returned model ID differs from the pinned ID the run fails. Human reviews 100% of held-out judgments plus any dev judgment within ±1 of threshold, blind to the judge verdict; raw agreement reported, κ only when both labels occur; below the prereg floor the criterion is demoted to advisory.
 - **First RED candidates: `counterfactual` and `synthesis`.** Both map to brief scenarios with mechanical checks; `ritual` is deferred because the record contract already embodies it; `tether`/`fork` depend on host capabilities v0.1 does not test.
 - **Matrix is data; README table is hand-maintained and checked.** `matrix.json` cells carry `status`, `evidence_ref`, `date`, `host_version`, `model`, `history[]`. `matrix:check` fails when a `verified` cell lacks a resolvable `evals/reports/<method>/green.json` or a `content-compatible-untested` cell lacks a primary discovery reference, and when the README table disagrees with `matrix.json`. Codex starts `content-compatible-untested` after a smoke listing.
-- **Negative "must not fire" suite is release-blocking.** ≥3 negative fixtures per shipped method (trivial, near-miss using the method's vocabulary, unrelated). Pass = no skill-tool call for the method, no helper invocation in the tool trace, no file in the records dir.
+- **Negative "must not fire" suite is release-blocking.** ≥3 negative fixtures per shipped method (trivial, near-miss using the method's vocabulary, unrelated). Pass = no `tool_use` event with `part.tool === "skill"` naming the method, no `tool_use` with `part.tool === "invalid"` whose output names the unavailable `skill` tool (a denied skill call is an attempted fire, not silence), no helper invocation in the tool trace, no file in the records dir.
 - **Reports are allowlist projections.** `evals/runs/` is gitignored; `evals/reports/<method>/` contains only counts, intervals, paired outcomes, verdict enums, hashes, model IDs, and SHAs — never stdout, stderr, config paths, or env. CI scans `evals/reports/` and `evals/*/fixtures/` for key-shaped strings and PII patterns. Fixtures are synthesized or anonymized; source URL and licence live in prereg metadata.
 - **Runner lifecycle.** Manifest written as `running` before launch; SIGINT/SIGTERM kill the child process group, delete the workspace, write `interrupted`. Runs are sequential by convention; a stale `running` manifest is reported on startup, not auto-reconciled. No lock file.
 
@@ -129,6 +129,8 @@ None; `docs/solutions/` does not exist.
 
 ### Resolved During Planning
 
+- Event mapping (opencode-ai 1.19.4, from Unit 1): every event has `type`, `timestamp` (epoch ms), `sessionID`; `step_start`/`step_finish` with `part.reason` (`tool-calls`|`stop`), `part.tokens.{total,input,output,reasoning,cache.{read,write}}`, `part.cost`; `tool_use` emitted once on settle with `part.tool`, `part.callID`, `part.state.{status,input,output,error,metadata,title,time.{start,end}}`; skill load = `tool_use` with `part.tool === "skill"`, `state.input.name`, `state.metadata.{name,dir,truncated}`; `text` with `part.text`, `part.time`; fatal `error` with `error.name`, `error.data.message`, exit 1. Skill directory is exposed in `state.metadata.dir` and as "Base directory for this skill: <abs>" in the tool output, so SKILL.md may reference `scripts/record.mjs` skill-relatively.
+- Timings (Unit 1): scripted run ≈4.7 s warm (≈4.4 s is `bunx` + boot); first cold `bunx` 17 s; concurrent cold starts 25–60 s — runs are sequential. Live `opencode/big-pickle` trivial run: 6.9 s, no key, no `auth.json`.
 - Which concepts enter RED first: `counterfactual` and `synthesis`.
 - Record field names, canonical form, and helper exit codes: fixed above.
 - Runner transport, env allowlist, permission set, and isolation criterion: fixed above; proven in Unit 1.
@@ -140,9 +142,7 @@ None; `docs/solutions/` does not exist.
 
 ### Deferred to Implementation
 
-- Exact OpenCode JSON event field names for tool calls, usage, and timing: undocumented; Unit 1 records the mapping in `evals/runner/README.md`.
-- Whether the skill-tool result exposes the skill's base directory: Unit 1 checks; if not, SKILL.md adopts an install-relative helper path convention.
-- Whether headless `opencode run` blocks or fails on an `ask` permission: Unit 1 observes; the generated config has no `ask` rules.
+- Whether Unit 4 live runs use the recording proxy (needs client headers forwarded untouched or the free tier returns 403) or rely on stdout events alone for the `<available_skills>` check: decided in Unit 4 against the README evidence.
 - Rubric wording and `redact.json` token lists per method: written in Unit 5 against dev fixtures only, hashed into the prereg.
 - Judge model selection: any different-family model with a stable ID; pinned in prereg.
 - Bun bundler flags for the smallest dependency-free `.mjs` under Node 22: settled in Unit 3.
@@ -223,7 +223,7 @@ Run-outcome taxonomy: `pass | fail | timeout→fail | budget→fail | judge_erro
 
 ### Phase 1 — Prove the unknowns
 
-- [ ] **Unit 1: OpenCode isolation and event-capture spike**
+- [x] **Unit 1: OpenCode isolation and event-capture spike** — GO (`0733034`; evidence in `evals/runner/README.md`; opencode-ai 1.19.4)
 
 **Goal:** Prove `opencode run` can execute in a workspace that provably loads nothing from the author's machine, that its JSON events expose tool calls, skill loads, usage, and timing well enough to check "no method fired," and that the skill tool tells the agent where the skill directory is.
 
@@ -260,7 +260,7 @@ Run-outcome taxonomy: `pass | fail | timeout→fail | budget→fail | judge_erro
 
 ### Phase 2 — Scaffold the pack
 
-- [ ] **Unit 2: Repository scaffold, license, CI skeleton**
+- [x] **Unit 2: Repository scaffold, license, CI skeleton**
 
 **Goal:** Turn the empty repo into a Bun/TypeScript project with CI that runs typecheck, tests, drift checks, and content scans.
 
@@ -283,7 +283,7 @@ Run-outcome taxonomy: `pass | fail | timeout→fail | budget→fail | judge_erro
 **Verification:**
 - CI passes on the scaffold commit; `HYPOTHESES.md` lists all eleven concepts with status.
 
-- [ ] **Unit 3: Record validator and generated helper**
+- [x] **Unit 3: Record validator and generated helper**
 
 **Goal:** Ship the TypeScript record contract and a single-source helper that validates and atomically writes records, bundled per skill as dependency-free `.mjs`.
 
@@ -322,7 +322,7 @@ Run-outcome taxonomy: `pass | fail | timeout→fail | budget→fail | judge_erro
 **Verification:**
 - All exit codes exercised; bundle parity under Node 22; drift check green.
 
-- [ ] **Unit 4: Eval runner — workspace, isolation checks, prereg enforcement, manifest**
+- [x] **Unit 4: Eval runner — workspace, isolation checks, prereg enforcement, manifest** (`3b1786e`; live mode uses a recording proxy for `<available_skills>`; prereg gained `prev_epoch_closing_commit`, `budget`, `run_outcome_taxonomy`; see `evals/runner/README.md` §Runner)
 
 **Goal:** A runner that executes N isolated OpenCode runs per fixture per condition, applies isolation and deterministic checks, enforces preregistration, and emits a replay manifest with the run-outcome taxonomy.
 
@@ -365,7 +365,7 @@ Run-outcome taxonomy: `pass | fail | timeout→fail | budget→fail | judge_erro
 
 ### Phase 3 — Preregister and RED
 
-- [ ] **Unit 5: Fixtures, rubrics, redaction lists, and preregistration for `counterfactual` and `synthesis`**
+- [x] **Unit 5: Fixtures, rubrics, redaction lists, and preregistration for `counterfactual` and `synthesis`** (`9ed607e`…`39b89a8`; tags `prereg/<m>/1`; expected-answer annex lives in `rubric.md`, held-out sidecars `*.expected.txt` in the state dir; epoch 1 judge id requires a paid key → superseded by epoch 2 in Unit 6)
 
 **Goal:** Author dev, negative, and held-out fixtures plus rubrics and redaction token lists for both candidates, and commit each prereg in the enforced sequence before any `skills/<method>/` content exists.
 
@@ -402,7 +402,7 @@ Run-outcome taxonomy: `pass | fail | timeout→fail | budget→fail | judge_erro
 **Verification:**
 - Two annotated tags exist; `git log` shows no `skills/counterfactual|synthesis` paths before them; the prereg commits touch one file each.
 
-- [ ] **Unit 6: RED runs and go/no-go**
+- [x] **Unit 6: RED runs and go/no-go** (`4ca26cb`…`db847fc`; epoch 2 tags; agent `opencode-go/beam-free`, judge `opencode-go/deepseek-v4.1-flash` via authenticated gateway with `opencode`/`opencode-go` passthrough; counterfactual 5/6 dev fixtures at bar, synthesis 6/6; 0 infra/non_isolated/judge_error; both GREEN-eligible. Caveat: baseline fails are process-rubric fails on terse answers, not wrong conclusions; judge family unverified; no human spot-check yet)
 
 **Goal:** Execute baseline runs for both candidates, retain failures, and decide which proceed to GREEN.
 
@@ -435,7 +435,7 @@ Run-outcome taxonomy: `pass | fail | timeout→fail | budget→fail | judge_erro
 
 ### Phase 4 — GREEN and release
 
-- [ ] **Unit 7: Author skills and run GREEN**
+- [x] **Unit 7: Author skills and run GREEN** (synthesis `green` at epoch 3 on `openai/gpt-6-luna` / judge `anthropic/claude-haiku-5-5` via CLIProxyAPI: held-out 19/20 vs 3/20, delta +0.80 [0.52, 0.91], human review pending; counterfactual `red-retained` — three epoch-3 dev misses all on cf-d6/CF5 judge-boundary variance, held-out unread, deferred to v0.2 epoch 4. Free-tier/Go epoch 2 recorded as `green-miss` on load rate.)
 
 **Goal:** Write the minimal `SKILL.md` for each eligible method against dev fixtures only, then run the one-shot GREEN read on held-out fixtures with both conditions, judge, and human review.
 
@@ -469,7 +469,7 @@ Run-outcome taxonomy: `pass | fail | timeout→fail | budget→fail | judge_erro
 **Verification:**
 - `green.json` per method with counts, intervals, paired outcomes, agreement, verdict; a method meets every bar or returns to `hypothesis` with a new epoch required.
 
-- [ ] **Unit 8: Host matrix, discovery smoke, README, release candidate**
+- [x] **Unit 8: Host matrix, discovery smoke, README, release candidate** (`291bbf8`, `d2cbbbc`; all four hosts list the skill — OpenCode 1.19.4, Pi 1.3.0, Codex 0.162.1, Claude Code 2.1.270; OpenCode cell `content-compatible-untested` + `pending_verification` until human review reconciles; `v0.1.0` tag deferred to owner)
 
 **Goal:** Publish the honest matrix and install docs; cut the v0.1 release candidate.
 
