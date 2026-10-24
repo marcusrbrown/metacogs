@@ -284,6 +284,20 @@ jobs:
           token: ${{ secrets.FRO_BOT_PAT }}
           persist-credentials: false
 
+      # fro-bot/agent scrubs GH_TOKEN/GITHUB_TOKEN from its child env, so the
+      # push credential must be on disk for scheduled and dispatched runs.
+      # Never for PR or mention runs: the action's on-disk-credential check
+      # fails closed there.
+      - name: Enable authenticated git push
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        env:
+          FRO_BOT_PAT: ${{ secrets.FRO_BOT_PAT }}
+        run: |
+          set -euo pipefail
+          auth="$(printf '%s' "x-access-token:${FRO_BOT_PAT}" | base64 | tr -d '\n')"
+          echo "::add-mask::${auth}"
+          git config --local http.https://github.com/.extraheader "AUTHORIZATION: basic ${auth}"
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
