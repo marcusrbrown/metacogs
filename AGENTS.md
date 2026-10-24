@@ -2,7 +2,7 @@
 
 - Use repo-relative paths everywhere; no absolute paths.
 - Generated files are never hand-edited; regenerate them: `skills/*/scripts/record.mjs`, `.agents/skills/`.
-- Prereg per method: `evals/<method>/prereg.json` is committed before the skill is authored; the runner reads bars and hashes from the committed file.
+- Prereg per method: `evals/<method>/prereg.json` (or `evals/<method>/pilot/prereg.json` for a pilot) is committed before any skill text for that method, draft included; the runner reads bars and hashes from the committed file.
 - Reports under `evals/reports/` are allowlist projections: no stdout, stderr, or env.
 - Held-out fixtures never live in the working tree.
 - Bundled helpers target the Node 22 floor.
