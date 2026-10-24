@@ -4,9 +4,9 @@
   "method": "synthesis",
   "prereg": {
     "tag": "prereg/synthesis/2",
-    "tag_object_sha": "2a996353134e8a7be22baeec4871840894f600c4",
-    "commit_sha": "5e3cc06110aaf41524be100816c12848f4ad79fd",
-    "blob_sha": "58eb0ec072facc2cea6e01365ed93e9d929e9e23",
+    "tag_object_sha": "607ebfaf713afc9b3accc7ccfbee69de05ac15cd",
+    "commit_sha": "4954a74285c5b7bc734470c5b52af340582adf9b",
+    "blob_sha": "803447fcb30fa109c4938a0dda1d6dbef8841038",
     "epoch": 2,
     "rubric_hash": "2701141a85847fe1ca78a32bc3fbcc359ef8c196d6f15538963ba76ad8b0180c",
     "runs_per_condition": 5,
