@@ -20,7 +20,7 @@ cp -R <metacogs-clone>/skills/synthesis .agents/skills/synthesis
 cp -R <metacogs-clone>/skills/counterfactual .agents/skills/counterfactual
 ```
 
-Copy the whole directory. The skill tells the agent to run the helper from the directory the host reports, so the helper must sit next to `SKILL.md`. For Claude Code use `.claude/skills/` instead of `.agents/skills/`.
+Copy the whole directory. The skill tells the agent to run the helper from the directory the host reports, so keep `SKILL.md` at the skill directory root and the helper at `scripts/record.mjs` inside it. For Claude Code use `.claude/skills/` instead of `.agents/skills/`.
 
 For all your projects, use the user-level path from the host section instead of the project path.
 
