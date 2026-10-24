@@ -5,7 +5,6 @@
  * Nothing here is imported from Systematic; the shapes (process-group reaping,
  * memoized availability probe, scripted provider) are reimplemented minimally.
  */
-import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -13,7 +12,7 @@ import { basePermission, buildConfig as buildGeneratedConfig, gitInit } from '..
 
 import { buildChildEnv, createFixture, type Fixture } from '../env'
 import { type ParsedEvents, parseEvents } from '../events'
-import { killGroup, opencodeArgv, type SpawnResult, spawnCapture } from '../opencode'
+import { opencodeArgv, type SpawnResult, spawnCapture } from '../opencode'
 import {
   type RecordedRequest,
   SPIKE_MODEL_ID,
@@ -215,54 +214,4 @@ export async function debugCommand(
     json = undefined
   }
   return { ...result, json }
-}
-
-// ── serve-based tool listing ───────────────────────────────────────────────
-
-export interface ServeProbe {
-  health: unknown
-  tools: unknown
-  toolsStatus: number
-}
-
-/**
- * `opencode serve` + `GET /global/health` + `GET /experimental/tool`. Used to
- * compare the HTTP surface against the system-prompt instrument.
- */
-export async function probeServe(
-  fixture: Fixture,
-  env: Record<string, string>,
-  model: { provider: string; model: string },
-  timeoutMs = 60_000,
-): Promise<ServeProbe> {
-  const port = 20_000 + Math.floor(Math.random() * 20_000)
-  const child = spawn(
-    opencodeArgv('serve', '--port', String(port), '--hostname', '127.0.0.1')[0] as string,
-    opencodeArgv('serve', '--port', String(port), '--hostname', '127.0.0.1').slice(1),
-    { cwd: fixture.workspace, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] },
-  )
-  try {
-    const base = `http://127.0.0.1:${port}`
-    const deadline = Date.now() + timeoutMs
-    let health: unknown
-    while (Date.now() < deadline) {
-      try {
-        const res = await fetch(`${base}/global/health`)
-        if (res.ok) {
-          health = await res.json()
-          break
-        }
-      } catch {
-        // not up yet
-      }
-      await Bun.sleep(500)
-    }
-    if (health === undefined) throw new Error('opencode serve did not become healthy')
-    const url = `${base}/experimental/tool?provider=${encodeURIComponent(model.provider)}&model=${encodeURIComponent(model.model)}`
-    const res = await fetch(url)
-    return { health, tools: await res.json().catch(() => undefined), toolsStatus: res.status }
-  } finally {
-    killGroup(child, 'SIGTERM')
-    setTimeout(() => killGroup(child, 'SIGKILL'), 3_000).unref()
-  }
 }
