@@ -84,4 +84,4 @@ No verdict flipped: 20 criterion verdicts (10 runs × TE1, TE2) are the same bef
 
 What the answers looked like (read from the retained local transcripts, which are not committed): every answer stated the result, and the answers that mentioned the planted tangents did so in a sentence, dismissing them with the evidence the material supplied (for `te-d1`, 1.9 s of log writes and a 38 ms config load; for `te-d2`, the advisory's own "not reachable" note and the admin-service location of the slow query). The pilot judge is unvalidated, so these counts are an experiment outcome, not evidence for a matrix cell.
 
-Per the exits above, the instruction and skill arms are not built or run, and `HYPOTHESES.md` stays at `pilot` until the owner records the exit.
+Exit recorded 2026-10-24: **not-reproduced**. The instruction and skill arms were not built or run, no skill was authored, and no `AGENTS.md` recommendation was written. The runner capabilities built for the pilot (expectation sidecars, rubric declarations, the post-judge word check, `eval pilot`) remain for the next concept. Reopen only with fixtures whose bait is not refutable from the fixture's own evidence.

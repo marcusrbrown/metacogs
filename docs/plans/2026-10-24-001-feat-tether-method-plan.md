@@ -1,7 +1,7 @@
 ---
 title: "feat: tether method — outcome-gated eval, pilot, and conditional ship"
 type: feat
-status: active
+status: complete
 date: 2026-10-24
 origin: docs/brainstorms/2026-10-24-tether-method-requirements.md
 ---
@@ -9,6 +9,8 @@ origin: docs/brainstorms/2026-10-24-tether-method-requirements.md
 # feat: tether method — outcome-gated eval, pilot, and conditional ship
 
 ## Overview
+
+> **Outcome (2026-10-24):** closed at Unit 5 with exit *not-reproduced*. The baseline failed TE2 on 0 of 5 runs on both pilot fixtures under both scorings (`evals/tether/pilot/README.md`). Units 1–5 landed; Units 6–11 were not started.
 
 Add the third method, `tether`, on the existing harness, gated on delivered outcomes rather than declared procedure. The runner gains four capabilities (a per-fixture evaluator expectation delivered to the judge and the review card, a prereg hash for those expectations, a post-judge word-count check, and a pilot mode), none of which changes the committed evidence of the shipped methods. The work is staged behind two gates: a 10-run baseline pilot decides whether the drift failure reproduces at all; a three-arm pilot decides whether a skill beats a one-line instruction. Only on a go do the full fixtures, prereg, RED, the skill, and the one-shot GREEN read follow.
 
@@ -185,7 +187,7 @@ flowchart TD
 
 ### Phase 1 — Plumbing for the baseline gate
 
-- [ ] **Unit 1: Expectation sidecars in fixture loading and prereg custody (dev path)**
+- [x] **Unit 1: Expectation sidecars in fixture loading and prereg custody (dev path)**
 
 **Goal:** A dev fixture can carry an evaluator-only expectation that is hashed in the prereg and verified before any run.
 
@@ -216,7 +218,7 @@ flowchart TD
 
 **Verification:** Shipped-method hashes unchanged; tests green; typecheck clean.
 
-- [ ] **Unit 2: Rubric declarations, EXPECTATION block, final-answer scoring**
+- [x] **Unit 2: Rubric declarations, EXPECTATION block, final-answer scoring**
 
 **Goal:** A rubric that declares `expectation: true` makes the judge receive EXPECTATION, omit RECORD, and score the final answer; every other rubric produces byte-identical prompts and input hashes.
 
@@ -248,7 +250,7 @@ flowchart TD
 
 **Verification:** S1 snapshots pass; judge, review, probe tests green.
 
-- [ ] **Unit 3: Post-judge word check**
+- [x] **Unit 3: Post-judge word check**
 
 **Goal:** An over-length answer fails the run after the judge has produced TE verdicts.
 
@@ -270,7 +272,7 @@ flowchart TD
 
 **Verification:** Tests green; `TE3m` absent from `judge.criteria`.
 
-- [ ] **Unit 4: `eval pilot` mode, baseline arm, tally projection**
+- [x] **Unit 4: `eval pilot` mode, baseline arm, tally projection**
 
 **Goal:** A dev-only campaign that runs the baseline arm on the pilot prereg and writes a per-fixture tally; invisible to `report`.
 
@@ -294,7 +296,7 @@ flowchart TD
 
 **Verification:** End-to-end against the scripted provider; `scan:secrets` clean.
 
-- [ ] **Unit 5: Tether pilot skeleton and the baseline gate**
+- [x] **Unit 5: Tether pilot skeleton and the baseline gate**
 
 **Goal:** Decide whether the drift failure reproduces.
 
