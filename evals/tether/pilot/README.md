@@ -21,7 +21,7 @@ Other arms are built only if the baseline fails TE2 on ≥4 of 5 runs on both fi
 
 ## The decision rule
 
-Fixed before any arm runs. Count runs passing both TE1 and TE2 over the pooled 10 runs per arm; go iff skill ≥ instruction + 2; `instruction_present` and `skill_loaded` are recorded for every run, none excluded; tie or less → closed-instruction.
+Fixed before any arm runs. Count runs passing both TE1 and TE2 over the pooled 10 runs per arm; go iff skill ≥ instruction + 2; whether the sentence reached the model and whether the skill loaded are recorded for every run, none excluded; tie or less → closed-instruction. (Decision rule as committed before the gate; the arms were never built because the gate failed.)
 
 ## The three exits
 
@@ -56,7 +56,7 @@ TE2 flips on the polished answers and holds on the terse ones; every quote was g
 bun run eval pilot --method tether --arm baseline --provider live
 ```
 
-The runner fetches the CLIProxyAPI key itself (`METACOGS_AUTH_CLIPROXY=fro-bot-marcusrbrown-metacogs` or `--auth-cliproxy`); it is written only to each run's throwaway `auth.json`. About 10 agent runs and 10 judge calls, sequential. The campaign directory is `evals/runs/tether-pilot-<timestamp>/` (gitignored); `pilot.json` is the committed projection. The instruction and skill arms are refused until the baseline gate has passed and Unit 6 of the plan has built them.
+The runner fetches the CLIProxyAPI key itself (`METACOGS_AUTH_CLIPROXY=fro-bot-marcusrbrown-metacogs` or `--auth-cliproxy`); it is written only to each run's throwaway `auth.json`. About 10 agent runs and 10 judge calls, sequential. The campaign directory is `evals/runs/tether-pilot-<timestamp>/` (gitignored); `pilot.json` is the committed projection. The runner supports the baseline arm only; the instruction and skill arms were never built because the gate failed.
 
 ## Results
 
