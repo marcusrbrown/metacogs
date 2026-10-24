@@ -1,7 +1,7 @@
 ---
 title: "feat: Repository operations for metacogs"
 type: feat
-status: active
+status: completed
 date: 2026-10-23
 origin: docs/brainstorms/2026-10-23-repo-ops-requirements.md
 ---
@@ -284,7 +284,7 @@ flowchart LR
 
 **Verification:** Tests pass; `bun run scan:secrets` passes with the new `.github` files; a `workflow_dispatch` of `release.yaml` on `main` is a no-op with a clear log line.
 
-- [ ] **Unit 4: Renovate and renovate-changesets**
+- [x] **Unit 4: Renovate and renovate-changesets**
 
 **Goal:** Dependency and action-pin PRs arrive with a regenerated helper and a changeset.
 
@@ -310,7 +310,7 @@ flowchart LR
 
 **Verification:** `Renovate / Renovate` reports on a PR head; the first Renovate PR carries a `.changeset/*.md` for `metacogs`, CI passes on the commit-back, Renovate still rebases after it, and the owner's approval survives the commit-back (if `dismiss_stale_reviews_on_push` drops it, note it for Unit 7).
 
-- [ ] **Unit 5: Fro Bot PR review with a verdict gate**
+- [x] **Unit 5: Fro Bot PR review with a verdict gate**
 
 **Goal:** Every reviewable PR gets one consolidated review; the `Fro Bot` check passes only on PASS at the reviewed head.
 
@@ -336,7 +336,7 @@ flowchart LR
 
 **Verification:** The five throwaway scenarios behave as listed; `bun run scan:secrets` passes.
 
-- [ ] **Unit 6: Fro Bot autoheal with path guard and rotating issue**
+- [x] **Unit 6: Fro Bot autoheal with path guard and rotating issue**
 
 **Goal:** Daily run that fixes only allowed paths through one PR and leaves exactly one dated issue open.
 
@@ -362,7 +362,7 @@ flowchart LR
 
 **Verification:** A `workflow_dispatch` run with no findings rotates the issue with an empty body; a run prompted to touch `evals/` gets its PR closed by the audit and the denial recorded; a second dispatch the same day updates, not duplicates.
 
-- [ ] **Unit 7: Settings-as-code with rulesets**
+- [x] **Unit 7: Settings-as-code with rulesets**
 
 **Goal:** `main` is squash-only, linear, one approval, required checks `check`, `Fro Bot`, `Renovate / Renovate`; `v*` tags immutable.
 

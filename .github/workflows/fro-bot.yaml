@@ -13,10 +13,8 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review, review_requested]
-  # Enable after the first successful dispatch. GitHub rejects an empty
-  # `schedule:` key, so the whole block stays commented out until then.
-  # schedule:
-  #   - cron: '30 4 * * *'
+  schedule:
+    - cron: '30 4 * * *'
   workflow_dispatch:
     inputs:
       prompt:
