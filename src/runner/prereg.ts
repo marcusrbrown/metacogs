@@ -26,6 +26,13 @@ export const RUN_OUTCOME_TAXONOMY = [
   'non_isolated',
 ] as const
 
+/** Evaluator-only: what a good answer to a fixture looks like. Lives in `<id>.expectation.json` beside the fixture; the agent never sees it. */
+export interface Expectation {
+  outcome: string
+  excludedTopics: string[]
+  maxWords: number
+}
+
 export interface Prereg {
   schema_version: typeof PREREG_SCHEMA_VERSION
   method: string
@@ -39,6 +46,11 @@ export interface Prereg {
     negative: Record<string, string>
     heldout: Record<string, string>
   }
+  /**
+   * id → salted canonical hash of each `<id>.expectation.json` sidecar. Absent: no fixture may carry a sidecar.
+   * Negative fixtures never carry one.
+   */
+  expectation_hashes?: { dev: Record<string, string>; heldout: Record<string, string> }
   rubric_hash: string
   /** N: runs per condition per fixture. */
   runs_per_condition: number
@@ -80,12 +92,25 @@ const isNonNegativeInt = (v: unknown): v is number => typeof v === 'number' && N
 const isRate = (v: unknown): v is number => typeof v === 'number' && v >= 0 && v <= 1
 const HEX64 = /^[0-9a-f]{64}$/
 
+/** One id → hash set: every id a legal fixture id, every hash a sha256 hex digest. `label` prefixes each error. */
+function checkHashSet(errors: string[], label: string, entries: unknown): void {
+  if (!isRecord(entries)) {
+    errors.push(`${label}: must be an object of id → hash`)
+    return
+  }
+  for (const [id, hash] of Object.entries(entries)) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)) errors.push(`${label}.${id}: invalid fixture id`)
+    if (typeof hash !== 'string' || !HEX64.test(hash)) errors.push(`${label}.${id}: must be a sha256 hex digest`)
+  }
+}
+
 const TOP_LEVEL_KEYS = [
   'schema_version',
   'method',
   'epoch',
   'salt',
   'fixture_hashes',
+  'expectation_hashes',
   'rubric_hash',
   'runs_per_condition',
   'red_bar',
@@ -134,16 +159,17 @@ export function parsePrereg(text: string): PreregParse {
     for (const key of Object.keys(hashes)) {
       if (!['dev', 'negative', 'heldout'].includes(key)) errors.push(`fixture_hashes.${key}: unknown set`)
     }
-    for (const set of ['dev', 'negative', 'heldout'] as const) {
-      const entries = hashes[set]
-      if (!isRecord(entries)) {
-        errors.push(`fixture_hashes.${set}: must be an object of id → hash`)
-        continue
+    for (const set of ['dev', 'negative', 'heldout'] as const) checkHashSet(errors, `fixture_hashes.${set}`, hashes[set])
+  }
+  if (raw.expectation_hashes !== undefined) {
+    const sets = raw.expectation_hashes
+    if (!isRecord(sets)) {
+      errors.push('expectation_hashes: must be an object with dev, heldout')
+    } else {
+      for (const key of Object.keys(sets)) {
+        if (!['dev', 'heldout'].includes(key)) errors.push(`expectation_hashes.${key}: unknown set`)
       }
-      for (const [id, hash] of Object.entries(entries)) {
-        if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)) errors.push(`fixture_hashes.${set}.${id}: invalid fixture id`)
-        if (typeof hash !== 'string' || !HEX64.test(hash)) errors.push(`fixture_hashes.${set}.${id}: must be a sha256 hex digest`)
-      }
+      for (const set of ['dev', 'heldout'] as const) checkHashSet(errors, `expectation_hashes.${set}`, sets[set])
     }
   }
   need(typeof raw.rubric_hash === 'string' && HEX64.test(raw.rubric_hash), 'rubric_hash: must be a sha256 hex digest')
@@ -237,6 +263,13 @@ export interface LoadedFixture {
   /** Canonical text; also the prompt the agent receives. */
   text: string
   hash: string
+  /** Evaluator-only. Set by `verifyPreregContent` once the sidecar's shape and hash check out; never on a negative. */
+  expectation?: Expectation
+}
+
+/** `sha256(salt NUL canonical-json)` of a parsed sidecar: formatting and key order in the file do not matter. */
+export function expectationHash(salt: string, value: unknown): string {
+  return saltedHash(salt, canonicalize(value))
 }
 
 /** `*.md` files directly in `dir`; id is the file stem. A missing dir is an empty set. */
@@ -259,7 +292,7 @@ export interface HashProblem {
   actual?: string
 }
 
-export function compareFixtureSet(set: string, expected: Record<string, string>, found: readonly LoadedFixture[]): HashProblem[] {
+export function compareFixtureSet(set: string, expected: Record<string, string>, found: readonly { id: string; hash: string }[]): HashProblem[] {
   const problems: HashProblem[] = []
   const byId = new Map(found.map((f) => [f.id, f]))
   for (const [id, hash] of Object.entries(expected)) {
@@ -280,8 +313,91 @@ export interface PreregPaths {
   heldoutDir: string
 }
 
+const EXPECTATION_SUFFIX = '.expectation.json'
+const EXPECTATION_FIELDS = ['outcome', 'excludedTopics', 'maxWords'] as const
+
+/** Field-level shape errors, each prefixed by `where`; empty when `value` is an `Expectation`. */
+function expectationShapeErrors(value: unknown, where: string): string[] {
+  if (!isRecord(value)) return [`${where}: expectation must be a JSON object`]
+  const errors: string[] = []
+  for (const key of Object.keys(value)) {
+    if (!(EXPECTATION_FIELDS as readonly string[]).includes(key)) errors.push(`${where}: ${key}: unknown field`)
+  }
+  if (!isNonEmptyString(value.outcome)) errors.push(`${where}: outcome must be a non-empty string`)
+  if (!Array.isArray(value.excludedTopics) || !value.excludedTopics.every((t) => typeof t === 'string')) {
+    errors.push(`${where}: excludedTopics must be an array of strings`)
+  }
+  if (!isPositiveInt(value.maxWords)) errors.push(`${where}: maxWords must be a positive integer`)
+  return errors
+}
+
+interface Sidecar {
+  id: string
+  /** Absent when the file could not be read as canonicalizable JSON. */
+  hash?: string
+  value?: Expectation
+  errors: string[]
+}
+
+/** `<id>.expectation.json` files directly in `dir`. A missing dir is an empty set. */
+function loadSidecars(set: string, dir: string, salt: string): Sidecar[] {
+  if (!existsSync(dir)) return []
+  return readdirSync(dir)
+    .filter((name) => name.endsWith(EXPECTATION_SUFFIX))
+    .sort()
+    .map((name) => {
+      const id = name.slice(0, -EXPECTATION_SUFFIX.length)
+      const where = `expectation ${set}/${id}`
+      let parsed: unknown
+      let hash: string
+      try {
+        parsed = JSON.parse(canonicalizeText(readFileSync(join(dir, name))))
+        hash = expectationHash(salt, parsed)
+      } catch (e) {
+        return { id, errors: [`${where}: not readable as JSON: ${(e as Error).message}`] }
+      }
+      const errors = expectationShapeErrors(parsed, where)
+      return errors.length ? { id, hash, errors } : { id, hash, value: parsed as Expectation, errors }
+    })
+}
+
+/**
+ * Checks one directory's sidecars against `expected` (the prereg's hashes for this set; `{}` when it has none) and returns the
+ * fixtures with each verified expectation attached. A sidecar with no fixture beside it is `extra`, whatever the prereg lists.
+ * Negatives pass `attach: false`: their expected set is always empty, so any sidecar there is `extra`.
+ */
+function verifyExpectations(
+  set: 'dev' | 'negative' | 'heldout',
+  dir: string,
+  salt: string,
+  expected: Record<string, string>,
+  fixtures: LoadedFixture[],
+): { problems: HashProblem[]; invalid: string[]; fixtures: LoadedFixture[] } {
+  const label = `expectation.${set}`
+  const sidecars = loadSidecars(set, dir, salt)
+  const unreadable = new Set(sidecars.filter((s) => s.hash === undefined).map((s) => s.id))
+  const readable = sidecars.flatMap((s) => (s.hash === undefined ? [] : [{ id: s.id, hash: s.hash }]))
+  const problems = compareFixtureSet(label, expected, readable).filter((p) => !(p.kind === 'missing' && unreadable.has(p.id)))
+  const fixtureIds = new Set(fixtures.map((f) => f.id))
+  for (const s of sidecars) {
+    if (fixtureIds.has(s.id) || problems.some((p) => p.id === s.id && p.kind === 'extra')) continue
+    problems.push({ set: label, id: s.id, kind: 'extra', ...(s.hash === undefined ? {} : { actual: s.hash }) })
+  }
+  const bySidecar = new Map(sidecars.map((s) => [s.id, s]))
+  return {
+    problems,
+    invalid: sidecars.flatMap((s) => s.errors),
+    fixtures: fixtures.map((f) => {
+      const s = bySidecar.get(f.id)
+      return set !== 'negative' && s?.value !== undefined && s.hash === expected[f.id] ? { ...f, expectation: s.value } : f
+    }),
+  }
+}
+
 export interface ContentVerification {
   problems: HashProblem[]
+  /** Sidecar shape errors (prereg_invalid), each naming the set, id, and field. */
+  invalid: string[]
   fixtures: { dev: LoadedFixture[]; negative: LoadedFixture[]; heldout: LoadedFixture[] }
 }
 
@@ -290,14 +406,24 @@ export interface ContentVerification {
  * when `includeHeldout`) against the prereg. Any mismatch voids the prereg.
  */
 export function verifyPreregContent(prereg: Prereg, paths: PreregPaths, options: { includeHeldout: boolean }): ContentVerification {
-  const dev = loadFixtureDir(join(paths.evalDir, 'fixtures', 'dev'), prereg.salt)
-  const negative = loadFixtureDir(join(paths.evalDir, 'fixtures', 'negative'), prereg.salt)
-  const heldout = options.includeHeldout ? loadFixtureDir(paths.heldoutDir, prereg.salt) : []
+  const devDir = join(paths.evalDir, 'fixtures', 'dev')
+  const negativeDir = join(paths.evalDir, 'fixtures', 'negative')
+  const expectations = prereg.expectation_hashes
+  const devX = verifyExpectations('dev', devDir, prereg.salt, expectations?.dev ?? {}, loadFixtureDir(devDir, prereg.salt))
+  const negativeX = verifyExpectations('negative', negativeDir, prereg.salt, {}, loadFixtureDir(negativeDir, prereg.salt))
+  const heldoutX = options.includeHeldout
+    ? verifyExpectations('heldout', paths.heldoutDir, prereg.salt, expectations?.heldout ?? {}, loadFixtureDir(paths.heldoutDir, prereg.salt))
+    : { problems: [], invalid: [], fixtures: [] }
+  const [dev, negative, heldout] = [devX.fixtures, negativeX.fixtures, heldoutX.fixtures]
   const problems = [
     ...compareFixtureSet('dev', prereg.fixture_hashes.dev, dev),
     ...compareFixtureSet('negative', prereg.fixture_hashes.negative, negative),
     ...(options.includeHeldout ? compareFixtureSet('heldout', prereg.fixture_hashes.heldout, heldout) : []),
+    ...devX.problems,
+    ...negativeX.problems,
+    ...heldoutX.problems,
   ]
+  const invalid = [...devX.invalid, ...negativeX.invalid, ...heldoutX.invalid]
   const rubricPath = join(paths.evalDir, 'rubric.md')
   if (!existsSync(rubricPath)) {
     problems.push({ set: 'rubric', id: 'rubric.md', kind: 'missing', expected: prereg.rubric_hash })
@@ -305,7 +431,7 @@ export function verifyPreregContent(prereg: Prereg, paths: PreregPaths, options:
     const actual = saltedHash(prereg.salt, canonicalizeText(readFileSync(rubricPath)))
     if (actual !== prereg.rubric_hash) problems.push({ set: 'rubric', id: 'rubric.md', kind: 'mismatch', expected: prereg.rubric_hash, actual })
   }
-  return { problems, fixtures: { dev, negative, heldout } }
+  return { problems, invalid, fixtures: { dev, negative, heldout } }
 }
 
 // ── enforcement ────────────────────────────────────────────────────────────
@@ -384,13 +510,12 @@ export function enforcePrereg(input: EnforceInput): PreregVerification {
     }
   }
   const content = verifyPreregContent(prereg, { evalDir: join(repoRoot, 'evals', method), heldoutDir: input.heldoutDir }, { includeHeldout: mode === 'green' })
+  const violations: Violation[] = content.invalid.map((message) => ({ code: 'prereg_invalid', message }))
   if (content.problems.length) {
     const lines = content.problems.map((p) => `${p.set}/${p.id} ${p.kind}`)
-    throw new PreregRefusal(
-      [{ code: 'content_hash_mismatch', message: `fixture/rubric hashes do not match the prereg (voided): ${lines.join(', ')}` }],
-      `prereg content for ${method}`,
-    )
+    violations.push({ code: 'content_hash_mismatch', message: `fixture/rubric hashes do not match the prereg (voided): ${lines.join(', ')}` })
   }
+  if (violations.length) throw new PreregRefusal(violations, `prereg content for ${method}`)
   if (mode === 'green') input.beforeHeldoutRead?.({ prereg, contentHash, heldout: content.fixtures.heldout })
   return { prereg, contentHash, content }
 }

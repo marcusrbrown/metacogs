@@ -214,6 +214,19 @@ describe('planRuns', () => {
     expect(Math.abs(idx('baseline', 1) - idx('skill', 1))).toBe(1)
   })
 
+  test('the expectation rides PlannedRun.fixture; fixtures without one gain no key', () => {
+    const expectation = { outcome: 'names the deciding constraint', excludedTopics: ['sharding'], maxWords: 120 }
+    const withExpectation = { dev: [{ ...fixtures.dev[0]!, expectation }, fixtures.dev[1]!], negative: fixtures.negative, heldout: [{ ...fixtures.heldout[0]!, expectation }, fixtures.heldout[1]!] }
+    for (const mode of ['red', 'dev', 'green'] as const) {
+      const plan = planRuns({ mode, fixtures: withExpectation, runsPerCondition: 2, includeDev: true })
+      const carried = plan.filter((p) => p.fixture.expectation !== undefined)
+      expect(carried.length).toBeGreaterThan(0)
+      for (const p of carried) expect(p.fixture.expectation).toEqual(expectation)
+      expect(new Set(carried.map((p) => p.fixture.id))).toEqual(new Set(mode === 'green' ? ['d1', 'h1'] : ['d1']))
+      for (const p of plan.filter((p) => p.fixture.expectation === undefined)) expect('expectation' in p.fixture).toBe(false)
+    }
+  })
+
   test('fixture filter; unknown id is an error', () => {
     expect(planRuns({ mode: 'red', fixtures, runsPerCondition: 2, onlyFixture: 'd2' })).toHaveLength(2)
     expect(() => planRuns({ mode: 'red', fixtures, runsPerCondition: 2, onlyFixture: 'nope' })).toThrow(/no fixture/)

@@ -28,7 +28,7 @@ import {
   writeManifest,
 } from './manifest'
 import { debugConfig, OPENCODE_PIN, runArgv, sleepUnlessAborted, type SpawnResult, spawnCapture } from './opencode'
-import { type LoadedFixture, type PreregVerification } from './prereg'
+import { type Expectation, type LoadedFixture, type PreregVerification } from './prereg'
 import {
   gatewayOf,
   isLiveModel,
@@ -53,7 +53,8 @@ export const SCRIPTED_MODEL = `${SPIKE_PROVIDER_ID}/${SPIKE_MODEL_ID}`
 // ── planning ───────────────────────────────────────────────────────────────
 
 export interface PlannedRun {
-  fixture: { id: string; kind: FixtureKind; text: string; hash: string }
+  /** `expectation` is evaluator-only (judge input); it never reaches the agent workspace or the manifest. */
+  fixture: { id: string; kind: FixtureKind; text: string; hash: string; expectation?: Expectation }
   condition: Condition
   /** 1-based repetition for this fixture and condition. */
   index: number
@@ -102,7 +103,13 @@ export function planRuns(input: PlanInput): PlannedRun[] {
       const ordered = (round + gi) % 2 === 0 ? g.conditions : [...g.conditions].reverse()
       for (const condition of ordered) {
         plan.push({
-          fixture: { id: g.fixture.id, kind: g.kind, text: g.fixture.text, hash: g.fixture.hash },
+          fixture: {
+            id: g.fixture.id,
+            kind: g.kind,
+            text: g.fixture.text,
+            hash: g.fixture.hash,
+            ...(g.fixture.expectation ? { expectation: g.fixture.expectation } : {}),
+          },
           condition,
           index: round,
         })

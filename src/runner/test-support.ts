@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 import { Git } from './git'
-import { canonicalizeText, type Prereg, RUN_OUTCOME_TAXONOMY, saltedHash } from './prereg'
+import { canonicalizeText, expectationHash, type Prereg, RUN_OUTCOME_TAXONOMY, saltedHash } from './prereg'
 
 export const TEST_SALT = 'test-salt-0123'
 
@@ -80,11 +80,19 @@ const NEG_TEXT = 'Negative fixture: fix the typo in README.\n'
 const HELD_TEXT = 'Held-out fixture: pick a queue.\n'
 const RUBRIC_TEXT = '# Rubric\n\n1. names an assumption\n'
 
-/** Writes fixtures, rubric, and held-out content for `method`; returns a prereg that matches them. */
+/**
+ * Writes fixtures, rubric, and held-out content for `method`; returns a prereg that matches them.
+ * `expectations` (id → sidecar JSON) writes `<id>.expectation.json` beside the dev fixture or the held-out fixture and hashes it
+ * into `expectation_hashes`; omit it and the prereg carries no such key. Dev sidecars beyond `d1` have no fixture beside them.
+ */
 export function scaffoldMethod(
   repo: TestRepo,
   method: string,
-  options: { heldoutDir: string; overrides?: Partial<Prereg> },
+  options: {
+    heldoutDir: string
+    overrides?: Partial<Prereg>
+    expectations?: { dev?: Record<string, unknown>; heldout?: Record<string, unknown> }
+  },
 ): MethodScaffold {
   const dir = `evals/${method}`
   const files: Record<string, string> = {
@@ -98,6 +106,22 @@ export function scaffoldMethod(
   writeFileSync(join(options.heldoutDir, 'h1.md'), HELD_TEXT)
 
   const h = (text: string) => saltedHash(TEST_SALT, canonicalizeText(text))
+  const sidecarPaths: string[] = []
+  let expectation_hashes: Prereg['expectation_hashes']
+  if (options.expectations) {
+    const devSidecars = options.expectations.dev ?? {}
+    const heldoutSidecars = options.expectations.heldout ?? {}
+    for (const [id, value] of Object.entries(devSidecars)) {
+      const path = `${dir}/fixtures/dev/${id}.expectation.json`
+      repo.write(path, `${JSON.stringify(value)}\n`)
+      sidecarPaths.push(path)
+    }
+    for (const [id, value] of Object.entries(heldoutSidecars)) {
+      writeFileSync(join(options.heldoutDir, `${id}.expectation.json`), `${JSON.stringify(value)}\n`)
+    }
+    const hashed = (sidecars: Record<string, unknown>) => Object.fromEntries(Object.entries(sidecars).map(([id, v]) => [id, expectationHash(TEST_SALT, v)]))
+    expectation_hashes = { dev: hashed(devSidecars), heldout: hashed(heldoutSidecars) }
+  }
   const prereg: Prereg = {
     schema_version: 1,
     method,
@@ -118,13 +142,14 @@ export function scaffoldMethod(
     judge_model_id: 'judge/other-family',
     accepted_error_rates: { false_red: 0.1, false_green: 0.22 },
     metadata: { source_url: 'https://example.invalid/synthetic', licence: 'MIT' },
+    ...(expectation_hashes ? { expectation_hashes } : {}),
     ...options.overrides,
   }
   return {
     method,
     heldoutDir: options.heldoutDir,
     prereg,
-    fixturePaths: Object.keys(files),
+    fixturePaths: [...Object.keys(files), ...sidecarPaths],
     preregPath: `${dir}/prereg.json`,
   }
 }
