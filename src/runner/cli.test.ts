@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
-import { defaultInstallSignalHandlers, EXIT, main } from './cli'
+import { defaultInstallSignalHandlers, EXIT, main, type MainIO } from './cli'
 import { createFixture, destroyFixture } from './env'
 import { opencodeAvailability, spawnCapture } from './opencode'
 import { preregContentHash } from './prereg'
@@ -28,7 +28,7 @@ function io() {
   return {
     lines,
     stateHome,
-    io: {
+    io: <Partial<MainIO> & { env: Record<string, string> }>{
       out: (l: string) => lines.out.push(l),
       err: (l: string) => lines.err.push(l),
       installSignalHandlers: () => () => {},
@@ -612,6 +612,92 @@ describe('pilot', () => {
     const t = io()
     expect(await main(['pilot', '--method', 'demo', '--repo', repo.dir, '--prereg', 'evals/demo/pilot/missing.json'], t.io)).toBe(EXIT.REFUSED)
     expect(t.lines.err.join('\n')).toContain('evals/demo/pilot/missing.json does not exist')
+  })
+
+  describe('rejudge of a pilot campaign', () => {
+    const CAMPAIGN = 'demo-pilot-2026-10-24T00-00-00-000Z'
+    const evidence = (te2: 'pass' | 'fail') => ({
+      model: { pinned: 'opencode-go/judge-model-x', returned: ['judge-model-x'] },
+      system_prompt_sha256: 'a'.repeat(64),
+      input_sha256: 'b'.repeat(64),
+      redacted_input_sha256: 'c'.repeat(64),
+      attempts: 1,
+      temperature: 0,
+      error_code: null,
+      criteria: [
+        { id: 'TE1', verdict: 'pass', quote: 'a verbatim quote of the answer', quote_verified: true },
+        { id: 'TE2', verdict: te2, quote: 'a verbatim quote of the answer', quote_verified: true },
+      ],
+      overclaim_flag: false,
+      tool_calls: 0,
+      wall_ms: 1,
+    })
+    const fakeJudge = (hook: (input: unknown) => Promise<unknown>) =>
+      (() => ({ hook, spec: { systemPrompt: 'S', declarations: { expectation: true }, criteria: [], overclaimPatterns: [] }, systemPromptSha256: 'd'.repeat(64), rubricSha256: 'e'.repeat(64) })) as never
+
+    async function plantedPilot(opts: { prereg?: boolean } = {}) {
+      const { repo, scaffold } = chainRepo()
+      if (opts.prereg !== false) repo.write(PILOT_PREREG, `${JSON.stringify(scaffold.prereg, null, 2)}\n`)
+      const { writeManifest } = await import('./manifest')
+      const dir = join(repo.dir, 'evals', 'runs', CAMPAIGN, '001-dev-d1-baseline-r1')
+      mkdirSync(dir, { recursive: true })
+      writeManifest(dir, {
+        schema_version: 1,
+        run_id: '001-dev-d1-baseline-r1',
+        campaign_id: CAMPAIGN,
+        status: 'completed',
+        outcome: 'pass',
+        reasons: [],
+        verdict_basis: 'judge',
+        method: 'demo',
+        condition: 'baseline',
+        arm: 'baseline',
+        fixture: { id: 'd1', kind: 'dev', hash: scaffold.prereg.fixture_hashes.dev.d1 },
+        check_failures: [],
+        records: [],
+        artifacts: {},
+        prereg: { content_hash: 'f'.repeat(64), epoch: 1 },
+        judge: evidence('pass'),
+      } as never)
+      const say = (text: string) => JSON.stringify({ type: 'text', timestamp: 2, part: { type: 'text', text } })
+      writeFileSync(join(dir, 'stdout.jsonl'), say('The answer.'))
+      writeFileSync(join(dir, 'judge.json'), JSON.stringify({ redacted_input_sha256: 'c'.repeat(64), model_pinned: 'm', model_returned: ['m'], criteria: [{ id: 'TE1', verdict: 'pass', quotes: ['q'] }, { id: 'TE2', verdict: 'pass', quotes: ['q'] }], attempts: 1 }))
+      return { repo, scaffold, dir }
+    }
+    const rejudgeArgs = (repo: TestRepo) => ['rejudge', '--campaign', CAMPAIGN, '--repo', repo.dir, '--auth-passthrough', 'none']
+
+    test('reads the pilot prereg, rejudges, regenerates pilot.json from the new verdicts, and writes no review sheets', async () => {
+      const { repo, scaffold, dir } = await plantedPilot()
+      const before = readFileSync(join(dir, 'manifest.json'), 'utf8')
+      const t = io()
+      t.io.createJudge = fakeJudge(async () => ({ verdict: 'fail', evidence: evidence('fail') }))
+      expect(await main(rejudgeArgs(repo), t.io)).toBe(EXIT.OK)
+      const written = JSON.parse(readFileSync(join(repo.dir, 'evals', 'demo', 'pilot', 'pilot.json'), 'utf8')) as { prereg_content_hash: string; arms: string[]; tally: Record<string, Record<string, { runs: number; te1_pass: number; te2_pass: number; both_pass: number }>> }
+      expect(written.prereg_content_hash).toBe(preregContentHash(scaffold.prereg))
+      expect(written.arms).toEqual(['baseline'])
+      expect(written.tally.baseline!.d1).toMatchObject({ runs: 1, te1_pass: 1, te2_pass: 0, both_pass: 0 })
+      expect(JSON.parse(readFileSync(join(repo.dir, 'evals', 'runs', CAMPAIGN, 'rejudge-summary.json'), 'utf8')).runs[0]).toMatchObject({ run_id: '001-dev-d1-baseline-r1', verdict: 'fail' })
+      expect(readFileSync(join(dir, 'manifest.json'), 'utf8')).toBe(before)
+      expect(existsSync(join(repo.dir, 'evals', 'runs', CAMPAIGN, 'review.md'))).toBe(false)
+      expect(t.lines.out.join('\n')).toContain('pilot.json')
+    })
+
+    test('a judge that cannot be reached for any run leaves pilot.json alone', async () => {
+      const { repo } = await plantedPilot()
+      const t = io()
+      t.io.createJudge = fakeJudge(async () => ({ verdict: 'infra_error', kind: 'infra', code: 'timeout' }))
+      expect(await main(rejudgeArgs(repo), t.io)).toBe(EXIT.ERROR)
+      expect(t.lines.err.join('\n')).toContain('pilot.json was not written')
+      expect(existsSync(join(repo.dir, 'evals', 'demo', 'pilot', 'pilot.json'))).toBe(false)
+    })
+
+    test('a pilot campaign without its pilot prereg is refused, naming the pilot path', async () => {
+      const { repo } = await plantedPilot({ prereg: false })
+      const t = io()
+      t.io.createJudge = fakeJudge(async () => ({ verdict: 'pass' }))
+      expect(await main(rejudgeArgs(repo), t.io)).toBe(EXIT.REFUSED)
+      expect(t.lines.err.join('\n')).toContain('evals/demo/pilot/prereg.json does not exist')
+    })
   })
 
   describe.skipIf(!opencodeAvailability().available)('scripted end-to-end', () => {

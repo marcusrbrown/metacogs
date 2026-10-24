@@ -7,7 +7,7 @@
  */
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import { AuthPassthroughError, DEFAULT_PASSTHROUGH, needlesOf, type PassthroughAuth, parseAuthPassthrough, PASSTHROUGH_PROVIDERS, readPassthroughAuth } from './auth'
 import { CliproxyAuthError, cliproxyModelMismatch, type ResolvedCliproxy, resolveCliproxy } from './cliproxy'
@@ -22,7 +22,7 @@ import { killLiveGroups, opencodeAvailability } from './opencode'
 import { isLiveModel } from './scripted-provider'
 import { enforcePrereg, heldoutFingerprints, parsePrereg, type Prereg, preregRelPath, PreregRefusal } from './prereg'
 import { buildDevReport, buildGreenReport, buildRedReport, type DevReport, type DevRegressionSource, type GreenReport, greenReportPath, loadCampaignManifests, recomputeDevRegression, validateDevReport, validateGreenReport, writeDevReport, writeGreenReport, writeReport } from './report'
-import { isPilotArm, armRefusal, PILOT_ARMS, planPilot, tallyPilotCampaign, writePilotTally } from './pilot'
+import { isPilotArm, armRefusal, PILOT_ARMS, pilotPreregRel, planPilot, tallyPilotCampaign, writePilotTally } from './pilot'
 import { planRuns, type ProviderMode, runCampaign, tallyKey } from './run'
 import { claimHeldoutRead, CustodyError, hashSkillDir, heldoutDir, heldoutReadMarkerPath, resolveOutputDir, stateRoot } from './workspace'
 
@@ -73,6 +73,8 @@ export interface MainIO {
   opencodeAvailability?: typeof opencodeAvailability
   /** Hook for tests; production installs SIGINT/SIGTERM handlers. */
   installSignalHandlers?: (abort: () => void) => () => void
+  /** Hook for tests: the judge `rejudge` builds, so a pilot rejudge can run without a gateway. */
+  createJudge?: typeof createJudge
   cwd: string
 }
 
@@ -115,7 +117,21 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
   const { method, runs, provider, fixture, repo, out: outRoot } = parsed.values
   const devOnly = parsed.values['dev-only'] === true
   if ((mode === 'review' || mode === 'rejudge') && !extra.length) {
-    return campaignToolMain({ mode, campaign: parsed.values.campaign, repo, reconcile: parsed.values.reconcile === true, authFlag: parsed.values['auth-passthrough'], cliproxyFlag: parsed.values['auth-cliproxy'], cwd, env, out, err })
+    return campaignToolMain({
+      mode,
+      campaign: parsed.values.campaign,
+      repo,
+      reconcile: parsed.values.reconcile === true,
+      authFlag: parsed.values['auth-passthrough'],
+      cliproxyFlag: parsed.values['auth-cliproxy'],
+      preregFlag: parsed.values.prereg,
+      cwd,
+      env,
+      out,
+      err,
+      availability: io.opencodeAvailability ?? opencodeAvailability,
+      makeJudge: io.createJudge ?? createJudge,
+    })
   }
   if (mode === 'report' && !extra.length && method) return reportMain({ method, repo, campaign: parsed.values.campaign, devOnly, green: parsed.values.green === true, cliproxyFlag: parsed.values['auth-cliproxy'], cwd, env, out, err })
   if ((mode !== 'red' && mode !== 'green' && mode !== 'pilot') || extra.length || !method) {
@@ -193,8 +209,8 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
   const repoRoot = new Git(repo ?? cwd).toplevel()
   const git = new Git(repoRoot)
   // The pilot prereg is a repo-relative file; a path that leaves the repository is not a committed contract.
-  const pilotPreregPath = relative(repoRoot, resolve(repoRoot, parsed.values.prereg ?? join('evals', method, 'pilot', 'prereg.json')))
-  if (isPilot && (pilotPreregPath.startsWith('..') || isAbsolute(pilotPreregPath))) {
+  const pilotPreregPath = pilotPreregRel(repoRoot, method, parsed.values.prereg)
+  if (isPilot && pilotPreregPath === undefined) {
     err(`REFUSED: --prereg ${parsed.values.prereg} is outside the repository`)
     return EXIT.REFUSED
   }
@@ -279,7 +295,7 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
       method,
       mode: runMode,
       heldoutDir: heldoutDir(method, env, undefined, repoRoot),
-      ...(isPilot ? { preregPath: pilotPreregPath } : {}),
+      ...(isPilot && pilotPreregPath ? { preregPath: pilotPreregPath } : {}),
       // The marker is claimed once the prereg, skill, fixtures and rubric have all verified and before anything is handed to an agent or
       // judge, so any later outcome (a crash, an interrupt) still leaves the read on record, and a refusal that has nothing to do with the
       // held-out set cannot burn it. A directory that does not exist has nothing to burn.
@@ -393,10 +409,14 @@ interface CampaignToolArgs {
   repo?: string
   authFlag?: string
   cliproxyFlag?: string
+  /** `--prereg`: rejudge of a pilot campaign only. */
+  preregFlag?: string | undefined
   cwd: string
   env: Record<string, string | undefined>
   out: (line: string) => void
   err: (line: string) => void
+  availability: typeof opencodeAvailability
+  makeJudge: typeof createJudge
 }
 
 /** `--campaign` is a directory, or a campaign id under `evals/runs/` (then the state root's `runs/`, where held-out campaigns live). */
@@ -451,9 +471,23 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
       }
       throw e
     }
+    // A pilot campaign (its manifests carry an arm) was run under the pilot prereg, not evals/<m>/prereg.json.
+    const isPilotCampaign = runs.some((r) => r.manifest.arm !== undefined)
+    const preregPath = isPilotCampaign ? pilotPreregRel(repoRoot, method, a.preregFlag) : undefined
+    if (isPilotCampaign && preregPath === undefined) {
+      a.err(`REFUSED: --prereg ${a.preregFlag} is outside the repository`)
+      return EXIT.REFUSED
+    }
     let verification: ReturnType<typeof enforcePrereg>
     try {
-      verification = enforcePrereg({ git: new Git(repoRoot), repoRoot, method, mode: 'red', heldoutDir: heldoutDir(method, a.env, undefined, repoRoot) })
+      verification = enforcePrereg({
+        git: new Git(repoRoot),
+        repoRoot,
+        method,
+        mode: isPilotCampaign ? 'dev' : 'red',
+        heldoutDir: heldoutDir(method, a.env, undefined, repoRoot),
+        ...(preregPath ? { preregPath } : {}),
+      })
     } catch (e) {
       if (e instanceof PreregRefusal || e instanceof CustodyError) {
         a.err(`REFUSED: ${e.message}`)
@@ -471,12 +505,12 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
       a.err(`REFUSED: ${mismatch}`)
       return EXIT.REFUSED
     }
-    const availability = opencodeAvailability()
+    const availability = a.availability()
     if (!availability.available) {
       a.err(`cannot launch the pinned OpenCode: ${availability.reason}`)
       return EXIT.ERROR
     }
-    const judge = createJudge({ repoRoot, method, model, auth })
+    const judge = a.makeJudge({ repoRoot, method, model, auth })
     const rows = await rejudgeCampaign({
       campaignDir,
       judge: judge.hook,
@@ -487,6 +521,22 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
     })
     const count = (v: string) => rows.filter((r) => r.verdict === v).length
     a.out(`rejudged ${rows.length - count('skipped')} of ${rows.length} runs: pass ${count('pass')} · fail ${count('fail')} · judge_error ${count('judge_error')} · skipped ${count('skipped')} (manifests unchanged)`)
+    if (isPilotCampaign) {
+      // A pilot has no review sheets. Its only projection is pilot.json, rebuilt from the verdicts now on disk, keyed to this prereg.
+      const unreachable = rows.filter((r) => r.reason?.startsWith('judge unreachable'))
+      if (unreachable.length) {
+        a.err(`ABORTED: the judge could not be reached for ${unreachable.length} run(s) (${unreachable.map((r) => r.run_id).join(', ')}); their old verdicts are still on disk, so pilot.json was not written. Run rejudge again.`)
+        return EXIT.ERROR
+      }
+      const tally = tallyPilotCampaign(campaignDir, {
+        method,
+        prereg_content_hash: verification.contentHash,
+        agent_model_id: verification.prereg.agent_model_id,
+        judge_model_id: verification.prereg.judge_model_id,
+      })
+      a.out(`wrote ${writePilotTally(repoRoot, tally).slice(repoRoot.length + 1)} (arms: ${tally.arms.join(', ')})`)
+      return EXIT.OK
+    }
   }
   let paths: ReturnType<typeof writeReview>
   try {

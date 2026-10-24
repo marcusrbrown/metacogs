@@ -184,6 +184,16 @@ describe('tallyPilotCampaign', () => {
     expect(t.tally.baseline!.d1).toMatchObject({ runs: 1, instruction_present: 0 })
   })
 
+  test('a rejudged verdict (judge.json) replaces the one on the manifest', () => {
+    const dir = plantCampaign([
+      { arm: 'baseline', fixture: 'd1', judge: evidence('pass', 'pass') },
+      { arm: 'baseline', fixture: 'd1', judge: evidence('pass', 'pass') },
+    ])
+    // The second run was re-judged: TE2 now fails. The manifest is never rewritten, judge.json is.
+    writeFileSync(join(dir, '002-dev-d1-baseline-r1', 'judge.json'), JSON.stringify({ redacted_input_sha256: 'c'.repeat(64), model_pinned: 'm', model_returned: ['m'], criteria: [{ id: 'TE1', verdict: 'pass', quotes: ['q'] }, { id: 'TE2', verdict: 'fail', quotes: ['q'] }], attempts: 1 }))
+    expect(tallyPilotCampaign(dir, CTX).tally.baseline!.d1).toMatchObject({ runs: 2, te1_pass: 2, te2_pass: 1, both_pass: 1 })
+  })
+
   test('a manifest without an arm means this is not a pilot campaign', () => {
     expect(() => tallyPilotCampaign(plantCampaign([{ fixture: 'd1' }]), CTX)).toThrow(/not a pilot campaign/)
   })

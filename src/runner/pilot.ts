@@ -7,9 +7,11 @@
  *   writer: counts, model ids, the prereg content hash, the arms present. No stdout, stderr, env, quotes or transcript text.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+
+import { isAbsolute, join, relative, resolve } from 'node:path'
 
 import { isSkillContentLoad, parseEvents, toolUses } from './events'
+import { readJudgeRecord } from './judge-record'
 import { PILOT_ARMS, type PilotArm, readManifest, type RunManifest } from './manifest'
 import type { LoadedFixture } from './prereg'
 import type { PlannedRun } from './run'
@@ -108,7 +110,17 @@ function fixedCell(cell: PilotCell): PilotCell {
 
 const COUNTED_STATUSES: readonly string[] = ['completed', 'timeout', 'budget_exceeded', 'host_crash']
 
-const criterionPassed = (m: RunManifest, id: string): boolean => m.judge?.criteria.some((c) => c.id === id && c.verdict === 'pass') ?? false
+/**
+ * The verdicts that count for a run: `judge.json` when the run directory has one, else the manifest's. A rejudge rewrites `judge.json`
+ * and never the manifest, so the file holds the latest verdicts either way (the run's own judge call writes it too).
+ */
+function verdictsOf(runDir: string, m: RunManifest): readonly { id: string; verdict: string }[] {
+  const path = join(runDir, 'judge.json')
+  if (existsSync(path)) return readJudgeRecord(readFileSync(path, 'utf8')).criteria
+  return m.judge?.criteria ?? []
+}
+
+const passed = (verdicts: readonly { id: string; verdict: string }[], id: string): boolean => verdicts.some((c) => c.id === id && c.verdict === 'pass')
 
 function skillLoadedIn(runDir: string): boolean {
   const path = join(runDir, 'stdout.jsonl')
@@ -134,8 +146,9 @@ export function tallyPilotCampaign(campaignDir: string, ctx: PilotContext): Pilo
     if (m.arm === undefined) throw new Error(`${m.run_id} carries no arm: ${campaignDir} is not a pilot campaign`)
     if (!COUNTED_STATUSES.includes(m.status)) continue
     const cell = ((tally[m.arm] ??= {})[m.fixture.id] ??= emptyCell())
-    const te1 = criterionPassed(m, TE1)
-    const te2 = criterionPassed(m, TE2)
+    const verdicts = verdictsOf(runDir, m)
+    const te1 = passed(verdicts, TE1)
+    const te2 = passed(verdicts, TE2)
     cell.runs += 1
     if (te1) cell.te1_pass += 1
     if (te2) cell.te2_pass += 1
@@ -165,6 +178,15 @@ export function projectPilot(input: PilotContext & { tally: PilotTally['tally'] 
     arms: PILOT_ARMS.filter((arm) => tally[arm] !== undefined),
     tally,
   }
+}
+
+/**
+ * The repo-relative pilot prereg: `flag` (as given to `--prereg`) or `evals/<method>/pilot/prereg.json`. `undefined` when it points
+ * outside the repository, because a path that leaves the repo is not a committed contract.
+ */
+export function pilotPreregRel(repoRoot: string, method: string, flag?: string): string | undefined {
+  const rel = relative(repoRoot, resolve(repoRoot, flag ?? join('evals', method, 'pilot', 'prereg.json')))
+  return rel.startsWith('..') || isAbsolute(rel) ? undefined : rel
 }
 
 export const pilotDir = (repoRoot: string, method: string): string => join(repoRoot, 'evals', method, 'pilot')
