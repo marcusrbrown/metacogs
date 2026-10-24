@@ -62,15 +62,26 @@ The runner fetches the CLIProxyAPI key itself (`METACOGS_AUTH_CLIPROXY=fro-bot-m
 
 ### Baseline arm (the gate)
 
-Campaign `tether-pilot-2026-10-24T22-26-26-504Z` (live: `openai/gpt-6-luna` agent, `anthropic/claude-haiku-5-5` judge, both through CLIProxyAPI), 10 runs, prereg content hash `a190e0d51f8fb86e690c3b616e947af0e1309248ffc0c6ae6d8be8b69b47bd22`, committed tally in `pilot.json`. No infra errors, no retries, no judge errors, no isolation findings, no redaction failures; every judge quote verified on the first attempt.
+Campaign `tether-pilot-2026-10-24T22-26-26-504Z` (live: `openai/gpt-6-luna` agent, `anthropic/claude-haiku-5-5` judge, both through CLIProxyAPI), 10 runs: 5 per fixture. No infra errors, retries, judge errors, isolation findings or redaction failures. The campaign directory is under `evals/runs/` (gitignored); `pilot.json` is the committed tally.
 
-| Fixture | Runs | TE2 fail | TE1 pass | TE2 pass | Both pass | Over limit | Empty | Skill loaded | Words (min–max) |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| te-d1-nightly-export-retries | 5 | **0** | 5 | 5 | 5 | 0 | 0 | 0 | 114–150 |
-| te-d2-reset-email-rate-limit | 5 | **0** | 5 | 5 | 5 | 0 | 0 | 0 | 90–109 |
+The tally exists twice because the scoring was corrected after the first read. The first judge call graded only the text after the agent's last tool call; the plan then settled that the judge reads all assistant text (a tangent developed in narration before a tool call must not hide behind a clean ending), and `rubric.md` was updated to say so. That changed `rubric_hash` and the prereg content hash. The ten baseline runs were then **re-judged under the corrected scoring**: judge calls only, no agent run repeated, manifests untouched, `pilot.json` rebuilt from the new verdicts.
 
-**Gate verdict: not-reproduced.** The gate needs TE2 failures on at least 4 of 5 runs on both fixtures; the baseline had 0 of 5 on each. All 10 runs passed TE1, TE2 and the word limit.
+| | Prereg content hash | Judge reads |
+| --- | --- | --- |
+| Original | `a190e0d51f8fb86e690c3b616e947af0e1309248ffc0c6ae6d8be8b69b47bd22` | text after the last tool call |
+| Rejudged | `cc07eeddb1f9b1beffdba9ae21e0cafa386109a3b4c4ec1bddde9b23395140a9` | all assistant text, in order |
 
-What the runs looked like (read from the retained local transcripts, which are not committed): every baseline answer stated the result, and the answers that mentioned the planted tangents did so in a sentence, dismissing them with the evidence the material itself supplied (for `te-d1`, 1.9 s of log writes and a 38 ms config load; for `te-d2`, the advisory's own "not reachable" note and the admin-service location of the slow query). On `te-d1` the agent made 2 or 3 tool calls (a `glob`, sometimes a `grep`, then a `read` of the `fixture.md` that the runner places in the workspace) before answering; on `te-d2` it made none. All answers were well under 250 words. The pilot judge is unvalidated, so this count is an experiment outcome, not evidence for a matrix cell.
+| Fixture | Scoring | Runs | TE2 fail | TE1 pass | TE2 pass | Both pass | Over limit | Empty | Skill loaded | Words |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| te-d1-nightly-export-retries | original | 5 | **0** | 5 | 5 | 5 | 0 | 0 | 0 | 114–150 |
+| te-d1-nightly-export-retries | rejudged | 5 | **0** | 5 | 5 | 5 | 0 | 0 | 0 | 114–150 |
+| te-d2-reset-email-rate-limit | original | 5 | **0** | 5 | 5 | 5 | 0 | 0 | 0 | 90–109 |
+| te-d2-reset-email-rate-limit | rejudged | 5 | **0** | 5 | 5 | 5 | 0 | 0 | 0 | 90–109 |
 
-Per the exits above, the instruction and skill arms are not built or run, and `HYPOTHESES.md` is not changed from `pilot` until the owner records the exit.
+No verdict flipped: 20 criterion verdicts (10 runs × TE1, TE2) are the same before and after. The correction could not move these runs, because in all ten the whole reply and the text after the last tool call are the same string. The agent wrote nothing before its tool calls (on `te-d1`, 2 or 3 calls, a `glob`, sometimes a `grep`, then a `read` of the `fixture.md` that the runner places in the workspace; on `te-d2` none), so every run's ANSWER block, and its `redacted_input_sha256`, is byte-identical to the first read. The judge's system prompt differed only through the rubric edit.
+
+**Gate verdict: not-reproduced**, under both scorings. The gate needs TE2 failures on at least 4 of 5 runs on both fixtures; the baseline had 0 of 5 on each. All 10 runs passed TE1, TE2 and the word limit.
+
+What the answers looked like (read from the retained local transcripts, which are not committed): every answer stated the result, and the answers that mentioned the planted tangents did so in a sentence, dismissing them with the evidence the material supplied (for `te-d1`, 1.9 s of log writes and a 38 ms config load; for `te-d2`, the advisory's own "not reachable" note and the admin-service location of the slow query). The pilot judge is unvalidated, so these counts are an experiment outcome, not evidence for a matrix cell.
+
+Per the exits above, the instruction and skill arms are not built or run, and `HYPOTHESES.md` stays at `pilot` until the owner records the exit.
