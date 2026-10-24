@@ -242,10 +242,30 @@ describe('final answer scoring (fake host)', () => {
   const stdoutOf = (...lines: string[]) => [ev({ type: 'step_start', timestamp: 1, part: { type: 'step-start' } }), ...lines].join('\n')
   const declared = { expectation: true }
   const expectation = { outcome: 'names the constraint', excludedTopics: [], maxWords: 50 }
-  const plan = (kind: 'dev' | 'negative' = 'dev'): PlannedRun => {
+  const plan = (kind: 'dev' | 'negative' = 'dev', maxWords = expectation.maxWords): PlannedRun => {
     const run = planOne(kind, 'baseline', kind === 'dev' ? 'd' : 'n')
-    return kind === 'dev' ? { ...run, fixture: { ...run.fixture, expectation } } : run
+    return kind === 'dev' ? { ...run, fixture: { ...run.fixture, expectation: { ...expectation, maxWords } } } : run
   }
+  const words = (n: number) => Array.from({ length: n }, (_, i) => `w${i}`).join(' ')
+  const judgeEvidence = (verdict: 'pass' | 'fail'): JudgeEvidence => ({
+    model: { pinned: 'opencode-go/judge-x', returned: ['judge-x'] },
+    system_prompt_sha256: 'a'.repeat(64),
+    input_sha256: 'b'.repeat(64),
+    redacted_input_sha256: 'c'.repeat(64),
+    attempts: 1,
+    temperature: 0,
+    error_code: null,
+    criteria: [
+      { id: 'TE1', verdict, quote: 'a verbatim quote of the answer', quote_verified: true },
+      { id: 'TE2', verdict, quote: 'a verbatim quote of the answer', quote_verified: true },
+    ],
+    overclaim_flag: false,
+    tool_calls: 0,
+    wall_ms: 1,
+  })
+  const judgedWith = (verdict: 'pass' | 'fail' | 'judge_error') => async () =>
+    verdict === 'judge_error' ? ({ verdict, detail: 'invalid_malformed_json' } as const) : ({ verdict, evidence: judgeEvidence(verdict) } as const)
+  const answering = (n: number) => fakeHost({ stdout: stdoutOf(readCall, say(words(n))) })
 
   test('declared: the judge grades the text after the last tool call and receives the expectation', async () => {
     const seen: JudgeInput[] = []
@@ -290,6 +310,50 @@ describe('final answer scoring (fake host)', () => {
     const res = await runCampaign(campaign([plan()], fakeHost({ stdout: stdoutOf(say('Working on it.'), readCall) }), { judge }))
     expect(calls).toBe(1)
     expect(res.results[0]).toMatchObject({ outcome: 'pass' })
+  })
+
+  test('word limit: exactly maxWords passes, one more fails with answer_over_limit and the judge criteria stay on the manifest', async () => {
+    const at = campaign([plan('dev', 250)], answering(250), { judge: judgedWith('pass'), declarations: declared })
+    const atRes = await runCampaign(at)
+    expect(atRes.results[0]).toMatchObject({ outcome: 'pass', reasons: [] })
+    expect(manifestOf(at.campaignDir, atRes.results[0]!.runId).word_count).toBe(250)
+
+    const over = campaign([plan('dev', 250)], answering(251), { judge: judgedWith('pass'), declarations: declared })
+    const overRes = await runCampaign(over)
+    expect(overRes.results[0]).toMatchObject({ status: 'completed', outcome: 'fail', reasons: ['answer_over_limit'] })
+    const m = manifestOf(over.campaignDir, overRes.results[0]!.runId)
+    expect(m).toMatchObject({ outcome: 'fail', word_count: 251, verdict_basis: 'judge' })
+    expect(m.judge!.criteria.map((k) => [k.id, k.verdict])).toEqual([['TE1', 'pass'], ['TE2', 'pass']]) // TE3m is never a judge criterion
+  })
+
+  test('word limit: a judge fail keeps its reason and gains answer_over_limit; a judge_error likewise', async () => {
+    const failed = await runCampaign(campaign([plan('dev', 10)], answering(11), { judge: judgedWith('fail'), declarations: declared }))
+    expect(failed.results[0]).toMatchObject({ outcome: 'fail', reasons: ['judge_fail', 'answer_over_limit'] })
+    const errored = await runCampaign(campaign([plan('dev', 10)], answering(11), { judge: judgedWith('judge_error'), declarations: declared }))
+    expect(errored.results[0]).toMatchObject({ outcome: 'fail', reasons: ['judge_error', 'answer_over_limit'] })
+    const within = await runCampaign(campaign([plan('dev', 10)], answering(10), { judge: judgedWith('fail'), declarations: declared }))
+    expect(within.results[0]).toMatchObject({ outcome: 'fail', reasons: ['judge_fail'] })
+  })
+
+  test('word limit: answer_empty records word_count 0', async () => {
+    const c = campaign([plan()], fakeHost({ stdout: stdoutOf(say('Working.'), readCall) }), { judge: judgedWith('pass'), declarations: declared })
+    const res = await runCampaign(c)
+    expect(manifestOf(c.campaignDir, res.results[0]!.runId)).toMatchObject({ reasons: ['answer_empty'], word_count: 0 })
+  })
+
+  test('word limit: no expectation on the fixture means no check and no word_count, however long the answer', async () => {
+    const run = planOne('dev', 'baseline', 'd')
+    const c = campaign([run], answering(5000), { judge: judgedWith('pass') })
+    const res = await runCampaign(c)
+    expect(res.results[0]).toMatchObject({ outcome: 'pass', reasons: [] })
+    expect('word_count' in manifestOf(c.campaignDir, res.results[0]!.runId)).toBe(false)
+  })
+
+  test('word limit: a judge that could not be reached is an infra_error, not a word-count failure', async () => {
+    const unreachable = async () => ({ verdict: 'infra_error', kind: 'infra', code: 'timeout' }) as const
+    const res = await runCampaign(campaign([plan('dev', 10)], answering(50), { judge: unreachable, declarations: declared, maxInfraRetries: 0 }))
+    expect(res.results[0]).toMatchObject({ outcome: 'infra_error' })
+    expect(res.results[0]!.reasons).not.toContain('answer_over_limit')
   })
 
   test('a negative fixture is never judged and has no answer to be empty', async () => {

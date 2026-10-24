@@ -44,6 +44,7 @@ import {
   startScriptedProvider,
   upstreamFor,
 } from './scripted-provider'
+import { countWords, isOverLimit } from './word-limit'
 import { type Condition, createRunWorkspace, type FixtureKind, type RunWorkspace, sha256 } from './workspace'
 
 export { CredentialLeakError, isRateLimited }
@@ -663,6 +664,7 @@ async function runAttempt(c: CampaignInput, run: PlannedRun, state: AttemptState
         if (!checks.ok) {
           final = settle('completed', 'fail', reasons)
         } else if (needsJudge && c.declarations?.expectation && finalAnswer.trim() === '') {
+          manifest.word_count = 0
           final = settle('completed', 'fail', ['answer_empty'])
         } else if (needsJudge && c.judge) {
           let verdict: JudgeVerdict
@@ -690,10 +692,11 @@ async function runAttempt(c: CampaignInput, run: PlannedRun, state: AttemptState
               manifest.judge = verdict.evidence
               manifest.artifacts['judge.json'] = writeJudgeRecord(runDir, verdict.evidence)
             }
-            final =
-              verdict.verdict === 'pass'
-                ? settle('completed', 'pass', [])
-                : settle('completed', 'fail', verdict.verdict === 'judge_error' ? ['judge_error'] : ['judge_fail'])
+            // The word limit (TE3m) is mechanical and runs after the judge, so the TE verdicts are on the manifest either way.
+            const limit = run.fixture.expectation?.maxWords
+            const overLimit = limit !== undefined && isOverLimit((manifest.word_count = countWords(finalAnswer)), limit)
+            const reasons = [...(verdict.verdict === 'pass' ? [] : [verdict.verdict === 'judge_error' ? 'judge_error' : 'judge_fail']), ...(overLimit ? ['answer_over_limit'] : [])]
+            final = reasons.length === 0 ? settle('completed', 'pass', []) : settle('completed', 'fail', reasons)
           }
         } else if (needsJudge) {
           // No judge wired: the checks passed, but nothing has graded the answer. No outcome until a judge does.

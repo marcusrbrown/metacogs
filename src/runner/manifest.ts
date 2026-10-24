@@ -102,6 +102,11 @@ export interface RunManifest {
    * a complete read of the installed SKILL.md; `null` = neither. Absent in manifests written before this field existed.
    */
   fire_basis?: FireBasis | null
+  /**
+   * Whitespace-split words of the scored final answer. Only for a fixture that carries an expectation: set after the judge, and 0 for
+   * an `answer_empty` run. Over `expectation.maxWords` adds the reason `answer_over_limit`; `TE3m` is never a judge criterion.
+   */
+  word_count?: number
   /** Present when the judge ran (verdict_basis `judge`). */
   judge?: JudgeEvidence
   artifacts: Record<string, ArtifactRef>
