@@ -350,6 +350,55 @@ describe('rejudgeCampaign (mocked judge)', () => {
     expect(rows.map((r) => r.reason)).toEqual(['fixture missing or changed since the run', 'record contents not retained'])
   })
 
+  test('declared expectation: rejudge forwards the fixture expectation and grades the text after the last tool call', async () => {
+    const campaign = tmp()
+    const dir = plant(campaign, '001-dev-d1-baseline-r1', 'ignored')
+    const say = (text: string) => ev({ type: 'text', timestamp: 2, part: { type: 'text', text } })
+    const call = ev({ type: 'tool_use', timestamp: 2, part: { type: 'tool', tool: 'read', callID: 'c', state: { status: 'completed', input: {}, output: 'x' } } })
+    writeFileSync(join(dir, 'stdout.jsonl'), [say('Looking.'), call, say('Final.')].join('\n'))
+    const expectation = { outcome: 'names the constraint', excludedTopics: [], maxWords: 40 }
+    const seen: JudgeInput[] = []
+    const run = (declarations?: { expectation: boolean }) =>
+      rejudgeCampaign({
+        campaignDir: campaign,
+        judge: async (input) => (seen.push(input), { verdict: 'pass' as const }),
+        fixtures: { dev: [{ ...fixture, expectation }], negative: [] },
+        ...(declarations ? { declarations } : {}),
+        judgePromptSha256: 'd'.repeat(64),
+      })
+    await run({ expectation: true })
+    expect(seen[0]!.finalAnswer).toBe('Final.')
+    expect(seen[0]!.fixture.expectation).toEqual(expectation)
+    await run()
+    expect(seen[1]!.finalAnswer).toBe('Looking.Final.')
+  })
+
+  test('a fixture without an expectation adds no expectation key; an answer_empty run is skipped', async () => {
+    const campaign = tmp()
+    plant(campaign, '001-dev-d1-baseline-r1', 'answer one')
+    plant(campaign, '002-dev-d1-baseline-r2', '', { outcome: 'fail', reasons: ['answer_empty'] })
+    const seen: JudgeInput[] = []
+    const rows = await rejudgeCampaign({
+      campaignDir: campaign,
+      judge: async (input) => (seen.push(input), { verdict: 'pass' as const }),
+      fixtures: { dev: [fixture], negative: [] },
+      judgePromptSha256: 'd'.repeat(64),
+    })
+    expect('expectation' in seen[0]!.fixture).toBe(false)
+    expect(rows.map((r) => [r.verdict, r.reason])).toEqual([['pass', undefined], ['skipped', 'empty final answer (never reached the judge)']])
+  })
+
+  test('finalAnswerOf takes the rubric declarations: text after the last tool call, or everything', () => {
+    const campaign = tmp()
+    const dir = plant(campaign, '001-dev-d1-baseline-r1', 'x')
+    const say = (text: string) => ev({ type: 'text', timestamp: 2, part: { type: 'text', text } })
+    const call = ev({ type: 'tool_use', timestamp: 2, part: { type: 'tool', tool: 'read', callID: 'c', state: { status: 'completed', input: {}, output: 'x' } } })
+    writeFileSync(join(dir, 'stdout.jsonl'), [say('Looking.'), call, say('Final.')].join('\n'))
+    expect(finalAnswerOf(dir)).toBe('Looking.Final.')
+    expect(finalAnswerOf(dir, { expectation: false })).toBe('Looking.Final.')
+    expect(finalAnswerOf(dir, { expectation: true })).toBe('Final.')
+  })
+
   test('skillReason names why held-out and negatives are not rejudged', () => {
     expect(skipReason(manifest('x', { fixture: { id: 'h1', kind: 'heldout', hash: 'h' } }), true)).toContain('held-out')
     expect(skipReason(manifest('x'), false)).toContain('no stdout')

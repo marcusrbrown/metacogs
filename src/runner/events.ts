@@ -97,6 +97,18 @@ export function assistantText(events: readonly OpencodeEvent[]): string {
     .join('')
 }
 
+/**
+ * The answer the agent committed to: the text parts after the last `tool_use` event, joined with `\n`. With no tool call it is
+ * every text part. Narration before a tool call is not the answer. Takes the ordered events from `parseEvents(stdout).events`.
+ */
+export function finalAnswerText(events: readonly OpencodeEvent[]): string {
+  const lastCall = events.findLastIndex((e) => e.type === 'tool_use')
+  return events
+    .slice(lastCall + 1)
+    .flatMap((e) => (e.type === 'text' && typeof e.part?.text === 'string' ? [e.part.text] : []))
+    .join('\n')
+}
+
 export interface Usage {
   input: number
   output: number

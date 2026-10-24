@@ -15,6 +15,7 @@ import {
   CredentialLeakError,
   type Host,
   type HostRunRequest,
+  type JudgeInput,
   planRuns,
   type PlannedRun,
   type ProviderMode,
@@ -230,6 +231,73 @@ describe('planRuns', () => {
   test('fixture filter; unknown id is an error', () => {
     expect(planRuns({ mode: 'red', fixtures, runsPerCondition: 2, onlyFixture: 'd2' })).toHaveLength(2)
     expect(() => planRuns({ mode: 'red', fixtures, runsPerCondition: 2, onlyFixture: 'nope' })).toThrow(/no fixture/)
+  })
+})
+
+// ── final answer under a declared expectation ──────────────────────────────
+
+describe('final answer scoring (fake host)', () => {
+  const readCall = toolUse('read', { status: 'completed', input: { filePath: 'x' }, output: 'x' })
+  const say = (text: string) => ev({ type: 'text', timestamp: 2, part: { type: 'text', text } })
+  const stdoutOf = (...lines: string[]) => [ev({ type: 'step_start', timestamp: 1, part: { type: 'step-start' } }), ...lines].join('\n')
+  const declared = { expectation: true }
+  const expectation = { outcome: 'names the constraint', excludedTopics: [], maxWords: 50 }
+  const plan = (kind: 'dev' | 'negative' = 'dev'): PlannedRun => {
+    const run = planOne(kind, 'baseline', kind === 'dev' ? 'd' : 'n')
+    return kind === 'dev' ? { ...run, fixture: { ...run.fixture, expectation } } : run
+  }
+
+  test('declared: the judge grades the text after the last tool call and receives the expectation', async () => {
+    const seen: JudgeInput[] = []
+    const judge = async (i: JudgeInput) => (seen.push(i), { verdict: 'pass' as const })
+    const stdout = stdoutOf(say('Let me look. '), readCall, say('The answer.'))
+    const res = await runCampaign(campaign([plan()], fakeHost({ stdout }), { judge, declarations: declared }))
+    expect(res.results[0]).toMatchObject({ outcome: 'pass' })
+    expect(seen).toHaveLength(1)
+    expect(seen[0]!.finalAnswer).toBe('The answer.')
+    expect(seen[0]!.fixture.expectation).toEqual(expectation)
+  })
+
+  test('not declared: the judge still gets every text part, as before', async () => {
+    const seen: JudgeInput[] = []
+    const judge = async (i: JudgeInput) => (seen.push(i), { verdict: 'pass' as const })
+    const stdout = stdoutOf(say('Let me look. '), readCall, say('The answer.'))
+    await runCampaign(campaign([plan()], fakeHost({ stdout }), { judge }))
+    expect(seen[0]!.finalAnswer).toBe('Let me look. The answer.')
+  })
+
+  test('declared and nothing after the last tool call: fail with answer_empty, judge not called, no judge verdict', async () => {
+    let calls = 0
+    const judge = async () => (calls += 1, { verdict: 'pass' as const })
+    const stdout = stdoutOf(say('Working on it.'), readCall)
+    const c = campaign([plan()], fakeHost({ stdout }), { judge, declarations: declared })
+    const res = await runCampaign(c)
+    expect(calls).toBe(0)
+    expect(res.results[0]).toMatchObject({ status: 'completed', outcome: 'fail', reasons: ['answer_empty'] })
+    const m = manifestOf(c.campaignDir, res.results[0]!.runId)
+    expect(m).toMatchObject({ outcome: 'fail', reasons: ['answer_empty'], verdict_basis: 'deterministic' })
+    expect(m.judge).toBeUndefined()
+  })
+
+  test('declared and the answer is only whitespace: also answer_empty', async () => {
+    const res = await runCampaign(campaign([plan()], fakeHost({ stdout: stdoutOf(readCall, say('  \n ')) }), { declarations: declared }))
+    expect(res.results[0]).toMatchObject({ outcome: 'fail', reasons: ['answer_empty'] })
+  })
+
+  test('not declared: the same stdout is judged on the text that exists', async () => {
+    let calls = 0
+    const judge = async () => (calls += 1, { verdict: 'pass' as const })
+    const res = await runCampaign(campaign([plan()], fakeHost({ stdout: stdoutOf(say('Working on it.'), readCall) }), { judge }))
+    expect(calls).toBe(1)
+    expect(res.results[0]).toMatchObject({ outcome: 'pass' })
+  })
+
+  test('a negative fixture is never judged and has no answer to be empty', async () => {
+    let calls = 0
+    const judge = async () => (calls += 1, { verdict: 'pass' as const })
+    const res = await runCampaign(campaign([plan('negative')], fakeHost({ stdout: stdoutOf(readCall) }), { judge, declarations: declared }))
+    expect(calls).toBe(0)
+    expect(res.results[0]).toMatchObject({ outcome: 'pass' })
   })
 })
 

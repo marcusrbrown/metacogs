@@ -12,8 +12,9 @@ import { join } from 'node:path'
 import { needlesOf, type PassthroughAuth, passthroughNames } from './auth'
 import { checkBudget, classifyHostOutcome, type CheckFailure, fireEvidence, helperVersionOf, listRecordFiles, runChecks } from './checks'
 import { destroyFixture } from './env'
-import { analyzeEvents, type EventSummary, isRateLimited } from './events'
+import { analyzeEvents, type EventSummary, finalAnswerText, isRateLimited, parseEvents } from './events'
 import { checkDebugConfig, checkIsolation, type IsolationEvidence } from './isolation'
+import type { RubricDeclarations } from './judge'
 import { writeJudgeRecord } from './judge-record'
 import {
   type ArtifactRef,
@@ -186,6 +187,8 @@ export interface CampaignInput {
   scriptFor?: (run: PlannedRun) => readonly ScriptedStep[]
   finalText?: string
   judge?: JudgeHook
+  /** The rubric's declarations (`parseDeclarations`). `expectation: true` scores the text after the last tool call; absent: all text. */
+  declarations?: RubricDeclarations
   signal?: AbortSignal
   /** Default 2. */
   maxInfraRetries?: number
@@ -655,8 +658,12 @@ async function runAttempt(c: CampaignInput, run: PlannedRun, state: AttemptState
         manifest.check_failures = checks.failures
         const reasons = checks.failures.map((f: CheckFailure) => f.code)
         const needsJudge = run.fixture.kind !== 'negative'
+        // Under `expectation: true` the answer is what follows the last tool call, the same evidence the review card shows.
+        const finalAnswer = c.declarations?.expectation ? finalAnswerText(parseEvents(spawn.stdout).events) : events.assistantText
         if (!checks.ok) {
           final = settle('completed', 'fail', reasons)
+        } else if (needsJudge && c.declarations?.expectation && finalAnswer.trim() === '') {
+          final = settle('completed', 'fail', ['answer_empty'])
         } else if (needsJudge && c.judge) {
           let verdict: JudgeVerdict
           try {
@@ -664,7 +671,7 @@ async function runAttempt(c: CampaignInput, run: PlannedRun, state: AttemptState
               method: c.method,
               condition: run.condition,
               fixture: run.fixture,
-              finalAnswer: events.assistantText,
+              finalAnswer,
               recordJson: records.map((r) => r.content),
               signal,
             })

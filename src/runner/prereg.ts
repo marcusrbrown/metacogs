@@ -317,7 +317,7 @@ const EXPECTATION_SUFFIX = '.expectation.json'
 const EXPECTATION_FIELDS = ['outcome', 'excludedTopics', 'maxWords'] as const
 
 /** Field-level shape errors, each prefixed by `where`; empty when `value` is an `Expectation`. */
-function expectationShapeErrors(value: unknown, where: string): string[] {
+export function expectationShapeErrors(value: unknown, where: string): string[] {
   if (!isRecord(value)) return [`${where}: expectation must be a JSON object`]
   const errors: string[] = []
   for (const key of Object.keys(value)) {

@@ -12,9 +12,9 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { analyzeEvents } from './events'
+import { analyzeEvents, finalAnswerText, parseEvents } from './events'
 import { type HumanReview, reconcile } from './human-review'
-import { type JudgeCriterion, parseRubric } from './judge'
+import { type JudgeCriterion, parseRubric, type RubricDeclarations } from './judge'
 import { type JudgeRecord, readJudgeRecord, writeJudgeRecord } from './judge-record'
 import { manifestPath, readManifest, type RunManifest } from './manifest'
 import type { LoadedFixture } from './prereg'
@@ -37,10 +37,14 @@ export function loadCampaignRuns(campaignDir: string): CampaignRun[] {
 
 const readIfExists = (path: string): string | undefined => (existsSync(path) ? readFileSync(path, 'utf8') : undefined)
 
-/** The final answer: the assistant `text` parts of the run's `stdout.jsonl`. */
-export function finalAnswerOf(runDir: string): string | undefined {
+/**
+ * The final answer from the run's `stdout.jsonl`: every assistant `text` part, or, when the rubric declares `expectation: true`,
+ * only the text after the last tool call (the same evidence the judge was given).
+ */
+export function finalAnswerOf(runDir: string, declarations?: RubricDeclarations): string | undefined {
   const stdout = readIfExists(join(runDir, 'stdout.jsonl'))
-  return stdout === undefined ? undefined : analyzeEvents(stdout).assistantText
+  if (stdout === undefined) return undefined
+  return declarations?.expectation ? finalAnswerText(parseEvents(stdout).events) : analyzeEvents(stdout).assistantText
 }
 
 // ── review sheets ──────────────────────────────────────────────────────────
@@ -223,7 +227,7 @@ export function renderReviewSheets(campaignDir: string, repoRoot: string, option
     const kept = readIfExists(join(run.dir, 'records.json'))
     const records = kept === undefined ? [] : (JSON.parse(kept) as { content: string }[]).map((r) => r.content)
     const context = fixtureContext(repoRoot, method, run.manifest.fixture.kind, run.manifest.fixture.id, rubric, options)
-    reviewBlocks.push(renderReviewBlock(run, finalAnswerOf(run.dir), records, criteria, context, !seen.has(key)))
+    reviewBlocks.push(renderReviewBlock(run, finalAnswerOf(run.dir, spec.declarations), records, criteria, context, !seen.has(key)))
     seen.add(key)
     keyBlocks.push(renderKeyBlock(run, judge))
   }
@@ -267,6 +271,8 @@ export interface RejudgeInput {
   judge: JudgeHook
   /** Verified, already-hashed fixtures by kind; held-out fixtures are not rejudged here. */
   fixtures: { dev: readonly LoadedFixture[]; negative: readonly LoadedFixture[] }
+  /** The rubric's declarations: which text counts as the answer. Absent: all text. */
+  declarations?: RubricDeclarations
   judgePromptSha256: string
   log?: (line: string) => void
 }
@@ -288,6 +294,7 @@ export function skipReason(m: RunManifest, hasStdout: boolean): string | undefin
   if (m.fixture.kind === 'heldout') return 'held-out fixture (not rejudged by this command)'
   if (m.status !== 'completed') return `status ${m.status}`
   if (m.check_failures.length) return 'failed a deterministic check (never reached the judge)'
+  if (m.reasons.includes('answer_empty')) return 'empty final answer (never reached the judge)'
   if (!hasStdout) return 'no stdout.jsonl retained'
   return undefined
 }
@@ -297,7 +304,7 @@ export async function rejudgeCampaign(input: RejudgeInput): Promise<RejudgeRow[]
   for (const run of loadCampaignRuns(input.campaignDir)) {
     const { manifest } = run
     const prior = manifest.outcome ?? manifest.status
-    const answer = finalAnswerOf(run.dir)
+    const answer = finalAnswerOf(run.dir, input.declarations)
     const skip = skipReason(manifest, answer !== undefined)
     if (skip) {
       rows.push({ run_id: manifest.run_id, prior_outcome: prior, verdict: 'skipped', reason: skip })
@@ -317,7 +324,7 @@ export async function rejudgeCampaign(input: RejudgeInput): Promise<RejudgeRow[]
       }
       recordJson = (JSON.parse(raw) as { content: string }[]).map((r) => r.content)
     }
-    const verdict = await input.judge({ method: manifest.method, condition: manifest.condition, fixture: { id: fixture.id, kind: manifest.fixture.kind, text: fixture.text, hash: fixture.hash }, finalAnswer: answer!, recordJson })
+    const verdict = await input.judge({ method: manifest.method, condition: manifest.condition, fixture: { id: fixture.id, kind: manifest.fixture.kind, text: fixture.text, hash: fixture.hash, ...(fixture.expectation ? { expectation: fixture.expectation } : {}) }, finalAnswer: answer!, recordJson })
     if (verdict.verdict === 'infra_error') {
       rows.push({ run_id: manifest.run_id, prior_outcome: prior, verdict: 'skipped', reason: `judge unreachable (${verdict.code}); no verdict recorded` })
       input.log?.(`${manifest.run_id}: ${prior} → judge unreachable (${verdict.code})`)

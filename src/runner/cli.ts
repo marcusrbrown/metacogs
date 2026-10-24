@@ -15,7 +15,7 @@ import { Git } from './git'
 import { findNearDuplicates, NEAR_DUPLICATE_THRESHOLD } from './neardup'
 import { HUMAN_REVIEW_FILE, loadCampaignRuns, reconcileCampaign, rejudgeCampaign, writeReview } from './review'
 import { type HumanReview, humanReviewBlock, summarize } from './human-review'
-import { createJudge } from './judge'
+import { createJudge, parseDeclarations } from './judge'
 import { findStaleManifests, ManifestFormatError } from './manifest'
 import { removeLiveFixtures } from './env'
 import { killLiveGroups, opencodeAvailability } from './opencode'
@@ -308,6 +308,7 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
       campaignDir,
       runs: plan,
       judge: judge?.hook,
+      declarations: parseDeclarations(readFileSync(join(repoRoot, 'evals', method, 'rubric.md'), 'utf8')),
       auth,
       ...(cliproxy ? { cliproxyKeyName: cliproxy.keyName, leakNeedles: cliproxy.needles } : {}),
       signal: controller.signal,
@@ -433,6 +434,7 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
       campaignDir,
       judge: judge.hook,
       fixtures: verification.content.fixtures,
+      declarations: judge.spec.declarations,
       judgePromptSha256: judge.systemPromptSha256,
       log: a.out,
     })

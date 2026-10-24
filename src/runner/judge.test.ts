@@ -1,5 +1,6 @@
-import { describe, expect, test } from 'bun:test'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { afterAll, describe, expect, test } from 'bun:test'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
@@ -11,11 +12,13 @@ import {
   judgePermission,
   normalizeForQuote,
   opencodeTransport,
+  parseDeclarations,
   parseRubric,
   parseVerdicts,
   verifyQuote,
 } from './judge'
 import { CredentialLeakError } from './manifest'
+import type { Expectation } from './prereg'
 import { RedactionFailed } from './redact'
 import { CLIPROXY_UPSTREAM } from './cliproxy'
 import { gatewayOf, GO_UPSTREAM, isLiveModel, providerOf, upstreamFor, ZEN_UPSTREAM } from './scripted-provider'
@@ -101,10 +104,16 @@ function fakeTransport(replies: FakeReply[]) {
   return { transport, calls }
 }
 
-const inputFor = (finalAnswer: string, extra: { recordJson?: string[]; method?: string } = {}) => ({
+const inputFor = (finalAnswer: string, extra: { recordJson?: string[]; method?: string; expectation?: Expectation } = {}) => ({
   method: extra.method ?? 'counterfactual',
   condition: 'baseline' as const,
-  fixture: { id: 'fx', kind: 'dev' as const, hash: 'h', text: 'Should we migrate to module X?\nThe platform config pins runtime: node20.\n' },
+  fixture: {
+    id: 'fx',
+    kind: 'dev' as const,
+    hash: 'h',
+    text: 'Should we migrate to module X?\nThe platform config pins runtime: node20.\n',
+    ...(extra.expectation ? { expectation: extra.expectation } : {}),
+  },
   finalAnswer,
   recordJson: extra.recordJson ?? [],
 })
@@ -139,6 +148,75 @@ describe('parseRubric', () => {
 
   test('refuses a rubric without judge sections', () => {
     expect(() => parseRubric('# nothing\n')).toThrow('needs')
+  })
+})
+
+// ── declarations ───────────────────────────────────────────────────────────
+
+/** The counterfactual rubric with a `## Declarations` section ahead of `## Criteria`. */
+const withDeclarations = (body: string) => rubricOf('counterfactual').replace('\n## Criteria\n', `\n## Declarations\n\n${body}\n\n## Criteria\n`)
+const EXPECTATION: Expectation = { outcome: 'recommends keeping better-sqlite3 and names the runtime constraint', excludedTopics: ['sharding'], maxWords: 120 }
+
+describe('rubric declarations', () => {
+  test('absent: defaults, and the shipped rubrics declare nothing', () => {
+    expect(parseRubric(rubricOf('counterfactual')).declarations).toEqual({ expectation: false })
+    expect(parseRubric(rubricOf('synthesis')).declarations).toEqual({ expectation: false })
+    expect(parseDeclarations(rubricOf('counterfactual'))).toEqual({ expectation: false })
+  })
+
+  test('the text before the first heading cannot declare anything', () => {
+    expect(parseDeclarations('expectation: true\n\n## Criteria\n')).toEqual({ expectation: false })
+  })
+
+  test('expectation: false is the default, byte for byte', () => {
+    const off = parseRubric(withDeclarations('expectation: false'))
+    expect(off.declarations).toEqual({ expectation: false })
+    expect(off.systemPrompt).toBe(parseRubric(rubricOf('counterfactual')).systemPrompt)
+  })
+
+  test('expectation: true changes the input-format and quote-rule sentences, and only those', () => {
+    const base = parseRubric(rubricOf('counterfactual')).systemPrompt
+    const on = parseRubric(withDeclarations('expectation: true'))
+    expect(on.declarations).toEqual({ expectation: true })
+    expect(on.systemPrompt).not.toBe(base)
+    expect(on.systemPrompt).toContain('EXPECTATION')
+    expect(on.systemPrompt).not.toContain('RECORD')
+    expect(on.systemPrompt).toContain('verbatim from the ANSWER block')
+    // Everything above "## Input format" is the same text.
+    const head = (s: string) => s.slice(0, s.indexOf('## Input format'))
+    expect(head(on.systemPrompt)).toBe(head(base))
+    expect(base).toContain('RECORD')
+  })
+
+  test('whitespace and blank lines around the declaration are fine', () => {
+    expect(parseDeclarations('# R\n\n## Declarations\n\n  expectation:   true  \n\n')).toEqual({ expectation: true })
+  })
+
+  test.each([
+    ['an unknown key', 'strictness: true', /strictness/],
+    ['an unknown value', 'expectation: maybe', /expectation.*maybe|maybe.*expectation/],
+    ['an empty value', 'expectation:', /expectation/],
+    ['a repeated key', 'expectation: true\nexpectation: false', /expectation.*more than once|twice|duplicate/i],
+    ['a line that is not key: value', 'expectation true', /expectation true/],
+  ])('rejects %s, naming it', (_name, body, message) => {
+    expect(() => parseRubric(withDeclarations(body))).toThrow(message)
+    expect(() => parseDeclarations(withDeclarations(body))).toThrow(message)
+  })
+})
+
+describe('buildUserMessage (EXPECTATION)', () => {
+  test('EXPECTATION sits between TASK and ANSWER, in its own nonce fence', () => {
+    const msg = buildUserMessage({ nonce: 'n0nce', task: 'T', expectation: 'E', answer: 'A', overclaimFlag: false })
+    const at = (name: string) => msg.indexOf(`<<<BEGIN n0nce ${name}>>>`)
+    expect(at('TASK')).toBeGreaterThan(-1)
+    expect(at('EXPECTATION')).toBeGreaterThan(at('TASK'))
+    expect(at('ANSWER')).toBeGreaterThan(at('EXPECTATION'))
+    expect(msg).toContain('<<<BEGIN n0nce EXPECTATION>>>\nE\n<<<END n0nce EXPECTATION>>>')
+    expect(msg).not.toContain('RECORD')
+  })
+
+  test('without an expectation the message is the same as before', () => {
+    expect(buildUserMessage({ nonce: 'n', task: 'T', answer: 'A', overclaimFlag: false })).not.toContain('EXPECTATION')
   })
 })
 
@@ -356,12 +434,12 @@ describe('opencodeTransport: passthrough auth and 429', () => {
 
 // ── the judge ──────────────────────────────────────────────────────────────
 
-function judgeWith(replies: FakeReply[], options: { nonces?: string[]; method?: string; redactText?: (t: string) => string } = {}) {
+function judgeWith(replies: FakeReply[], options: { nonces?: string[]; method?: string; repoRoot?: string; redactText?: (t: string) => string } = {}) {
   const { transport, calls } = fakeTransport(replies)
   const nonces = [...(options.nonces ?? [])]
   let n = 0
   const judge = createJudge({
-    repoRoot: REPO_ROOT,
+    repoRoot: options.repoRoot ?? REPO_ROOT,
     method: options.method ?? 'counterfactual',
     model: PINNED,
     transport,
@@ -406,6 +484,14 @@ describe('S1: shipped-method judge hashes are pinned', () => {
       expect(verdict.evidence!.input_sha256).toBe(pinned.user)
     })
   }
+
+  test('an expectation on the fixture changes nothing for a rubric that does not declare it', async () => {
+    const { judge, calls } = judgeWith([{ text: allPass('The config pins node20, so that claim is false today.') }], { nonces: ['fixed-nonce'], redactText: (t) => t })
+    const verdict = await judge.hook(inputFor(ANSWER, { expectation: { outcome: 'anything', excludedTopics: [], maxWords: 50 } }))
+    expect(verdict.evidence!.redacted_input_sha256).toBe(PINNED_INPUTS.withoutRecord.redacted)
+    expect(verdict.evidence!.input_sha256).toBe(PINNED_INPUTS.withoutRecord.user)
+    expect(calls[0]!.stdin).not.toContain('EXPECTATION')
+  })
 })
 
 describe('judge hook', () => {
@@ -621,5 +707,101 @@ describe('gateway is a recorded fact', () => {
     expect((await transportFor(`${GO_UPSTREAM}/chat/completions`)(request)).gateway).toBe('go')
     expect((await transportFor(`${ZEN_UPSTREAM}/chat/completions`)(request)).gateway).toBe('zen')
     expect((await transportFor(undefined)(request)).gateway).toBeNull()
+  })
+})
+
+// ── a rubric that declares `expectation: true` ─────────────────────────────
+
+describe('judge hook (declared expectation)', () => {
+  const scratch: string[] = []
+  afterAll(() => {
+    for (const d of scratch) rmSync(d, { recursive: true, force: true })
+  })
+  /** A repo root whose `evals/declared/` carries the counterfactual rubric plus a declaration and one redact token. */
+  function declaredRepo(): string {
+    const root = mkdtempSync(join(tmpdir(), 'metacogs-declared-'))
+    scratch.push(root)
+    mkdirSync(join(root, 'evals', 'declared'), { recursive: true })
+    writeFileSync(join(root, 'evals', 'declared', 'rubric.md'), withDeclarations('expectation: true'))
+    writeFileSync(join(root, 'evals', 'declared', 'redact.json'), JSON.stringify({ tokens: ['secretword'] }))
+    return root
+  }
+  const root = declaredRepo()
+  const declared = (replies: FakeReply[], options: { nonces?: string[]; redactText?: (t: string) => string } = {}) => judgeWith(replies, { ...options, repoRoot: root, method: 'declared' })
+  const QUOTE = 'The config pins node20, so that claim is false today.'
+  const declaredInput = (answer = ANSWER, extra: { recordJson?: string[]; expectation?: Expectation | null } = {}) => ({
+    ...inputFor(answer, { method: 'declared', ...(extra.recordJson ? { recordJson: extra.recordJson } : {}), ...(extra.expectation === null ? {} : { expectation: extra.expectation ?? EXPECTATION }) }),
+  })
+
+  test('EXPECTATION follows TASK and precedes ANSWER; RECORD is omitted even when a record exists', async () => {
+    const { judge, calls } = declared([{ text: allPass(QUOTE) }], { nonces: ['feedface00'] })
+    expect(judge.spec.declarations).toEqual({ expectation: true })
+    const verdict = await judge.hook(declaredInput(ANSWER, { recordJson: ['{"closing":"a record the judge must not see"}'] }))
+    expect(verdict.verdict).toBe('pass')
+    const stdin = calls[0]!.stdin
+    const at = (name: string) => stdin.indexOf(`<<<BEGIN feedface00 ${name}>>>`)
+    expect(at('EXPECTATION')).toBeGreaterThan(at('TASK'))
+    expect(at('ANSWER')).toBeGreaterThan(at('EXPECTATION'))
+    expect(stdin).not.toContain('RECORD')
+    expect(stdin).not.toContain('a record the judge must not see')
+    // Canonical JSON: keys sorted, no whitespace.
+    expect(stdin).toContain(`<<<BEGIN feedface00 EXPECTATION>>>\n{"excludedTopics":["sharding"],"maxWords":120,"outcome":"${EXPECTATION.outcome}"}\n<<<END feedface00 EXPECTATION>>>`)
+    expect(calls[0]!.system).toBe(judge.spec.systemPrompt)
+  })
+
+  test('redacted_input_sha256 includes the expectation; the same inputs hash the same, a changed expectation does not', async () => {
+    const hashFor = async (expectation: Expectation) => {
+      const { judge } = declared([{ text: allPass(QUOTE) }], { nonces: ['n1'] })
+      return (await judge.hook(declaredInput(ANSWER, { expectation }))).evidence!.redacted_input_sha256
+    }
+    const a = await hashFor(EXPECTATION)
+    expect(a).toMatch(/^[0-9a-f]{64}$/)
+    expect(await hashFor(EXPECTATION)).toBe(a)
+    expect(await hashFor({ ...EXPECTATION, maxWords: 121 })).not.toBe(a)
+  })
+
+  test('a declared rubric with no expectation on the fixture is a judge_error before any request', async () => {
+    const { judge, calls } = declared([{ text: allPass(QUOTE) }])
+    expect(await judge.hook(declaredInput(ANSWER, { expectation: null }))).toMatchObject({ verdict: 'judge_error', detail: 'expectation_missing' })
+    expect(calls).toHaveLength(0)
+  })
+
+  test('a nonce that occurs inside the expectation is regenerated', async () => {
+    const { judge, calls } = declared([{ text: allPass(QUOTE) }], { nonces: ['feedface00', 'feedface01'] })
+    await judge.hook(declaredInput(ANSWER, { expectation: { ...EXPECTATION, outcome: 'mentions feedface00 in passing' } }))
+    expect(calls[0]!.stdin).toContain('nonce: feedface01')
+    expect(calls[0]!.stdin).not.toContain('<<<BEGIN feedface00')
+  })
+
+  test('a redact token that survives in the expectation aborts before any request', async () => {
+    const { judge, calls } = declared([{ text: allPass(QUOTE) }], {
+      redactText: (t) => {
+        if (t.includes('BADTOKEN')) throw new RedactionFailed(['badtoken'])
+        return t
+      },
+    })
+    const verdict = await judge.hook(declaredInput(ANSWER, { expectation: { ...EXPECTATION, excludedTopics: ['BADTOKEN'] } }))
+    expect(verdict).toMatchObject({ verdict: 'judge_error', detail: 'redaction_failed' })
+    expect(calls).toHaveLength(0)
+  })
+
+  test('the method redact list is applied to the expectation like any other block', async () => {
+    const { judge, calls } = declared([{ text: allPass(QUOTE) }])
+    await judge.hook(declaredInput(ANSWER, { expectation: { ...EXPECTATION, outcome: 'names the SecretWord constraint' } }))
+    expect(calls[0]!.stdin).toContain('names the [redacted] constraint')
+    expect(calls[0]!.stdin).not.toMatch(/secretword/i)
+  })
+
+  test('a quote found only in the record is ungrounded under the declaration, and grounded without it', async () => {
+    const recordOnly = 'the closing record sentence that lives only in the record'
+    const input = declaredInput(ANSWER, { recordJson: [`{"closing":"${recordOnly}"}`] })
+    expect(await declared([{ text: allPass(recordOnly) }]).judge.hook(input)).toMatchObject({ verdict: 'judge_error', detail: 'invalid_ungrounded_quote' })
+    const undeclared = judgeWith([{ text: allPass(recordOnly) }])
+    expect((await undeclared.judge.hook(inputFor(ANSWER, { recordJson: [`{\"closing\":\"${recordOnly}\"}`] }))).verdict).toBe('pass')
+  })
+
+  test('a quote copied from the EXPECTATION block is ungrounded: the expectation is not evidence', async () => {
+    const { judge } = declared([{ text: allPass(EXPECTATION.outcome) }])
+    expect(await judge.hook(declaredInput())).toMatchObject({ verdict: 'judge_error', detail: 'invalid_ungrounded_quote' })
   })
 })
