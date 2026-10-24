@@ -66,15 +66,27 @@ export interface HumanReview {
 
 const CRITERION_ID = '[A-Z]{2}\\d+'
 
-/** Splits `## <run-id>` blocks: run id → block text. */
+/** Splits `## <run-id>` blocks: run id → block text. Headings inside code fences do not start a block. */
 function blocksOf(text: string): Map<string, string> {
   const out = new Map<string, string>()
-  const parts = text.split(/^## /m).slice(1)
-  for (const part of parts) {
-    const nl = part.indexOf('\n')
-    const id = (nl === -1 ? part : part.slice(0, nl)).trim()
-    out.set(id, nl === -1 ? '' : part.slice(nl + 1))
+  let id: string | undefined
+  let lines: string[] = []
+  let fence: string | undefined
+  for (const line of text.split('\n')) {
+    const tick = /^(`{3,})/.exec(line)?.[1]
+    if (tick) {
+      if (fence === undefined) fence = tick
+      else if (tick.length >= fence.length) fence = undefined
+    }
+    if (fence === undefined && line.startsWith('## ')) {
+      if (id !== undefined) out.set(id, lines.join('\n'))
+      id = line.slice(3).trim()
+      lines = []
+      continue
+    }
+    if (id !== undefined) lines.push(line)
   }
+  if (id !== undefined) out.set(id, lines.join('\n'))
   return out
 }
 

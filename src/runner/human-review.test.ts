@@ -20,6 +20,35 @@ describe('parsing', () => {
     expect([...marks]).toEqual([['SY1', 'pass'], ['SY2', 'fail']])
   })
 
+  test('a `## ` heading inside a fenced answer does not start a new block', () => {
+    const text = [
+      '## 012-heldout-h1-baseline-r2',
+      '',
+      '- fixture: h1 (heldout)',
+      '',
+      '**Final answer**',
+      '',
+      '```text',
+      '## Recommendation: do not ship',
+      '```',
+      '',
+      '````text',
+      'outer',
+      '```hcl',
+      'inner = 1',
+      '```',
+      '## still inside the outer fence',
+      '````',
+      '',
+      row('CF1', 'human: pass'),
+      row('CF2', 'human: fail'),
+      '',
+    ].join('\n')
+    const marks = parseHumanMarks(text)
+    expect([...marks.keys()]).toEqual(['012-heldout-h1-baseline-r2'])
+    expect([...marks.get('012-heldout-h1-baseline-r2')!]).toEqual([['CF1', 'pass'], ['CF2', 'fail']])
+  })
+
   test('the key yields judge verdicts per block; blocks without a table or header are skipped', () => {
     const key = [keyBlock('001-heldout-h1-skill-r1', 'h1', 'heldout', 'skill', { SY1: 'pass', SY2: 'fail' }), '## 002-x\n\n_no per-criterion verdicts stored (judge_error)_\n'].join('\n')
     expect(parseKey(key)).toEqual([{ run_id: '001-heldout-h1-skill-r1', fixture_id: 'h1', fixture_kind: 'heldout', condition: 'skill', judge: { SY1: 'pass', SY2: 'fail' } }])
