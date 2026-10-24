@@ -246,7 +246,7 @@ flowchart LR
 - Edge case: a skill dir with no `scripts/` hashes the same as one with an empty `scripts/`.
 - Integration: `bun test` suite still passes (committed-report tests do not compare the current tree hash).
 
-**Verification:** Tests pass. Committed reports keep their pre-change hashes, so a dev-regression recompute against them warns once; the first campaign after this change records the new hash and recomputes clean. Trade-off recorded: a green read no longer binds the helper bytes that ran, only the method text; `helper_version` in each record identifies the helper.
+**Verification:** Tests pass. A dev campaign recorded before this change cannot be re-projected or count toward a GREEN read; the next epoch starts with a fresh dev campaign. Trade-off recorded: a green read no longer binds the helper bytes that ran, only the method text; `helper_version` in each record identifies the helper.
 
 - [x] **Unit 3: Changesets and the release script**
 
