@@ -701,6 +701,21 @@ describe('pilot', () => {
       expect(existsSync(join(repo.dir, 'evals', 'runs', CAMPAIGN, 'rejudge-summary.json'))).toBe(false)
     })
 
+    test('review and review --reconcile refuse a pilot campaign with the message report uses, and write nothing', async () => {
+      const { repo, dir } = await plantedPilot()
+      const campaignDir = dirname(dir)
+      writeFileSync(join(campaignDir, 'review.md'), 'marked')
+      writeFileSync(join(campaignDir, 'review-key.md'), 'key')
+      for (const extra of [[], ['--reconcile']]) {
+        const t = io()
+        expect(await main(['review', '--campaign', CAMPAIGN, '--repo', repo.dir, ...extra], t.io)).toBe(EXIT.REFUSED)
+        const message = t.lines.err.join('\n')
+        expect(message).toContain('1 manifest(s) belong to a pilot campaign (001-dev-d1-baseline-r1 carries arm "baseline"); pilot runs are not reportable')
+      }
+      expect(readFileSync(join(campaignDir, 'review.md'), 'utf8')).toBe('marked')
+      expect(existsSync(join(campaignDir, 'human-review.json'))).toBe(false)
+    })
+
     test('--tally-only applies to rejudge of a pilot campaign only', async () => {
       const { repo } = await plantedPilot()
       const t = io()

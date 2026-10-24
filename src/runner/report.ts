@@ -12,7 +12,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 
 import { dirname, join } from 'node:path'
 
 import { type HumanReview, type HumanReviewBlock, humanReviewBlock } from './human-review'
-import { type RunManifest, manifestPath, readManifest } from './manifest'
+import { type RunManifest, manifestPath, pilotCampaignRefusal, readManifest } from './manifest'
 import type { Prereg } from './prereg'
 import { sha256 } from './workspace'
 
@@ -135,16 +135,10 @@ export function lacksJudgeVerdict(m: Pick<RunManifest, 'outcome' | 'verdict_basi
   return m.fixture.kind !== 'negative' && m.verdict_basis !== 'judge' && (m.outcome === 'pass' || m.verdict_basis === 'pending-judge')
 }
 
-/**
- * Pilot manifests (`eval pilot`) never feed a report: they ran a different plan (arms, no negatives) under a pilot prereg, and a
- * RED/dev/GREEN read built from them would claim evidence nobody pre-registered. `pilot.json` is their only projection.
- */
+/** Pilot manifests (`eval pilot`) never feed a report; `pilotCampaignRefusal` says why, and `review` says the same. */
 function assertNoPilotArms(runs: readonly LoadedRun[]): void {
-  const piloted = runs.filter((r) => r.manifest.arm !== undefined)
-  if (piloted.length) {
-    const first = piloted[0]!.manifest
-    throw new Error(`${piloted.length} manifest(s) belong to a pilot campaign (${first.run_id} carries arm "${first.arm}"); pilot runs are not reportable`)
-  }
+  const refusal = pilotCampaignRefusal(runs)
+  if (refusal !== undefined) throw new Error(refusal)
 }
 
 /** Reports count judged results only: an unjudged positive-fixture run is a reason to stop, not a number to average in. */

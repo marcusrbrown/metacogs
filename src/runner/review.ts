@@ -16,9 +16,15 @@ import { allAssistantText, analyzeEvents, finalAnswerText, parseEvents } from '.
 import { type HumanReview, reconcile } from './human-review'
 import { type JudgeCriterion, parseRubric, type RubricDeclarations } from './judge'
 import { type JudgeRecord, readJudgeRecord, writeJudgeRecord } from './judge-record'
-import { type CampaignRun, loadCampaignRuns, type RunManifest } from './manifest'
+import { type CampaignRun, loadCampaignRuns, pilotCampaignRefusal, type RunManifest } from './manifest'
 import type { LoadedFixture } from './prereg'
 import type { JudgeHook } from './run'
+
+/** Review sheets are for RED/GREEN campaigns; a pilot's only projection is `pilot.json`. */
+function assertNotPilot(runs: readonly CampaignRun[]): void {
+  const refusal = pilotCampaignRefusal(runs)
+  if (refusal !== undefined) throw new Error(refusal)
+}
 
 const readIfExists = (path: string): string | undefined => (existsSync(path) ? readFileSync(path, 'utf8') : undefined)
 
@@ -91,7 +97,11 @@ export const RECORD_FIELDS: readonly (readonly [string, string])[] = [
   ['status', 'where the decision stands (for example `recommended`)'],
 ]
 
-export function legend(method: string, campaignId: string, judgeCriteria: readonly string[], shown: number, omitted: number): string[] {
+export function legend(method: string, campaignId: string, judgeCriteria: readonly string[], shown: number, omitted: number, declarations?: RubricDeclarations): string[] {
+  // Under `expectation: true` the judge graded every assistant text part (and never saw a record); the card shows the final segment only.
+  const judgeRead = declarations?.expectation
+    ? '- **What the judge scored.** The judge read the fixture prompt, the evaluator\'s expectation, and all of the agent\'s assistant text, in order, including text written before a tool call. It saw no record. The answer on each card is the final segment only (the text after the last tool call), so the judge saw more than the card shows.'
+    : '- **What the judge scored.** The judge read the fixture prompt, the final answer, and the record (when there is one) together. Judge against the same material.'
   return [
     `# Review sheet: ${campaignId}`,
     '',
@@ -100,7 +110,7 @@ export function legend(method: string, campaignId: string, judgeCriteria: readon
     '## How to read this sheet',
     '',
     `- **Record.** Skill-condition runs also write a structured record by running a helper. It is a JSON object. Fields: ${RECORD_FIELDS.map(([f, d]) => `\`${f}\` (${d})`).join('; ')}. Baseline runs have no skill and no record.`,
-    '- **What the judge scored.** The judge read the fixture prompt, the final answer, and the record (when there is one) together. Judge against the same material.',
+    judgeRead,
     `- **What you score.** Only the ${judgeCriteria.length} judge criteria (${judgeCriteria.join(', ')}), one row each. Mechanical criteria (marked \`m\` in the rubric) are checked by code and are not scored here. Replace \`${HUMAN_CELL_BLANK}\` in the last cell with \`human: pass\` or \`human: fail\`; leave a row untouched if you cannot decide. Put anything else on the \`${NOTE_LINE}\` line.`,
     `- **Run outcome.** A run passes if and only if all ${judgeCriteria.length} criteria pass.`,
     '- **Expected-answer notes** (family, probes, pass and fail sketch) are shown once per fixture, at its first block. They describe what the fixture is designed to probe; the criteria and anchors decide, not the fixture author\'s preferred option.',
@@ -204,6 +214,7 @@ export interface ReviewSheets {
 export function renderReviewSheets(campaignDir: string, repoRoot: string, options: ReviewOptions = {}): ReviewSheets {
   const runs = loadCampaignRuns(campaignDir)
   if (runs.length === 0) throw new Error(`no run manifests in ${campaignDir}`)
+  assertNotPilot(runs)
   const method = runs[0]!.manifest.method
   const campaignId = runs[0]!.manifest.campaign_id
   const rubric = readFileSync(join(repoRoot, 'evals', method, 'rubric.md'), 'utf8')
@@ -230,7 +241,7 @@ export function renderReviewSheets(campaignDir: string, repoRoot: string, option
   const omitted = runs.length - judged.length
   const ids = criteria.map((c) => c.id)
   return {
-    review: `${legend(method, campaignId, ids, judged.length, omitted).join('\n')}\n${reviewBlocks.join('\n')}`,
+    review: `${legend(method, campaignId, ids, judged.length, omitted, spec.declarations).join('\n')}\n${reviewBlocks.join('\n')}`,
     key: [`# Review key: ${campaignId}`, '', 'Judge verdicts and quotes for `review.md`. Open after marking. `eval review --reconcile` reads this file.', '', ...keyBlocks].join('\n'),
     shown: judged.length,
     omitted,
@@ -252,8 +263,9 @@ export const HUMAN_REVIEW_FILE = 'human-review.json'
 export function reconcileCampaign(campaignDir: string, agreementFloor: number): HumanReview {
   const reviewPath = join(campaignDir, 'review.md')
   const keyPath = join(campaignDir, 'review-key.md')
-  if (!existsSync(reviewPath) || !existsSync(keyPath)) throw new Error(`need review.md and review-key.md in ${campaignDir}; run \`eval review --campaign …\` first`)
   const runs = loadCampaignRuns(campaignDir)
+  assertNotPilot(runs)
+  if (!existsSync(reviewPath) || !existsSync(keyPath)) throw new Error(`need review.md and review-key.md in ${campaignDir}; run \`eval review --campaign …\` first`)
   if (runs.length === 0) throw new Error(`no run manifests in ${campaignDir}`)
   const review = reconcile({ reviewText: readFileSync(reviewPath, 'utf8'), keyText: readFileSync(keyPath, 'utf8'), campaignId: runs[0]!.manifest.campaign_id, method: runs[0]!.manifest.method, agreementFloor })
   writeFileSync(join(campaignDir, HUMAN_REVIEW_FILE), `${JSON.stringify(review, null, 2)}\n`, { mode: 0o600 })

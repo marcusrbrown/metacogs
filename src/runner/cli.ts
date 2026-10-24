@@ -16,7 +16,7 @@ import { findNearDuplicates, NEAR_DUPLICATE_THRESHOLD } from './neardup'
 import { HUMAN_REVIEW_FILE, reconcileCampaign, rejudgeCampaign, writeReview } from './review'
 import { type HumanReview, humanReviewBlock, summarize } from './human-review'
 import { createJudge, parseDeclarations, parseRubric } from './judge'
-import { findStaleManifests, loadCampaignRuns, ManifestFormatError } from './manifest'
+import { findStaleManifests, loadCampaignRuns, ManifestFormatError, pilotCampaignRefusal } from './manifest'
 import { removeLiveFixtures } from './env'
 import { killLiveGroups, opencodeAvailability } from './opencode'
 import { isLiveModel } from './scripted-provider'
@@ -460,6 +460,12 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
   if (runs.length === 0) {
     a.err(`no run manifests in ${a.campaign}`)
     return EXIT.ERROR
+  }
+  // Review sheets (and their reconcile) are for RED/GREEN campaigns. A pilot campaign's only projection is pilot.json; `rejudge` accepts it.
+  const pilotRefusal = a.mode === 'review' ? pilotCampaignRefusal(runs) : undefined
+  if (pilotRefusal !== undefined) {
+    a.err(`REFUSED: ${pilotRefusal}`)
+    return EXIT.REFUSED
   }
   const method = runs[0]!.manifest.method
   if (a.reconcile) {

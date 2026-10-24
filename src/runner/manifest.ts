@@ -174,6 +174,18 @@ export function loadCampaignRuns(campaignDir: string): CampaignRun[] {
   return out
 }
 
+/**
+ * Why these runs can never feed a report or a review sheet, or `undefined` when none of them is a pilot run. Pilot manifests (`eval pilot`)
+ * ran a different plan (arms, no negatives) under a pilot prereg, and a RED/dev/GREEN read or a human review built from them would claim
+ * evidence nobody pre-registered. `pilot.json` is their only projection.
+ */
+export function pilotCampaignRefusal(runs: readonly { manifest: Pick<RunManifest, 'run_id' | 'arm'> }[]): string | undefined {
+  const piloted = runs.filter((r) => r.manifest.arm !== undefined)
+  const first = piloted[0]
+  if (first === undefined) return undefined
+  return `${piloted.length} manifest(s) belong to a pilot campaign (${first.manifest.run_id} carries arm "${first.manifest.arm}"); pilot runs are not reportable`
+}
+
 export interface StaleManifest {
   path: string
   run_id: string

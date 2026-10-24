@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 import { judgeRecordOf, quoteFragments } from './judge-record'
 import { type JudgeEvidence, type RunManifest, writeManifest } from './manifest'
-import { finalAnswerOf, judgedAnswerOf, reconcileCampaign, rejudgeCampaign, renderReviewSheets, rubricAnchors, skipReason, writeReview } from './review'
+import { finalAnswerOf, judgedAnswerOf, legend, reconcileCampaign, rejudgeCampaign, renderReviewSheets, rubricAnchors, skipReason, writeReview } from './review'
 import { parseRubric } from './judge'
 import type { JudgeInput } from './run'
 import { sha256 } from './workspace'
@@ -226,6 +226,39 @@ describe('renderReviewSheets (blind sheet + key)', () => {
     expect(head).toContain('Only the 2 judge criteria (CF1, CF2)')
     expect(head).toContain('passes if and only if all 2 criteria pass')
     expect(head).toContain('review-key.md')
+  })
+
+  test('the legend of a rubric that declares expectation: true says the judge read all assistant text in order and the card shows the final segment; the default legend is unchanged', () => {
+    const plain = legend('demo', 'c1', ['TE1', 'TE2'], 2, 0).join('\n')
+    const declared = legend('demo', 'c1', ['TE1', 'TE2'], 2, 0, { expectation: true }).join('\n')
+    expect(plain).toBe(legend('demo', 'c1', ['TE1', 'TE2'], 2, 0, { expectation: false }).join('\n'))
+    expect(plain).toContain('read the fixture prompt, the final answer, and the record')
+    expect(plain).not.toContain('final segment')
+    expect(declared).toContain('all of the agent\'s assistant text, in order')
+    expect(declared).toContain('final segment')
+    expect(declared).not.toContain('read the fixture prompt, the final answer, and the record')
+    // Everything else on the sheet is shared.
+    expect(declared).toContain('Only the 2 judge criteria (TE1, TE2)')
+    expect(declared).toContain('passes if and only if all 2 criteria pass')
+  })
+
+  test('a declared rubric reaches the legend through renderReviewSheets', () => {
+    const repo = tmp()
+    mkdirSync(join(repo, 'evals', 'demo'), { recursive: true })
+    writeFileSync(join(repo, 'evals', 'demo', 'rubric.md'), RUBRIC.replace('## What is being measured', '## Declarations\n\nexpectation: true\n\n## What is being measured'))
+    const campaign = tmp()
+    plant(campaign, '001-dev-d1-baseline-r1', 'ans', {}, judgeJson)
+    const { review } = renderReviewSheets(campaign, repo)
+    expect(review.slice(0, review.indexOf('## 001-'))).toContain('final segment')
+  })
+
+  test('a pilot campaign (manifests carrying an arm) never gets review sheets or a reconcile', () => {
+    const repo = repoWithRubric()
+    const campaign = tmp()
+    plant(campaign, '001-dev-d1-baseline-r1', 'ans', { arm: 'baseline' }, judgeJson)
+    expect(() => renderReviewSheets(campaign, repo)).toThrow(/pilot runs are not reportable/)
+    expect(() => writeReview(campaign, repo)).toThrow(/belong to a pilot campaign/)
+    expect(() => reconcileCampaign(campaign, 0.8)).toThrow(/belong to a pilot campaign/)
   })
 
   test('review-key.md carries verdicts, quotes, attempts, and recorded outcomes under the same block ids', () => {
