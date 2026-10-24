@@ -114,8 +114,7 @@ Until this lands, every dependency update, settings change and release is manual
 
 ## Dependencies / Assumptions
 
-- Present on the repo: secrets `FRO_BOT_PAT`, `OPENCODE_AUTH_JSON`, `OPENCODE_CONFIG`; variable `FRO_BOT_MODEL`; `@fro-bot` is a collaborator.
-- Still to provision by the owner, as on dev-like: secrets `APPLICATION_ID` and `APPLICATION_PRIVATE_KEY` (the GitHub App the shared Renovate and settings workflows mint tokens from). Those two workflows cannot run until they exist.
+- Present on the repo: secrets `FRO_BOT_PAT`, `OPENCODE_AUTH_JSON`, `OPENCODE_CONFIG`, `APPLICATION_ID`, `APPLICATION_PRIVATE_KEY`; variable `FRO_BOT_MODEL`; `@fro-bot` is a collaborator. No credential prerequisite remains.
 - The Renovate runner has `bun` on its PATH; unverified until the first dependency PR.
 - Shared workflow versions at adoption: `bfra-me/.github` v4.43.0, `fro-bot/agent` v0.125.3, `marcusrbrown/renovate-config` latest tag.
 
