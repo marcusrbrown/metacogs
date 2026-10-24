@@ -6,3 +6,4 @@
 - Reports under `evals/reports/` are allowlist projections: no stdout, stderr, or env.
 - Held-out fixtures never live in the working tree.
 - Bundled helpers target the Node 22 floor.
+- `docs/solutions/`: documented solutions to past problems (bugs, workflow patterns, best practices), organized by category with YAML frontmatter (`module`, `tags`, `problem_type`); relevant when working in a documented area.
