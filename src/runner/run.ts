@@ -447,13 +447,7 @@ async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, at
     fixture: { id: run.fixture.id, kind: run.fixture.kind, hash: run.fixture.hash },
     attempt,
     skill: null,
-    prereg: {
-      tag: verification.shas.tag,
-      tag_object_sha: verification.shas.tagObjectSha,
-      commit_sha: verification.shas.commitSha,
-      blob_sha: verification.shas.blobSha,
-      epoch: prereg.epoch,
-    },
+    prereg: { content_hash: verification.contentHash, epoch: prereg.epoch },
     provider_mode: c.providerMode,
     ...(c.cliproxyKeyName
       ? { auth_cliproxy: c.cliproxyKeyName, gateways: ['cliproxy'] }
@@ -557,7 +551,7 @@ async function runAttempt(c: CampaignInput, run: PlannedRun, state: AttemptState
 
   try {
     manifest.config = { path: workspace.fixture.configPath, sha256: sha256(JSON.stringify(workspace.config)) }
-    manifest.skill = workspace.skill ? { sha256: workspace.skill.sha256, tree_sha: verification.shas.skillTreeSha ?? null } : null
+    manifest.skill = workspace.skill ? { sha256: workspace.skill.sha256 } : null
     writeManifest(runDir, manifest)
 
     const base = { cwd: workspace.fixture.workspace, env: workspace.env, config: workspace.config }

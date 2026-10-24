@@ -3,10 +3,7 @@
   "kind": "green",
   "method": "counterfactual",
   "prereg": {
-    "tag": "prereg/counterfactual/5",
-    "tag_object_sha": "d607d508e3c8954ce9dd4768a41ee75b7ff2dacc",
-    "commit_sha": "f120783582251890a2ec9439fa769cbdfd72241a",
-    "blob_sha": "2f00f0f18e941c25b2b23e6fa8ca54801ffbfe67",
+    "content_hash": "152c5889db5bc7a029c802a0365b19bc22c613def222512c31d62a377b8a6fa4",
     "epoch": 5,
     "rubric_hash": "4dbd235645f66aba120e5b87c151188ae3b90e6ce4d0f6e23ff7bd60a48a367b",
     "runs_per_condition": 5,
@@ -16,8 +13,7 @@
     "head_sha": "4033f8356a5b64ec35fdd982b59e98349c22ecbb"
   },
   "skill": {
-    "sha256": "44b9c08c3ca650a81631fd9f83f05147208812e326c12c54afb53d010e9e4c97",
-    "tree_sha": "1c3a1686f7f2f4b6be8b5e502012a95637d94865"
+    "sha256": "44b9c08c3ca650a81631fd9f83f05147208812e326c12c54afb53d010e9e4c97"
   },
   "opencode": {
     "package": "opencode-ai",

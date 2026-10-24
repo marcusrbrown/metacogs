@@ -1,12 +1,12 @@
 # Eval reports
 
-Files here are **allowlist projections** of local run artifacts. They hold counts, Wilson intervals, per-fixture `fail/total`, outcome-taxonomy tallies, verdict enums, hashes, model ids, SHAs, and the prereg tag. They never hold stdout, stderr, transcripts, judge quotes, paths, or environment. `src/runner/report.ts` validates every report against a closed schema before writing, and `src/runner/report.test.ts` re-validates the committed files. The raw artifacts stay under `evals/runs/` (gitignored); each report names the retained failures by `run_id` with the SHA-256 of the run's manifest and its `stdout.jsonl`.
+Files here are **allowlist projections** of local run artifacts. They hold counts, Wilson intervals, per-fixture `fail/total`, outcome-taxonomy tallies, verdict enums, hashes, model ids, the head SHA, and the prereg content hash. They never hold stdout, stderr, transcripts, judge quotes, paths, or environment. `src/runner/report.ts` validates every report against a closed schema before writing, and `src/runner/report.test.ts` re-validates the committed files. The raw artifacts stay under `evals/runs/` (gitignored); each report names the retained failures by `run_id` with the SHA-256 of the run's manifest and its `stdout.jsonl`.
 
 Regenerate with `bun run eval report --method <m>` (newest `evals/runs/<m>-red-*` campaign, prereg re-enforced first).
 
 ## Reading `red.json`
 
-- `prereg`: the tag, tag object, tagged commit, and `prereg.json` blob the runs were enforced against, plus the rubric hash. `repo.head_sha` is the checkout that produced the report.
+- `prereg`: `content_hash` (sha256 of the RFC 8785 canonical form of `prereg.json`) the runs were enforced against, plus `epoch` and the rubric hash. `repo.head_sha` is the checkout that produced the report. Reports before 2026-10-24 were re-keyed from tag identifiers to content hashes: each carries the content hash of the `prereg.json` as committed on that date, which for an earlier epoch is the current file, not that epoch's own.
 - `fixtures[]`: one entry per fixture.
   - `fail_over_total` is `fail/attempted`. `attempted` is `pass + fail`; `infra_error` and `non_isolated` runs are reported but are in no denominator. Timeouts, budget breaches, host crashes, and `judge_error` are FAILs.
   - `fail_rate_wilson95` is the 95% Wilson interval for the fail rate. At N=5, 5/5 is `[0.5655, 1]`: it rules out a true fail rate below about 57%, nothing more.
@@ -17,23 +17,6 @@ Regenerate with `bun run eval report --method <m>` (newest `evals/runs/<m>-red-*
   - `retained[]` lists each failed run with hashes only.
 - `red`: `green_eligible` is true when at least `min_fixtures` (2) dev fixtures meet the bar. `sensitivity_excluding_judge_error` is the same decision without `judge_error` runs.
 - `judge`: the judge prompt hash (one value means one prompt for the whole campaign), how many runs were judged, how many ended in `judge_error`, and the temperature the provider received.
-
-## Provenance remap
-
-The repository history was rewritten before publication to remove an untracked planning file from the root commit. On 2026-10-23 the `prereg` object identifiers in the epoch-2 reports (`counterfactual/red.json`, `synthesis/red.json`, `synthesis/green.epoch2.json`) were remapped to the published tag objects. The epoch-3 and epoch-5 reports already named the published objects.
-
-The `prereg.json` blobs changed as well as the commits. Each epoch-2 `prereg.json` holds `prev_epoch_closing_commit`, a commit SHA, and the published file holds the rewritten SHA. Mapping that one field back to its pre-rewrite value reproduces the old blob SHA exactly.
-
-| Method | Field | Old | New |
-| --- | --- | --- | --- |
-| counterfactual (`prereg/counterfactual/2`) | `tag_object_sha` | `cfa2cd741b83a235911f58ae94a7fd839e7ff1ae` | `a513df36cffbd4f702ca8e7b26640de94b7a116c` |
-| counterfactual (`prereg/counterfactual/2`) | `commit_sha` | `146346f8fdb67492351a27296b2368919c86425d` | `99d8bf75888a40b4f27040b5a0297914a2d85426` |
-| counterfactual (`prereg/counterfactual/2`) | `blob_sha` | `f7bac508c44e579bb5d51f1392678ac8190165f4` | `53c8104d5315f33f2c5a34be1668ac4ef9675f18` |
-| synthesis (`prereg/synthesis/2`) | `tag_object_sha` | `2a996353134e8a7be22baeec4871840894f600c4` | `607ebfaf713afc9b3accc7ccfbee69de05ac15cd` |
-| synthesis (`prereg/synthesis/2`) | `commit_sha` | `5e3cc06110aaf41524be100816c12848f4ad79fd` | `4954a74285c5b7bc734470c5b52af340582adf9b` |
-| synthesis (`prereg/synthesis/2`) | `blob_sha` | `58eb0ec072facc2cea6e01365ed93e9d929e9e23` | `803447fcb30fa109c4938a0dda1d6dbef8841038` |
-
-A reader can check that each published tag points at the listed commit and that each listed blob hash-matches the `prereg.json` committed under that tag. A reader cannot check the old objects: they are not reachable in the published history, so the table records the mapping and does not prove it. The `repo.head_sha` values in these three reports also name checkouts that are not in the published history.
 
 ## Epoch 2 RED results (2026-10-22)
 

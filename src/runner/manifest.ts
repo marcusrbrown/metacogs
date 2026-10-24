@@ -75,14 +75,9 @@ export interface RunManifest {
   fixture: { id: string; kind: FixtureKind; hash: string }
   /** 1 for the first launch; infra retries increment. */
   attempt: number
-  skill: { sha256: string; tree_sha: string | null } | null
-  prereg: {
-    tag: string
-    tag_object_sha: string
-    commit_sha: string
-    blob_sha: string
-    epoch: number
-  }
+  skill: { sha256: string } | null
+  /** `content_hash`: `preregContentHash` of the prereg this run was produced under. */
+  prereg: { content_hash: string; epoch: number }
   provider_mode: 'scripted' | 'live'
   /** Provider names whose real credentials were copied into this run's isolated auth.json. Never values. */
   auth_passthrough?: string[]

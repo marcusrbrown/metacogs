@@ -28,7 +28,7 @@ function manifest(overrides: Partial<RunManifest> = {}): RunManifest {
     fixture: { id: 'f', kind: 'dev', hash: 'h' },
     attempt: 1,
     skill: null,
-    prereg: { tag: 'prereg/demo/1', tag_object_sha: 'a', commit_sha: 'b', blob_sha: 'c', epoch: 1 },
+    prereg: { content_hash: 'a'.repeat(64), epoch: 1 },
     provider_mode: 'scripted',
     opencode: { package: 'opencode-ai', version: '1.19.4' },
     model: { pinned: 'p/m', returned: [] },

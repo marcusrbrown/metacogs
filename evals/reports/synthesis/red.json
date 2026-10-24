@@ -3,10 +3,7 @@
   "kind": "red",
   "method": "synthesis",
   "prereg": {
-    "tag": "prereg/synthesis/2",
-    "tag_object_sha": "607ebfaf713afc9b3accc7ccfbee69de05ac15cd",
-    "commit_sha": "4954a74285c5b7bc734470c5b52af340582adf9b",
-    "blob_sha": "803447fcb30fa109c4938a0dda1d6dbef8841038",
+    "content_hash": "7cf14e1b617452de157593316cdc45a9bacf4a6828242024d90ee6faf2599b81",
     "epoch": 2,
     "rubric_hash": "2701141a85847fe1ca78a32bc3fbcc359ef8c196d6f15538963ba76ad8b0180c",
     "runs_per_condition": 5,

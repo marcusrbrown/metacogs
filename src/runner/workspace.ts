@@ -132,7 +132,7 @@ export function heldoutDir(
 export interface HeldoutReadMarker {
   campaign_id: string
   started_at: string
-  prereg_tag: string
+  prereg_content_hash: string
 }
 
 /** `<state root>/heldout/<method>/<epoch>.read.json`: exists once an epoch's held-out set has been loaded for a GREEN read. */
@@ -158,11 +158,11 @@ export function claimHeldoutRead(path: string, marker: HeldoutReadMarker): void 
     let prior = 'an earlier run'
     try {
       const read = JSON.parse(readFileSync(path, 'utf8')) as Partial<HeldoutReadMarker>
-      prior = `campaign ${read.campaign_id ?? '(unknown)'} under ${read.prereg_tag ?? '(unknown tag)'}`
+      prior = `campaign ${read.campaign_id ?? '(unknown)'} under prereg ${read.prereg_content_hash?.slice(0, 12) ?? '(unknown)'}`
     } catch {
       // an unreadable marker still blocks the read
     }
-    throw new CustodyError(`the held-out set for ${marker.prereg_tag} was already read by ${prior}; a new epoch with a new held-out set is the only way past it`)
+    throw new CustodyError(`the held-out set for ${marker.prereg_content_hash.slice(0, 12)} was already read by ${prior}; a new epoch with a new held-out set is the only way past it`)
   }
 }
 

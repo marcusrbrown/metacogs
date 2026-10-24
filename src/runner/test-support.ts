@@ -39,7 +39,6 @@ export class TestRepo {
     this.sh(['init', '-q', '-b', 'main'])
     this.sh(['config', 'core.autocrlf', 'false'])
     this.sh(['config', 'commit.gpgsign', 'false'])
-    this.sh(['config', 'tag.gpgsign', 'false'])
     this.git = new Git(this.dir, this.env)
   }
 
@@ -60,12 +59,6 @@ export class TestRepo {
     this.sh(['add', '--', ...paths])
     this.sh(['commit', '-q', '-m', message, '--allow-empty'])
     return this.sh(['rev-parse', 'HEAD'])
-  }
-
-  tag(name: string, annotated = true): string {
-    if (annotated) this.sh(['tag', '-a', name, '-m', name])
-    else this.sh(['tag', name])
-    return this.sh(['rev-parse', name])
   }
 
   head(): string {
@@ -95,7 +88,7 @@ const RUBRIC_TEXT = '# Rubric\n\n1. names an assumption\n'
 export function scaffoldMethod(
   repo: TestRepo,
   method: string,
-  options: { epoch?: number; prevClosing?: string | null; heldoutDir: string; overrides?: Partial<Prereg> },
+  options: { epoch?: number; heldoutDir: string; overrides?: Partial<Prereg> },
 ): MethodScaffold {
   const epoch = options.epoch ?? 1
   const dir = `evals/${method}`
@@ -114,7 +107,6 @@ export function scaffoldMethod(
     schema_version: 1,
     method,
     epoch,
-    prev_epoch_closing_commit: epoch === 1 ? null : (options.prevClosing ?? null),
     salt: TEST_SALT,
     fixture_hashes: { dev: { d1: h(DEV_TEXT) }, negative: { n1: h(NEG_TEXT) }, heldout: { h1: h(HELD_TEXT) } },
     rubric_hash: h(RUBRIC_TEXT),
@@ -146,14 +138,12 @@ export function writePrereg(repo: TestRepo, scaffold: MethodScaffold, prereg: Pr
   repo.write(scaffold.preregPath, `${JSON.stringify(prereg, null, 2)}\n`.replace(/\n/g, eol))
 }
 
-/** The happy-path chain: fixtures → prereg-only commit → annotated tag → first skill commit. */
+/** The happy path: fixtures, rubric and prereg committed, then the skill. */
 export function buildHappyChain(repo: TestRepo, scaffold: MethodScaffold, extraSkillFiles: Record<string, string> = {}) {
-  const fixturesCommit = repo.commit('test: fixtures and rubric', scaffold.fixturePaths)
   writePrereg(repo, scaffold)
-  const preregCommit = repo.commit('test: prereg', [scaffold.preregPath])
-  repo.tag(`prereg/${scaffold.method}/${scaffold.prereg.epoch}`)
+  const preregCommit = repo.commit('test: fixtures, rubric and prereg', [...scaffold.fixturePaths, scaffold.preregPath])
   repo.write(`skills/${scaffold.method}/SKILL.md`, `---\nname: ${scaffold.method}\ndescription: test skill\n---\n\nbody\n`)
   for (const [rel, content] of Object.entries(extraSkillFiles)) repo.write(`skills/${scaffold.method}/${rel}`, content)
   const skillCommit = repo.commit('test: skill', [`skills/${scaffold.method}`])
-  return { fixturesCommit, preregCommit, skillCommit }
+  return { preregCommit, skillCommit }
 }

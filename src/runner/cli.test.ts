@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { defaultInstallSignalHandlers, EXIT, main } from './cli'
 import { createFixture, destroyFixture } from './env'
 import { opencodeAvailability, spawnCapture } from './opencode'
+import { preregContentHash } from './prereg'
 import { buildHappyChain, scaffoldMethod, TestRepo, writePrereg } from './test-support'
 
 const cleanup: (() => void)[] = []
@@ -43,7 +44,7 @@ function chainRepo() {
   const repo = new TestRepo('metacogs-clitest-')
   cleanup.push(() => repo.destroy())
   const heldout = tmp('metacogs-clitest-held-')
-  // A judge this runner can reach: the live GREEN preflight refuses anything else before the git-ordering checks run.
+  // A judge this runner can reach: the live GREEN preflight refuses anything else before the prereg is enforced.
   const scaffold = scaffoldMethod(repo, 'demo', { heldoutDir: heldout, overrides: { judge_model_id: 'opencode-go/judge-model-x' } })
   return { repo, heldout, scaffold }
 }
@@ -119,19 +120,6 @@ describe('refusals happen before anything launches', () => {
     expect(t.lines.err.join('\n')).toContain('REFUSED')
   })
 
-  test('prereg and SKILL.md in one commit → refused, naming the SHAs', async () => {
-    const { repo, scaffold } = chainRepo()
-    repo.commit('fixtures', scaffold.fixturePaths)
-    writePrereg(repo, scaffold)
-    repo.write('skills/demo/SKILL.md', 'skill\n')
-    const both = repo.commit('prereg+skill', [scaffold.preregPath, 'skills/demo'])
-    repo.tag('prereg/demo/1')
-    const t = io()
-    expect(await main(['red', '--method', 'demo', '--repo', repo.dir], t.io)).toBe(EXIT.REFUSED)
-    expect(t.lines.err.join('\n')).toContain(both.slice(0, 12))
-    expect(t.lines.out).toEqual([]) // no campaign started
-  })
-
   test('held-out hash mismatch → refused pre-launch', async () => {
     const { repo, heldout, scaffold } = chainRepo()
     buildHappyChain(repo, scaffold)
@@ -190,8 +178,8 @@ describe('refusals happen before anything launches', () => {
     expect(await main(['green', '--method', 'demo', '--repo', repo.dir, ...LIVE], first.io)).toBe(EXIT.REFUSED)
     expect(first.lines.err.join('\n')).toContain('heldout/h1 missing')
     const markerPath = join(first.stateHome, 'metacogs', 'heldout', 'demo', '1.read.json')
-    const marker = JSON.parse(readFileSync(markerPath, 'utf8')) as { campaign_id: string; started_at: string; prereg_tag: string }
-    expect(marker.prereg_tag).toBe('prereg/demo/1')
+    const marker = JSON.parse(readFileSync(markerPath, 'utf8')) as { campaign_id: string; started_at: string; prereg_content_hash: string }
+    expect(marker.prereg_content_hash).toBe(preregContentHash(scaffold.prereg))
     expect(marker.campaign_id).toMatch(/^demo-green-/)
     expect(Number.isNaN(Date.parse(marker.started_at))).toBe(false)
 
@@ -204,20 +192,18 @@ describe('refusals happen before anything launches', () => {
     const message = second.lines.err.join('\n')
     expect(message).toContain('already read')
     expect(message).toContain(marker.campaign_id)
-    expect(message).toContain('prereg/demo/1')
+    expect(message).toContain(marker.prereg_content_hash.slice(0, 12))
     expect(second.lines.out).toEqual([])
   })
 
-  test('a git-ordering refusal happens before the marker is claimed', async () => {
+  test('an uncommitted skill is refused before the marker is claimed', async () => {
     const { repo, heldout, scaffold } = chainRepo()
-    repo.commit('fixtures', scaffold.fixturePaths)
-    writePrereg(repo, scaffold)
-    repo.write('skills/demo/SKILL.md', 'skill\n')
-    repo.commit('prereg+skill', [scaffold.preregPath, 'skills/demo'])
-    repo.tag('prereg/demo/1')
+    buildHappyChain(repo, scaffold)
+    repo.write('skills/demo/SKILL.md', 'uncommitted edit\n')
     const t = io()
     t.io.env.METACOGS_HELDOUT_DIR = heldout
     expect(await main(['green', '--method', 'demo', '--repo', repo.dir, ...LIVE], t.io)).toBe(EXIT.REFUSED)
+    expect(t.lines.err.join('\n')).toContain('skill_dirty')
     expect(existsSync(join(t.stateHome, 'metacogs', 'heldout'))).toBe(false)
   })
 
@@ -257,10 +243,8 @@ describe('refusals happen before anything launches', () => {
     const repo = new TestRepo('metacogs-clitest-')
     cleanup.push(() => repo.destroy())
     const scaffold = scaffoldMethod(repo, 'demo', { heldoutDir: tmp('metacogs-clitest-held-'), overrides: { agent_model_id: 'openai/gpt-6-luna', judge_model_id: 'anthropic/claude-haiku-5-5' } })
-    repo.commit('fixtures', scaffold.fixturePaths)
     writePrereg(repo, scaffold)
-    repo.commit('prereg', [scaffold.preregPath])
-    repo.tag('prereg/demo/1')
+    repo.commit('fixtures and prereg', [...scaffold.fixturePaths, scaffold.preregPath])
     const t = io()
     expect(await main(['red', '--method', 'demo', '--repo', repo.dir, '--provider', 'live', '--auth-passthrough', 'none'], t.io)).toBe(EXIT.REFUSED)
     expect(t.lines.err.join('\n')).toContain('--auth-cliproxy')
@@ -296,14 +280,12 @@ describe('refusals happen before anything launches', () => {
 describe('report', () => {
   function reportRepo() {
     const { repo, scaffold } = chainRepo()
-    repo.commit('fixtures', scaffold.fixturePaths)
     writePrereg(repo, scaffold)
-    const prereg = repo.commit('prereg', [scaffold.preregPath])
-    repo.tag('prereg/demo/1')
-    return { repo, prereg }
+    repo.commit('fixtures and prereg', [...scaffold.fixturePaths, scaffold.preregPath])
+    return { repo, scaffold, prereg: preregContentHash(scaffold.prereg) }
   }
 
-  const manifest = (id: string, fixture: string, kind: string, commit: string) => ({
+  const manifest = (id: string, fixture: string, kind: string, contentHash: string) => ({
     schema_version: 1,
     run_id: id,
     campaign_id: 'demo-red-2026-10-22T16-00-00-000Z',
@@ -313,7 +295,7 @@ describe('report', () => {
     method: 'demo',
     condition: 'baseline',
     fixture: { id: fixture, kind, hash: 'f'.repeat(64) },
-    prereg: { tag: 'prereg/demo/1', commit_sha: commit, epoch: 1 },
+    prereg: { content_hash: contentHash, epoch: 1 },
     opencode: { package: 'opencode-ai', version: '1.19.4' },
     model: { pinned: 'opencode/big-pickle', returned: ['big-pickle'] },
     usage: { input: 1, output: 1, reasoning: 0 },
@@ -323,14 +305,14 @@ describe('report', () => {
     finished_at: '2026-10-22T16:00:01.000Z',
   })
 
-  async function plant(repo: TestRepo, commit: string) {
+  async function plant(repo: TestRepo, contentHash: string) {
     const { writeManifest } = await import('./manifest')
     const campaign = join(repo.dir, 'evals', 'runs', 'demo-red-2026-10-22T16-00-00-000Z')
     for (const [i, [fixture, kind]] of [['d1', 'dev'], ['n1', 'negative']].entries()) {
       const id = `00${i + 1}-${kind}-${fixture}-baseline-r1`
       const dir = join(campaign, id)
       require('node:fs').mkdirSync(dir, { recursive: true })
-      writeManifest(dir, manifest(id, fixture!, kind!, commit) as never)
+      writeManifest(dir, manifest(id, fixture!, kind!, contentHash) as never)
     }
   }
 
@@ -342,29 +324,43 @@ describe('report', () => {
     const { reportPath, validateReport } = await import('./report')
     const written = JSON.parse(require('node:fs').readFileSync(reportPath(repo.dir, 'demo'), 'utf8'))
     expect(validateReport(written)).toEqual([])
-    expect(written.prereg.commit_sha).toBe(prereg)
+    expect(written.prereg.content_hash).toBe(prereg)
     expect(written.fixtures.map((f: { fail_over_total: string }) => f.fail_over_total)).toEqual(['1/1', '1/1'])
     expect(t.lines.out.join('\n')).toContain('dev/d1: fail 1/1')
   })
 
-  test('refuses manifests produced under a different prereg commit', async () => {
+  test('refuses manifests produced under a different prereg content hash', async () => {
     const { repo } = reportRepo()
-    await plant(repo, 'e'.repeat(40))
+    await plant(repo, 'e'.repeat(64))
     const t = io()
     expect(await main(['report', '--method', 'demo', '--repo', repo.dir], t.io)).toBe(EXIT.REFUSED)
     expect(t.lines.err.join('\n')).toContain('not produced under')
   })
 
+  test('editing prereg.json after the campaign ran voids its manifests: the report is refused', async () => {
+    const { repo, scaffold, prereg } = reportRepo()
+    await plant(repo, prereg)
+    const before = io()
+    expect(await main(['report', '--method', 'demo', '--repo', repo.dir], before.io)).toBe(EXIT.OK)
+    require('node:fs').rmSync(join(repo.dir, 'evals', 'reports'), { recursive: true, force: true })
+    writePrereg(repo, scaffold, { ...scaffold.prereg, runs_per_condition: scaffold.prereg.runs_per_condition + 1 })
+    const after = io()
+    expect(await main(['report', '--method', 'demo', '--repo', repo.dir], after.io)).toBe(EXIT.REFUSED)
+    expect(after.lines.err.join('\n')).toContain('not produced under')
+    expect(existsSync(join(repo.dir, 'evals', 'reports', 'demo', 'red.json'))).toBe(false)
+  })
+
   describe('report --green: the dev regression is recomputed, never read from green-dev.json', () => {
     async function greenRepo() {
       const { repo, heldout, scaffold } = chainRepo()
-      const { preregCommit } = buildHappyChain(repo, scaffold)
+      buildHappyChain(repo, scaffold)
+      const preregHash = preregContentHash(scaffold.prereg)
       const { writeManifest } = await import('./manifest')
       const campaign = join(tmp('metacogs-clitest-green-'), 'demo-green-2026-10-22T16-00-00-000Z')
       const dir = join(campaign, '001-heldout-h1-skill-r1')
       mkdirSync(dir, { recursive: true })
-      writeManifest(dir, { ...manifest('001-heldout-h1-skill-r1', 'h1', 'heldout', preregCommit), condition: 'skill' } as never)
-      return { repo, heldout, campaign, preregCommit }
+      writeManifest(dir, { ...manifest('001-heldout-h1-skill-r1', 'h1', 'heldout', preregHash), condition: 'skill' } as never)
+      return { repo, heldout, campaign, preregHash }
     }
     const run = async (r: Awaited<ReturnType<typeof greenRepo>>) => {
       const t = io()
@@ -394,12 +390,12 @@ describe('report', () => {
     test('a valid-looking green-dev.json whose campaign manifests are not here is refused, not trusted', async () => {
       const r = await greenRepo()
       const { buildDevReport } = await import('./report')
-      const m = (id: string, kind: string) => ({ ...manifest(`001-${kind}-${id}-skill-r1`, id, kind, r.preregCommit), condition: 'skill', campaign_id: 'demo-dev-2026-10-22T15-00-00-000Z', verdict_basis: kind === 'dev' ? 'judge' : 'deterministic', skill: { sha256: '9'.repeat(64), tree_sha: null }, model: { pinned: 'opencode/big-pickle', returned: [] }, check_failures: [] })
+      const m = (id: string, kind: string) => ({ ...manifest(`001-${kind}-${id}-skill-r1`, id, kind, r.preregHash), condition: 'skill', campaign_id: 'demo-dev-2026-10-22T15-00-00-000Z', verdict_basis: kind === 'dev' ? 'judge' : 'deterministic', skill: { sha256: '9'.repeat(64) }, model: { pinned: 'opencode/big-pickle', returned: [] }, check_failures: [] })
       const prereg = (await import('./prereg')).parsePrereg(readFileSync(join(r.repo.dir, 'evals', 'demo', 'prereg.json'), 'utf8'))
       if (!prereg.ok) throw new Error('prereg')
       const dev = buildDevReport({
         prereg: prereg.prereg,
-        shas: { tag: 'prereg/demo/1', tagObjectSha: 'b'.repeat(40), commitSha: r.preregCommit, blobSha: 'd'.repeat(40), firstSkillCommit: null, skillTreeSha: null },
+        contentHash: r.preregHash,
         headSha: 'a'.repeat(40),
         runs: [m('d1', 'dev'), m('n1', 'negative')].map((x) => ({ manifest: x as never, manifestSha256: 'f'.repeat(64) })),
         plannedRuns: 2,

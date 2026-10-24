@@ -2,8 +2,8 @@
  * Allowlist projection of a campaign into `evals/reports/<method>/red.json`.
  *
  * The report contains counts, Wilson intervals, per-fixture `fail/total`,
- * outcome-taxonomy tallies, verdict enums, hashes, model ids, SHAs, and the
- * prereg tag. It never contains stdout, stderr, transcripts, quotes, paths,
+ * outcome-taxonomy tallies, verdict enums, hashes, model ids, the head SHA, and the
+ * prereg content hash. It never contains stdout, stderr, transcripts, quotes, paths,
  * or environment. Two layers enforce that: `buildRedReport` only reads named
  * manifest fields, and `validateReport` rejects any key or string value that
  * is not in the schema below (checked again before every write).
@@ -13,7 +13,7 @@ import { dirname, join } from 'node:path'
 
 import { type HumanReview, type HumanReviewBlock, humanReviewBlock } from './human-review'
 import { type RunManifest, manifestPath, readManifest } from './manifest'
-import type { Prereg, PreregShas } from './prereg'
+import type { Prereg } from './prereg'
 import { sha256 } from './workspace'
 
 export const REPORT_SCHEMA_VERSION = 1 as const
@@ -97,10 +97,7 @@ export interface RedReport {
   kind: 'red'
   method: string
   prereg: {
-    tag: string
-    tag_object_sha: string
-    commit_sha: string
-    blob_sha: string
+    content_hash: string
     epoch: number
     rubric_hash: string
     runs_per_condition: number
@@ -208,7 +205,8 @@ export function loadCampaignManifests(campaignDir: string): LoadedRun[] {
 
 export interface RedReportInput {
   prereg: Prereg
-  shas: PreregShas
+  /** `preregContentHash` of the prereg the campaign ran under. */
+  contentHash: string
   headSha: string
   runs: readonly LoadedRun[]
   /** `summary.json`'s `planned_runs`, when the campaign wrote one. */
@@ -218,7 +216,7 @@ export interface RedReportInput {
 const sorted = <T>(values: Iterable<T>): T[] => [...new Set(values)].sort()
 
 export function buildRedReport(input: RedReportInput): RedReport {
-  const { prereg, shas, runs } = input
+  const { prereg, contentHash, runs } = input
   if (runs.length === 0) throw new Error('no run manifests to report')
   assertAllJudged(runs)
   const bar = prereg.red_bar
@@ -313,10 +311,7 @@ export function buildRedReport(input: RedReportInput): RedReport {
     kind: 'red',
     method: prereg.method,
     prereg: {
-      tag: shas.tag,
-      tag_object_sha: shas.tagObjectSha,
-      commit_sha: shas.commitSha,
-      blob_sha: shas.blobSha,
+      content_hash: contentHash,
       epoch: prereg.epoch,
       rubric_hash: prereg.rubric_hash,
       runs_per_condition: prereg.runs_per_condition,
@@ -417,10 +412,7 @@ export const RED_REPORT_SCHEMA: Schema = obj({
   kind: { t: 'lit', v: 'red' },
   method: str(/^[a-z][a-z0-9-]{0,63}$/),
   prereg: obj({
-    tag: str(/^prereg\/[a-z][a-z0-9-]{0,63}\/\d+$/),
-    tag_object_sha: str(HEX40),
-    commit_sha: str(HEX40),
-    blob_sha: str(HEX40),
+    content_hash: str(HEX64),
     epoch: INT,
     rubric_hash: str(HEX64),
     runs_per_condition: INT,
@@ -574,7 +566,7 @@ export type DevBar =
   | { kind: 'per_fixture'; min_pass_fraction: number; max_negative_false_fires: number }
   | { kind: 'pooled'; pooled_min_passes: number; per_fixture_min_passes: number; max_negative_false_fires: number }
 
-/** The dev bar of a prereg: its `dev_bar` field when present (read from the tagged blob, like the other bars), else the default rule. */
+/** The dev bar of a prereg: its `dev_bar` field when present (read from the committed prereg, like the other bars), else the default rule. */
 export function devBarOf(prereg: Pick<Prereg, 'dev_bar'>): DevBar {
   const bar = prereg.dev_bar
   if (bar === undefined) return { kind: 'per_fixture', ...DEV_BAR }
@@ -630,10 +622,7 @@ export interface DevReport {
   method: string
   held_out: 'untouched'
   prereg: {
-    tag: string
-    tag_object_sha: string
-    commit_sha: string
-    blob_sha: string
+    content_hash: string
     epoch: number
     rubric_hash: string
     runs_per_condition: number
@@ -669,7 +658,8 @@ export interface DevReport {
 
 export interface DevReportInput {
   prereg: Prereg
-  shas: PreregShas
+  /** `preregContentHash` of the prereg the campaign ran under. */
+  contentHash: string
   headSha: string
   runs: readonly LoadedRun[]
   plannedRuns: number
@@ -678,7 +668,7 @@ export interface DevReportInput {
 }
 
 export function buildDevReport(input: DevReportInput): DevReport {
-  const { prereg, shas, runs } = input
+  const { prereg, contentHash, runs } = input
   if (runs.length === 0) throw new Error('no run manifests to report')
   assertAllJudged(runs)
   const devBar = devBarOf(prereg)
@@ -776,10 +766,7 @@ export function buildDevReport(input: DevReportInput): DevReport {
     method: prereg.method,
     held_out: 'untouched',
     prereg: {
-      tag: shas.tag,
-      tag_object_sha: shas.tagObjectSha,
-      commit_sha: shas.commitSha,
-      blob_sha: shas.blobSha,
+      content_hash: contentHash,
       epoch: prereg.epoch,
       rubric_hash: prereg.rubric_hash,
       runs_per_condition: prereg.runs_per_condition,
@@ -838,7 +825,8 @@ export function buildDevReport(input: DevReportInput): DevReport {
 
 export interface DevRegressionInput {
   prereg: Prereg
-  shas: PreregShas
+  /** `preregContentHash` of the prereg the campaign ran under. */
+  contentHash: string
   headSha: string
   /** Every manifest of the dev campaign that `green-dev.json` names. */
   runs: readonly LoadedRun[]
@@ -851,10 +839,10 @@ export interface DevRegressionInput {
  * negative fixtures.
  */
 export function recomputeDevRegression(input: DevRegressionInput): DevRegressionSource {
-  const { prereg, shas, runs } = input
+  const { prereg, contentHash, runs } = input
   if (runs.length === 0) throw new Error('the dev campaign has no run manifests')
-  const foreign = runs.filter((r) => r.manifest.prereg.commit_sha !== shas.commitSha)
-  if (foreign.length) throw new Error(`${foreign.length} dev manifest(s) were not produced under ${shas.tag} (${shas.commitSha.slice(0, 12)})`)
+  const foreign = runs.filter((r) => r.manifest.prereg.content_hash !== contentHash)
+  if (foreign.length) throw new Error(`${foreign.length} dev manifest(s) were not produced under prereg ${contentHash.slice(0, 12)}`)
   const skills = new Set(runs.map((r) => r.manifest.skill?.sha256))
   const [skillSha256] = [...skills]
   if (skills.size !== 1 || !skillSha256) throw new Error('the dev campaign did not run exactly one skill')
@@ -887,10 +875,7 @@ export const DEV_REPORT_SCHEMA: Schema = obj({
   method: str(/^[a-z][a-z0-9-]{0,63}$/),
   held_out: { t: 'lit', v: 'untouched' },
   prereg: obj({
-    tag: str(/^prereg\/[a-z][a-z0-9-]{0,63}\/\d+$/),
-    tag_object_sha: str(HEX40),
-    commit_sha: str(HEX40),
-    blob_sha: str(HEX40),
+    content_hash: str(HEX64),
     epoch: INT,
     rubric_hash: str(HEX64),
     runs_per_condition: INT,
@@ -1054,7 +1039,7 @@ export interface GreenReport {
   method: string
   prereg: DevReport['prereg']
   repo: { head_sha: string }
-  skill: { sha256: string; tree_sha: string }
+  skill: { sha256: string }
   opencode: { package: string; version: string }
   models: { agent_pinned: string; agent_returned: string[]; judge_pinned: string; judge_returned: string[]; gateways?: string[] }
   judge: { system_prompt_sha256: string[]; judged_runs: number; judge_error_runs: number; temperature_observed: number[] }
@@ -1088,7 +1073,8 @@ export interface GreenReport {
 
 export interface GreenReportInput {
   prereg: Prereg
-  shas: PreregShas
+  /** `preregContentHash` of the prereg the campaign ran under. */
+  contentHash: string
   headSha: string
   runs: readonly LoadedRun[]
   plannedRuns: number
@@ -1165,10 +1151,9 @@ const deltaOf = (skill: { pass: number; attempted: number }, baseline: { pass: n
 })
 
 export function buildGreenReport(input: GreenReportInput): GreenReport {
-  const { prereg, shas, runs } = input
+  const { prereg, contentHash, runs } = input
   if (runs.length === 0) throw new Error('no run manifests to report')
   assertAllJudged(runs)
-  if (!shas.skillTreeSha) throw new Error('GREEN report needs the committed skill tree (enforce the prereg in green mode first)')
 
   type Group = { id: string; hash: string; baseline: LoadedRun[]; skill: LoadedRun[] }
   const heldout = new Map<string, Group>()
@@ -1236,17 +1221,14 @@ export function buildGreenReport(input: GreenReportInput): GreenReport {
     kind: 'green',
     method: prereg.method,
     prereg: {
-      tag: shas.tag,
-      tag_object_sha: shas.tagObjectSha,
-      commit_sha: shas.commitSha,
-      blob_sha: shas.blobSha,
+      content_hash: contentHash,
       epoch: prereg.epoch,
       rubric_hash: prereg.rubric_hash,
       runs_per_condition: prereg.runs_per_condition,
       per_run_timeout_ms: prereg.per_run_timeout_ms,
     },
     repo: { head_sha: input.headSha },
-    skill: { sha256: input.skillSha256, tree_sha: shas.skillTreeSha },
+    skill: { sha256: input.skillSha256 },
     opencode: { package: manifests[0]!.opencode.package, version: manifests[0]!.opencode.version },
     models: {
       agent_pinned: prereg.agent_model_id,
@@ -1349,17 +1331,14 @@ export const GREEN_REPORT_SCHEMA: Schema = obj({
   kind: { t: 'lit', v: 'green' },
   method: str(/^[a-z][a-z0-9-]{0,63}$/),
   prereg: obj({
-    tag: str(/^prereg\/[a-z][a-z0-9-]{0,63}\/\d+$/),
-    tag_object_sha: str(HEX40),
-    commit_sha: str(HEX40),
-    blob_sha: str(HEX40),
+    content_hash: str(HEX64),
     epoch: INT,
     rubric_hash: str(HEX64),
     runs_per_condition: INT,
     per_run_timeout_ms: INT,
   }),
   repo: obj({ head_sha: str(HEX40) }),
-  skill: obj({ sha256: str(HEX64), tree_sha: str(HEX40) }),
+  skill: obj({ sha256: str(HEX64) }),
   opencode: obj({ package: str(/^[a-z][a-z0-9-]*$/), version: str(/^\d+\.\d+\.\d+$/) }),
   models: obj({
     agent_pinned: str(PINNED_MODEL),
