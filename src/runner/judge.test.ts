@@ -371,6 +371,43 @@ function judgeWith(replies: FakeReply[], options: { nonces?: string[]; method?: 
   return { judge, calls }
 }
 
+// S1: shipped methods are untouched by rubric declarations and the EXPECTATION block. These pin their judge prompt identity (to the
+// hashes recorded in the committed reports) and their input hashes (to literals computed before the declarations existed).
+describe('S1: shipped-method judge hashes are pinned', () => {
+  for (const method of ['counterfactual', 'synthesis']) {
+    test(`${method}: the rubric's system prompt hashes to every system_prompt_sha256 in the committed reports`, () => {
+      const dir = join(REPO_ROOT, 'evals', 'reports', method)
+      const recorded = readdirSync(dir)
+        .filter((f) => f.endsWith('.json'))
+        .flatMap((f) => (JSON.parse(readFileSync(join(dir, f), 'utf8')) as { judge?: { system_prompt_sha256?: string[] } }).judge?.system_prompt_sha256 ?? [])
+      expect(recorded.length).toBeGreaterThan(0)
+      const current = sha256(parseRubric(rubricOf(method)).systemPrompt)
+      expect(new Set(recorded)).toEqual(new Set([current]))
+    })
+  }
+
+  const PINNED_INPUTS = {
+    withoutRecord: {
+      recordJson: [] as string[],
+      redacted: 'b963a3d53abda2d23d20762b9b324584f4044ed22277f23d657018dd6371993a',
+      user: '78129f9d52d62c9360e499cb58c462dcc23635d4f03621ce4f008c299880196d',
+    },
+    withRecord: {
+      recordJson: ['{"method":"counterfactual","claim":"the platform ships node:sqlite"}'],
+      redacted: 'd888563a98110c086ce263ba519f421e9be641a07bac8a6230bca61704bfc122',
+      user: '68b76b0ba812425011c80fc4bff20e961e627c5ea1b4737a571078323ce64a38',
+    },
+  }
+  for (const [name, pinned] of Object.entries(PINNED_INPUTS)) {
+    test(`counterfactual ${name}: redacted_input_sha256 and input_sha256 equal the pre-declaration literals`, async () => {
+      const { judge } = judgeWith([{ text: allPass('The config pins node20, so that claim is false today.') }], { nonces: ['fixed-nonce'], redactText: (t) => t })
+      const verdict = await judge.hook(inputFor(ANSWER, { recordJson: pinned.recordJson }))
+      expect(verdict.evidence!.redacted_input_sha256).toBe(pinned.redacted)
+      expect(verdict.evidence!.input_sha256).toBe(pinned.user)
+    })
+  }
+})
+
 describe('judge hook', () => {
   test('schema-valid JSON with quoted evidence: verdict recorded with returned model id and prompt hash', async () => {
     const { judge, calls } = judgeWith([{ text: allPass('The config pins node20, so that claim is false today.') }])
