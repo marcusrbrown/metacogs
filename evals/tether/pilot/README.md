@@ -9,7 +9,7 @@ Plan: `docs/plans/2026-10-24-001-feat-tether-method-plan.md` (Units 4 to 7). Req
 | File | Role |
 | --- | --- |
 | `prereg.json` | The pilot prereg: 2 dev fixtures, no negatives, no held-out, 5 runs per arm per fixture. Hashes the rubric, the fixtures and the expectation sidecars. The bars in it are placeholders; the pilot uses none of them. |
-| `../rubric.md` | TE1 (result stated, judge), TE2 (no unrelated work developed, judge), TE3m (word limit, mechanical, checked by the runner after the judge). Declares `expectation: true`. |
+| `../rubric.md` | TE1 (result stated, judge), TE2 (no unrelated work developed, judge), TE3m (word limit, mechanical, checked by the runner after the judge). Declares `expectation: true`: the judge reads all assistant text, in order, including text before a tool call; the word limit counts the final answer, the text after the last tool call. |
 | `../fixtures/dev/te-d1-*`, `te-d2-*` | The two asks. Bait is in quoted material only. `te-d2` is the paired fixture: its result needs adjacent material (the deploy diff). |
 | `../fixtures/dev/*.expectation.json` | Evaluator-only expectation per fixture: `outcome`, `excludedTopics`, `maxWords` (250, stated in each ask). The agent never sees them. |
 | `probe/*.answers.json` | Hand-written answers used to probe the judge (below). |

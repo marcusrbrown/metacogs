@@ -109,7 +109,8 @@ export interface RunManifest {
    */
   fire_basis?: FireBasis | null
   /**
-   * Whitespace-split words of the scored final answer. Only for a fixture that carries an expectation: set after the judge, and 0 for
+   * Whitespace-split words of the final answer (the text after the last tool call under `expectation: true`, which is narrower than what
+   * the judge reads). Only for a fixture that carries an expectation: set after the judge, and 0 for
    * an `answer_empty` run. Over `expectation.maxWords` adds the reason `answer_over_limit`; `TE3m` is never a judge criterion.
    */
   word_count?: number

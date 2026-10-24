@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { analyzeEvents, finalAnswerText, isSkillContentLoad, parseEvents } from './events'
+import { allAssistantText, analyzeEvents, finalAnswerText, isSkillContentLoad, parseEvents } from './events'
 
 const line = (o: unknown) => JSON.stringify(o)
 
@@ -89,5 +89,26 @@ describe('finalAnswerText', () => {
   test('assistantText still joins everything with no separator (unchanged)', () => {
     const s = analyzeEvents([say('a'), tool('bash'), say('b')].join('\n'))
     expect(s.assistantText).toBe('ab')
+  })
+})
+
+describe('allAssistantText', () => {
+  const say = (t: unknown) => line({ type: 'text', part: { type: 'text', text: t } })
+  const tool = (name: string) => line({ type: 'tool_use', part: { type: 'tool', tool: name, callID: name, state: { status: 'completed', input: {}, output: 'x' } } })
+  const allOf = (...lines: string[]) => allAssistantText(parseEvents(lines.join('\n')).events)
+
+  test('every text part in stream order, joined with a newline, whatever the tool calls between them', () => {
+    expect(allOf(say('Narration.'), tool('read'), say('More.'), tool('bash'), say('The answer.'))).toBe('Narration.\nMore.\nThe answer.')
+  })
+
+  test('the final segment is the tail of the whole reply', () => {
+    const events = parseEvents([say('Tangent developed here.'), tool('bash'), say('Result.')].join('\n')).events
+    expect(allAssistantText(events)).toBe('Tangent developed here.\nResult.')
+    expect(finalAnswerText(events)).toBe('Result.')
+  })
+
+  test('no text, non-text events and text parts without a string: nothing', () => {
+    expect(allOf()).toBe('')
+    expect(allOf(tool('bash'), say(7), line({ type: 'text', part: {} }))).toBe('')
   })
 })

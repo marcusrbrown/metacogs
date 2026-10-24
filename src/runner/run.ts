@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { needlesOf, type PassthroughAuth, passthroughNames } from './auth'
 import { checkBudget, classifyHostOutcome, type CheckFailure, fireEvidence, helperVersionOf, listRecordFiles, runChecks } from './checks'
 import { destroyFixture } from './env'
-import { analyzeEvents, type EventSummary, finalAnswerText, isRateLimited, parseEvents } from './events'
+import { allAssistantText, analyzeEvents, type EventSummary, finalAnswerText, isRateLimited, parseEvents } from './events'
 import { checkDebugConfig, checkIsolation, type IsolationEvidence } from './isolation'
 import type { RubricDeclarations } from './judge'
 import { writeJudgeRecord } from './judge-record'
@@ -155,6 +155,7 @@ export interface JudgeInput {
   method: string
   condition: Condition
   fixture: PlannedRun['fixture']
+  /** The text under grading (the ANSWER block). Under `expectation: true` it is all assistant text, not only the final segment. */
   finalAnswer: string
   recordJson: string[]
   /** The campaign's interrupt: the judge's spawn and its backoff waits stop when it fires. */
@@ -191,7 +192,10 @@ export interface CampaignInput {
   scriptFor?: (run: PlannedRun) => readonly ScriptedStep[]
   finalText?: string
   judge?: JudgeHook
-  /** The rubric's declarations (`parseDeclarations`). `expectation: true` scores the text after the last tool call; absent: all text. */
+  /**
+   * The rubric's declarations (`parseDeclarations`). `expectation: true`: the judge reads all assistant text joined with newlines, while the
+   * word limit and `answer_empty` use the final answer (the text after the last tool call). Absent: all text, as before.
+   */
   declarations?: RubricDeclarations
   signal?: AbortSignal
   /** Default 2. */
@@ -668,8 +672,11 @@ async function runAttempt(c: CampaignInput, run: PlannedRun, state: AttemptState
         manifest.check_failures = checks.failures
         const reasons = checks.failures.map((f: CheckFailure) => f.code)
         const needsJudge = run.fixture.kind !== 'negative'
-        // Under `expectation: true` the answer is what follows the last tool call, the same evidence the review card shows.
-        const finalAnswer = c.declarations?.expectation ? finalAnswerText(parseEvents(spawn.stdout).events) : events.assistantText
+        // Under `expectation: true` the judge reads every assistant text part, so a tangent developed before a tool call is graded; the
+        // final answer (the text after the last tool call) is the result excerpt, the word-limit segment, and the `answer_empty` test.
+        const replyEvents = c.declarations?.expectation ? parseEvents(spawn.stdout).events : undefined
+        const finalAnswer = replyEvents ? finalAnswerText(replyEvents) : events.assistantText
+        const judgedAnswer = replyEvents ? allAssistantText(replyEvents) : events.assistantText
         if (!checks.ok) {
           final = settle('completed', 'fail', reasons)
         } else if (needsJudge && c.declarations?.expectation && finalAnswer.trim() === '') {
@@ -682,7 +689,7 @@ async function runAttempt(c: CampaignInput, run: PlannedRun, state: AttemptState
               method: c.method,
               condition: run.condition,
               fixture: run.fixture,
-              finalAnswer,
+              finalAnswer: judgedAnswer,
               recordJson: records.map((r) => r.content),
               signal,
             })

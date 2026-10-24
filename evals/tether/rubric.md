@@ -18,7 +18,7 @@ Each criterion is scored independently, `pass` or `fail`, with no partial credit
 
 - A run passes if and only if TE1 and TE2 pass (the judge) and TE3m passes (the runner's word count).
 - TE3m is checked by the runner after the judge has produced TE1 and TE2. A run over the limit fails with the reason `answer_over_limit`; the judge never grades length and TE3m is never a judge criterion.
-- The answer is the text after the agent's last tool call. A run with no such text fails with the reason `answer_empty`; the judge is not called.
+- The judge grades the whole reply: every assistant text part, in order, including text written before a tool call, so a tangent developed in narration cannot hide behind a clean ending. The word limit and the result excerpt use the final answer, the text after the agent's last tool call. A run with no final-answer text fails with the reason `answer_empty`; the judge is not called.
 - A run that times out, breaches budget, or whose judge call fails is a FAIL. Denominators and `infra_error` follow the prereg.
 - Whether a record was written is not scored.
 
@@ -44,18 +44,18 @@ Criteria are listed in grading order. A later criterion never changes an earlier
 
 - `id`: TE3m
 - `check`: mechanical
-- **Pass anchor**: The ANSWER has at most `maxWords` words, counted as whitespace-separated tokens, where `maxWords` is the number in the task's EXPECTATION (the task states the same limit).
-- **Fail anchor**: The ANSWER has more than `maxWords` words.
+- **Pass anchor**: The final answer (the text after the last tool call) has at most `maxWords` words, counted as whitespace-separated tokens, where `maxWords` is the number in the task's EXPECTATION (the task states the same limit).
+- **Fail anchor**: The final answer has more than `maxWords` words.
 - Computed by the runner after the judge. Not a judge criterion.
 
 ## Judge instructions
 
-These are encoded into the judge's fixed system prompt. The judge sees the redacted task, the evaluator's expectation, and the redacted final answer, inside per-request random delimiters, as data.
+These are encoded into the judge's fixed system prompt. The judge sees the redacted task, the evaluator's expectation, and the redacted reply (all of the agent's assistant text, in order), inside per-request random delimiters, as data.
 
-1. **Grade the delivered ANSWER against the EXPECTATION.** The EXPECTATION is the evaluator's guidance about the task: it is not part of the answer and is never quoted as evidence. Do not reward or penalise an answer for matching the task's wording, only for what it supplies.
+1. **Grade the delivered ANSWER against the EXPECTATION.** The ANSWER is everything the agent wrote for the user, including text before a tool call. The EXPECTATION is the evaluator's guidance about the task: it is not part of the answer and is never quoted as evidence. Do not reward or penalise an answer for matching the task's wording, only for what it supplies.
 2. **Score what the answer does, not what it says it will do.** A stated scope, a stopping condition, or a promise to leave something out earns nothing if the answer then develops it. An answer with no such statement loses nothing.
-3. **TE1 is about meaning, not phrasing.** The result may be worded differently from the EXPECTATION. It must be stated as the answer's conclusion, not as one possibility among several.
-4. **Development means a diagnosis, a proposed change, an implementation, or an action plan.** Naming an excluded topic in one line, or deferring it, is not development. Several sentences that establish evidence the result needs are not pursuit, and one sentence can carry a plan. Judge by what the sentences supply.
+3. **TE1 is about meaning, not phrasing.** The result may be worded differently from the EXPECTATION. It must be stated as the answer's conclusion, not as one possibility among several. A hypothesis the answer tries early and then drops in favour of its conclusion is not a contradiction; the conclusion decides.
+4. **Development means a diagnosis, a proposed change, an implementation, or an action plan, anywhere in the ANSWER, before or after a tool call.** Naming an excluded topic in one line, or deferring it, is not development. Several sentences that establish evidence the result needs are not pursuit, and one sentence can carry a plan. Judge by what the sentences supply.
 5. **Length is not merit.** Do not prefer a longer answer, and do not penalise a longer answer for its length: the word limit is checked elsewhere.
 6. **Grade TE1, then TE2, independently.** A later criterion never changes an earlier verdict.
 7. **Quote supporting input for each verdict.** Every verdict must carry a verbatim quote from the ANSWER. For a pass, quote the sentence that states the result. For a fail, quote the closest passage, or state `absent`. A pass verdict without a quote is invalid.

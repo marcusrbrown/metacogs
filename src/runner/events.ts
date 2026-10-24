@@ -97,6 +97,11 @@ export function assistantText(events: readonly OpencodeEvent[]): string {
     .join('')
 }
 
+/** Every assistant text part in stream order, joined with `\n`: all the user-visible text of the reply, narration before a tool call included. */
+export function allAssistantText(events: readonly OpencodeEvent[]): string {
+  return events.flatMap((e) => (e.type === 'text' && typeof e.part?.text === 'string' ? [e.part.text] : [])).join('\n')
+}
+
 /**
  * The answer the agent committed to: the text parts after the last `tool_use` event, joined with `\n`. With no tool call it is
  * every text part. Narration before a tool call is not the answer. Takes the ordered events from `parseEvents(stdout).events`.

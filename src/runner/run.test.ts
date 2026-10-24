@@ -267,15 +267,43 @@ describe('final answer scoring (fake host)', () => {
     verdict === 'judge_error' ? ({ verdict, detail: 'invalid_malformed_json' } as const) : ({ verdict, evidence: judgeEvidence(verdict) } as const)
   const answering = (n: number) => fakeHost({ stdout: stdoutOf(readCall, say(words(n))) })
 
-  test('declared: the judge grades the text after the last tool call and receives the expectation', async () => {
+  test('declared: the judge grades all assistant text, joined with newlines, and receives the expectation', async () => {
     const seen: JudgeInput[] = []
     const judge = async (i: JudgeInput) => (seen.push(i), { verdict: 'pass' as const })
-    const stdout = stdoutOf(say('Let me look. '), readCall, say('The answer.'))
+    const stdout = stdoutOf(say('Let me look.'), readCall, say('The answer.'))
     const res = await runCampaign(campaign([plan()], fakeHost({ stdout }), { judge, declarations: declared }))
     expect(res.results[0]).toMatchObject({ outcome: 'pass' })
     expect(seen).toHaveLength(1)
-    expect(seen[0]!.finalAnswer).toBe('The answer.')
+    expect(seen[0]!.finalAnswer).toBe('Let me look.\nThe answer.')
     expect(seen[0]!.fixture.expectation).toEqual(expectation)
+  })
+
+  test('declared: a tangent developed in narration before a tool call reaches the judge, and the word count uses the final answer only', async () => {
+    const seen: JudgeInput[] = []
+    const judge = async (i: JudgeInput) => (seen.push(i), { verdict: 'pass' as const })
+    const tangent = `While I am here, here is a full plan for the excluded work: ${words(40)}.`
+    const stdout = stdoutOf(say(tangent), readCall, say('Clean result in five words.'))
+    const c = campaign([plan('dev', 10)], fakeHost({ stdout }), { judge, declarations: declared })
+    const res = await runCampaign(c)
+    expect(seen[0]!.finalAnswer).toBe(`${tangent}\nClean result in five words.`)
+    // 5 words in the final segment fit a limit of 10; the 40-word narration is judged but not counted.
+    expect(res.results[0]).toMatchObject({ outcome: 'pass', reasons: [] })
+    expect(manifestOf(c.campaignDir, res.results[0]!.runId).word_count).toBe(5)
+  })
+
+  test('declared: the final segment alone decides answer_over_limit, even when the narration is short', async () => {
+    const stdout = stdoutOf(say('Short note.'), readCall, say(words(11)))
+    const res = await runCampaign(campaign([plan('dev', 10)], fakeHost({ stdout }), { judge: judgedWith('pass'), declarations: declared }))
+    expect(res.results[0]).toMatchObject({ outcome: 'fail', reasons: ['answer_over_limit'] })
+  })
+
+  test('declared: narration with an empty final segment is still answer_empty and the judge is not called', async () => {
+    let calls = 0
+    const judge = async () => (calls += 1, { verdict: 'pass' as const })
+    const stdout = stdoutOf(say(`A long plan: ${words(60)}`), readCall)
+    const res = await runCampaign(campaign([plan()], fakeHost({ stdout }), { judge, declarations: declared }))
+    expect(calls).toBe(0)
+    expect(res.results[0]).toMatchObject({ outcome: 'fail', reasons: ['answer_empty'] })
   })
 
   test('not declared: the judge still gets every text part, as before', async () => {

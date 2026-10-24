@@ -50,7 +50,8 @@ export interface JudgeCriterion {
 
 /**
  * The rubric's `## Declarations` section. `expectation: true` means the judge receives the fixture's EXPECTATION block, never sees
- * the RECORD (and cannot quote it), and grades the final answer. Absent section: all defaults, today's behaviour.
+ * the RECORD (and cannot quote it), and grades all assistant text (the run settles the word limit on the final answer). Absent section:
+ * all defaults, today's behaviour.
  */
 export interface RubricDeclarations {
   expectation: boolean

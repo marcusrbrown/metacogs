@@ -12,7 +12,7 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { analyzeEvents, finalAnswerText, parseEvents } from './events'
+import { allAssistantText, analyzeEvents, finalAnswerText, parseEvents } from './events'
 import { type HumanReview, reconcile } from './human-review'
 import { type JudgeCriterion, parseRubric, type RubricDeclarations } from './judge'
 import { type JudgeRecord, readJudgeRecord, writeJudgeRecord } from './judge-record'
@@ -38,13 +38,23 @@ export function loadCampaignRuns(campaignDir: string): CampaignRun[] {
 const readIfExists = (path: string): string | undefined => (existsSync(path) ? readFileSync(path, 'utf8') : undefined)
 
 /**
- * The final answer from the run's `stdout.jsonl`: every assistant `text` part, or, when the rubric declares `expectation: true`,
- * only the text after the last tool call (the same evidence the judge was given).
+ * The final answer from the run's `stdout.jsonl`, for the review card: every assistant `text` part, or, when the rubric declares
+ * `expectation: true`, only the text after the last tool call (the result excerpt, and the segment the word limit counts).
  */
 export function finalAnswerOf(runDir: string, declarations?: RubricDeclarations): string | undefined {
   const stdout = readIfExists(join(runDir, 'stdout.jsonl'))
   if (stdout === undefined) return undefined
   return declarations?.expectation ? finalAnswerText(parseEvents(stdout).events) : analyzeEvents(stdout).assistantText
+}
+
+/**
+ * What the judge reads as ANSWER: every assistant `text` part joined with nothing, or, under `expectation: true`, joined with `\n`
+ * (narration before a tool call included, so a tangent developed there is graded). Same function the campaign applies.
+ */
+export function judgedAnswerOf(runDir: string, declarations?: RubricDeclarations): string | undefined {
+  const stdout = readIfExists(join(runDir, 'stdout.jsonl'))
+  if (stdout === undefined) return undefined
+  return declarations?.expectation ? allAssistantText(parseEvents(stdout).events) : analyzeEvents(stdout).assistantText
 }
 
 // ── review sheets ──────────────────────────────────────────────────────────
@@ -304,8 +314,10 @@ export async function rejudgeCampaign(input: RejudgeInput): Promise<RejudgeRow[]
   for (const run of loadCampaignRuns(input.campaignDir)) {
     const { manifest } = run
     const prior = manifest.outcome ?? manifest.status
-    const answer = finalAnswerOf(run.dir, input.declarations)
-    const skip = skipReason(manifest, answer !== undefined)
+    const answer = judgedAnswerOf(run.dir, input.declarations)
+    // Under the declaration an empty final segment never reached the judge, whatever narration came before it.
+    const emptyFinal = input.declarations?.expectation === true && answer !== undefined && (finalAnswerOf(run.dir, input.declarations) ?? '').trim() === ''
+    const skip = emptyFinal ? 'empty final answer (never reached the judge)' : skipReason(manifest, answer !== undefined)
     if (skip) {
       rows.push({ run_id: manifest.run_id, prior_outcome: prior, verdict: 'skipped', reason: skip })
       continue

@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 import { judgeRecordOf, quoteFragments } from './judge-record'
 import { type JudgeEvidence, type RunManifest, writeManifest } from './manifest'
-import { finalAnswerOf, reconcileCampaign, rejudgeCampaign, renderReviewSheets, rubricAnchors, skipReason, writeReview } from './review'
+import { finalAnswerOf, judgedAnswerOf, reconcileCampaign, rejudgeCampaign, renderReviewSheets, rubricAnchors, skipReason, writeReview } from './review'
 import { parseRubric } from './judge'
 import type { JudgeInput } from './run'
 import { sha256 } from './workspace'
@@ -350,7 +350,7 @@ describe('rejudgeCampaign (mocked judge)', () => {
     expect(rows.map((r) => r.reason)).toEqual(['fixture missing or changed since the run', 'record contents not retained'])
   })
 
-  test('declared expectation: rejudge forwards the fixture expectation and grades the text after the last tool call', async () => {
+  test('declared expectation: rejudge forwards the fixture expectation and grades all assistant text, like the campaign', async () => {
     const campaign = tmp()
     const dir = plant(campaign, '001-dev-d1-baseline-r1', 'ignored')
     const say = (text: string) => ev({ type: 'text', timestamp: 2, part: { type: 'text', text } })
@@ -367,7 +367,7 @@ describe('rejudgeCampaign (mocked judge)', () => {
         judgePromptSha256: 'd'.repeat(64),
       })
     await run({ expectation: true })
-    expect(seen[0]!.finalAnswer).toBe('Final.')
+    expect(seen[0]!.finalAnswer).toBe('Looking.\nFinal.')
     expect(seen[0]!.fixture.expectation).toEqual(expectation)
     await run()
     expect(seen[1]!.finalAnswer).toBe('Looking.Final.')
@@ -388,7 +388,25 @@ describe('rejudgeCampaign (mocked judge)', () => {
     expect(rows.map((r) => [r.verdict, r.reason])).toEqual([['pass', undefined], ['skipped', 'empty final answer (never reached the judge)']])
   })
 
-  test('finalAnswerOf takes the rubric declarations: text after the last tool call, or everything', () => {
+  test('a declared run whose final segment is empty is skipped even if the manifest lacks the reason', async () => {
+    const campaign = tmp()
+    const dir = plant(campaign, '001-dev-d1-baseline-r1', 'x')
+    const say = (text: string) => ev({ type: 'text', timestamp: 2, part: { type: 'text', text } })
+    const call = ev({ type: 'tool_use', timestamp: 2, part: { type: 'tool', tool: 'read', callID: 'c', state: { status: 'completed', input: {}, output: 'x' } } })
+    writeFileSync(join(dir, 'stdout.jsonl'), [say('A long plan.'), call].join('\n'))
+    let calls = 0
+    const rows = await rejudgeCampaign({
+      campaignDir: campaign,
+      judge: async () => (calls += 1, { verdict: 'pass' as const }),
+      fixtures: { dev: [fixture], negative: [] },
+      declarations: { expectation: true },
+      judgePromptSha256: 'd'.repeat(64),
+    })
+    expect(calls).toBe(0)
+    expect(rows[0]).toMatchObject({ verdict: 'skipped', reason: 'empty final answer (never reached the judge)' })
+  })
+
+  test('finalAnswerOf (the card excerpt) takes the final segment under the declaration; judgedAnswerOf is what the judge reads', () => {
     const campaign = tmp()
     const dir = plant(campaign, '001-dev-d1-baseline-r1', 'x')
     const say = (text: string) => ev({ type: 'text', timestamp: 2, part: { type: 'text', text } })
@@ -397,6 +415,10 @@ describe('rejudgeCampaign (mocked judge)', () => {
     expect(finalAnswerOf(dir)).toBe('Looking.Final.')
     expect(finalAnswerOf(dir, { expectation: false })).toBe('Looking.Final.')
     expect(finalAnswerOf(dir, { expectation: true })).toBe('Final.')
+    expect(judgedAnswerOf(dir)).toBe('Looking.Final.')
+    expect(judgedAnswerOf(dir, { expectation: false })).toBe('Looking.Final.')
+    expect(judgedAnswerOf(dir, { expectation: true })).toBe('Looking.\nFinal.')
+    expect(judgedAnswerOf(join(campaign, 'absent'), { expectation: true })).toBeUndefined()
   })
 
   test('skillReason names why held-out and negatives are not rejudged', () => {
