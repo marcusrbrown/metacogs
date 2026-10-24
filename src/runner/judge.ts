@@ -115,7 +115,9 @@ export function parseDeclarations(rubric: string): RubricDeclarations {
     if (!line) continue
     const match = /^([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$/.exec(line)
     if (!match) throw new Error(`rubric Declarations: cannot read "${line}" (expected \`key: value\`)`)
-    const [, key, value] = match as unknown as [string, string, string]
+    const key = match[1]
+    const value = match[2]
+    if (key === undefined || value === undefined) throw new Error(`rubric Declarations: cannot read "${line}" (expected \`key: value\`)`)
     if (key !== 'expectation') throw new Error(`rubric Declarations: unknown key "${key}" (the only key is "expectation")`)
     if (seen.has(key)) throw new Error(`rubric Declarations: "${key}" declared more than once`)
     seen.add(key)

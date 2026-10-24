@@ -97,7 +97,7 @@ export function assistantText(events: readonly OpencodeEvent[]): string {
     .join('')
 }
 
-/** Every assistant text part in stream order, joined with `\n`: all the user-visible text of the reply, narration before a tool call included. */
+/** Every assistant text part in stream order, joined with `\n`: all the user-visible text of the reply, narration before a tool call included. Unlike `assistantText`, which joins with '', this joins with '\n'. */
 export function allAssistantText(events: readonly OpencodeEvent[]): string {
   return events.flatMap((e) => (e.type === 'text' && typeof e.part?.text === 'string' ? [e.part.text] : [])).join('\n')
 }

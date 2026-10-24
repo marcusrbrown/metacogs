@@ -85,15 +85,13 @@ const summarize = (r: JudgeTransportResponse) => ({
 
 async function main() {
   const args = process.argv.slice(2)
-  const methodAt = args.indexOf('--method')
-  const method = methodAt === -1 ? 'counterfactual' : (args[methodAt + 1] ?? 'counterfactual')
-  const expectationAt = args.indexOf('--expectation')
   const valueFlags = ['--method', '--expectation', '--task', '--answers']
   const requested = args.filter((a, i) => !a.startsWith('--') && !valueFlags.includes(args[i - 1] ?? ''))
   const flagValue = (flag: string): string | undefined => {
     const at = args.indexOf(flag)
     return at === -1 ? undefined : args[at + 1]
   }
+  const method = flagValue('--method') ?? 'counterfactual'
   const taskFile = flagValue('--task')
   const task = taskFile ? readFileSync(taskFile, 'utf8') : PROBE_TASK
   const answersFile = flagValue('--answers')
@@ -107,7 +105,7 @@ async function main() {
   const repoRoot = join(import.meta.dir, '..', '..')
   const spec = parseRubric(readFileSync(join(repoRoot, 'evals', method, 'rubric.md'), 'utf8'))
   // A rubric that declares `expectation: true` cannot be probed without one; the canned task needs a sidecar written for it.
-  const expectationFile = expectationAt === -1 ? undefined : args[expectationAt + 1]
+  const expectationFile = flagValue('--expectation')
   if (spec.declarations.expectation && !expectationFile) throw new Error(`${method} declares expectation: true; pass --expectation <file> (an expectation.json written for the probe task)`)
   const expectation = expectationFile ? readExpectation(expectationFile) : undefined
 

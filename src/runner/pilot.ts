@@ -6,13 +6,13 @@
  * - Reports refuse any manifest that carries an `arm`, so the only projection of a pilot is `pilot.json`, written by a fixed-key
  *   writer: counts, model ids, the prereg content hash, the arms present. No stdout, stderr, env, quotes or transcript text.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 
 import { isAbsolute, join, relative, resolve } from 'node:path'
 
 import { isSkillContentLoad, parseEvents, toolUses } from './events'
 import { readJudgeRecord } from './judge-record'
-import { PILOT_ARMS, type PilotArm, readManifest, type RunManifest } from './manifest'
+import { loadCampaignRuns, PILOT_ARMS, type PilotArm, type RunManifest } from './manifest'
 import type { LoadedFixture } from './prereg'
 import type { PlannedRun } from './run'
 import type { Condition } from './workspace'
@@ -138,11 +138,7 @@ export interface PilotContext {
 /** Counts one pilot campaign into `arm → fixture → cell`. A manifest without an `arm` means this is not a pilot campaign. */
 export function tallyPilotCampaign(campaignDir: string, ctx: PilotContext): PilotTally {
   const tally: PilotTally['tally'] = {}
-  for (const name of readdirSync(campaignDir).sort()) {
-    const runDir = join(campaignDir, name)
-    const path = join(runDir, 'manifest.json')
-    if (!existsSync(path)) continue
-    const m = readManifest(path)
+  for (const { dir: runDir, manifest: m } of loadCampaignRuns(campaignDir)) {
     if (m.arm === undefined) throw new Error(`${m.run_id} carries no arm: ${campaignDir} is not a pilot campaign`)
     if (!COUNTED_STATUSES.includes(m.status)) continue
     const cell = ((tally[m.arm] ??= {})[m.fixture.id] ??= emptyCell())

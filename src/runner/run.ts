@@ -710,9 +710,14 @@ async function runAttempt(c: CampaignInput, run: PlannedRun, state: AttemptState
             }
             // The word limit (TE3m) is mechanical and runs after the judge, so the TE verdicts are on the manifest either way.
             const limit = run.fixture.expectation?.maxWords
-            const overLimit = limit !== undefined && isOverLimit((manifest.word_count = countWords(finalAnswer)), limit)
-            const reasons = [...(verdict.verdict === 'pass' ? [] : [verdict.verdict === 'judge_error' ? 'judge_error' : 'judge_fail']), ...(overLimit ? ['answer_over_limit'] : [])]
-            final = reasons.length === 0 ? settle('completed', 'pass', []) : settle('completed', 'fail', reasons)
+            let overLimit = false
+            if (limit !== undefined) {
+              const words = countWords(finalAnswer)
+              manifest.word_count = words
+              overLimit = isOverLimit(words, limit)
+            }
+            const judgeReasons = [...(verdict.verdict === 'pass' ? [] : [verdict.verdict === 'judge_error' ? 'judge_error' : 'judge_fail']), ...(overLimit ? ['answer_over_limit'] : [])]
+            final = judgeReasons.length === 0 ? settle('completed', 'pass', []) : settle('completed', 'fail', judgeReasons)
           }
         } else if (needsJudge) {
           // No judge wired: the checks passed, but nothing has graded the answer. No outcome until a judge does.

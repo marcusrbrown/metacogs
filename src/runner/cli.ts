@@ -13,10 +13,10 @@ import { AuthPassthroughError, DEFAULT_PASSTHROUGH, needlesOf, type PassthroughA
 import { CliproxyAuthError, cliproxyModelMismatch, type ResolvedCliproxy, resolveCliproxy } from './cliproxy'
 import { Git } from './git'
 import { findNearDuplicates, NEAR_DUPLICATE_THRESHOLD } from './neardup'
-import { HUMAN_REVIEW_FILE, loadCampaignRuns, reconcileCampaign, rejudgeCampaign, writeReview } from './review'
+import { HUMAN_REVIEW_FILE, reconcileCampaign, rejudgeCampaign, writeReview } from './review'
 import { type HumanReview, humanReviewBlock, summarize } from './human-review'
 import { createJudge, parseDeclarations } from './judge'
-import { findStaleManifests, ManifestFormatError } from './manifest'
+import { findStaleManifests, loadCampaignRuns, ManifestFormatError } from './manifest'
 import { removeLiveFixtures } from './env'
 import { killLiveGroups, opencodeAvailability } from './opencode'
 import { isLiveModel } from './scripted-provider'
@@ -340,7 +340,7 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
         onlyFixture: fixture,
       })
 
-  const judge = providerMode === 'live' ? createJudge({ repoRoot, method, model: prereg.judge_model_id, auth, signal: controller.signal }) : undefined
+  const judge = providerMode === 'live' ? (io.createJudge ?? createJudge)({ repoRoot, method, model: prereg.judge_model_id, auth, signal: controller.signal }) : undefined
 
   const deviates = runsPerCondition !== prereg.runs_per_condition || fixture !== undefined
   if (deviates) err('note: --runs/--fixture deviate from the prereg plan; this campaign is a debugging run, not evidence.')

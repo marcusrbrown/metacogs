@@ -9,37 +9,23 @@
  *   reruns) and writes `judge.json` per run. Manifests and outcomes are never changed; a
  *   `rejudge-summary.json` beside them lists the prior outcome next to the new verdict.
  */
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { allAssistantText, analyzeEvents, finalAnswerText, parseEvents } from './events'
 import { type HumanReview, reconcile } from './human-review'
 import { type JudgeCriterion, parseRubric, type RubricDeclarations } from './judge'
 import { type JudgeRecord, readJudgeRecord, writeJudgeRecord } from './judge-record'
-import { manifestPath, readManifest, type RunManifest } from './manifest'
+import { type CampaignRun, loadCampaignRuns, type RunManifest } from './manifest'
 import type { LoadedFixture } from './prereg'
 import type { JudgeHook } from './run'
-
-export interface CampaignRun {
-  dir: string
-  manifest: RunManifest
-}
-
-/** Every run directory with a manifest, in run-id order. */
-export function loadCampaignRuns(campaignDir: string): CampaignRun[] {
-  const out: CampaignRun[] = []
-  for (const name of readdirSync(campaignDir).sort()) {
-    const dir = join(campaignDir, name)
-    if (existsSync(manifestPath(dir))) out.push({ dir, manifest: readManifest(manifestPath(dir)) })
-  }
-  return out
-}
 
 const readIfExists = (path: string): string | undefined => (existsSync(path) ? readFileSync(path, 'utf8') : undefined)
 
 /**
- * The final answer from the run's `stdout.jsonl`, for the review card: every assistant `text` part, or, when the rubric declares
- * `expectation: true`, only the text after the last tool call (the result excerpt, and the segment the word limit counts).
+ * The final answer from the run's `stdout.jsonl`, for the review card. When the rubric declares `expectation: true`, only the text
+ * after the last tool call (the result excerpt, and the segment the word limit counts). Without a declaration it returns all
+ * assistant text joined with '' (the same as `judgedAnswerOf` in that case).
  */
 export function finalAnswerOf(runDir: string, declarations?: RubricDeclarations): string | undefined {
   const stdout = readIfExists(join(runDir, 'stdout.jsonl'))
@@ -49,7 +35,7 @@ export function finalAnswerOf(runDir: string, declarations?: RubricDeclarations)
 
 /**
  * What the judge reads as ANSWER: every assistant `text` part joined with nothing, or, under `expectation: true`, joined with `\n`
- * (narration before a tool call included, so a tangent developed there is graded). Same function the campaign applies.
+ * (narration before a tool call included, so a tangent developed there is graded). Mirrors the answer selection in `run.ts`.
  */
 export function judgedAnswerOf(runDir: string, declarations?: RubricDeclarations): string | undefined {
   const stdout = readIfExists(join(runDir, 'stdout.jsonl'))

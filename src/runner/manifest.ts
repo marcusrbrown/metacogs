@@ -155,6 +155,21 @@ export function readManifest(path: string): RunManifest {
   return parseManifest(readFileSync(path, 'utf8'))
 }
 
+export interface CampaignRun {
+  dir: string
+  manifest: RunManifest
+}
+
+/** Every run directory with a manifest, in run-id order. */
+export function loadCampaignRuns(campaignDir: string): CampaignRun[] {
+  const out: CampaignRun[] = []
+  for (const name of readdirSync(campaignDir).sort()) {
+    const dir = join(campaignDir, name)
+    if (existsSync(manifestPath(dir))) out.push({ dir, manifest: readManifest(manifestPath(dir)) })
+  }
+  return out
+}
+
 export interface StaleManifest {
   path: string
   run_id: string

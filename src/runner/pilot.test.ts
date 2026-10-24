@@ -352,10 +352,10 @@ describe('baseline pilot, end to end (fake host)', () => {
     const path = writePilotTally(repo.dir, tally)
     const written = JSON.parse(readFileSync(path, 'utf8')) as PilotTally
     expect(written).toMatchObject({ arms: ['baseline'], method: 'demo', prereg_content_hash: verification.contentHash, agent_model_id: 'opencode/big-pickle', judge_model_id: 'judge/other-family' })
+    expect(written.tally).toEqual(tally.tally)
     expect(path.endsWith(join('evals', 'demo', 'pilot', 'pilot.json'))).toBe(true)
 
     const manifest = JSON.parse(readFileSync(join(campaignDir, result.results[0]!.runId, 'manifest.json'), 'utf8')) as { arm: string; condition: string }
     expect(manifest).toMatchObject({ arm: 'baseline', condition: 'baseline' })
-    expect(sha256(readFileSync(path, 'utf8'))).toMatch(/^[0-9a-f]{64}$/)
   })
 })
