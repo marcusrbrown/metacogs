@@ -788,9 +788,71 @@
   "verdict": "green",
   "held_out_too_easy": false,
   "human_review": {
-    "status": "pending",
-    "judged_runs": 40,
-    "reviewed": 0
+    "status": "complete",
+    "judged_runs": 38,
+    "reviewed": 38,
+    "agreement": {
+      "CF1": {
+        "n": 38,
+        "agree": 28,
+        "rate": 0.7368,
+        "kappa": 0.393,
+        "demoted": true
+      },
+      "CF2": {
+        "n": 38,
+        "agree": 32,
+        "rate": 0.8421,
+        "kappa": 0.6607,
+        "demoted": false
+      },
+      "CF3": {
+        "n": 38,
+        "agree": 31,
+        "rate": 0.8158,
+        "kappa": 0.6122,
+        "demoted": false
+      },
+      "CF4": {
+        "n": 38,
+        "agree": 32,
+        "rate": 0.8421,
+        "kappa": 0.6868,
+        "demoted": false
+      },
+      "CF5": {
+        "n": 38,
+        "agree": 29,
+        "rate": 0.7632,
+        "kappa": 0.5072,
+        "demoted": true
+      }
+    },
+    "flipped_runs": [
+      "001-heldout-cf-h1-skill-r1",
+      "012-heldout-cf-h1-baseline-r2",
+      "014-heldout-cf-h2-skill-r2"
+    ],
+    "demoted_criteria": [
+      "CF1",
+      "CF5"
+    ],
+    "recomputed": {
+      "skill_pooled_pass": 17,
+      "baseline_pooled_pass": 0,
+      "per_fixture_skill_pass": {
+        "cf-h1": 4,
+        "cf-h2": 3,
+        "cf-h3": 5,
+        "cf-h4": 5
+      },
+      "checks": {
+        "skill_pooled": true,
+        "per_fixture_floor": true,
+        "baseline_ceiling": true
+      },
+      "verdict": "green"
+    }
   },
   "burn_rule": {
     "one_shot_read": true,
