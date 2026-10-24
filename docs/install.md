@@ -24,7 +24,7 @@ Copy the whole directory. The skill tells the agent to run the helper from the d
 
 For all your projects, use the user-level path from the host section instead of the project path.
 
-`skills/*/scripts/record.mjs` is generated from `src/record/`. Never edit it by hand. `bun run generate` rebuilds it and `bun run generate:check` fails when it drifts.
+`skills/*/scripts/record.mjs` is generated from `src/record/`. Never edit it by hand. `bun run generate` rebuilds it and `bun run generate:check` fails when it drifts. The committed helper is minified; `src/record/` is the readable source.
 
 ## Records
 
