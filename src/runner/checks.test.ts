@@ -333,10 +333,12 @@ describe('record provenance: helper_version', () => {
     expect(r.failures).toEqual([])
   })
 
-  test('helperVersionOf reads the constant from a bundled helper and refuses anything else', async () => {
+  test('helperVersionOf reads the banner marker from a bundled helper and refuses anything else', async () => {
     const { buildHelper } = await import('../generate/bundle-helpers')
     expect(helperVersionOf(await buildHelper({ methods: ['counterfactual'], helperVersion: '4.5.6-test' }))).toBe('4.5.6-test')
     expect(helperVersionOf('console.log(1)')).toBeNull()
+    expect(helperVersionOf('// helper_version: 1.0.0\nconsole.log(1)')).toBeNull()
+    expect(helperVersionOf('console.log("// helper_version: 1.0.0")')).toBeNull()
   })
 })
 

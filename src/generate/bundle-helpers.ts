@@ -4,10 +4,9 @@ import { cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SHIPPED_METHODS } from '../record/contract'
+import { helperBanner } from './marker'
 
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
-
-export const BANNER = '// generated — do not edit; run `bun run generate`'
 
 export const HELPER_RELPATH = join('scripts', 'record.mjs')
 
@@ -37,10 +36,10 @@ export async function buildHelper(options: BuildOptions = {}): Promise<string> {
     root: REPO_ROOT,
     target: 'node',
     format: 'esm',
-    minify: false,
+    minify: true,
     sourcemap: 'none',
     splitting: false,
-    banner: BANNER,
+    banner: helperBanner(helperVersion),
     define: {
       __METACOGS_HELPER_VERSION__: JSON.stringify(helperVersion),
       __METACOGS_METHODS__: JSON.stringify(methods.join(',')),

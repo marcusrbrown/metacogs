@@ -7,6 +7,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, posix } from 'node:path'
 
 import { EXECUTION_MODES } from '../record/contract'
+import { readHelperVersion } from '../generate/marker'
 import { recordFilename } from '../record/canonical'
 import { validateRecord } from '../record/validate'
 import { type EventSummary, isRateLimited, isSkillContentLoad, skillCallName, type ToolUse } from './events'
@@ -116,16 +117,9 @@ export function isSkillFileRead(call: ToolUse, method: string): boolean {
 
 const collapse = (text: string): string => text.replace(/\s+/g, ' ').trim()
 
-/** The version baked into a bundled `scripts/record.mjs` (`function buildHelperVersion() { return "x" }`), or `null` if the bundle has no such constant. */
+/** The version stamped in a bundled `scripts/record.mjs` banner (`// helper_version: x`), or `null` if the bundle has no such marker. */
 export function helperVersionOf(bundle: string): string | null {
-  const match = /function buildHelperVersion\(\)\s*\{\s*return\s*("(?:[^"\\]|\\.)*")/.exec(bundle)
-  if (!match) return null
-  try {
-    const value: unknown = JSON.parse(match[1]!)
-    return typeof value === 'string' ? value : null
-  } catch {
-    return null
-  }
+  return readHelperVersion(bundle)
 }
 
 /** SKILL.md without its YAML frontmatter. */
