@@ -203,7 +203,7 @@ flowchart LR
 
 ## Implementation Units
 
-- [ ] **Unit 1: Pin toolchain and actions**
+- [x] **Unit 1: Pin toolchain and actions**
 
 **Goal:** Deterministic bundle and SHA-pinned actions before any automation lands.
 
@@ -225,7 +225,7 @@ flowchart LR
 
 **Verification:** CI green on the PR; `bun run generate:check` exits 0; helpers contain `"0.1.0"`.
 
-- [ ] **Unit 2: Skill hash excludes the generated helper**
+- [x] **Unit 2: Skill hash excludes the generated helper**
 
 **Goal:** Releases and regens never change the recorded skill hash.
 
@@ -248,7 +248,7 @@ flowchart LR
 
 **Verification:** Tests pass. Committed reports keep their pre-change hashes, so a dev-regression recompute against them warns once; the first campaign after this change records the new hash and recomputes clean. Trade-off recorded: a green read no longer binds the helper bytes that ran, only the method text; `helper_version` in each record identifies the helper.
 
-- [ ] **Unit 3: Changesets and the release script**
+- [x] **Unit 3: Changesets and the release script**
 
 **Goal:** Merging the version PR produces a `v*` tag and a GitHub Release; nothing publishes.
 
