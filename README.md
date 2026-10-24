@@ -13,6 +13,7 @@ Copy a skill directory to a path your host scans:
 ```sh
 mkdir -p .agents/skills
 cp -R <metacogs-clone>/skills/synthesis .agents/skills/synthesis
+cp -R <metacogs-clone>/skills/counterfactual .agents/skills/counterfactual
 ```
 
 `.agents/skills/` works for OpenCode, Pi, and Codex. Claude Code reads `.claude/skills/` only. Per-host paths, listing commands, and the smoke evidence are in [docs/install.md](docs/install.md).
@@ -31,19 +32,23 @@ The record holds `objective`, `evidence[]`, `assumptions[]`, `alternatives[]`, `
 
 ### counterfactual
 
-A hypothesis, not shipped. The idea: find the one premise a decision depends on, state what changes if it is false, and name the evidence that would flip the decision. Its baseline failure was retained (without the skill, a model fails the preregistered rubric on 5 of 6 dev fixtures), and a skill was written. The skill did not clear the dev bar. The first epoch-3 dev read missed because the record was not always written; one edit fixed that. After it, `cf-d6-autoscaler-removal` scored 3 of 5 against a bar of 4 in two consecutive dev reads. The misses were on one criterion, "name flip evidence and where to get it", and re-judging the same answers passed all of them. That points to judge-boundary variance on a fixture at the edge of the criterion, not to a skill defect, but it does not prove either. The held-out set was not read. Counterfactual stays `red-retained`, its skill directory stays in `skills/` as evidence, and it is not installable guidance. Retrying needs a new epoch and a new held-out set.
+Use when a decision rests on an assumption that could be wrong. The agent finds the one premise the decision depends on, states what changes if it is false, and names the evidence that would flip the decision and where to get it. The record uses the same helper and fields as synthesis.
+
+Without the skill, a model fails the preregistered rubric on 5 of 6 dev fixtures. In the epoch-5 read the dev campaign passed the preregistered pooled bar (29 of 30, 0 of 15 negative false fires). The one-shot held-out read scored skill 18/20 against baseline 1/20, delta +0.85 (95% interval 0.58 to 0.93), with 0 of 15 false fires on negative fixtures. Both skill-condition misses are `judge_error` results, not judge fail verdicts. Human review: 38/38 held-out judgments reviewed; CF2–CF4 above the 0.8 agreement floor; CF1 and CF5 below floor and demoted to advisory; recomputed verdict green. Three run outcomes flipped on review, giving a recomputed skill 17/20 against baseline 0/20.
+
+The dev bar changed from a per-fixture 4 of 5 to a pooled 24 of 30 in epoch 5, after the dev results of epochs 2 to 4 were seen. It is declared in the epoch-5 prereg before any epoch-5 run, but it was chosen with that data in view. The epoch-5 held-out set is burned; any edit to the skill voids the read.
 
 The other nine upstream concepts are listed in [HYPOTHESES.md](HYPOTHESES.md) with one-line interpretations. None has fixtures or a skill.
 
 ## Host matrix
 
 <!-- matrix:start -->
-| Host | Project skills path | synthesis |
-| --- | --- | --- |
-| [OpenCode](docs/install.md#opencode) | `.agents/skills/` | `verified`<br>OpenCode 1.19.4 · model `openai/gpt-6-luna` · judge `anthropic/claude-haiku-5-5` · 2026-10-23 · [evidence](evals/reports/synthesis/green.json)<br>Human review: 39/39 held-out judgments reviewed; SY1 above the 0.8 agreement floor; SY2–SY5 below floor and demoted to advisory; recomputed verdict green. |
-| [Pi](docs/install.md#pi) | `.agents/skills/` | `content-compatible-untested`<br>Pi 1.3.0 · 2026-10-23 · [evidence](docs/install.md#pi)<br>Listing smoke only. Project skills load after trusting the project (`--approve`). |
-| [Codex](docs/install.md#codex) | `.agents/skills/` | `content-compatible-untested`<br>Codex 0.162.1 · 2026-10-23 · [evidence](docs/install.md#codex)<br>Listing smoke only. |
-| [Claude Code](docs/install.md#claude-code) | `.claude/skills/` | `content-compatible-untested`<br>Claude Code 2.1.270 · 2026-10-23 · [evidence](docs/install.md#claude-code)<br>Listing smoke only. Reads `.claude/skills/`, not `.agents/skills/`. |
+| Host | Project skills path | synthesis | counterfactual |
+| --- | --- | --- | --- |
+| [OpenCode](docs/install.md#opencode) | `.agents/skills/` | `verified`<br>OpenCode 1.19.4 · model `openai/gpt-6-luna` · judge `anthropic/claude-haiku-5-5` · 2026-10-23 · [evidence](evals/reports/synthesis/green.json)<br>Human review: 39/39 held-out judgments reviewed; SY1 above the 0.8 agreement floor; SY2–SY5 below floor and demoted to advisory; recomputed verdict green. | `verified`<br>OpenCode 1.19.4 · model `openai/gpt-6-luna` · judge `anthropic/claude-haiku-5-5` · 2026-10-23 · [evidence](evals/reports/counterfactual/green.json)<br>Human review: 38/38 held-out judgments reviewed; CF2–CF4 above the 0.8 agreement floor; CF1 and CF5 below floor and demoted to advisory; recomputed verdict green. |
+| [Pi](docs/install.md#pi) | `.agents/skills/` | `content-compatible-untested`<br>Pi 1.3.0 · 2026-10-23 · [evidence](docs/install.md#pi)<br>Listing smoke only. Project skills load after trusting the project (`--approve`). | `content-compatible-untested`<br>Pi 1.3.0 · 2026-10-23 · [evidence](docs/install.md#pi)<br>Listing smoke ran on synthesis only; counterfactual was not listed on this host. Project skills load after trusting the project (`--approve`). |
+| [Codex](docs/install.md#codex) | `.agents/skills/` | `content-compatible-untested`<br>Codex 0.162.1 · 2026-10-23 · [evidence](docs/install.md#codex)<br>Listing smoke only. | `content-compatible-untested`<br>Codex 0.162.1 · 2026-10-23 · [evidence](docs/install.md#codex)<br>Listing smoke ran on synthesis only; counterfactual was not listed on this host. |
+| [Claude Code](docs/install.md#claude-code) | `.claude/skills/` | `content-compatible-untested`<br>Claude Code 2.1.270 · 2026-10-23 · [evidence](docs/install.md#claude-code)<br>Listing smoke only. Reads `.claude/skills/`, not `.agents/skills/`. | `content-compatible-untested`<br>Claude Code 2.1.270 · 2026-10-23 · [evidence](docs/install.md#claude-code)<br>Listing smoke ran on synthesis only; counterfactual was not listed on this host. Reads `.claude/skills/`, not `.agents/skills/`. |
 <!-- matrix:end -->
 
 `matrix.json` is the source of truth and `bun run matrix:check` fails if this table drifts from it. "Pending human review" means the eval report is machine-green and a person has not finished reviewing the judge's verdicts. Statuses are defined in [docs/install.md](docs/install.md#status-key).
@@ -54,7 +59,7 @@ Reports are under [`evals/reports/`](evals/reports/README.md); how to read them 
 
 - **synthesis, epoch 3** ([`green.json`](evals/reports/synthesis/green.json)): agent `openai/gpt-6-luna`, judge `anthropic/claude-haiku-5-5`, OpenCode 1.19.4. One preregistered read on four held-out fixtures, five runs per condition: skill 19/20, baseline 3/20, delta +0.80 (95% interval 0.52 to 0.91), 0 of 15 false fires on negative fixtures. Machine verdict `green`. Human review: 39/39 held-out judgments reviewed; SY1 above the 0.8 agreement floor; SY2–SY5 below floor and demoted to advisory; recomputed verdict green.
 - **synthesis, epoch 2** ([`green.epoch2.json`](evals/reports/synthesis/green.epoch2.json)): free-tier and Go-gateway models. `green-miss`: skill 15/20 against a bar of 17/20, traced to the skill not always being loaded. Kept as recorded.
-- **counterfactual** ([`red.json`](evals/reports/counterfactual/red.json), [`green-dev.json`](evals/reports/counterfactual/green-dev.json)): `red-retained`, as described under Methods. Held-out unread.
+- **counterfactual, epoch 5** ([`red.json`](evals/reports/counterfactual/red.json), [`green-dev.json`](evals/reports/counterfactual/green-dev.json), [`green.json`](evals/reports/counterfactual/green.json)): `green`. Agent `openai/gpt-6-luna`, judge `anthropic/claude-haiku-5-5`, OpenCode 1.19.4. Dev 29/30 under the preregistered pooled bar. One preregistered read on four held-out fixtures, five runs per condition: skill 18/20, baseline 1/20, delta +0.85 (95% interval 0.58 to 0.93), 0 of 15 false fires on negative fixtures. Machine verdict `green`. Human review: 38/38 held-out judgments reviewed; CF2–CF4 above the 0.8 agreement floor; CF1 and CF5 below floor and demoted to advisory; recomputed verdict green. Both skill misses are `judge_error`.
 
 What this does not show:
 

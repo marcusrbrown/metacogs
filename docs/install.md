@@ -2,7 +2,7 @@
 
 metacogs ships Agent Skills. A skill is a directory with a `SKILL.md` and, for methods that record a decision, a `scripts/record.mjs` helper. Installing means copying that directory to a path your host scans. Nothing else is configured and no host settings change.
 
-Only `synthesis` is installable guidance in this release. `counterfactual` is a hypothesis whose baseline failure is retained; its skill directory stays in the repository as evidence and is not part of the pack. Do not install it. See [Methods](../README.md#methods).
+Two methods are installable guidance in this release: `synthesis` and `counterfactual`. See [Methods](../README.md#methods).
 
 ## Requirements
 
@@ -17,6 +17,7 @@ From a clone of this repository, in the project that should get the skill:
 ```sh
 mkdir -p .agents/skills
 cp -R <metacogs-clone>/skills/synthesis .agents/skills/synthesis
+cp -R <metacogs-clone>/skills/counterfactual .agents/skills/counterfactual
 ```
 
 Copy the whole directory. The skill tells the agent to run the helper from the directory the host reports, so the helper must sit next to `SKILL.md`. For Claude Code use `.claude/skills/` instead of `.agents/skills/`.
@@ -51,13 +52,13 @@ If the helper cannot run, the skill does not retry blindly and does not pretend 
 
 ## Verify an install
 
-Each section lists a listing command. They only list skills; none sends a model request. The smoke runs below used a temporary git project that held only `skills/synthesis/` at the host's project path, plus a control project without it. Evidence was recorded on 2026-10-23.
+Each section lists a listing command. They only list skills; none sends a model request. The smoke runs below used a temporary git project that held only `skills/synthesis/` at the host's project path, plus a control project without it. They did not list `counterfactual`, and the matrix cells say so. Evidence was recorded on 2026-10-23.
 
 ## OpenCode
 
 Discovery: project `.opencode/skills/`, `.claude/skills/`, `.agents/skills/` (walking up to the git root), and the user-level `~/.config/opencode/skills/`, `~/.claude/skills/`, `~/.agents/skills/`. Docs: https://opencode.ai/docs/skills/
 
-Install: copy to `.agents/skills/synthesis/`.
+Install: copy to `.agents/skills/<method>/` (`synthesis` or `counterfactual`).
 
 Verify: `opencode debug skill` lists `synthesis` next to OpenCode's built-in `customize-opencode`. A permission rule such as `skill: {"*": "deny", "synthesis": "allow"}` limits what the agent may load.
 
@@ -74,7 +75,7 @@ Evidence:
 
 Discovery: project `.pi/skills/` and `.agents/skills/` (from the working directory up to the repository root), user-level `~/.pi/agent/skills/` and `~/.agents/skills/`. Docs: https://pi.dev/docs/latest/skills
 
-Install: copy to `.agents/skills/synthesis/`.
+Install: copy to `.agents/skills/<method>/` (`synthesis` or `counterfactual`).
 
 Verify: start `pi --mode rpc --no-session --offline --approve`, send `{"type":"get_commands"}` on stdin, and look for a command named `skill:synthesis` with `source` `skill`. In an interactive session the skill appears as `/skill:synthesis`. RPC reference: https://pi.dev/docs/latest/rpc-commands
 
@@ -90,7 +91,7 @@ Evidence:
 
 Discovery: project `.agents/skills/`, user-level `$HOME/.agents/skills/`, and `/etc/codex/skills`. Docs: https://developers.openai.com/codex/skills
 
-Install: copy to `.agents/skills/synthesis/`.
+Install: copy to `.agents/skills/<method>/` (`synthesis` or `counterfactual`).
 
 Verify: run `codex debug prompt-input` in the project. The output is the model-visible prompt as JSON; its skills section has a `synthesis` entry and a skill root that points at the project's `.agents/skills`.
 
@@ -105,7 +106,7 @@ Evidence:
 
 Discovery: project `.claude/skills/` and user-level `~/.claude/skills/` only. Claude Code does not read `.agents/skills/`. Docs: https://code.claude.com/docs/en/skills
 
-Install: copy to `.claude/skills/synthesis/`.
+Install: copy to `.claude/skills/<method>/` (`synthesis` or `counterfactual`).
 
 Verify: run `claude -p --output-format stream-json --verbose "hi"` and read the `skills` array in the `system` event with subtype `init`. To make sure no model request leaves your machine, point `ANTHROPIC_BASE_URL` at a closed local port for this check, for example `http://127.0.0.1:9`. In an interactive session `synthesis` appears among the available skills.
 

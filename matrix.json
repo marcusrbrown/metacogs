@@ -42,6 +42,42 @@
         "note": "Listing smoke only. Reads `.claude/skills/`, not `.agents/skills/`.",
         "history": []
       }
+    },
+    "counterfactual": {
+      "opencode": {
+        "status": "verified",
+        "evidence_ref": "evals/reports/counterfactual/green.json",
+        "date": "2026-10-23",
+        "host_version": "1.19.4",
+        "model": "openai/gpt-6-luna",
+        "judge_model": "anthropic/claude-haiku-5-5",
+        "note": "Human review: 38/38 held-out judgments reviewed; CF2–CF4 above the 0.8 agreement floor; CF1 and CF5 below floor and demoted to advisory; recomputed verdict green.",
+        "history": []
+      },
+      "pi": {
+        "status": "content-compatible-untested",
+        "evidence_ref": "docs/install.md#pi",
+        "date": "2026-10-23",
+        "host_version": "1.3.0",
+        "note": "Listing smoke ran on synthesis only; counterfactual was not listed on this host. Project skills load after trusting the project (`--approve`).",
+        "history": []
+      },
+      "codex": {
+        "status": "content-compatible-untested",
+        "evidence_ref": "docs/install.md#codex",
+        "date": "2026-10-23",
+        "host_version": "0.162.1",
+        "note": "Listing smoke ran on synthesis only; counterfactual was not listed on this host.",
+        "history": []
+      },
+      "claude-code": {
+        "status": "content-compatible-untested",
+        "evidence_ref": "docs/install.md#claude-code",
+        "date": "2026-10-23",
+        "host_version": "2.1.270",
+        "note": "Listing smoke ran on synthesis only; counterfactual was not listed on this host. Reads `.claude/skills/`, not `.agents/skills/`.",
+        "history": []
+      }
     }
   }
 }
