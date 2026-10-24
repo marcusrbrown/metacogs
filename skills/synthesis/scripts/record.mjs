@@ -284,7 +284,7 @@ function buildMethods() {
   return "counterfactual,synthesis".split(",");
 }
 function buildHelperVersion() {
-  return "0.1.0";
+  return "0.1.1";
 }
 async function run(argv, ctx) {
   const err = (text) => ctx.stderr(`${PROGRAM}: ${text}
