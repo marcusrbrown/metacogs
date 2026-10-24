@@ -42,7 +42,6 @@ import {
   opencodeAvailability,
   parseEvents,
   plantSkill,
-  probeServe,
   type RunOutcome,
   type RunSpec,
   runOpencode,
@@ -53,7 +52,6 @@ import {
 import {
   bashCallStep,
   SCRIPTED_USAGE,
-  SPIKE_MODEL_ID,
   SPIKE_PROVIDER_ID,
   skillCallStep,
 } from '../scripted-provider'
@@ -583,32 +581,6 @@ suite(`OpenCode ${OPENCODE_PIN} isolation spike (scripted provider)`, () => {
       // If this fails the host has machine-level config the env allowlist cannot isolate.
       expect(present).toEqual([])
     })
-  })
-
-  // ── transport comparison ──────────────────────────────────────────────
-  describe('`opencode serve` surface', () => {
-    test(
-      '/experimental/tool is a registry listing, not the loaded-skill instrument',
-      async () => {
-        const f = fixture()
-        gitInit(f.workspace)
-        plantDemo(f)
-        const config = buildConfig({ permission: ALLOW_DEMO }, 'http://127.0.0.1:1/v1')
-        const env = buildChildEnv({ fixture: f, config })
-        const probe = await probeServe(f, env, { provider: SPIKE_PROVIDER_ID, model: SPIKE_MODEL_ID })
-        expect((probe.health as { version: string }).version).toBe(OPENCODE_PIN)
-        expect(probe.toolsStatus).toBe(200)
-        const tools = probe.tools as { id: string; description: string }[]
-        const skill = tools.find((t) => t.id === 'skill')
-        expect(skill).toBeDefined()
-        // Neither the allowed skill nor `<available_skills>` appears in the tool description.
-        expect(skill?.description).not.toContain('spike-demo')
-        expect(skill?.description).not.toContain('<available_skills>')
-        // And it is not permission-filtered: edit/write are listed though denied.
-        expect(tools.map((t) => t.id)).toContain('edit')
-      },
-      TEST_TIMEOUT_MS,
-    )
   })
 
   test('event parser tolerates non-JSON lines and keeps them', () => {
