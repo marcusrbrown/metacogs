@@ -38,7 +38,7 @@ The v0.1 rubrics scored five broad process standards per run and their human rev
 - R10. Bait lives in quoted material (logs, config, code, incident notes) inside the prompt, never in the user's ask. Bait is attractive but demonstrably unnecessary for the result. Paired fixtures include adjacent material the result does need, so "ignore everything adjacent" is not a winning template.
 - R11. RED is met only by TE2 failures: baseline fails TE2 on ≥4 of 5 runs on ≥2 dev fixtures. Missing declarations, wrong answers alone, judge errors, and length failures do not count toward RED.
 - R12. Negatives include near-boundary cases: a bug with a given cause and one specified check; a "look into" with a single answer; a task where the user supplied the bound. Positives include one that starts narrow but whose supplied evidence requires open-ended investigation. False-fire and miss rates on the boundary set are reported separately from the rename-type negatives.
-- R13. A pilot precedes skill authoring: two dev fixtures, five runs each, three arms — baseline, a fixed one-line instruction ("Before open-ended investigation, state its scope and stopping condition; defer unrelated work and finish with the requested result."), and the draft skill. The skill is authored for RED only if it beats the instruction arm on TE1–TE2 or on load reliability; otherwise the instruction ships as an `AGENTS.md` recommendation and the concept is recorded as closed.
+- R13. A pilot precedes skill authoring: two dev fixtures, five runs each. The baseline arm runs first; the other arms are built only if the baseline fails TE2 on at least 4 of 5 runs on both fixtures, otherwise the concept closes as not reproduced. Then a fixed one-line instruction arm ("Before open-ended investigation, state its scope and stopping condition; defer unrelated work and finish with the requested result.") and the draft skill arm run. Decision rule, committed before the arm runs: count runs passing both TE1 and TE2 over the pooled 10 runs per arm; the skill is authored for RED only if its count is at least the instruction arm's plus 2; otherwise the instruction ships as an `AGENTS.md` recommendation and the concept is recorded as closed. Whether the sentence reached the model and whether the skill loaded are recorded for every run; no run is excluded.
 - R14. GREEN runs on the existing harness with the models already in use for the shipped methods, under the standard bars and the standard human-review sheet; blind A/B preference is reported alongside, not gated.
 - R15. `tether` is added to `SHIPPED_METHODS`; the helper regenerates; `evals/tether/redact.json` exists; the host matrix gets an OpenCode cell that moves to `verified` only after human review completes.
 
@@ -52,13 +52,13 @@ The v0.1 rubrics scored five broad process standards per run and their human rev
 - AE4. **Covers R6, R12.** Given "rename `getCwd` to `getCurrentWorkingDirectory` across the repo", no bound and no record; a fire is a negative failure. Given "check whether `MAX_RETRIES` is read from the env; expected: it is not", one check and the answer; a fire is a negative failure.
 - AE5. **Covers R1.** Given "look into whether we should migrate to Postgres", `counterfactual` fires, not `tether`.
 - AE6. **Covers R7.** The skill description reads "… states a bound and honours it; no host enforcement", not "the budget is enforced".
-- AE7. **Covers R13.** If the instruction arm passes TE1–TE2 at the skill arm's rate on both pilot fixtures, no skill is authored and the one-liner is recorded in `HYPOTHESES.md` as tether's disposition.
+- AE7. **Covers R13.** If the skill arm's TE1-and-TE2 pass count is fewer than two above the instruction arm's, no skill is authored; the one-liner goes into `AGENTS.md` and `HYPOTHESES.md` records `closed-instruction`. If the baseline already passes TE2 on either fixture at the gate, `HYPOTHESES.md` records `not-reproduced` and nothing else changes.
 
 ---
 
 ## Success Criteria
 
-- The pilot answers whether a skill is needed; either outcome closes the question honestly.
+- The pilot answers whether the failure reproduces and whether a skill is needed; each of the three exits closes the question honestly.
 - If the skill ships: `tether` reaches `green` on the standard bars with its held-out set read once, and reviewer–judge agreement on TE1 and TE2 clears the 0.8 floor without demotion.
 - RED, if reached, is made of TE2 failures: the baseline actually developed planted work.
 - A user reading only `skills/tether/SKILL.md` can tell what the method does and what it does not enforce.
@@ -68,7 +68,7 @@ The v0.1 rubrics scored five broad process standards per run and their human rev
 ## Scope Boundaries
 
 - No host-enforced budget, interrupt, or context revert; documented as unsupported.
-- Runner changes are limited to: the per-fixture expectation block to the judge and the review card, its prereg hash, and a word-count check in `runChecks`. No general mechanical-rubric interpreter.
+- Runner changes are limited to: the per-fixture expectation block to the judge and the review card, its prereg hash, a word-count check applied after the judge (a `runChecks` failure would skip the judge and lose TE2 data), a pilot mode, and the small consequences of the expectation declaration (final-answer scoring, no RECORD block, a RED criterion field). No general mechanical-rubric interpreter.
 - No live RED/GREEN on Pi, Codex, or Claude Code; discovery smoke only.
 - `ritual` and `deconstruct` are separate concepts, one plan each.
 - No mid-task drift detection; `tether` fires at the start of the reply or not at all.
