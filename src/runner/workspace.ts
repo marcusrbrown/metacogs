@@ -260,9 +260,14 @@ function walkFiles(root: string, dir = ''): SkillFile[] {
   return out
 }
 
-/** Hash of a skill directory: sorted `path NUL sha256 LF` lines. */
+/**
+ * Hash of a skill directory: sorted `path NUL sha256 LF` lines. The generated helper under `scripts/` is not hashed:
+ * it is versioned by `helper_version`, so a release or regeneration never reads as an edit to the method text.
+ */
 export function hashSkillDir(dir: string): { sha256: string; files: SkillFile[] } {
-  const files = walkFiles(dir).sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+  const files = walkFiles(dir)
+    .filter((f) => !f.path.startsWith('scripts/'))
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
   return { sha256: sha256(files.map((f) => `${f.path}\0${f.sha256}\n`).join('')), files }
 }
 
