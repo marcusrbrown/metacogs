@@ -574,6 +574,17 @@ describe('pilot', () => {
     }
   })
 
+  test('the usage text documents --arm and --prereg with their defaults, and --prereg on rejudge', async () => {
+    const t = io()
+    expect(await main(['pilot'], t.io)).toBe(EXIT.USAGE)
+    const usage = t.lines.err.join('\n')
+    expect(usage).toContain('--arm baseline')
+    expect(usage).toContain('default: baseline')
+    expect(usage).toContain('default: evals/<m>/pilot/prereg.json')
+    expect(usage).toMatch(/rejudge --campaign <id\|dir> \[--auth-passthrough opencode-go\] \[--prereg <file>\]/)
+    expect(usage).toContain('pilot --method <name> --provider live')
+  })
+
   test('any --arm but baseline is refused with the same generic message, before any repo work', async () => {
     for (const arm of ['instruction', 'skill', 'bogus']) {
       const t = io()
@@ -714,6 +725,31 @@ describe('pilot', () => {
       }
       expect(readFileSync(join(campaignDir, 'review.md'), 'utf8')).toBe('marked')
       expect(existsSync(join(campaignDir, 'human-review.json'))).toBe(false)
+    })
+
+    test('rejudge --prereg on a campaign that is not a pilot is a usage error, before credentials or the judge; review --prereg too', async () => {
+      const { repo, dir } = await plantedPilot()
+      const { writeManifest, readManifest } = await import('./manifest')
+      const redId = 'demo-red-2026-10-24T00-00-00-000Z'
+      const plain = join(dirname(dirname(dir)), redId, '001-dev-d1-baseline-r1')
+      mkdirSync(plain, { recursive: true })
+      const { arm: _arm, ...unarmed } = readManifest(join(dir, 'manifest.json'))
+      writeManifest(plain, { ...unarmed, campaign_id: redId })
+      for (const argv of [
+        ['rejudge', '--campaign', redId, '--repo', repo.dir, '--prereg', PILOT_PREREG],
+        ['review', '--campaign', redId, '--repo', repo.dir, '--prereg', PILOT_PREREG],
+      ]) {
+        const t = io()
+        t.io.env.METACOGS_AUTH_CLIPROXY = 'no-such-key' // fetching it would fail with a different message
+        t.io.createJudge = (() => {
+          throw new Error('the judge must not be built')
+        }) as never
+        expect(await main(argv, t.io)).toBe(EXIT.USAGE)
+        expect(t.lines.err.join('\n')).toContain('--prereg applies to')
+      }
+      // On the pilot campaign the flag is accepted (the prereg is the one named).
+      const t = io()
+      expect(await main(['rejudge', '--campaign', CAMPAIGN, '--repo', repo.dir, '--prereg', PILOT_PREREG, '--tally-only'], t.io)).toBe(EXIT.OK)
     })
 
     test('--tally-only applies to rejudge of a pilot campaign only', async () => {

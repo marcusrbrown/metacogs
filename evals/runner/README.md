@@ -402,7 +402,46 @@ The field is optional in the report schemas so that the committed epoch-2 report
 
 `eval review --campaign <id|dir>` writes two local files (gitignored under `evals/runs/`, or under the state root for held-out campaigns) for every run that has a stored `judge.json`:
 
-- `review.md`, the **blind sheet**: a legend (what the record is, that the judge scored fixture prompt, answer and record together, that only the judge criteria are human-scored, and that a run passes iff all of them pass), then one block per run: fixture id and condition, the fixture prompt verbatim (collapsed under `<details>` past 600 characters), the expected-answer notes once per fixture at its first block (rubric annex entry for dev and negative fixtures, the `*.expected.txt` sidecar for held-out ones), the final answer, the record, and a table `criterion | pass anchor | fail anchor | human`. It holds no judge verdict, quote, model, attempt count, or recorded outcome. Runs that failed a deterministic check never reached the judge and are not shown (the legend counts them).
+- `review.md`, the **blind sheet**: a legend (what the record is, that the judge scored fixture prompt, answer and record together, that only the judge criteria are human-scored, and that a run passes iff all of them pass; for a rubric that declares `expectation: true`, that the judge read all assistant text in order and the card shows the final segment only), then one block per run: fixture id and condition, the fixture prompt verbatim (collapsed under `<details>` past 600 characters), the expected-answer notes once per fixture at its first block (rubric annex entry for dev and negative fixtures, the `*.expected.txt` sidecar for held-out ones), the final answer, the record, and a table `criterion | pass anchor | fail anchor | human`. It holds no judge verdict, quote, model, attempt count, or recorded outcome. Runs that failed a deterministic check never reached the judge and are not shown (the legend counts them).
 - `review-key.md`: the same block ids with the judge's verdict, quotes, attempts, model, and the recorded outcome.
 
 Mark each row by replacing `human: pass/fail` with `human: pass` or `human: fail`, and write anything else on the `note:` line. `eval review --campaign <id|dir> --reconcile` then reads the marked sheet against the key, prints per-criterion agreement (and Cohen's kappa when both labels occur), run-outcome flips (human outcome differs from the judge's, for fully marked runs), and writes `human-review.json` next to them (run ids, criterion ids and counts only). A criterion whose raw agreement is below the prereg `agreement_floor` is **demoted to advisory**: it is ignored in the recomputed run outcomes. If a GREEN report for the same campaign exists, only its `human_review` block is rewritten (status `pending`/`partial`/`complete`, agreement, flipped runs, demoted criteria, and a verdict recomputed with the same bars from the human marks and the machine's negatives, dev-regression and near-duplicate checks); the machine `verdict` field is never changed. `eval report --green` reads `human-review.json` too when it is already there. Unmarked rows are left out of the agreement counts and the judge's verdict stands for them in the recomputation.
+
+## Pilot (`eval pilot`)
+
+```sh
+bun run eval pilot --method <m> --arm baseline --provider live
+```
+
+A dev-only, unreported campaign for asking whether a concept's failure reproduces before any skill exists. It plans the prereg's dev fixtures only (`runs_per_condition` runs each; `--runs` and `--fixture` override and mark the campaign as deviating), never loads held-out fixtures, never claims the read marker, and never writes under `evals/reports/`. Code: `src/runner/pilot.ts`, wired in `src/runner/cli.ts`.
+
+**Reads.** `evals/<m>/pilot/prereg.json` (or `--prereg <repo-relative file>`; a path outside the repository is refused). It is enforced like any other prereg: the content hash, the fixture, rubric and expectation-sidecar hashes, the model pins. The judge criterion ids the tally counts come from `evals/<m>/rubric.md` (`parseRubric`), which the prereg's `rubric_hash` already pins. `--arm` defaults to `baseline`, the only arm this runner supports.
+
+**Writes.**
+
+- The campaign directory `evals/runs/<m>-pilot-<timestamp>/` (gitignored). Every manifest carries `arm`, which is what marks it as a pilot run.
+- `evals/<m>/pilot/pilot.json`, the only committed projection, written by a fixed-key writer (temp file, then rename): `schema_version` (3), `method`, `prereg_content_hash`, `agent_model_id`, `judge_model_id`, `arms`, `campaigns` (arm → the campaign id its tally was counted from), and `tally` (arm → fixture id → `{runs, criteria: {<judge criterion id>: passes}, all_pass, over_limit, empty, skill_loaded}`). No stdout, stderr, env, quotes or transcript text. Counted runs are those that ended `completed`, `timeout`, `budget_exceeded` or `host_crash`; infra errors, isolation breaches and interrupted runs are left out. Verdicts come from a run's `judge.json` when it has one (a rejudge rewrites it), else from its manifest. `skill_loaded` counts transcripts that show a skill's content being loaded: the baseline arm gets no skill, so any is contamination.
+- A rerun under the same prereg content hash replaces the arm's tally and prints `replaced baseline tally from <old campaign id>`; a different prereg content hash starts the file over. An existing `pilot.json` that is unreadable, from another schema version, or not a closed record of the keys above (unknown arm, negative or non-integer count) stops the write with an error naming its path and is left untouched; fix it or delete it.
+- The tally refuses any manifest produced under a prereg content hash other than the current one (it names the run directory), unless the verdicts were rewritten by a rejudge under the current prereg. If the tally or the write fails after a live campaign, the campaign directory is intact: fix the cause and run `bun run eval rejudge --campaign <id> --tally-only`.
+
+**Refusals.**
+
+| Condition | Exit |
+| --- | --- |
+| `--provider` is not `live` (`eval pilot requires --provider live`; checked before any credential is fetched or the prereg is read, so a scripted invocation can never touch `pilot.json`) | 64 |
+| `--dev-only`, `--rehearsal` or `--include-dev` | 64 |
+| `--arm` other than `baseline` (`this runner supports the baseline arm only; see evals/<m>/pilot/README.md`) | 3 |
+| `--prereg` outside the repository, a missing or edited pilot prereg, any other prereg or custody refusal | 3 |
+
+**Other commands.** `report` and `review` (with or without `--reconcile`) refuse a campaign whose manifests carry an arm, with one message (`N manifest(s) belong to a pilot campaign (<run id> carries arm "baseline"); pilot runs are not reportable`), and `report`'s newest-campaign lookup skips pilot directories. `rejudge --campaign <pilot>` accepts them: it enforces the pilot prereg (`--prereg`, default as above), re-judges the retained answers, rewrites each `judge.json`, rebuilds `pilot.json` from the verdicts now on disk, and writes no review sheets; if the judge cannot be reached for any run it leaves `pilot.json` alone. `rejudge --tally-only` rebuilds `pilot.json` the same way with no judge call, no credentials and no OpenCode. `--prereg` and `--tally-only` on a campaign that carries no arm are usage errors, and a campaign that mixes armed and unarmed manifests is refused before any judge call.
+
+**Exit codes** (`EXIT` in `src/runner/cli.ts`):
+
+| Code | Name | Meaning |
+| --- | --- | --- |
+| 0 | `OK` | The campaign finished and `pilot.json` was written (or `rejudge` rebuilt it). |
+| 1 | `ERROR` | An empty plan, a judge model the runner cannot reach, OpenCode unavailable, no such campaign, a `provider_outage` abort (the summary lists what ran), or a rejudge whose judge was unreachable. |
+| 3 | `REFUSED` | A refusal in the table above, or a campaign that cannot be tallied (another prereg hash, mixed manifests, an invalid existing `pilot.json`). |
+| 4 | `CREDENTIAL_LEAK` | A run's artifacts held a configured secret; they were purged and the campaign stopped. |
+| 64 | `USAGE` | A bad or missing flag, or a flag that does not apply to the mode. |
+| 130 | `INTERRUPTED` | SIGINT, SIGTERM or SIGHUP aborted the campaign. |

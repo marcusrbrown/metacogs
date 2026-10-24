@@ -31,19 +31,21 @@ export const EXIT = { OK: 0, ERROR: 1, USAGE: 64, REFUSED: 3, CREDENTIAL_LEAK: 4
 const USAGE = `usage: bun run eval <red|green> --method <name> [options]
        bun run eval pilot --method <name> --provider live [--arm baseline] [--prereg <repo-relative file>]
                                                                     dev-only comparison of arms on evals/<m>/pilot/prereg.json; writes evals/<m>/pilot/pilot.json.
-                                                                    Never reported: report refuses its campaigns. Only --arm baseline runs in this build
+                                                                    Never reported: report and review refuse its campaigns. Only --arm baseline runs in this build
        bun run eval report --method <name> [--campaign <dir>]
        bun run eval review --campaign <id|dir>                     write the blind review.md (fixture prompt, expected-answer notes, answer, record, an unmarked
                                                                    scoring table) and review-key.md (judge verdicts and quotes) into the campaign dir
        bun run eval review --campaign <id|dir> --reconcile         read the marked-up review.md against review-key.md: per-criterion agreement, run-outcome
                                                                    flips, human-review.json; updates a matching GREEN report's human_review block
-       bun run eval rejudge --campaign <id|dir> [--auth-passthrough opencode-go]
+       bun run eval rejudge --campaign <id|dir> [--auth-passthrough opencode-go] [--prereg <file>]
                                                                     judge calls over retained answers, then review.md; manifests untouched
        bun run eval rejudge --campaign <id|dir> --tally-only         pilot campaigns only: rebuild pilot.json from the verdicts already on disk; no judge call, no credentials
   --runs <n>              runs per condition per fixture (default: prereg runs_per_condition)
   --provider scripted|live   scripted = local stub (default for red and green --dev-only), live = the model pinned in the prereg through
                           OpenCode's gateway: opencode-go/* (Go subscription, the default and preferred) or opencode/* (Zen, bills credits).
                           The one-shot held-out read (green without --dev-only) refuses anything but --provider live
+  --arm baseline          pilot only: the arm to run (default: baseline, the only arm this runner supports)
+  --prereg <file>         pilot, and rejudge of a pilot campaign: the repo-relative prereg to enforce (default: evals/<m>/pilot/prereg.json)
   --fixture <id>          only this fixture (single-run debugging; marks the campaign as deviating from prereg)
   --rehearsal             green only: scripted dry run of the skill condition on dev + negative fixtures. Never loads held-out fixtures,
                           never claims the read marker, never feeds a report
@@ -388,14 +390,20 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
     return EXIT.CREDENTIAL_LEAK
   }
   if (isPilot) {
-    const pilotTally = tallyPilotCampaign(campaignDir, {
-      method,
-      prereg_content_hash: verification.contentHash,
-      agent_model_id: prereg.agent_model_id,
-      judge_model_id: prereg.judge_model_id,
-      criteria: pilotCriteria(repoRoot, method),
-    })
-    out(`wrote ${writePilotTally(repoRoot, pilotTally, out).slice(repoRoot.length + 1)} (arms: ${pilotTally.arms.join(', ')})`)
+    try {
+      const pilotTally = tallyPilotCampaign(campaignDir, {
+        method,
+        prereg_content_hash: verification.contentHash,
+        agent_model_id: prereg.agent_model_id,
+        judge_model_id: prereg.judge_model_id,
+        criteria: pilotCriteria(repoRoot, method),
+      })
+      out(`wrote ${writePilotTally(repoRoot, pilotTally, out).slice(repoRoot.length + 1)} (arms: ${pilotTally.arms.join(', ')})`)
+    } catch (e) {
+      // The campaign is intact on disk; only the projection failed. Say how to redo it instead of crashing with a stack.
+      err(`REFUSED: ${(e as Error).message}\npilot.json was not written; the campaign is intact at ${campaignDir}. Fix the cause, then: bun run eval rejudge --campaign ${campaignId} --tally-only`)
+      return EXIT.REFUSED
+    }
   }
   if (result.aborted === 'provider_outage') {
     err('ABORTED: provider_outage. Three rate-limited attempts in a row; no further runs were launched. The summary lists what ran.')
@@ -443,6 +451,10 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
     a.err(`--tally-only applies to rejudge only\n${USAGE}`)
     return EXIT.USAGE
   }
+  if (a.preregFlag !== undefined && a.mode !== 'rejudge') {
+    a.err(`--prereg applies to rejudge of a pilot campaign only\n${USAGE}`)
+    return EXIT.USAGE
+  }
   const repoRoot = new Git(a.repo ?? a.cwd).toplevel()
   const campaignDir = resolveCampaignDir(a.campaign, repoRoot, a.cwd, a.env)
   if (!campaignDir) {
@@ -484,6 +496,10 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
     }
     if (a.tallyOnly && !isPilotCampaign) {
       a.err(`--tally-only applies to a pilot campaign only; ${a.campaign} carries no arm\n${USAGE}`)
+      return EXIT.USAGE
+    }
+    if (a.preregFlag !== undefined && !isPilotCampaign) {
+      a.err(`--prereg applies to a pilot campaign only; ${a.campaign} carries no arm (its prereg is evals/${method}/prereg.json)\n${USAGE}`)
       return EXIT.USAGE
     }
     let auth: PassthroughAuth = {}
