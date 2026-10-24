@@ -12,8 +12,10 @@ export interface ReleaseDeps {
   version: string
   /** CHANGELOG.md text, or `null` when the file does not exist. */
   changelog: string | null
-  /** Commit the tag points at when it is created. */
-  sha: string
+  /** First-parent commit on the current branch that introduced `version` into package.json, or `null` when none is found. */
+  introducingSha: () => string | null
+  /** Fallback target when `introducingSha` finds nothing (fresh-clone edge). */
+  headSha: () => string
   releaseExists: (tag: string) => boolean
   createRelease: (release: { tag: string; sha: string; notes: string; prerelease: boolean }) => void
   log: (message: string) => void
@@ -33,7 +35,12 @@ export function runRelease(deps: ReleaseDeps): number {
       deps.log(`release: notice: CHANGELOG.md has no "## ${deps.version}" section; skipping ${tag}`)
       return 0
     }
-    deps.createRelease({ tag, sha: deps.sha, notes: section.body, prerelease: section.prerelease })
+    let sha = deps.introducingSha()
+    if (sha === null) {
+      sha = deps.headSha()
+      deps.log(`release: notice: no commit found that introduced version ${deps.version}; targeting HEAD (${sha})`)
+    }
+    deps.createRelease({ tag, sha, notes: section.body, prerelease: section.prerelease })
     deps.log(`release: created GitHub Release ${tag}${section.prerelease ? ' (prerelease)' : ''}`)
     return 0
   } catch (error) {
@@ -69,19 +76,31 @@ function ghCreateRelease({ tag, sha, notes, prerelease }: { tag: string; sha: st
   }
 }
 
+function git(root: string, args: string[]): string {
+  const r = spawnSync('git', args, { cwd: root, encoding: 'utf8' })
+  if (r.error) throw new Error(`could not run git: ${r.error.message}`)
+  if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr.trim()}`)
+  return r.stdout.trim()
+}
+
+/** Oldest first-parent commit whose diff adds or removes the exact `"version": "<v>"` line in package.json. */
+function introducingCommit(root: string, version: string): string | null {
+  const needle = `"version": "${version}"`
+  const lines = git(root, ['log', '--first-parent', '--format=%H', `-S${needle}`, '--', 'package.json'])
+    .split('\n')
+    .filter(Boolean)
+  return lines.at(-1) ?? null
+}
+
 function main(): number {
   const root = fileURLToPath(new URL('../../', import.meta.url))
   const { version } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { version: string }
   const changelogPath = join(root, 'CHANGELOG.md')
-  const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' })
-  if (head.status !== 0) {
-    console.error(`release: failed for v${version}: git rev-parse HEAD failed: ${head.stderr.trim()}`)
-    return 1
-  }
   return runRelease({
     version,
     changelog: existsSync(changelogPath) ? readFileSync(changelogPath, 'utf8') : null,
-    sha: head.stdout.trim(),
+    introducingSha: () => introducingCommit(root, version),
+    headSha: () => git(root, ['rev-parse', 'HEAD']),
     releaseExists: ghReleaseExists,
     createRelease: ghCreateRelease,
     log: (message) => console.log(message),

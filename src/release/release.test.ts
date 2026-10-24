@@ -11,7 +11,8 @@ function harness(overrides: Partial<ReleaseDeps> = {}) {
   const deps: ReleaseDeps = {
     version: '0.1.1',
     changelog: CHANGELOG,
-    sha: 'abc123',
+    introducingSha: () => 'abc123',
+    headSha: () => 'head999',
     releaseExists: () => false,
     createRelease: (r) => void created.push(r),
     log: (m) => void logs.push(m),
@@ -33,6 +34,20 @@ describe('runRelease', () => {
     const h = harness()
     expect(runRelease(h.deps)).toBe(0)
     expect(h.created).toEqual([{ tag: 'v0.1.1', sha: 'abc123', notes: '- fix', prerelease: false }])
+  })
+
+  test('the Release targets the commit that introduced the version, not HEAD', () => {
+    const h = harness({ introducingSha: () => 'intro42' })
+    expect(runRelease(h.deps)).toBe(0)
+    expect(h.created[0]?.sha).toBe('intro42')
+    expect(h.logs.join('\n')).not.toContain('targeting HEAD')
+  })
+
+  test('falls back to HEAD and logs it when no introducing commit is found', () => {
+    const h = harness({ introducingSha: () => null })
+    expect(runRelease(h.deps)).toBe(0)
+    expect(h.created[0]?.sha).toBe('head999')
+    expect(h.logs.join('\n')).toContain('targeting HEAD (head999)')
   })
 
   test('a prerelease version is created as a prerelease', () => {
