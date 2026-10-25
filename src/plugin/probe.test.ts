@@ -6,50 +6,31 @@
  * runs only with `METACOGS_HOST_PROBES=1`, on a host pin bump.
  */
 import { afterAll, describe, expect, test } from 'bun:test'
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync, readFileSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
 
-import { buildChildEnv, createFixture, destroyFixture, type Fixture } from '../runner/env'
-import { type OpencodeEvent, parseEvents, toolUses } from '../runner/events'
-import { systemTexts } from '../runner/isolation'
-import { opencodeArgv, opencodeAvailability, spawnCapture, type SpawnResult } from '../runner/opencode'
+import { buildChildEnv } from '../runner/env'
+import { toolUses } from '../runner/events'
+import { opencodeAvailability } from '../runner/opencode'
+import type { RecordedRequest, ScriptedStep } from '../runner/scripted-provider'
 import {
-  type RecordedRequest,
-  type ScriptedStep,
-  SPIKE_MODEL_ID,
-  SPIKE_PROVIDER_ID,
-  scriptedProviderConfig,
-  startScriptedProvider,
-} from '../runner/scripted-provider'
-import { buildConfig, gitInit } from '../runner/workspace'
+  BASE_PERMISSION,
+  bodyOf,
+  DENY_ALL,
+  disposeFixtures,
+  HostLab,
+  mainRequest,
+  offeredNames,
+  skillNames,
+  systemOf,
+  userTexts,
+} from './fixture'
 
-const HOST_MODEL = `${SPIKE_PROVIDER_ID}/${SPIKE_MODEL_ID}`
 const SYSTEMATIC_TITLE_SIGNATURE = 'You are a title generator'
 const SYSTEMATIC_SUMMARY_SIGNATURE = 'You are a helpful AI assistant tasked with summarizing conversations'
 const COMPACTION_SIGNATURE = 'You are a context summarization agent'
 const BLOCK = '<PROBE_BLOCK/>'
 
-/** Every permission key in `core/src/v1/config/permission.ts` that gates a built-in tool, denied. */
-const DENY_ALL: Record<string, unknown> = Object.fromEntries(
-  ['glob', 'grep', 'list', 'read', 'edit', 'bash', 'task', 'todowrite', 'question', 'webfetch', 'websearch', 'lsp', 'skill'].map((key) => [key, 'deny']),
-)
-const BASE_PERMISSION: Record<string, unknown> = { edit: 'deny', bash: { '*': 'deny' } }
-
-interface ChatBody {
-  messages?: { role: string; content?: unknown; tool_calls?: { id: string; function: { name: string; arguments: string } }[]; tool_call_id?: string }[]
-  tools?: { function: { name: string } }[]
-}
-
-const bodyOf = (request: RecordedRequest): ChatBody => (request.body ?? {}) as ChatBody
-const offeredNames = (request: RecordedRequest): string[] => (bodyOf(request).tools ?? []).map((t) => t.function.name)
-const systemOf = (request: RecordedRequest): string => systemTexts(request.body as Record<string, unknown>).join('\n')
-const userTexts = (request: RecordedRequest): string[] => (bodyOf(request).messages ?? []).filter((m) => m.role === 'user').map((m) => String(m.content))
-const mainRequest = (requests: readonly RecordedRequest[]): RecordedRequest => {
-  const found = requests.find((r) => systemOf(r).startsWith('You are opencode'))
-  if (!found) throw new Error('no main request recorded')
-  return found
-}
-const skillNames = (request: RecordedRequest): string[] => [...systemOf(request).matchAll(/<name>([^<]+)<\/name>/g)].map((m) => m[1] ?? '')
 const countBlocks = (request: RecordedRequest): number => systemOf(request).split(BLOCK).length - 1
 
 interface ProbeLogEntry {
@@ -70,55 +51,11 @@ interface PluginSpec {
   block?: boolean
 }
 
-/** The host runs `npm install @opencode-ai/plugin` in its config dir on the first run that loads a plugin (about 20 s). Every lab copies one installed dir and then keeps npm offline. */
-const OFFLINE_NPM = { npm_config_offline: 'true', npm_config_audit: 'false', npm_config_fund: 'false' }
-let template: { lab: Lab; ready: Promise<string> } | undefined
-const installedConfigDir = (): Promise<string> => {
-  template ??= (() => {
-    const lab = new Lab(false)
-    const ready = (async () => {
-      const spec = lab.plugin('seed.mjs', { tag: 'SEED' })
-      await lab.run({ args: ['seed'], config: { plugin: [spec] } })
-      return lab.fixture.opencodeConfigDir
-    })()
-    return { lab, ready }
-  })()
-  return template.ready
-}
-afterAll(() => template?.lab.destroy())
+afterAll(disposeFixtures)
 
-class Lab {
-  readonly fixture: Fixture = createFixture('metacogs-probe-')
+/** A lab that also writes probe plugins and skills and reads back what the plugins recorded. */
+class Lab extends HostLab {
   readonly log = join(this.fixture.root, 'probe.log')
-  private seeded = false
-
-  constructor(private readonly useTemplate = true) {
-    gitInit(this.fixture.workspace)
-  }
-
-  destroy(): void {
-    destroyFixture(this.fixture)
-  }
-
-  workspaceFile(rel: string, content: string): void {
-    const full = join(this.fixture.workspace, rel)
-    mkdirSync(dirname(full), { recursive: true })
-    writeFileSync(full, content)
-  }
-
-  /** A file under the fixture root but outside the workspace and `HOME`; returns its path. */
-  scratch(rel: string, content: string): string {
-    const full = join(this.fixture.root, 'scratch', rel)
-    mkdirSync(dirname(full), { recursive: true })
-    writeFileSync(full, content)
-    return full
-  }
-
-  homeFile(rel: string, content: string): void {
-    const full = join(this.fixture.home, rel)
-    mkdirSync(dirname(full), { recursive: true })
-    writeFileSync(full, content)
-  }
 
   skill(root: string, name: string, description: string, body: string): string {
     const dir = join(this.fixture.root, 'scratch', root)
@@ -138,37 +75,6 @@ class Lab {
 
   resetLog(): void {
     rmSync(this.log, { force: true })
-  }
-
-  async run(options: {
-    args: string[]
-    config?: Record<string, unknown>
-    permission?: Record<string, unknown>
-    steps?: ScriptedStep[]
-    limit?: { context: number; output: number }
-    timeoutMs?: number
-  }): Promise<{ result: SpawnResult; requests: RecordedRequest[]; events: OpencodeEvent[] }> {
-    if (this.useTemplate && !this.seeded) {
-      cpSync(await installedConfigDir(), this.fixture.opencodeConfigDir, { recursive: true })
-      this.seeded = true
-    }
-    const provider = startScriptedProvider({ steps: options.steps ?? [] })
-    try {
-      const providerConfig = scriptedProviderConfig(provider.url) as Record<string, { models: Record<string, Record<string, unknown>> }>
-      if (options.limit) providerConfig[SPIKE_PROVIDER_ID]!.models[SPIKE_MODEL_ID]!.limit = options.limit
-      const config = buildConfig({ permission: options.permission ?? BASE_PERMISSION, provider: providerConfig, ...(options.config ? { extra: options.config } : {}) })
-      const env = buildChildEnv({ fixture: this.fixture, config, ...(this.useTemplate ? { extra: OFFLINE_NPM } : {}) })
-      const argv = options.args[0] === 'debug' ? opencodeArgv(...options.args) : opencodeArgv('run', '--format', 'json', '--model', HOST_MODEL, ...options.args)
-      const result = await spawnCapture(argv, { cwd: this.fixture.workspace, env, timeoutMs: options.timeoutMs ?? 180_000 })
-      return { result, requests: provider.requests, events: parseEvents(result.stdout).events }
-    } finally {
-      provider.stop()
-    }
-  }
-
-  async debugConfig(config: Record<string, unknown>): Promise<Record<string, unknown>> {
-    const { result } = await this.run({ args: ['debug', 'config'], config })
-    return JSON.parse(result.stdout) as Record<string, unknown>
   }
 }
 

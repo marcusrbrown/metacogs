@@ -193,3 +193,12 @@ What OpenCode `1.19.4` does with an object plugin, asserted at $0 against the sc
 - **Stale `skills.paths`.** A path added by an earlier plugin config does not survive a fresh config load; the host keeps no copy, so no scrub is needed.
 - **Config-dir install.** The first run that loads a plugin makes the host run `npm install @opencode-ai/plugin` in `OPENCODE_CONFIG_DIR` (about 20 s, over the network). The probe tests install it once and copy the directory into each fixture, with `npm_config_offline=true`.
 - **Not run.** `Agent.generate` (the `opencode agent create` path) also triggers the transform hook, with no `sessionID` (read from the 1.19.4 binary, not run).
+
+## Manual check: Systematic loaded alongside
+
+Not automated and not run yet. `src/plugin/integration.test.ts` covers the plugin alone; coexistence with Systematic is checked by hand when its pin changes.
+
+1. In a scratch project, set `opencode.json` to `{"plugin": ["@fro.bot/systematic@<pinned version>", "<file:// URL of the extracted metacogs package>/dist/index.js"]}` and start `opencode`.
+2. Send one message and read the request (`opencode run --print-logs`, or a recording provider). Expect the system text to hold one `<SYSTEMATIC_WORKFLOWS>` block and one `<METACOGS_GUIDANCE>` block, each once.
+3. Run `opencode debug config`. Expect `command.feel` and `command.drugs` with the `(metacogs) ` prefix and no key shared with Systematic's commands.
+4. Expect `synthesis` and `counterfactual` in the skill list. Systematic applies its own per-agent skill rules, which can hide the metacogs skills from the agents it manages; note any agent that loses them.
