@@ -436,6 +436,18 @@ export function verifyPreregContent(prereg: Prereg, paths: PreregPaths, options:
 
 // ── enforcement ────────────────────────────────────────────────────────────
 
+/**
+ * A prereg is a contract only once it is committed: the pilot reads its bars, hashes and model pins from the working tree, so an
+ * untracked, staged-only or edited file would let a run claim a contract nobody committed. `undefined` when `relPath` is tracked and has
+ * no staged or working-tree change, and also when the file does not exist (`enforcePrereg` reports that, naming the path).
+ */
+export function preregCommitViolation(git: Git, repoRoot: string, relPath: string): { code: 'prereg_untracked' | 'prereg_dirty'; message: string } | undefined {
+  if (!existsSync(join(repoRoot, relPath))) return undefined
+  if (!git.isTracked(relPath)) return { code: 'prereg_untracked', message: `prereg_untracked: ${relPath} is not tracked by git; commit it before running a pilot` }
+  if (git.porcelain([relPath])) return { code: 'prereg_dirty', message: `prereg_dirty: ${relPath} has staged or uncommitted changes; commit it before running a pilot` }
+  return undefined
+}
+
 export type ViolationCode = 'prereg_missing' | 'prereg_invalid' | 'content_hash_mismatch' | 'skill_missing' | 'skill_dirty'
 
 export interface Violation {

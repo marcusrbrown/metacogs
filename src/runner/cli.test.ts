@@ -559,6 +559,7 @@ describe('pilot', () => {
   function pilotRepo(prereg?: object) {
     const { repo, heldout, scaffold } = chainRepo()
     repo.write(PILOT_PREREG, `${JSON.stringify(prereg ?? scaffold.prereg, null, 2)}\n`)
+    repo.commit('test: pilot prereg', [PILOT_PREREG]) // a pilot prereg is a contract only once committed
     return { repo, heldout, scaffold }
   }
 
@@ -594,6 +595,79 @@ describe('pilot', () => {
       expect(message).toContain('this runner supports the baseline arm only; see evals/demo/pilot/README.md')
       expect(message).not.toContain('Unit')
     }
+  })
+
+  describe('the pilot prereg must be committed and clean, checked before any credential is fetched or model asked', () => {
+    const noFetch = (t: ReturnType<typeof io>) => {
+      t.io.env.METACOGS_AUTH_CLIPROXY = 'no-such-key' // fetching it would fail with a different message
+      t.io.createJudge = (() => {
+        throw new Error('the judge must not be built')
+      }) as never
+    }
+    const states: [string, string, (repo: TestRepo, path: string) => void][] = [
+      ['untracked', 'prereg_untracked', (repo, path) => repo.write(path, `${JSON.stringify(chainRepoPrereg(), null, 2)}\n`)],
+      ['staged only', 'prereg_dirty', (repo, path) => (repo.write(path, `${JSON.stringify(chainRepoPrereg(), null, 2)}\n`), repo.sh(['add', '--', path]))],
+      ['modified after the commit', 'prereg_dirty', (repo, path) => (repo.write(path, `${JSON.stringify(chainRepoPrereg(), null, 2)}\n`), repo.commit('c', [path]), repo.write(path, `${JSON.stringify({ ...chainRepoPrereg(), epoch: 9 }, null, 2)}\n`))],
+      ['staged then modified again', 'prereg_dirty', (repo, path) => (repo.write(path, `${JSON.stringify(chainRepoPrereg(), null, 2)}\n`), repo.commit('c', [path]), repo.write(path, '{}\n'), repo.sh(['add', '--', path]))],
+    ]
+    // Any valid prereg will do: the gate refuses before it is parsed.
+    const chainRepoPrereg = () => scaffoldPrereg
+    let scaffoldPrereg: object = {}
+
+    for (const [name, code, arrange] of states) {
+      for (const path of [PILOT_PREREG, 'evals/demo/pilot/other.json']) {
+        test(`eval pilot: ${name} (${path}) is refused as ${code}, naming the path`, async () => {
+          const { repo, scaffold } = chainRepo()
+          scaffoldPrereg = scaffold.prereg
+          arrange(repo, path)
+          const t = io()
+          noFetch(t)
+          const argv = ['pilot', '--method', 'demo', '--repo', repo.dir, '--provider', 'live', ...(path === PILOT_PREREG ? [] : ['--prereg', path])]
+          expect(await main(argv, t.io)).toBe(EXIT.REFUSED)
+          expect(t.lines.err.join('\n')).toContain(`${code}: ${path}`)
+          expect(readdirSync(join(repo.dir, 'evals')).includes('runs')).toBe(false)
+        })
+      }
+    }
+
+    test('a committed, clean prereg passes the gate (the next refusal is a different one)', async () => {
+      const { repo } = pilotRepo()
+      repo.write('evals/demo/fixtures/dev/d1.md', 'edited after the prereg\n')
+      const t = io()
+      expect(await main(['pilot', '--method', 'demo', '--repo', repo.dir, ...LIVE], t.io)).toBe(EXIT.REFUSED)
+      expect(t.lines.err.join('\n')).not.toMatch(/prereg_(dirty|untracked)/)
+    })
+
+    describe('rejudge of a pilot campaign', () => {
+      const CAMPAIGN = 'demo-pilot-2026-10-24T00-00-00-000Z'
+      async function plantedUncommitted(arrange: (repo: TestRepo) => void) {
+        const { repo, scaffold } = chainRepo(JUDGED_RUBRIC_TEXT)
+        scaffoldPrereg = scaffold.prereg
+        arrange(repo)
+        const { writeManifest } = await import('./manifest')
+        const dir = join(repo.dir, 'evals', 'runs', CAMPAIGN, '001-dev-d1-baseline-r1')
+        mkdirSync(dir, { recursive: true })
+        writeManifest(dir, { schema_version: 1, run_id: '001-dev-d1-baseline-r1', campaign_id: CAMPAIGN, status: 'completed', outcome: 'pass', reasons: [], verdict_basis: 'judge', method: 'demo', condition: 'baseline', arm: 'baseline', fixture: { id: 'd1', kind: 'dev', hash: scaffold.prereg.fixture_hashes.dev.d1 }, check_failures: [], records: [], artifacts: {}, prereg: { content_hash: 'f'.repeat(64), epoch: 1 }, model: { pinned: 'm', returned: [] } } as never)
+        return repo
+      }
+      const write = (repo: TestRepo, text = `${JSON.stringify(scaffoldPrereg, null, 2)}\n`) => repo.write(PILOT_PREREG, text)
+      const arrangements: [string, string, (repo: TestRepo) => void][] = [
+        ['untracked', 'prereg_untracked', (repo) => write(repo)],
+        ['staged only', 'prereg_dirty', (repo) => (write(repo), repo.sh(['add', '--', PILOT_PREREG]))],
+        ['modified after the commit', 'prereg_dirty', (repo) => (write(repo), repo.commit('c', [PILOT_PREREG]), write(repo, `${JSON.stringify({ ...(scaffoldPrereg as object), epoch: 9 }, null, 2)}\n`))],
+      ]
+      for (const [name, code, arrange] of arrangements) {
+        for (const extra of [[], ['--tally-only']]) {
+          test(`rejudge${extra.length ? ' --tally-only' : ''}: ${name} is refused as ${code} before credentials or the judge`, async () => {
+            const repo = await plantedUncommitted(arrange)
+            const t = io()
+            noFetch(t)
+            expect(await main(['rejudge', '--campaign', CAMPAIGN, '--repo', repo.dir, ...extra], t.io)).toBe(EXIT.REFUSED)
+            expect(t.lines.err.join('\n')).toContain(`${code}: ${PILOT_PREREG}`)
+          })
+        }
+      }
+    })
   })
 
   test('a missing pilot prereg is refused, naming the pilot path and not evals/<m>/prereg.json', async () => {
@@ -652,7 +726,10 @@ describe('pilot', () => {
 
     async function plantedPilot(opts: { prereg?: boolean; summary?: boolean } = {}) {
       const { repo, scaffold } = chainRepo(JUDGED_RUBRIC_TEXT)
-      if (opts.prereg !== false) repo.write(PILOT_PREREG, `${JSON.stringify(scaffold.prereg, null, 2)}\n`)
+      if (opts.prereg !== false) {
+        repo.write(PILOT_PREREG, `${JSON.stringify(scaffold.prereg, null, 2)}\n`)
+        repo.commit('test: pilot prereg', [PILOT_PREREG])
+      }
       const { writeManifest } = await import('./manifest')
       const dir = join(repo.dir, 'evals', 'runs', CAMPAIGN, '001-dev-d1-baseline-r1')
       mkdirSync(dir, { recursive: true })

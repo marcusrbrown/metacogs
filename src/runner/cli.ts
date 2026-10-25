@@ -20,7 +20,7 @@ import { findStaleManifests, loadCampaignRuns, ManifestFormatError, pilotCampaig
 import { removeLiveFixtures } from './env'
 import { killLiveGroups, opencodeAvailability } from './opencode'
 import { isLiveModel } from './scripted-provider'
-import { enforcePrereg, heldoutFingerprints, parsePrereg, type Prereg, preregRelPath, PreregRefusal } from './prereg'
+import { enforcePrereg, heldoutFingerprints, parsePrereg, type Prereg, preregCommitViolation, preregRelPath, PreregRefusal } from './prereg'
 import { buildDevReport, buildGreenReport, buildRedReport, type DevReport, type DevRegressionSource, type GreenReport, greenReportPath, loadCampaignManifests, recomputeDevRegression, validateDevReport, validateGreenReport, writeDevReport, writeGreenReport, writeReport } from './report'
 import { isPilotArm, pilotPreregRel, planPilot, tallyPilotCampaign, writePilotTally } from './pilot'
 import { planRuns, type ProviderMode, runCampaign, tallyKey } from './run'
@@ -192,6 +192,20 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
   // The dev-only green and the rehearsal are separate runner modes: they can never plan, load, or hash held-out content.
   const runMode = devOnly || rehearsal || isPilot ? 'dev' : mode
   const providerMode: ProviderMode = provider === 'live' ? 'live' : 'scripted'
+  const repoRoot = new Git(repo ?? cwd).toplevel()
+  const git = new Git(repoRoot)
+  // The pilot prereg is a repo-relative file; a path that leaves the repository is not a committed contract.
+  const pilotPreregPath = pilotPreregRel(repoRoot, method, parsed.values.prereg)
+  if (isPilot && pilotPreregPath === undefined) {
+    err(`REFUSED: --prereg ${parsed.values.prereg} is outside the repository`)
+    return EXIT.REFUSED
+  }
+  // Nor is a pilot prereg that is not committed and clean. Checked before any credential is fetched or any model is asked.
+  const uncommitted = isPilot && pilotPreregPath !== undefined ? preregCommitViolation(git, repoRoot, pilotPreregPath) : undefined
+  if (uncommitted) {
+    err(`REFUSED: ${uncommitted.message}`)
+    return EXIT.REFUSED
+  }
   let auth: PassthroughAuth = {}
   let cliproxy: ResolvedCliproxy | undefined
   try {
@@ -208,15 +222,6 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
   if (runsOverride !== undefined && (!Number.isInteger(runsOverride) || runsOverride < 1)) {
     err(`--runs must be a positive integer\n${USAGE}`)
     return EXIT.USAGE
-  }
-
-  const repoRoot = new Git(repo ?? cwd).toplevel()
-  const git = new Git(repoRoot)
-  // The pilot prereg is a repo-relative file; a path that leaves the repository is not a committed contract.
-  const pilotPreregPath = pilotPreregRel(repoRoot, method, parsed.values.prereg)
-  if (isPilot && pilotPreregPath === undefined) {
-    err(`REFUSED: --prereg ${parsed.values.prereg} is outside the repository`)
-    return EXIT.REFUSED
   }
 
   const stale = findStaleManifests([join(repoRoot, 'evals', 'runs'), join(stateRoot(env), 'runs')])
@@ -507,6 +512,17 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
       a.err(`--prereg applies to a pilot campaign only; ${a.campaign} carries no arm (its prereg is evals/${method}/prereg.json)\n${USAGE}`)
       return EXIT.USAGE
     }
+    const preregPath = isPilotCampaign ? pilotPreregRel(repoRoot, method, a.preregFlag) : undefined
+    if (isPilotCampaign && preregPath === undefined) {
+      a.err(`REFUSED: --prereg ${a.preregFlag} is outside the repository`)
+      return EXIT.REFUSED
+    }
+    // The pilot prereg must be committed and clean before any credential is read or any judge is asked.
+    const uncommitted = preregPath !== undefined ? preregCommitViolation(new Git(repoRoot), repoRoot, preregPath) : undefined
+    if (uncommitted) {
+      a.err(`REFUSED: ${uncommitted.message}`)
+      return EXIT.REFUSED
+    }
     let auth: PassthroughAuth = {}
     let cliproxyOn = false
     // --tally-only makes no judge call, so it reads no credentials.
@@ -522,11 +538,6 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
         }
         throw e
       }
-    }
-    const preregPath = isPilotCampaign ? pilotPreregRel(repoRoot, method, a.preregFlag) : undefined
-    if (isPilotCampaign && preregPath === undefined) {
-      a.err(`REFUSED: --prereg ${a.preregFlag} is outside the repository`)
-      return EXIT.REFUSED
     }
     let verification: ReturnType<typeof enforcePrereg>
     try {
