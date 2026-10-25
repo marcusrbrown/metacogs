@@ -902,3 +902,34 @@ describe('committed green reports', () => {
     }
   }
 })
+
+describe('pilot manifests (carrying `arm`) are not reportable', () => {
+  const pilotRuns = (): { manifest: RunManifest; manifestSha256: string }[] =>
+    ['baseline', 'instruction'].map((arm, i) => ({
+      manifest: { ...manifestFor(i + 1, 'dev', 'd1-x', 1, 'pass'), arm } as unknown as RunManifest,
+      manifestSha256: sha256(arm),
+    }))
+  const base = { prereg: prereg(), contentHash: CONTENT_HASH, headSha: HEAD, plannedRuns: 2 }
+
+  test('buildRedReport refuses, naming the run and the arm', () => {
+    expect(() => buildRedReport({ ...base, runs: pilotRuns() })).toThrow(/pilot.*001-dev-d1-x-baseline-r1.*arm/s)
+  })
+
+  test('buildDevReport refuses', () => {
+    expect(() => buildDevReport({ ...base, runs: pilotRuns(), skillSha256: sha256('skill') })).toThrow(/pilot/)
+  })
+
+  test('buildGreenReport and recomputeDevRegression refuse', () => {
+    expect(() => buildGreenReport({ ...base, runs: pilotRuns(), skillSha256: sha256('skill'), devReport: null, nearDuplicate: 'pass' } as never)).toThrow(/pilot/)
+    expect(() => recomputeDevRegression({ ...base, runs: pilotRuns() })).toThrow(/pilot/)
+  })
+
+  test('the refusal does not depend on the content hash or the judge verdicts', () => {
+    const runs = pilotRuns().map((r) => ({ ...r, manifest: { ...r.manifest, prereg: { ...r.manifest.prereg, content_hash: 'e'.repeat(64) } } }))
+    expect(() => buildRedReport({ ...base, runs })).toThrow(/pilot/)
+  })
+
+  test('manifests without `arm` are unaffected', () => {
+    expect(() => reportFor(campaign([['dev', 'd1-x', ['pass']], ['dev', 'd2-y', ['pass']], ['negative', 'n1-z', ['pass']]]))).not.toThrow()
+  })
+})

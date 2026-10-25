@@ -1,14 +1,15 @@
 import { afterAll, describe, expect, spyOn, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
-import { defaultInstallSignalHandlers, EXIT, main } from './cli'
+import { defaultInstallSignalHandlers, EXIT, main, type MainIO } from './cli'
 import { createFixture, destroyFixture } from './env'
 import { opencodeAvailability, spawnCapture } from './opencode'
-import { preregContentHash } from './prereg'
+import { parseRubric } from './judge'
+import { canonicalizeText, expectationHash, preregContentHash, saltedHash } from './prereg'
 import { sha256 } from './workspace'
-import { buildHappyChain, scaffoldMethod, TestRepo, writePrereg } from './test-support'
+import { buildHappyChain, JUDGED_RUBRIC_TEXT, scaffoldMethod, TEST_SALT, TestRepo, writePrereg } from './test-support'
 
 const cleanup: (() => void)[] = []
 afterAll(() => {
@@ -28,7 +29,7 @@ function io() {
   return {
     lines,
     stateHome,
-    io: {
+    io: <Partial<MainIO> & { env: Record<string, string> }>{
       out: (l: string) => lines.out.push(l),
       err: (l: string) => lines.err.push(l),
       installSignalHandlers: () => () => {},
@@ -41,12 +42,12 @@ function io() {
 
 const LIVE = ['--provider', 'live', '--auth-passthrough', 'none']
 
-function chainRepo() {
+function chainRepo(rubric?: string, expectations?: { dev?: Record<string, unknown> }) {
   const repo = new TestRepo('metacogs-clitest-')
   cleanup.push(() => repo.destroy())
   const heldout = tmp('metacogs-clitest-held-')
   // A judge this runner can reach: the live GREEN preflight refuses anything else before the prereg is enforced.
-  const scaffold = scaffoldMethod(repo, 'demo', { heldoutDir: heldout, overrides: { judge_model_id: 'opencode-go/judge-model-x' } })
+  const scaffold = scaffoldMethod(repo, 'demo', { heldoutDir: heldout, overrides: { judge_model_id: 'opencode-go/judge-model-x' }, ...(rubric ? { rubric } : {}), ...(expectations ? { expectations } : {}) })
   return { repo, heldout, scaffold }
 }
 
@@ -355,6 +356,30 @@ describe('report', () => {
     expect(t.lines.out.join('\n')).toContain('dev/d1: fail 1/1')
   })
 
+  test('report --campaign <pilot dir> is refused even when the pilot ran under the same prereg content', async () => {
+    const { repo, prereg } = reportRepo()
+    const { writeManifest } = await import('./manifest')
+    const dir = join(repo.dir, 'evals', 'runs', 'demo-pilot-2026-10-22T16-00-00-000Z', '001-dev-d1-baseline-r1')
+    mkdirSync(dir, { recursive: true })
+    writeManifest(dir, { ...manifest('001-dev-d1-baseline-r1', 'd1', 'dev', prereg), campaign_id: 'demo-pilot-2026-10-22T16-00-00-000Z', arm: 'baseline' } as never)
+    const t = io()
+    expect(await main(['report', '--method', 'demo', '--repo', repo.dir, '--campaign', dirname(dir)], t.io)).toBe(EXIT.REFUSED)
+    expect(t.lines.err.join('\n')).toContain('pilot')
+    expect(existsSync(join(repo.dir, 'evals', 'reports', 'demo', 'red.json'))).toBe(false)
+  })
+
+  test('latestCampaign ignores pilot directories: a newer pilot never shadows the newest RED campaign', async () => {
+    const { repo, prereg } = reportRepo()
+    await plant(repo, prereg)
+    const { writeManifest } = await import('./manifest')
+    const dir = join(repo.dir, 'evals', 'runs', 'demo-pilot-2099-01-01T00-00-00-000Z', '001-dev-d1-baseline-r1')
+    mkdirSync(dir, { recursive: true })
+    writeManifest(dir, { ...manifest('001-dev-d1-baseline-r1', 'd1', 'dev', prereg), arm: 'baseline' } as never)
+    const t = io()
+    expect(await main(['report', '--method', 'demo', '--repo', repo.dir], t.io)).toBe(EXIT.OK)
+    expect(t.lines.out.join('\n')).toContain('dev/d1: fail 1/1')
+  })
+
   test('refuses manifests produced under a different prereg content hash', async () => {
     const { repo } = reportRepo()
     await plant(repo, 'e'.repeat(64))
@@ -527,6 +552,518 @@ describe.skipIf(!opencodeAvailability().available)('scripted end-to-end', () => 
     await main(['red', '--runs', '1', '--fixture', 'n1', '--method', 'demo', '--repo', repo.dir, '--out', out], t.io)
     expect(t.lines.err.join('\n')).toContain('stale "running" manifest')
   }, 180_000)
+})
+
+describe('pilot', () => {
+  const PILOT_PREREG = 'evals/demo/pilot/prereg.json'
+  function pilotRepo(prereg?: object) {
+    const { repo, heldout, scaffold } = chainRepo()
+    repo.write(PILOT_PREREG, `${JSON.stringify(prereg ?? scaffold.prereg, null, 2)}\n`)
+    repo.commit('test: pilot prereg', [PILOT_PREREG]) // a pilot prereg is a contract only once committed
+    return { repo, heldout, scaffold }
+  }
+
+  test('usage: a bad --arm, --arm/--prereg outside pilot, and pilot-incompatible flags', async () => {
+    for (const argv of [
+      ['red', '--method', 'demo', '--arm', 'baseline'],
+      ['green', '--method', 'demo', '--prereg', PILOT_PREREG],
+      ['pilot', '--method', 'demo', '--dev-only'],
+      ['pilot', '--method', 'demo', '--rehearsal'],
+      ['pilot'],
+    ]) {
+      const t = io()
+      expect(await main(argv, t.io)).toBe(EXIT.USAGE)
+    }
+  })
+
+  test('the usage text documents --arm and --prereg with their defaults, and --prereg on rejudge', async () => {
+    const t = io()
+    expect(await main(['pilot'], t.io)).toBe(EXIT.USAGE)
+    const usage = t.lines.err.join('\n')
+    expect(usage).toContain('--arm baseline')
+    expect(usage).toContain('default: baseline')
+    expect(usage).toContain('default: evals/<m>/pilot/prereg.json')
+    expect(usage).toMatch(/rejudge --campaign <id\|dir> \[--auth-passthrough opencode-go\] \[--prereg <file>\]/)
+    expect(usage).toContain('pilot --method <name> --provider live')
+  })
+
+  test('any --arm but baseline is refused with the same generic message, before any repo work', async () => {
+    for (const arm of ['instruction', 'skill', 'bogus']) {
+      const t = io()
+      expect(await main(['pilot', '--method', 'demo', '--arm', arm, '--repo', '/nonexistent'], t.io)).toBe(EXIT.REFUSED)
+      const message = t.lines.err.join('\n')
+      expect(message).toContain('this runner supports the baseline arm only; see evals/demo/pilot/README.md')
+      expect(message).not.toContain('Unit')
+    }
+  })
+
+  describe('the pilot prereg must be committed and clean, checked before any credential is fetched or model asked', () => {
+    const noFetch = (t: ReturnType<typeof io>) => {
+      t.io.env.METACOGS_AUTH_CLIPROXY = 'no-such-key' // fetching it would fail with a different message
+      t.io.createJudge = (() => {
+        throw new Error('the judge must not be built')
+      }) as never
+    }
+    const states: [string, string, (repo: TestRepo, path: string) => void][] = [
+      ['untracked', 'prereg_untracked', (repo, path) => repo.write(path, `${JSON.stringify(chainRepoPrereg(), null, 2)}\n`)],
+      ['staged only', 'prereg_dirty', (repo, path) => (repo.write(path, `${JSON.stringify(chainRepoPrereg(), null, 2)}\n`), repo.sh(['add', '--', path]))],
+      ['modified after the commit', 'prereg_dirty', (repo, path) => (repo.write(path, `${JSON.stringify(chainRepoPrereg(), null, 2)}\n`), repo.commit('c', [path]), repo.write(path, `${JSON.stringify({ ...chainRepoPrereg(), epoch: 9 }, null, 2)}\n`))],
+      ['staged then modified again', 'prereg_dirty', (repo, path) => (repo.write(path, `${JSON.stringify(chainRepoPrereg(), null, 2)}\n`), repo.commit('c', [path]), repo.write(path, '{}\n'), repo.sh(['add', '--', path]))],
+    ]
+    // Any valid prereg will do: the gate refuses before it is parsed.
+    const chainRepoPrereg = () => scaffoldPrereg
+    let scaffoldPrereg: object = {}
+
+    for (const [name, code, arrange] of states) {
+      for (const path of [PILOT_PREREG, 'evals/demo/pilot/other.json']) {
+        test(`eval pilot: ${name} (${path}) is refused as ${code}, naming the path`, async () => {
+          const { repo, scaffold } = chainRepo()
+          scaffoldPrereg = scaffold.prereg
+          arrange(repo, path)
+          const t = io()
+          noFetch(t)
+          const argv = ['pilot', '--method', 'demo', '--repo', repo.dir, '--provider', 'live', ...(path === PILOT_PREREG ? [] : ['--prereg', path])]
+          expect(await main(argv, t.io)).toBe(EXIT.REFUSED)
+          expect(t.lines.err.join('\n')).toContain(`${code}: ${path}`)
+          expect(readdirSync(join(repo.dir, 'evals')).includes('runs')).toBe(false)
+        })
+      }
+    }
+
+    test('a committed, clean prereg passes the gate (the next refusal is a different one)', async () => {
+      const { repo } = pilotRepo()
+      repo.write('evals/demo/fixtures/dev/d1.md', 'edited after the prereg\n')
+      const t = io()
+      expect(await main(['pilot', '--method', 'demo', '--repo', repo.dir, ...LIVE], t.io)).toBe(EXIT.REFUSED)
+      expect(t.lines.err.join('\n')).not.toMatch(/prereg_(dirty|untracked)/)
+    })
+
+    describe('rejudge of a pilot campaign', () => {
+      const CAMPAIGN = 'demo-pilot-2026-10-24T00-00-00-000Z'
+      async function plantedUncommitted(arrange: (repo: TestRepo) => void) {
+        const { repo, scaffold } = chainRepo(JUDGED_RUBRIC_TEXT)
+        scaffoldPrereg = scaffold.prereg
+        arrange(repo)
+        const { writeManifest } = await import('./manifest')
+        const dir = join(repo.dir, 'evals', 'runs', CAMPAIGN, '001-dev-d1-baseline-r1')
+        mkdirSync(dir, { recursive: true })
+        writeManifest(dir, { schema_version: 1, run_id: '001-dev-d1-baseline-r1', campaign_id: CAMPAIGN, status: 'completed', outcome: 'pass', reasons: [], verdict_basis: 'judge', method: 'demo', condition: 'baseline', arm: 'baseline', fixture: { id: 'd1', kind: 'dev', hash: scaffold.prereg.fixture_hashes.dev.d1 }, check_failures: [], records: [], artifacts: {}, prereg: { content_hash: 'f'.repeat(64), epoch: 1 }, model: { pinned: 'm', returned: [] } } as never)
+        return repo
+      }
+      const write = (repo: TestRepo, text = `${JSON.stringify(scaffoldPrereg, null, 2)}\n`) => repo.write(PILOT_PREREG, text)
+      const arrangements: [string, string, (repo: TestRepo) => void][] = [
+        ['untracked', 'prereg_untracked', (repo) => write(repo)],
+        ['staged only', 'prereg_dirty', (repo) => (write(repo), repo.sh(['add', '--', PILOT_PREREG]))],
+        ['modified after the commit', 'prereg_dirty', (repo) => (write(repo), repo.commit('c', [PILOT_PREREG]), write(repo, `${JSON.stringify({ ...(scaffoldPrereg as object), epoch: 9 }, null, 2)}\n`))],
+      ]
+      for (const [name, code, arrange] of arrangements) {
+        for (const extra of [[], ['--tally-only']]) {
+          test(`rejudge${extra.length ? ' --tally-only' : ''}: ${name} is refused as ${code} before credentials or the judge`, async () => {
+            const repo = await plantedUncommitted(arrange)
+            const t = io()
+            noFetch(t)
+            expect(await main(['rejudge', '--campaign', CAMPAIGN, '--repo', repo.dir, ...extra], t.io)).toBe(EXIT.REFUSED)
+            expect(t.lines.err.join('\n')).toContain(`${code}: ${PILOT_PREREG}`)
+          })
+        }
+      }
+    })
+  })
+
+  test('a missing pilot prereg is refused, naming the pilot path and not evals/<m>/prereg.json', async () => {
+    const { repo, scaffold } = chainRepo()
+    writePrereg(repo, scaffold) // the production prereg exists; the pilot one does not
+    const t = io()
+    expect(await main(['pilot', '--method', 'demo', '--repo', repo.dir, ...LIVE], t.io)).toBe(EXIT.REFUSED)
+    expect(t.lines.err.join('\n')).toContain('evals/demo/pilot/prereg.json does not exist')
+  })
+
+  test('--prereg must stay inside the repository', async () => {
+    const { repo } = pilotRepo()
+    const t = io()
+    expect(await main(['pilot', '--method', 'demo', '--repo', repo.dir, '--prereg', '../elsewhere/prereg.json', ...LIVE], t.io)).toBe(EXIT.REFUSED)
+    expect(t.lines.err.join('\n')).toContain('outside the repository')
+  })
+
+  test('the pilot prereg is enforced like any other: an edited fixture voids it', async () => {
+    const { repo } = pilotRepo()
+    repo.write('evals/demo/fixtures/dev/d1.md', 'edited after the prereg\n')
+    const t = io()
+    expect(await main(['pilot', '--method', 'demo', '--repo', repo.dir, ...LIVE], t.io)).toBe(EXIT.REFUSED)
+    expect(t.lines.err.join('\n')).toContain('dev/d1 mismatch')
+  })
+
+  test('--prereg names another repo-relative prereg file', async () => {
+    const { repo, scaffold } = chainRepo()
+    repo.write('evals/demo/pilot/other.json', `${JSON.stringify(scaffold.prereg)}\n`)
+    const t = io()
+    expect(await main(['pilot', '--method', 'demo', '--repo', repo.dir, '--prereg', 'evals/demo/pilot/missing.json', ...LIVE], t.io)).toBe(EXIT.REFUSED)
+    expect(t.lines.err.join('\n')).toContain('evals/demo/pilot/missing.json does not exist')
+  })
+
+  describe('rejudge of a pilot campaign', () => {
+    const CAMPAIGN = 'demo-pilot-2026-10-24T00-00-00-000Z'
+    const evidence = (te2: 'pass' | 'fail') => ({
+      model: { pinned: 'opencode-go/judge-model-x', returned: ['judge-model-x'] },
+      system_prompt_sha256: 'a'.repeat(64),
+      input_sha256: 'b'.repeat(64),
+      redacted_input_sha256: 'c'.repeat(64),
+      attempts: 1,
+      temperature: 0,
+      error_code: null,
+      criteria: [
+        { id: 'TE1', verdict: 'pass', quote: 'a verbatim quote of the answer', quote_verified: true },
+        { id: 'TE2', verdict: te2, quote: 'a verbatim quote of the answer', quote_verified: true },
+      ],
+      overclaim_flag: false,
+      tool_calls: 0,
+      wall_ms: 1,
+    })
+    // A rejudge records the hash of the judge prompt it used. Here it is the real one, so a rule that trusted the prompt hash alone would accept these runs.
+    const REAL_PROMPT = sha256(parseRubric(JUDGED_RUBRIC_TEXT).systemPrompt)
+    const fakeJudge = (hook: (input: unknown) => Promise<unknown>) =>
+      (() => ({ hook, spec: { systemPrompt: 'S', declarations: { expectation: true }, criteria: [], overclaimPatterns: [] }, systemPromptSha256: REAL_PROMPT, rubricSha256: 'e'.repeat(64) })) as never
+
+    async function plantedPilot(opts: { prereg?: boolean; summary?: boolean; maxWords?: number; words?: number; manifestCurrent?: boolean } = {}) {
+      const { repo, scaffold } = chainRepo(JUDGED_RUBRIC_TEXT, opts.maxWords === undefined ? undefined : { dev: { d1: { outcome: 'o', excludedTopics: [], maxWords: opts.maxWords } } })
+      if (opts.prereg !== false) {
+        repo.write(PILOT_PREREG, `${JSON.stringify(scaffold.prereg, null, 2)}\n`)
+        repo.commit('test: pilot prereg', [PILOT_PREREG])
+      }
+      const { writeManifest } = await import('./manifest')
+      const dir = join(repo.dir, 'evals', 'runs', CAMPAIGN, '001-dev-d1-baseline-r1')
+      mkdirSync(dir, { recursive: true })
+      writeManifest(dir, {
+        schema_version: 1,
+        run_id: '001-dev-d1-baseline-r1',
+        campaign_id: CAMPAIGN,
+        status: 'completed',
+        outcome: 'pass',
+        reasons: [],
+        verdict_basis: 'judge',
+        method: 'demo',
+        condition: 'baseline',
+        arm: 'baseline',
+        fixture: { id: 'd1', kind: 'dev', hash: scaffold.prereg.fixture_hashes.dev.d1 },
+        check_failures: [],
+        records: [],
+        artifacts: {},
+        // 'f…' stands for the contract the run was made under; `manifestCurrent` makes it the committed one.
+        prereg: { content_hash: opts.manifestCurrent ? preregContentHash(scaffold.prereg) : 'f'.repeat(64), epoch: 1 },
+        model: { pinned: 'opencode/agent-x', returned: [] },
+        ...(opts.words !== undefined ? { word_count: opts.words } : {}),
+        judge: evidence('pass'),
+      } as never)
+      const say = (text: string) => JSON.stringify({ type: 'text', timestamp: 2, part: { type: 'text', text } })
+      writeFileSync(join(dir, 'stdout.jsonl'), say('The answer.'))
+      writeFileSync(join(dir, 'judge.json'), JUDGE_JSON)
+      // Default: the state a finished rejudge leaves, so the verdicts on disk are provably from the current judge prompt.
+      if (opts.summary !== false) writeSummary(dirname(dir), preregContentHash(scaffold.prereg), [{ run_id: '001-dev-d1-baseline-r1', verdict: 'pass', judge_json_sha256: sha256(JUDGE_JSON) }])
+      return { repo, scaffold, dir }
+    }
+    const JUDGE_JSON = JSON.stringify({ redacted_input_sha256: 'c'.repeat(64), model_pinned: 'm', model_returned: ['m'], criteria: [{ id: 'TE1', verdict: 'pass', quotes: ['q'] }, { id: 'TE2', verdict: 'pass', quotes: ['q'] }], attempts: 1 })
+    const writeSummary = (campaignDir: string, contract: string, runs: object[]) =>
+      writeFileSync(join(campaignDir, 'rejudge-summary.json'), JSON.stringify({ judge_prompt_sha256: REAL_PROMPT, prereg_content_hash: contract, judge_model_id: 'opencode-go/judge-model-x', runs }))
+    /** A second run in the same campaign, copied from the first with `over` applied to its manifest. */
+    async function plantSecondRun(dir: string, over: Record<string, unknown>) {
+      const { writeManifest, readManifest } = await import('./manifest')
+      const second = join(dirname(dir), '002-dev-d1-baseline-r1')
+      mkdirSync(second, { recursive: true })
+      writeManifest(second, { ...readManifest(join(dir, 'manifest.json')), run_id: '002-dev-d1-baseline-r1', ...over } as never)
+      writeFileSync(join(second, 'stdout.jsonl'), readFileSync(join(dir, 'stdout.jsonl')))
+      writeFileSync(join(second, 'judge.json'), JUDGE_JSON)
+      return second
+    }
+    const tallyOnlyArgs = (repo: TestRepo) => ['rejudge', '--campaign', CAMPAIGN, '--repo', repo.dir, '--tally-only']
+    const pilotJson = (repo: TestRepo) => join(repo.dir, 'evals', 'demo', 'pilot', 'pilot.json')
+    const rejudgeArgs = (repo: TestRepo) => ['rejudge', '--campaign', CAMPAIGN, '--repo', repo.dir, '--auth-passthrough', 'none']
+
+    test('reads the pilot prereg, rejudges, regenerates pilot.json from the new verdicts, and writes no review sheets', async () => {
+      const { repo, scaffold, dir } = await plantedPilot()
+      const before = readFileSync(join(dir, 'manifest.json'), 'utf8')
+      const t = io()
+      t.io.createJudge = fakeJudge(async () => ({ verdict: 'fail', evidence: evidence('fail') }))
+      expect(await main(rejudgeArgs(repo), t.io)).toBe(EXIT.OK)
+      const written = JSON.parse(readFileSync(join(repo.dir, 'evals', 'demo', 'pilot', 'pilot.json'), 'utf8')) as { prereg_content_hash: string; arms: string[]; tally: Record<string, Record<string, { runs: number; criteria: Record<string, number>; all_pass: number }>> }
+      expect(written.prereg_content_hash).toBe(preregContentHash(scaffold.prereg))
+      expect(written.arms).toEqual(['baseline'])
+      expect((written as unknown as { campaigns: object }).campaigns).toEqual({ baseline: CAMPAIGN })
+      expect(written.tally.baseline!.d1).toMatchObject({ runs: 1, criteria: { TE1: 1, TE2: 0 }, all_pass: 0 })
+      expect(JSON.parse(readFileSync(join(repo.dir, 'evals', 'runs', CAMPAIGN, 'rejudge-summary.json'), 'utf8')).runs[0]).toMatchObject({ run_id: '001-dev-d1-baseline-r1', verdict: 'fail' })
+      expect(readFileSync(join(dir, 'manifest.json'), 'utf8')).toBe(before)
+      expect(existsSync(join(repo.dir, 'evals', 'runs', CAMPAIGN, 'review.md'))).toBe(false)
+      expect(t.lines.out.join('\n')).toContain('pilot.json')
+    })
+
+    test('--tally-only rebuilds pilot.json from the verdicts on disk without building a judge, reading credentials, or needing OpenCode', async () => {
+      const { repo, scaffold, dir } = await plantedPilot()
+      const before = readFileSync(join(dir, 'manifest.json'), 'utf8')
+      const t = io()
+      t.io.createJudge = (() => {
+        throw new Error('the judge must not be built')
+      }) as never
+      t.io.opencodeAvailability = () => ({ available: false as const, reason: 'must not be asked' })
+      t.io.env.METACOGS_AUTH_CLIPROXY = 'no-such-key'
+      expect(await main(['rejudge', '--campaign', CAMPAIGN, '--repo', repo.dir, '--tally-only'], t.io)).toBe(EXIT.OK)
+      const written = JSON.parse(readFileSync(join(repo.dir, 'evals', 'demo', 'pilot', 'pilot.json'), 'utf8')) as { prereg_content_hash: string; tally: Record<string, Record<string, object>> }
+      expect(written.prereg_content_hash).toBe(preregContentHash(scaffold.prereg))
+      expect(written.tally.baseline!.d1).toMatchObject({ runs: 1, criteria: { TE1: 1, TE2: 1 }, all_pass: 1 })
+      expect(readFileSync(join(dir, 'manifest.json'), 'utf8')).toBe(before)
+      expect(readFileSync(join(repo.dir, 'evals', 'runs', CAMPAIGN, 'rejudge-summary.json'), 'utf8')).toContain('"prereg_content_hash"') // read, never rewritten
+    })
+
+    test('review and review --reconcile refuse a pilot campaign with the message report uses, and write nothing', async () => {
+      const { repo, dir } = await plantedPilot()
+      const campaignDir = dirname(dir)
+      writeFileSync(join(campaignDir, 'review.md'), 'marked')
+      writeFileSync(join(campaignDir, 'review-key.md'), 'key')
+      for (const extra of [[], ['--reconcile']]) {
+        const t = io()
+        expect(await main(['review', '--campaign', CAMPAIGN, '--repo', repo.dir, ...extra], t.io)).toBe(EXIT.REFUSED)
+        const message = t.lines.err.join('\n')
+        expect(message).toContain('1 manifest(s) belong to a pilot campaign (001-dev-d1-baseline-r1 carries arm "baseline"); pilot runs are not reportable')
+      }
+      expect(readFileSync(join(campaignDir, 'review.md'), 'utf8')).toBe('marked')
+      expect(existsSync(join(campaignDir, 'human-review.json'))).toBe(false)
+    })
+
+    test('over_limit follows the maxWords of the committed expectation sidecar, not the reasons the run recorded', async () => {
+      for (const [maxWords, over] of [[5, 1], [9, 0], [50, 0]] as const) {
+        const { repo } = await plantedPilot({ maxWords, words: 9 })
+        const t = io()
+        expect(await main(tallyOnlyArgs(repo), t.io)).toBe(EXIT.OK)
+        const written = JSON.parse(readFileSync(pilotJson(repo), 'utf8')) as { tally: { baseline: { d1: { over_limit: number } } } }
+        expect(written.tally.baseline.d1.over_limit).toBe(over)
+      }
+    })
+
+    test('--tally-only is refused when no rejudge under the current contract backs the verdicts, naming the run dir', async () => {
+      const { repo } = await plantedPilot({ summary: false })
+      const t = io()
+      expect(await main(tallyOnlyArgs(repo), t.io)).toBe(EXIT.REFUSED)
+      expect(t.lines.err.join('\n')).toContain('001-dev-d1-baseline-r1')
+      expect(existsSync(pilotJson(repo))).toBe(false)
+    })
+
+    test('--tally-only is refused after a contract change that was not followed by a rejudge, and accepted once it is', async () => {
+      const { repo, dir } = await plantedPilot()
+      // The summary is for the contract as it was before the change.
+      writeSummary(dirname(dir), 'e'.repeat(64), [{ run_id: '001-dev-d1-baseline-r1', verdict: 'pass', judge_json_sha256: sha256(JUDGE_JSON) }])
+      const refused = io()
+      expect(await main(tallyOnlyArgs(repo), refused.io)).toBe(EXIT.REFUSED)
+      expect(refused.lines.err.join('\n')).toContain('contract')
+      expect(existsSync(pilotJson(repo))).toBe(false)
+      // The rejudge rewrites judge.json and the summary under the current prompt.
+      const rejudge = io()
+      rejudge.io.createJudge = fakeJudge(async () => ({ verdict: 'pass', evidence: evidence('pass') }))
+      expect(await main(rejudgeArgs(repo), rejudge.io)).toBe(EXIT.OK)
+      rmSync(pilotJson(repo))
+      const accepted = io()
+      expect(await main(tallyOnlyArgs(repo), accepted.io)).toBe(EXIT.OK)
+      expect(existsSync(pilotJson(repo))).toBe(true)
+    })
+
+    describe('a verdict is bound to the whole contract it was made under, not only to the judge prompt', () => {
+      const rejudgeOk = async (repo: TestRepo, verdict: 'pass' | 'fail' = 'pass') => {
+        const t = io()
+        t.io.createJudge = fakeJudge(async () => ({ verdict, evidence: evidence(verdict) }))
+        expect(await main(rejudgeArgs(repo), t.io)).toBe(EXIT.OK)
+      }
+      /** Commit a changed pilot contract. The judge prompt (the rubric) is untouched in every case. */
+      const recommit = (repo: TestRepo, prereg: object, extra: Record<string, string> = {}) => {
+        for (const [path, text] of Object.entries(extra)) repo.write(path, text)
+        repo.write(PILOT_PREREG, `${JSON.stringify(prereg, null, 2)}\n`)
+        repo.commit('test: change the pilot contract', [PILOT_PREREG, ...Object.keys(extra)])
+      }
+      const refusedAfter = async (repo: TestRepo) => {
+        const before = readFileSync(pilotJson(repo), 'utf8')
+        const t = io()
+        expect(await main(tallyOnlyArgs(repo), t.io)).toBe(EXIT.REFUSED)
+        expect(t.lines.err.join('\n')).toContain('001-dev-d1-baseline-r1')
+        expect(readFileSync(pilotJson(repo), 'utf8')).toBe(before)
+      }
+
+      test('(i) an expectation-only change (and its hash) after the rejudge is refused', async () => {
+        const { repo, scaffold } = await plantedPilot({ summary: false, maxWords: 50, words: 9 })
+        await rejudgeOk(repo)
+        const sidecar = { outcome: 'o', excludedTopics: [], maxWords: 60 }
+        recommit(repo, { ...scaffold.prereg, expectation_hashes: { dev: { d1: expectationHash(TEST_SALT, sidecar) }, heldout: {} } }, { 'evals/demo/fixtures/dev/d1.expectation.json': `${JSON.stringify(sidecar)}\n` })
+        await refusedAfter(repo)
+      })
+
+      test('(ii) a fixture-text change (and its hash) after the rejudge is refused', async () => {
+        const { repo, scaffold } = await plantedPilot({ summary: false })
+        await rejudgeOk(repo)
+        const text = 'Dev fixture: choose a database for the service, and say why.\n'
+        recommit(repo, { ...scaffold.prereg, fixture_hashes: { ...scaffold.prereg.fixture_hashes, dev: { d1: saltedHash(TEST_SALT, canonicalizeText(text)) } } }, { 'evals/demo/fixtures/dev/d1.md': text })
+        await refusedAfter(repo)
+      })
+
+      test('(iii) a judge_model_id-only change after the rejudge is refused', async () => {
+        const { repo, scaffold } = await plantedPilot({ summary: false })
+        await rejudgeOk(repo)
+        recommit(repo, { ...scaffold.prereg, judge_model_id: 'opencode-go/judge-model-y' })
+        await refusedAfter(repo)
+      })
+
+      test('run under contract A, rejudge under B, restore A: B\'s judge.json is not accepted; the tally uses the manifests\' own verdicts (A)', async () => {
+        const { repo, scaffold } = await plantedPilot({ summary: false, manifestCurrent: true })
+        recommit(repo, { ...scaffold.prereg, judge_model_id: 'opencode-go/judge-model-y' })
+        await rejudgeOk(repo, 'fail') // B's judge fails TE2; judge.json and the summary now say so, under B
+        const underB = JSON.parse(readFileSync(pilotJson(repo), 'utf8')) as { tally: { baseline: { d1: { criteria: Record<string, number> } } } }
+        expect(underB.tally.baseline.d1.criteria.TE2).toBe(0)
+        recommit(repo, scaffold.prereg) // back to A
+        const t = io()
+        expect(await main(tallyOnlyArgs(repo), t.io)).toBe(EXIT.OK)
+        const underA = JSON.parse(readFileSync(pilotJson(repo), 'utf8')) as { prereg_content_hash: string; tally: { baseline: { d1: { criteria: Record<string, number>; all_pass: number } } } }
+        expect(underA.prereg_content_hash).toBe(preregContentHash(scaffold.prereg))
+        expect(underA.tally.baseline.d1).toMatchObject({ criteria: { TE1: 1, TE2: 1 }, all_pass: 1 })
+      })
+
+      test('a rejudge under the current contract is accepted from judge.json, by the rejudge itself and by a later --tally-only', async () => {
+        const { repo } = await plantedPilot({ summary: false })
+        await rejudgeOk(repo, 'fail')
+        const first = readFileSync(pilotJson(repo), 'utf8')
+        expect(JSON.parse(first).tally.baseline.d1.criteria).toEqual({ TE1: 1, TE2: 0 })
+        rmSync(pilotJson(repo))
+        const t = io()
+        expect(await main(tallyOnlyArgs(repo), t.io)).toBe(EXIT.OK)
+        expect(readFileSync(pilotJson(repo), 'utf8')).toBe(first)
+      })
+    })
+
+    test('--tally-only is refused when the rejudge skipped a run, naming it', async () => {
+      const { repo, dir, scaffold } = await plantedPilot()
+      await plantSecondRun(dir, {})
+      writeSummary(dirname(dir), preregContentHash(scaffold.prereg), [
+        { run_id: '001-dev-d1-baseline-r1', verdict: 'pass', judge_json_sha256: sha256(JUDGE_JSON) },
+        { run_id: '002-dev-d1-baseline-r1', prior_outcome: 'pass', verdict: 'skipped', reason: 'fixture missing or changed since the run' },
+      ])
+      const t = io()
+      expect(await main(tallyOnlyArgs(repo), t.io)).toBe(EXIT.REFUSED)
+      expect(t.lines.err.join('\n')).toContain('002-dev-d1-baseline-r1')
+      expect(existsSync(pilotJson(repo))).toBe(false)
+    })
+
+    test('a full rejudge publishes no tally when it skipped a run (fixture changed since the run), and says which', async () => {
+      const { repo, dir } = await plantedPilot({ summary: false })
+      await plantSecondRun(dir, { fixture: { id: 'd1', kind: 'dev', hash: 'a'.repeat(64) } })
+      const t = io()
+      t.io.createJudge = fakeJudge(async () => ({ verdict: 'pass', evidence: evidence('pass') }))
+      expect(await main(rejudgeArgs(repo), t.io)).toBe(EXIT.REFUSED)
+      expect(t.lines.err.join('\n')).toContain('002-dev-d1-baseline-r1')
+      expect(existsSync(pilotJson(repo))).toBe(false)
+    })
+
+    test('manifests that recorded different agent models are refused, and the tally carries the recorded model, not the prereg\'s', async () => {
+      const { repo, dir, scaffold } = await plantedPilot()
+      const current = preregContentHash(scaffold.prereg)
+      const second = await plantSecondRun(dir, { model: { pinned: 'opencode/agent-y', returned: [] } })
+      writeSummary(dirname(dir), current, ['001-dev-d1-baseline-r1', '002-dev-d1-baseline-r1'].map((run_id) => ({ run_id, verdict: 'pass', judge_json_sha256: sha256(JUDGE_JSON) })))
+      const refused = io()
+      expect(await main(tallyOnlyArgs(repo), refused.io)).toBe(EXIT.REFUSED)
+      expect(refused.lines.err.join('\n')).toContain('agent model')
+      expect(existsSync(pilotJson(repo))).toBe(false)
+      rmSync(second, { recursive: true })
+      writeSummary(dirname(dir), current, [{ run_id: '001-dev-d1-baseline-r1', verdict: 'pass', judge_json_sha256: sha256(JUDGE_JSON) }])
+      const ok = io()
+      expect(await main(tallyOnlyArgs(repo), ok.io)).toBe(EXIT.OK)
+      expect((JSON.parse(readFileSync(pilotJson(repo), 'utf8')) as { agent_model_id: string }).agent_model_id).toBe('opencode/agent-x')
+    })
+
+    test('rejudge --prereg on a campaign that is not a pilot is a usage error, before credentials or the judge; review --prereg too', async () => {
+      const { repo, dir } = await plantedPilot()
+      const { writeManifest, readManifest } = await import('./manifest')
+      const redId = 'demo-red-2026-10-24T00-00-00-000Z'
+      const plain = join(dirname(dirname(dir)), redId, '001-dev-d1-baseline-r1')
+      mkdirSync(plain, { recursive: true })
+      const { arm: _arm, ...unarmed } = readManifest(join(dir, 'manifest.json'))
+      writeManifest(plain, { ...unarmed, campaign_id: redId })
+      for (const argv of [
+        ['rejudge', '--campaign', redId, '--repo', repo.dir, '--prereg', PILOT_PREREG],
+        ['review', '--campaign', redId, '--repo', repo.dir, '--prereg', PILOT_PREREG],
+      ]) {
+        const t = io()
+        t.io.env.METACOGS_AUTH_CLIPROXY = 'no-such-key' // fetching it would fail with a different message
+        t.io.createJudge = (() => {
+          throw new Error('the judge must not be built')
+        }) as never
+        expect(await main(argv, t.io)).toBe(EXIT.USAGE)
+        expect(t.lines.err.join('\n')).toContain('--prereg applies to')
+      }
+      // On the pilot campaign the flag is accepted (the prereg is the one named).
+      const t = io()
+      expect(await main(['rejudge', '--campaign', CAMPAIGN, '--repo', repo.dir, '--prereg', PILOT_PREREG, '--tally-only'], t.io)).toBe(EXIT.OK)
+    })
+
+    test('--tally-only applies to rejudge of a pilot campaign only', async () => {
+      const { repo } = await plantedPilot()
+      const t = io()
+      expect(await main(['review', '--campaign', CAMPAIGN, '--repo', repo.dir, '--tally-only'], t.io)).toBe(EXIT.USAGE)
+      expect(t.lines.err.join('\n')).toContain('--tally-only')
+    })
+
+    test('a campaign that mixes armed and unarmed manifests is refused before any judge call (with or without --tally-only)', async () => {
+      const { repo, dir } = await plantedPilot()
+      const { writeManifest, readManifest } = await import('./manifest')
+      const plain = join(dirname(dir), '002-dev-d1-baseline-r2')
+      mkdirSync(plain, { recursive: true })
+      const { arm: _arm, ...unarmed } = readManifest(join(dir, 'manifest.json'))
+      writeManifest(plain, { ...unarmed, run_id: '002-dev-d1-baseline-r2' })
+      for (const extra of [[], ['--tally-only']]) {
+        const t = io()
+        t.io.createJudge = (() => {
+          throw new Error('the judge must not be built')
+        }) as never
+        expect(await main([...rejudgeArgs(repo), ...extra], t.io)).toBe(EXIT.REFUSED)
+        expect(t.lines.err.join('\n')).toContain('mixes')
+      }
+      expect(existsSync(join(repo.dir, 'evals', 'demo', 'pilot', 'pilot.json'))).toBe(false)
+    })
+
+    test('a judge that cannot be reached for any run leaves pilot.json alone', async () => {
+      const { repo } = await plantedPilot()
+      const t = io()
+      t.io.createJudge = fakeJudge(async () => ({ verdict: 'infra_error', kind: 'infra', code: 'timeout' }))
+      expect(await main(rejudgeArgs(repo), t.io)).toBe(EXIT.ERROR)
+      expect(t.lines.err.join('\n')).toContain('pilot.json was not written')
+      expect(existsSync(join(repo.dir, 'evals', 'demo', 'pilot', 'pilot.json'))).toBe(false)
+    })
+
+    test('a pilot campaign without its pilot prereg is refused, naming the pilot path', async () => {
+      const { repo } = await plantedPilot({ prereg: false })
+      const t = io()
+      t.io.createJudge = fakeJudge(async () => ({ verdict: 'pass' }))
+      expect(await main(rejudgeArgs(repo), t.io)).toBe(EXIT.REFUSED)
+      expect(t.lines.err.join('\n')).toContain('evals/demo/pilot/prereg.json does not exist')
+    })
+  })
+
+  test('pilot requires --provider live: a usage error on one line, before credentials, the repo or the prereg are touched', async () => {
+    for (const argv of [
+      ['pilot', '--method', 'demo', '--repo', '/nonexistent'],
+      ['pilot', '--method', 'demo', '--repo', '/nonexistent', '--provider', 'scripted'],
+    ]) {
+      const t = io()
+      t.io.env.METACOGS_AUTH_CLIPROXY = 'no-such-key' // fetching it would fail with a different message
+      expect(await main(argv, t.io)).toBe(EXIT.USAGE)
+      expect(t.lines.err).toHaveLength(1)
+      expect(t.lines.err[0]).toContain('--provider live')
+      expect(t.lines.err[0]).not.toContain('\n')
+    }
+  })
+
+  test('a scripted pilot invocation leaves an existing pilot.json byte-identical', async () => {
+    const { repo } = pilotRepo()
+    const path = join(repo.dir, 'evals', 'demo', 'pilot', 'pilot.json')
+    const sentinel = '{"kept": true}\n'
+    repo.write('evals/demo/pilot/pilot.json', sentinel)
+    const out = tmp('metacogs-cliout-')
+    const t = io()
+    expect(await main(['pilot', '--arm', 'baseline', '--provider', 'scripted', '--runs', '1', '--method', 'demo', '--repo', repo.dir, '--out', out], t.io)).toBe(EXIT.USAGE)
+    expect(readFileSync(path, 'utf8')).toBe(sentinel)
+    expect(readdirSync(out)).toEqual([])
+  })
 })
 
 describe('defaultInstallSignalHandlers', () => {

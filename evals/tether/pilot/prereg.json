@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "method": "tether",
+  "epoch": 2,
+  "salt": "161cf18c0d0a409650c000dcaa3745d4",
+  "fixture_hashes": {
+    "dev": {
+      "te-d1-nightly-export-retries": "3cbcfc8ed546cc5d628a5c044babd89db557f1128b1a2bd35f910d133beeda90",
+      "te-d2-reset-email-rate-limit": "73b38271f64a913460a0ba3e90819fb9fff9d625c2bd30d5f91901db7453e1cd"
+    },
+    "negative": {},
+    "heldout": {}
+  },
+  "expectation_hashes": {
+    "dev": {
+      "te-d1-nightly-export-retries": "366ccb81c9d32125ab4204719d79da247873bd4bd294b5569094142766f6a931",
+      "te-d2-reset-email-rate-limit": "e185910d115f01efea9e5a2a8844945720c6f1c61ed4be63ba9dbd0ddfb299b8"
+    },
+    "heldout": {}
+  },
+  "rubric_hash": "b791f7ccd1b7056a3d2b9de2499047c5d3b1750d71251b7797651c9af9390d19",
+  "runs_per_condition": 5,
+  "red_bar": {
+    "min_baseline_fails_per_fixture": 4,
+    "min_fixtures": 2
+  },
+  "green_bar": {
+    "skill_pooled_pass_min": 17,
+    "skill_per_fixture_pass_min": 3,
+    "baseline_pooled_pass_max": 10
+  },
+  "false_fire_max": 0,
+  "per_run_timeout_ms": 180000,
+  "budget": {
+    "max_tool_calls": 20,
+    "max_total_tokens": 300000
+  },
+  "infra_error_definition": "A provider or host outage before the agent produces any answer: a non-zero host exit, a provider 4xx/5xx or network error, or a recording-proxy failure. Retried at most 2 times, reported separately, and excluded from the denominator. A timeout, a budget breach, a judge_error, or any host exit after the agent has started answering counts as a run and stays in the denominator.",
+  "run_outcome_taxonomy": [
+    "pass",
+    "fail",
+    "timeout->fail",
+    "budget->fail",
+    "judge_error->fail",
+    "infra_error",
+    "non_isolated"
+  ],
+  "agreement_floor": 0.8,
+  "agent_model_id": "openai/gpt-6-luna",
+  "judge_model_id": "anthropic/claude-haiku-5-5",
+  "accepted_error_rates": {
+    "false_red": 0.314,
+    "false_green": 0.225
+  },
+  "metadata": {
+    "source_url": "synthesized (no external source)",
+    "licence": "MIT",
+    "notes": "Pilot prereg for tether (docs/plans/2026-10-24-001-feat-tether-method-plan.md). It is read by `eval pilot` only; `report` refuses pilot campaigns, and evals/tether/prereg.json (the RED/GREEN contract) does not exist yet. Two dev fixtures, no negatives, no held-out; five runs per arm per fixture. The rubric, fixtures and expectation sidecars are hashed here, and the pilot reads nothing else as evidence. Bars are placeholders: red_bar, green_bar, false_fire_max and accepted_error_rates are copied from the counterfactual epoch-5 shape only so the file parses. The pilot uses none of them. Baseline gate: other arms are built only if the baseline fails TE2 on ≥4 of 5 runs on both fixtures; otherwise not-reproduced. Decision rule: count runs passing both TE1 and TE2 over the pooled 10 runs per arm; go iff skill ≥ instruction + 2; instruction_present and skill_loaded recorded for every run, none excluded; tie or less → closed-instruction. maxWords is provisional at 250 (each ask states \"under 250 words\"); epoch 1 of evals/tether/prereg.json may revise it from pilot answer lengths. The pilot judge is unvalidated: no reviewer-judge agreement has been measured for TE1 or TE2, so pilot counts are an experiment outcome, not evidence for a matrix cell. Models: agent openai/gpt-6-luna and judge anthropic/claude-haiku-5-5 through the owner's CLIProxyAPI (key name fro-bot-marcusrbrown-metacogs), as in counterfactual epoch 5. Per-run timeout 180000 ms and the 20-call / 300000-token budget are the counterfactual values. Post-gate scoring correction: after the baseline runs, the judge was changed to read all assistant text rather than only the text after the last tool call (a tangent developed before a tool call would otherwise escape TE2), and rubric.md was updated to say so, so rubric_hash and this prereg's content hash changed. The word limit still counts the final answer (the text after the last tool call). Fixtures, expectation sidecars, salt, bars and models are unchanged. The baseline campaign tether-pilot-2026-10-24T22-26-26-504Z was re-judged under the corrected scoring (judge calls only; no agent run was repeated), and pilot.json is keyed to the corrected prereg's content hash. Epoch 2 declares the post-baseline scoring correction (judge reads all assistant text). The ten baseline answers from epoch 1 campaign tether-pilot-2026-10-24T22-26-26-504Z were re-judged under this epoch, not re-run; they are retrospective evidence and the epoch-1 tally is kept in the README."
+  }
+}

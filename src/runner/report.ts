@@ -12,7 +12,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 
 import { dirname, join } from 'node:path'
 
 import { type HumanReview, type HumanReviewBlock, humanReviewBlock } from './human-review'
-import { type RunManifest, manifestPath, readManifest } from './manifest'
+import { type RunManifest, manifestPath, pilotCampaignRefusal, readManifest } from './manifest'
 import type { Prereg } from './prereg'
 import { sha256 } from './workspace'
 
@@ -135,6 +135,12 @@ export function lacksJudgeVerdict(m: Pick<RunManifest, 'outcome' | 'verdict_basi
   return m.fixture.kind !== 'negative' && m.verdict_basis !== 'judge' && (m.outcome === 'pass' || m.verdict_basis === 'pending-judge')
 }
 
+/** Pilot manifests (`eval pilot`) never feed a report; `pilotCampaignRefusal` says why, and `review` says the same. */
+function assertNoPilotArms(runs: readonly LoadedRun[]): void {
+  const refusal = pilotCampaignRefusal(runs)
+  if (refusal !== undefined) throw new Error(refusal)
+}
+
 /** Reports count judged results only: an unjudged positive-fixture run is a reason to stop, not a number to average in. */
 function assertAllJudged(runs: readonly LoadedRun[]): void {
   const unjudged = runs.filter((r) => lacksJudgeVerdict(r.manifest))
@@ -224,6 +230,7 @@ const sorted = <T>(values: Iterable<T>): T[] => [...new Set(values)].sort()
 export function buildRedReport(input: RedReportInput): RedReport {
   const { prereg, contentHash, runs } = input
   if (runs.length === 0) throw new Error('no run manifests to report')
+  assertNoPilotArms(runs)
   assertAllJudged(runs)
   assertContentHash(runs, contentHash)
   const bar = prereg.red_bar
@@ -677,6 +684,7 @@ export interface DevReportInput {
 export function buildDevReport(input: DevReportInput): DevReport {
   const { prereg, contentHash, runs } = input
   if (runs.length === 0) throw new Error('no run manifests to report')
+  assertNoPilotArms(runs)
   assertAllJudged(runs)
   assertContentHash(runs, contentHash)
   const devBar = devBarOf(prereg)
@@ -849,6 +857,7 @@ export interface DevRegressionInput {
 export function recomputeDevRegression(input: DevRegressionInput): DevRegressionSource {
   const { prereg, contentHash, runs } = input
   if (runs.length === 0) throw new Error('the dev campaign has no run manifests')
+  assertNoPilotArms(runs)
   const foreign = runs.filter((r) => r.manifest.prereg.content_hash !== contentHash)
   if (foreign.length) throw new Error(`${foreign.length} dev manifest(s) were not produced under prereg ${contentHash.slice(0, 12)}`)
   const skills = new Set(runs.map((r) => r.manifest.skill?.sha256))
@@ -1161,6 +1170,7 @@ const deltaOf = (skill: { pass: number; attempted: number }, baseline: { pass: n
 export function buildGreenReport(input: GreenReportInput): GreenReport {
   const { prereg, contentHash, runs } = input
   if (runs.length === 0) throw new Error('no run manifests to report')
+  assertNoPilotArms(runs)
   assertAllJudged(runs)
   assertContentHash(runs, contentHash)
 

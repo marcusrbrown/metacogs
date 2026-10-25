@@ -1,0 +1,5 @@
+{
+  "outcome": "The slowdown comes from the retry loop: when a rates-api page keeps timing out (six 30-second attempts), the tenant is restarted from page 1, and those repeated timeouts and restarts account for almost all of the extra roughly 40 minutes.",
+  "excludedTopics": ["the volume of DEBUG logging", "the deprecated legacy config loader"],
+  "maxWords": 250
+}

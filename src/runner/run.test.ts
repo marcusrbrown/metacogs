@@ -15,6 +15,7 @@ import {
   CredentialLeakError,
   type Host,
   type HostRunRequest,
+  type JudgeInput,
   planRuns,
   type PlannedRun,
   type ProviderMode,
@@ -214,9 +215,181 @@ describe('planRuns', () => {
     expect(Math.abs(idx('baseline', 1) - idx('skill', 1))).toBe(1)
   })
 
+  test('the expectation rides PlannedRun.fixture; fixtures without one gain no key', () => {
+    const expectation = { outcome: 'names the deciding constraint', excludedTopics: ['sharding'], maxWords: 120 }
+    const withExpectation = { dev: [{ ...fixtures.dev[0]!, expectation }, fixtures.dev[1]!], negative: fixtures.negative, heldout: [{ ...fixtures.heldout[0]!, expectation }, fixtures.heldout[1]!] }
+    for (const mode of ['red', 'dev', 'green'] as const) {
+      const plan = planRuns({ mode, fixtures: withExpectation, runsPerCondition: 2, includeDev: true })
+      const carried = plan.filter((p) => p.fixture.expectation !== undefined)
+      expect(carried.length).toBeGreaterThan(0)
+      for (const p of carried) expect(p.fixture.expectation).toEqual(expectation)
+      expect(new Set(carried.map((p) => p.fixture.id))).toEqual(new Set(mode === 'green' ? ['d1', 'h1'] : ['d1']))
+      for (const p of plan.filter((p) => p.fixture.expectation === undefined)) expect('expectation' in p.fixture).toBe(false)
+    }
+  })
+
   test('fixture filter; unknown id is an error', () => {
     expect(planRuns({ mode: 'red', fixtures, runsPerCondition: 2, onlyFixture: 'd2' })).toHaveLength(2)
     expect(() => planRuns({ mode: 'red', fixtures, runsPerCondition: 2, onlyFixture: 'nope' })).toThrow(/no fixture/)
+  })
+})
+
+// ── final answer under a declared expectation ──────────────────────────────
+
+describe('final answer scoring (fake host)', () => {
+  const readCall = toolUse('read', { status: 'completed', input: { filePath: 'x' }, output: 'x' })
+  const say = (text: string) => ev({ type: 'text', timestamp: 2, part: { type: 'text', text } })
+  const stdoutOf = (...lines: string[]) => [ev({ type: 'step_start', timestamp: 1, part: { type: 'step-start' } }), ...lines].join('\n')
+  const declared = { expectation: true }
+  const expectation = { outcome: 'names the constraint', excludedTopics: [], maxWords: 50 }
+  const plan = (kind: 'dev' | 'negative' = 'dev', maxWords = expectation.maxWords): PlannedRun => {
+    const run = planOne(kind, 'baseline', kind === 'dev' ? 'd' : 'n')
+    return kind === 'dev' ? { ...run, fixture: { ...run.fixture, expectation: { ...expectation, maxWords } } } : run
+  }
+  const words = (n: number) => Array.from({ length: n }, (_, i) => `w${i}`).join(' ')
+  const judgeEvidence = (verdict: 'pass' | 'fail'): JudgeEvidence => ({
+    model: { pinned: 'opencode-go/judge-x', returned: ['judge-x'] },
+    system_prompt_sha256: 'a'.repeat(64),
+    input_sha256: 'b'.repeat(64),
+    redacted_input_sha256: 'c'.repeat(64),
+    attempts: 1,
+    temperature: 0,
+    error_code: null,
+    criteria: [
+      { id: 'TE1', verdict, quote: 'a verbatim quote of the answer', quote_verified: true },
+      { id: 'TE2', verdict, quote: 'a verbatim quote of the answer', quote_verified: true },
+    ],
+    overclaim_flag: false,
+    tool_calls: 0,
+    wall_ms: 1,
+  })
+  const judgedWith = (verdict: 'pass' | 'fail' | 'judge_error') => async () =>
+    verdict === 'judge_error' ? ({ verdict, detail: 'invalid_malformed_json' } as const) : ({ verdict, evidence: judgeEvidence(verdict) } as const)
+  const answering = (n: number) => fakeHost({ stdout: stdoutOf(readCall, say(words(n))) })
+
+  test('declared: the judge grades all assistant text, joined with newlines, and receives the expectation', async () => {
+    const seen: JudgeInput[] = []
+    const judge = async (i: JudgeInput) => (seen.push(i), { verdict: 'pass' as const })
+    const stdout = stdoutOf(say('Let me look.'), readCall, say('The answer.'))
+    const res = await runCampaign(campaign([plan()], fakeHost({ stdout }), { judge, declarations: declared }))
+    expect(res.results[0]).toMatchObject({ outcome: 'pass' })
+    expect(seen).toHaveLength(1)
+    expect(seen[0]!.finalAnswer).toBe('Let me look.\nThe answer.')
+    expect(seen[0]!.fixture.expectation).toEqual(expectation)
+  })
+
+  test('declared: a tangent developed in narration before a tool call reaches the judge, and the word count uses the final answer only', async () => {
+    const seen: JudgeInput[] = []
+    const judge = async (i: JudgeInput) => (seen.push(i), { verdict: 'pass' as const })
+    const tangent = `While I am here, here is a full plan for the excluded work: ${words(40)}.`
+    const stdout = stdoutOf(say(tangent), readCall, say('Clean result in five words.'))
+    const c = campaign([plan('dev', 10)], fakeHost({ stdout }), { judge, declarations: declared })
+    const res = await runCampaign(c)
+    expect(seen[0]!.finalAnswer).toBe(`${tangent}\nClean result in five words.`)
+    // 5 words in the final segment fit a limit of 10; the 40-word narration is judged but not counted.
+    expect(res.results[0]).toMatchObject({ outcome: 'pass', reasons: [] })
+    expect(manifestOf(c.campaignDir, res.results[0]!.runId).word_count).toBe(5)
+  })
+
+  test('declared: the final segment alone decides answer_over_limit, even when the narration is short', async () => {
+    const stdout = stdoutOf(say('Short note.'), readCall, say(words(11)))
+    const res = await runCampaign(campaign([plan('dev', 10)], fakeHost({ stdout }), { judge: judgedWith('pass'), declarations: declared }))
+    expect(res.results[0]).toMatchObject({ outcome: 'fail', reasons: ['answer_over_limit'] })
+  })
+
+  test('declared: narration with an empty final segment is still answer_empty and the judge is not called', async () => {
+    let calls = 0
+    const judge = async () => (calls += 1, { verdict: 'pass' as const })
+    const stdout = stdoutOf(say(`A long plan: ${words(60)}`), readCall)
+    const res = await runCampaign(campaign([plan()], fakeHost({ stdout }), { judge, declarations: declared }))
+    expect(calls).toBe(0)
+    expect(res.results[0]).toMatchObject({ outcome: 'fail', reasons: ['answer_empty'] })
+  })
+
+  test('not declared: the judge still gets every text part, as before', async () => {
+    const seen: JudgeInput[] = []
+    const judge = async (i: JudgeInput) => (seen.push(i), { verdict: 'pass' as const })
+    const stdout = stdoutOf(say('Let me look. '), readCall, say('The answer.'))
+    await runCampaign(campaign([plan()], fakeHost({ stdout }), { judge }))
+    expect(seen[0]!.finalAnswer).toBe('Let me look. The answer.')
+  })
+
+  test('declared and nothing after the last tool call: fail with answer_empty, judge not called, no judge verdict', async () => {
+    let calls = 0
+    const judge = async () => (calls += 1, { verdict: 'pass' as const })
+    const stdout = stdoutOf(say('Working on it.'), readCall)
+    const c = campaign([plan()], fakeHost({ stdout }), { judge, declarations: declared })
+    const res = await runCampaign(c)
+    expect(calls).toBe(0)
+    expect(res.results[0]).toMatchObject({ status: 'completed', outcome: 'fail', reasons: ['answer_empty'] })
+    const m = manifestOf(c.campaignDir, res.results[0]!.runId)
+    expect(m).toMatchObject({ outcome: 'fail', reasons: ['answer_empty'], verdict_basis: 'deterministic' })
+    expect(m.judge).toBeUndefined()
+  })
+
+  test('declared and the answer is only whitespace: also answer_empty', async () => {
+    const res = await runCampaign(campaign([plan()], fakeHost({ stdout: stdoutOf(readCall, say('  \n ')) }), { declarations: declared }))
+    expect(res.results[0]).toMatchObject({ outcome: 'fail', reasons: ['answer_empty'] })
+  })
+
+  test('not declared: the same stdout is judged on the text that exists', async () => {
+    let calls = 0
+    const judge = async () => (calls += 1, { verdict: 'pass' as const })
+    const res = await runCampaign(campaign([plan()], fakeHost({ stdout: stdoutOf(say('Working on it.'), readCall) }), { judge }))
+    expect(calls).toBe(1)
+    expect(res.results[0]).toMatchObject({ outcome: 'pass' })
+  })
+
+  test('word limit: exactly maxWords passes, one more fails with answer_over_limit and the judge criteria stay on the manifest', async () => {
+    const at = campaign([plan('dev', 250)], answering(250), { judge: judgedWith('pass'), declarations: declared })
+    const atRes = await runCampaign(at)
+    expect(atRes.results[0]).toMatchObject({ outcome: 'pass', reasons: [] })
+    expect(manifestOf(at.campaignDir, atRes.results[0]!.runId).word_count).toBe(250)
+
+    const over = campaign([plan('dev', 250)], answering(251), { judge: judgedWith('pass'), declarations: declared })
+    const overRes = await runCampaign(over)
+    expect(overRes.results[0]).toMatchObject({ status: 'completed', outcome: 'fail', reasons: ['answer_over_limit'] })
+    const m = manifestOf(over.campaignDir, overRes.results[0]!.runId)
+    expect(m).toMatchObject({ outcome: 'fail', word_count: 251, verdict_basis: 'judge' })
+    expect(m.judge!.criteria.map((k) => [k.id, k.verdict])).toEqual([['TE1', 'pass'], ['TE2', 'pass']]) // TE3m is never a judge criterion
+  })
+
+  test('word limit: a judge fail keeps its reason and gains answer_over_limit; a judge_error likewise', async () => {
+    const failed = await runCampaign(campaign([plan('dev', 10)], answering(11), { judge: judgedWith('fail'), declarations: declared }))
+    expect(failed.results[0]).toMatchObject({ outcome: 'fail', reasons: ['judge_fail', 'answer_over_limit'] })
+    const errored = await runCampaign(campaign([plan('dev', 10)], answering(11), { judge: judgedWith('judge_error'), declarations: declared }))
+    expect(errored.results[0]).toMatchObject({ outcome: 'fail', reasons: ['judge_error', 'answer_over_limit'] })
+    const within = await runCampaign(campaign([plan('dev', 10)], answering(10), { judge: judgedWith('fail'), declarations: declared }))
+    expect(within.results[0]).toMatchObject({ outcome: 'fail', reasons: ['judge_fail'] })
+  })
+
+  test('word limit: answer_empty records word_count 0', async () => {
+    const c = campaign([plan()], fakeHost({ stdout: stdoutOf(say('Working.'), readCall) }), { judge: judgedWith('pass'), declarations: declared })
+    const res = await runCampaign(c)
+    expect(manifestOf(c.campaignDir, res.results[0]!.runId)).toMatchObject({ reasons: ['answer_empty'], word_count: 0 })
+  })
+
+  test('word limit: no expectation on the fixture means no check and no word_count, however long the answer', async () => {
+    const run = planOne('dev', 'baseline', 'd')
+    const c = campaign([run], answering(5000), { judge: judgedWith('pass') })
+    const res = await runCampaign(c)
+    expect(res.results[0]).toMatchObject({ outcome: 'pass', reasons: [] })
+    expect('word_count' in manifestOf(c.campaignDir, res.results[0]!.runId)).toBe(false)
+  })
+
+  test('word limit: a judge that could not be reached is an infra_error, not a word-count failure', async () => {
+    const unreachable = async () => ({ verdict: 'infra_error', kind: 'infra', code: 'timeout' }) as const
+    const res = await runCampaign(campaign([plan('dev', 10)], answering(50), { judge: unreachable, declarations: declared, maxInfraRetries: 0 }))
+    expect(res.results[0]).toMatchObject({ outcome: 'infra_error' })
+    expect(res.results[0]!.reasons).not.toContain('answer_over_limit')
+  })
+
+  test('a negative fixture is never judged and has no answer to be empty', async () => {
+    let calls = 0
+    const judge = async () => (calls += 1, { verdict: 'pass' as const })
+    const res = await runCampaign(campaign([plan('negative')], fakeHost({ stdout: stdoutOf(readCall) }), { judge, declarations: declared }))
+    expect(calls).toBe(0)
+    expect(res.results[0]).toMatchObject({ outcome: 'pass' })
   })
 })
 

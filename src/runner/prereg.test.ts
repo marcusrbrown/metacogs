@@ -3,9 +3,11 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
+import { canonicalize } from '../record/canonical'
 import {
   canonicalizeText,
   enforcePrereg,
+  expectationHash,
   parsePrereg,
   PreregRefusal,
   preregContentHash,
@@ -13,7 +15,9 @@ import {
   type ViolationCode,
   verifyPreregContent,
 } from './prereg'
-import { buildHappyChain, scaffoldMethod, TestRepo, writePrereg } from './test-support'
+import { parseDeclarations, parseRubric } from './judge'
+import { loadRedactTokens, survivingTokens } from './redact'
+import { buildHappyChain, scaffoldMethod, TEST_SALT, TestRepo, writePrereg } from './test-support'
 import { heldoutDir } from './workspace'
 
 const repos: TestRepo[] = []
@@ -331,8 +335,10 @@ describe('committed preregs', () => {
 
       test('dev, negative, rubric hashes match the working tree', () => {
         if (!parsed.ok) throw new Error(parsed.errors.join('; '))
-        const { problems } = verifyPreregContent(parsed.prereg, { evalDir, heldoutDir: '/nonexistent' }, { includeHeldout: false })
+        const { problems, invalid } = verifyPreregContent(parsed.prereg, { evalDir, heldoutDir: '/nonexistent' }, { includeHeldout: false })
         expect(problems).toEqual([])
+        expect(invalid).toEqual([])
+        expect(parsed.prereg.expectation_hashes).toBeUndefined()
       })
 
       test('redact.json is a non-empty array of non-empty strings', () => {
@@ -346,10 +352,323 @@ describe('committed preregs', () => {
       test.skipIf(!existsSync(heldoutDir(method)))('held-out hashes match the custody directory when it exists', () => {
         if (!parsed.ok) throw new Error(parsed.errors.join('; '))
         const dir = heldoutDir(method)
-        const { problems, fixtures } = verifyPreregContent(parsed.prereg, { evalDir, heldoutDir: dir }, { includeHeldout: true })
+        const { problems, invalid, fixtures } = verifyPreregContent(parsed.prereg, { evalDir, heldoutDir: dir }, { includeHeldout: true })
         expect(problems).toEqual([])
+        expect(invalid).toEqual([])
         expect(fixtures.heldout).toHaveLength(4)
       })
     })
   }
+})
+
+// ── expectation sidecars ───────────────────────────────────────────────────
+
+describe('expectation_hashes (parsePrereg)', () => {
+  const { prereg } = (() => {
+    const { repo, heldout } = setup()
+    return scaffoldMethod(repo, 'demo', { heldoutDir: heldout })
+  })()
+  const HEX = 'a'.repeat(64)
+  const errorsOf = (expectation_hashes: unknown) => {
+    const r = parsePrereg(JSON.stringify({ ...prereg, expectation_hashes }))
+    return r.ok ? [] : r.errors
+  }
+
+  test('optional: a prereg without the key parses', () => {
+    expect(parsePrereg(JSON.stringify(prereg)).ok).toBe(true)
+  })
+
+  test('accepts dev and heldout sets of hex64 hashes', () => {
+    const r = parsePrereg(JSON.stringify({ ...prereg, expectation_hashes: { dev: { d1: HEX }, heldout: { h1: HEX } } }))
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.prereg.expectation_hashes).toEqual({ dev: { d1: HEX }, heldout: { h1: HEX } })
+  })
+
+  test('names the set and id for a bad hash or id; refuses other sets, a missing set, and a non-object', () => {
+    expect(errorsOf({ dev: { d1: 'nope' }, heldout: {} }).join('\n')).toContain('expectation_hashes.dev.d1: must be a sha256 hex digest')
+    expect(errorsOf({ dev: { '../x': HEX }, heldout: {} }).join('\n')).toContain('expectation_hashes.dev.../x: invalid fixture id')
+    expect(errorsOf({ dev: {}, heldout: {}, negative: {} }).join('\n')).toContain('expectation_hashes.negative: unknown set')
+    expect(errorsOf({ dev: {} }).join('\n')).toContain('expectation_hashes.heldout: must be an object of id → hash')
+    expect(errorsOf('x').join('\n')).toContain('expectation_hashes: must be an object with dev, heldout')
+    expect(errorsOf([]).join('\n')).toContain('expectation_hashes: must be an object with dev, heldout')
+  })
+
+  test('fixture_hashes validation is unchanged', () => {
+    const r = parsePrereg(JSON.stringify({ ...prereg, fixture_hashes: { ...prereg.fixture_hashes, dev: { d1: 'nope' } } }))
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.errors.join('\n')).toContain('fixture_hashes.dev.d1: must be a sha256 hex digest')
+  })
+})
+
+describe('expectation sidecars (verifyPreregContent)', () => {
+  const A = { outcome: 'picks a database and names the deciding constraint', excludedTopics: ['sharding'], maxWords: 120 }
+  const B = { outcome: 'recommends the boring option', excludedTopics: [], maxWords: 80 }
+  const D2_TEXT = 'Dev fixture two: choose a cache.\n'
+
+  /** A repo with dev fixtures d1 and d2, a negative n1, and sidecars (default: A beside d1, B beside d2) hashed into the prereg. */
+  function twoDev(sidecars: Record<string, unknown> = { d1: A, d2: B }, heldoutSidecars?: Record<string, unknown>) {
+    const { repo, heldout } = setup()
+    const scaffold = scaffoldMethod(repo, 'demo', {
+      heldoutDir: heldout,
+      expectations: { dev: sidecars, ...(heldoutSidecars ? { heldout: heldoutSidecars } : {}) },
+    })
+    repo.write('evals/demo/fixtures/dev/d2.md', D2_TEXT)
+    const prereg = {
+      ...scaffold.prereg,
+      fixture_hashes: { ...scaffold.prereg.fixture_hashes, dev: { ...scaffold.prereg.fixture_hashes.dev, d2: saltedHash(TEST_SALT, canonicalizeText(D2_TEXT)) } },
+    }
+    const evalDir = join(repo.dir, 'evals', 'demo')
+    const verify = (p = prereg, includeHeldout = false) => verifyPreregContent(p, { evalDir, heldoutDir: heldout }, { includeHeldout })
+    const enforceDev = (p = prereg) => {
+      writePrereg(repo, scaffold, p)
+      return enforcePrereg({ git: repo.git, repoRoot: repo.dir, method: 'demo', mode: 'dev', heldoutDir: heldout })
+    }
+    return { repo, heldout, prereg, evalDir, verify, enforceDev, scaffold }
+  }
+  const refusal = (fn: () => unknown): PreregRefusal => {
+    try {
+      fn()
+    } catch (e) {
+      if (e instanceof PreregRefusal) return e
+      throw e
+    }
+    throw new Error('expected a PreregRefusal')
+  }
+
+  test('happy path: two dev ids with matching sidecars verify clean and carry the parsed object', () => {
+    const { verify, enforceDev } = twoDev()
+    const v = verify()
+    expect(v.problems).toEqual([])
+    expect(v.invalid).toEqual([])
+    expect(v.fixtures.dev.map((f) => [f.id, f.expectation])).toEqual([
+      ['d1', A],
+      ['d2', B],
+    ])
+    expect(v.fixtures.negative.every((f) => f.expectation === undefined)).toBe(true)
+    expect(enforceDev().content.fixtures.dev[0]?.expectation).toEqual(A)
+  })
+
+  test('the hash is over canonical JSON: key order and whitespace in the file do not matter', () => {
+    const { repo, verify } = twoDev()
+    repo.write('evals/demo/fixtures/dev/d1.expectation.json', `{\n  "maxWords": 120,\n  "excludedTopics": ["sharding"],\n  "outcome": "${A.outcome}"\n}\n`)
+    expect(verify().problems).toEqual([])
+    expect(expectationHash(TEST_SALT, A)).toBe(saltedHash(TEST_SALT, canonicalize(A)))
+  })
+
+  test('a sidecar beside a negative fixture is extra', () => {
+    const { repo, verify } = twoDev()
+    repo.write('evals/demo/fixtures/negative/n1.expectation.json', JSON.stringify(A))
+    expect(verify().problems).toEqual([{ set: 'expectation.negative', id: 'n1', kind: 'extra', actual: expectationHash(TEST_SALT, A) }])
+  })
+
+  test('an orphan sidecar (no matching fixture) is extra, listed or not', () => {
+    const unlisted = twoDev()
+    unlisted.repo.write('evals/demo/fixtures/dev/d9.expectation.json', JSON.stringify(A))
+    expect(unlisted.verify().problems).toEqual([{ set: 'expectation.dev', id: 'd9', kind: 'extra', actual: expectationHash(TEST_SALT, A) }])
+
+    const listed = twoDev({ d1: A, d2: B, d9: A })
+    expect(listed.verify().problems.map((p) => `${p.set}/${p.id} ${p.kind}`)).toEqual(['expectation.dev/d9 extra'])
+  })
+
+  test('a listed id without a sidecar is missing', () => {
+    const { evalDir, verify } = twoDev()
+    rmSync(join(evalDir, 'fixtures', 'dev', 'd2.expectation.json'))
+    expect(verify().problems).toEqual([{ set: 'expectation.dev', id: 'd2', kind: 'missing', expected: expectationHash(TEST_SALT, B) }])
+  })
+
+  test('key absent: any sidecar is a violation, and the refusal is a content_hash_mismatch', () => {
+    const { prereg, verify, enforceDev } = twoDev()
+    const { expectation_hashes: _drop, ...bare } = prereg
+    expect(verify(bare).problems.map((p) => `${p.set}/${p.id} ${p.kind}`)).toEqual(['expectation.dev/d1 extra', 'expectation.dev/d2 extra'])
+    const r = refusal(() => enforceDev(bare))
+    expect(codes(r.violations)).toEqual(['content_hash_mismatch'])
+    expect(r.violations[0]?.message).toContain('expectation.dev/d1 extra')
+  })
+
+  test('a sidecar edited after the prereg is a mismatch → content_hash_mismatch', () => {
+    const { repo, verify, enforceDev } = twoDev()
+    repo.write('evals/demo/fixtures/dev/d1.expectation.json', JSON.stringify({ ...A, maxWords: 121 }))
+    expect(verify().problems).toEqual([
+      { set: 'expectation.dev', id: 'd1', kind: 'mismatch', expected: expectationHash(TEST_SALT, A), actual: expectationHash(TEST_SALT, { ...A, maxWords: 121 }) },
+    ])
+    const r = refusal(() => enforceDev())
+    expect(codes(r.violations)).toEqual(['content_hash_mismatch'])
+    expect(r.violations[0]?.message).toContain('expectation.dev/d1 mismatch')
+  })
+
+  describe('shape errors are prereg_invalid naming the id and the field', () => {
+    const cases: [string, unknown, string][] = [
+      ['maxWords 0', { ...A, maxWords: 0 }, 'maxWords'],
+      ['maxWords non-integer', { ...A, maxWords: 12.5 }, 'maxWords'],
+      ['maxWords a string', { ...A, maxWords: '120' }, 'maxWords'],
+      ['maxWords missing', { outcome: A.outcome, excludedTopics: [] }, 'maxWords'],
+      ['excludedTopics not an array', { ...A, excludedTopics: 'sharding' }, 'excludedTopics'],
+      ['excludedTopics holds a non-string', { ...A, excludedTopics: ['ok', 3] }, 'excludedTopics'],
+      ['empty outcome', { ...A, outcome: '' }, 'outcome'],
+      ['blank outcome', { ...A, outcome: '   ' }, 'outcome'],
+      ['outcome missing', { excludedTopics: [], maxWords: 5 }, 'outcome'],
+      ['unknown field', { ...A, extra: 1 }, 'extra'],
+      ['not an object', ['x'], 'expectation'],
+    ]
+    for (const [label, bad, field] of cases) {
+      test(label, () => {
+        const { verify, enforceDev } = twoDev({ d1: bad, d2: B })
+        const v = verify()
+        expect(v.invalid).toHaveLength(1)
+        expect(v.invalid[0]).toContain('d1')
+        expect(v.invalid[0]).toContain(field)
+        expect(v.problems).toEqual([]) // hashes match; only the shape is wrong
+        expect(v.fixtures.dev.find((f) => f.id === 'd1')?.expectation).toBeUndefined()
+        const r = refusal(() => enforceDev())
+        expect(codes(r.violations)).toEqual(['prereg_invalid'])
+        expect(r.violations[0]?.message).toContain('d1')
+        expect(r.violations[0]?.message).toContain(field)
+      })
+    }
+
+    test('invalid JSON names the id and is not also reported as missing', () => {
+      const { repo, verify } = twoDev()
+      repo.write('evals/demo/fixtures/dev/d1.expectation.json', '{nope')
+      const v = verify()
+      expect(v.invalid).toHaveLength(1)
+      expect(v.invalid[0]).toContain('d1')
+      expect(v.problems).toEqual([])
+    })
+
+    test('shape errors and hash problems are both reported', () => {
+      const { repo, enforceDev } = twoDev({ d1: { ...A, maxWords: 0 }, d2: B })
+      repo.write('evals/demo/fixtures/dev/d2.expectation.json', JSON.stringify({ ...B, maxWords: 81 }))
+      expect(codes(refusal(() => enforceDev()).violations)).toEqual(['prereg_invalid', 'content_hash_mismatch'])
+    })
+  })
+
+  describe('held-out directory (verified only when included)', () => {
+    const H = { outcome: 'names the queue and its failure mode', excludedTopics: ['kafka'], maxWords: 90 }
+
+    test('a matching held-out sidecar attaches to the held-out fixture', () => {
+      const { verify } = twoDev(undefined, { h1: H })
+      const v = verify(undefined, true)
+      expect(v.problems).toEqual([])
+      expect(v.invalid).toEqual([])
+      expect(v.fixtures.heldout.map((f) => [f.id, f.expectation])).toEqual([['h1', H]])
+    })
+
+    test('a held-out sidecar is not read when held-out is not included', () => {
+      const { heldout, verify } = twoDev(undefined, { h1: H })
+      writeFileSync(join(heldout, 'h1.expectation.json'), '{nope')
+      const v = verify(undefined, false)
+      expect(v.problems).toEqual([])
+      expect(v.invalid).toEqual([])
+      expect(v.fixtures.heldout).toEqual([])
+    })
+
+    test('an edited held-out sidecar is a mismatch; one with the key absent is extra', () => {
+      const { heldout, prereg, verify } = twoDev(undefined, { h1: H })
+      writeFileSync(join(heldout, 'h1.expectation.json'), JSON.stringify({ ...H, maxWords: 91 }))
+      expect(verify(prereg, true).problems.map((p) => `${p.set}/${p.id} ${p.kind}`)).toEqual(['expectation.heldout/h1 mismatch'])
+      const { expectation_hashes: _drop, ...bare } = prereg
+      expect(verify(bare, true).problems.map((p) => `${p.set}/${p.id} ${p.kind}`)).toContain('expectation.heldout/h1 extra')
+    })
+  })
+})
+
+// The tether pilot: its own prereg (`evals/tether/pilot/prereg.json`), two dev fixtures with expectation sidecars, no negatives, no
+// held-out. The production `evals/tether/prereg.json` does not exist yet; the shipped-method loop above is unchanged.
+describe('tether pilot (committed)', () => {
+  const repoRoot = resolve(import.meta.dir, '..', '..')
+  const evalDir = join(repoRoot, 'evals', 'tether')
+  const parsed = parsePrereg(readFileSync(join(evalDir, 'pilot', 'prereg.json'), 'utf8'))
+  if (!parsed.ok) throw new Error(parsed.errors.join('; '))
+  const { prereg } = parsed
+  const IDS = ['te-d1-nightly-export-retries', 'te-d2-reset-email-rate-limit']
+  const dev = (id: string, ext: 'md' | 'expectation.json') => readFileSync(join(evalDir, 'fixtures', 'dev', `${id}.${ext}`), 'utf8')
+
+  test('parses with the runner parser: two dev fixtures, nothing else, five runs, the epoch-5 models', () => {
+    expect(prereg.method).toBe('tether')
+    expect(Object.keys(prereg.fixture_hashes.dev).sort()).toEqual(IDS)
+    expect(prereg.fixture_hashes.negative).toEqual({})
+    expect(prereg.fixture_hashes.heldout).toEqual({})
+    expect(Object.keys(prereg.expectation_hashes?.dev ?? {}).sort()).toEqual(IDS)
+    expect(prereg.expectation_hashes?.heldout).toEqual({})
+    expect(prereg.runs_per_condition).toBe(5)
+    expect(prereg.agent_model_id).toBe('openai/gpt-6-luna')
+    expect(prereg.judge_model_id).toBe('anthropic/claude-haiku-5-5')
+  })
+
+  test('the rubric, fixtures and expectation sidecars hash to the prereg, and each fixture carries its verified expectation', () => {
+    const { problems, invalid, fixtures } = verifyPreregContent(prereg, { evalDir, heldoutDir: '/nonexistent' }, { includeHeldout: false })
+    expect(problems).toEqual([])
+    expect(invalid).toEqual([])
+    expect(fixtures.dev.map((f) => f.id)).toEqual(IDS)
+    for (const f of fixtures.dev) {
+      expect(f.expectation?.maxWords).toBe(250)
+      expect(f.expectation?.excludedTopics).toHaveLength(2)
+      expect(f.expectation?.outcome.length).toBeGreaterThan(20)
+    }
+    expect(fixtures.negative).toEqual([])
+  })
+
+  test('the notes carry the gate, the decision rule, the provisional word limit and the unvalidated-judge caveat verbatim', () => {
+    const notes = prereg.metadata.notes ?? ''
+    expect(notes).toContain('other arms are built only if the baseline fails TE2 on ≥4 of 5 runs on both fixtures; otherwise not-reproduced')
+    expect(notes).toContain(
+      'count runs passing both TE1 and TE2 over the pooled 10 runs per arm; go iff skill ≥ instruction + 2; instruction_present and skill_loaded recorded for every run, none excluded; tie or less → closed-instruction',
+    )
+    expect(notes).toContain('maxWords is provisional at 250')
+    expect(notes).toContain('The pilot judge is unvalidated')
+    expect(notes).toContain('The pilot uses none of them')
+  })
+
+  test('each ask states the limit, is plain prose, and keeps its bait inside quoted material', () => {
+    // Words that name the planted tangents. They may appear in fenced material, never in the user's own sentences.
+    const bait: Record<string, string[]> = {
+      [IDS[0]!]: ['logging', 'debug', 'config', 'loader', 'deprecat'],
+      [IDS[1]!]: ['nodemailer', 'audit', 'index', 'dashboard', 'advisor', 'upgrade', 'vulnerab'],
+    }
+    for (const id of IDS) {
+      const text = dev(id, 'md')
+      const prose = text.replace(/```[\s\S]*?```/g, '').toLowerCase()
+      expect(text).toContain('Answer in under 250 words.')
+      expect(text.startsWith('---')).toBe(false)
+      expect(text).not.toMatch(/^#+ /m)
+      for (const word of bait[id]!) expect(prose).not.toContain(word)
+    }
+  })
+
+  test('the redact list is identifiers only, and no fixture or sidecar contains any of them (the authoring lint)', () => {
+    const tokens = loadRedactTokens(join(evalDir, 'redact.json'))
+    expect([...tokens].sort()).toEqual(['tether', 'skills/tether', 'record.mjs', 'Scope used:', 'Stop condition:', 'Parked:'].sort())
+    for (const id of IDS) {
+      expect(survivingTokens(dev(id, 'md'), tokens)).toEqual([])
+      expect(survivingTokens(dev(id, 'expectation.json'), tokens)).toEqual([])
+    }
+    // The lint bites: a fixture that leaks the method name or a record prefix is caught, whatever the case.
+    expect(survivingTokens('Use Tether here.\nScope used: the log', tokens).sort()).toEqual(['Scope used:', 'tether'].sort())
+    expect(survivingTokens('see skills/Tether/scripts/record.mjs', tokens).sort()).toEqual(['record.mjs', 'skills/tether', 'tether'].sort())
+  })
+
+  test('the rubric declares expectation: true, judges TE1 and TE2 only, and keeps TE3m mechanical', () => {
+    const rubric = readFileSync(join(evalDir, 'rubric.md'), 'utf8')
+    expect(parseDeclarations(rubric)).toEqual({ expectation: true })
+    const spec = parseRubric(rubric)
+    expect(spec.declarations).toEqual({ expectation: true })
+    expect(spec.criteria.map((c) => c.id)).toEqual(['TE1', 'TE2'])
+    expect(spec.systemPrompt).not.toContain('TE3m')
+    expect(spec.systemPrompt).not.toContain('RECORD')
+    expect(spec.systemPrompt).toContain('EXPECTATION')
+    expect(rubric).toMatch(/### TE3m: Word limit\n\n- `id`: TE3m\n- `check`: mechanical/)
+    // Quotable anchors: both pass anchors name the sentence to quote.
+    expect(spec.criteria.map((c) => c.body.includes('The pass quote is the sentence that states the result'))).toEqual([true, true])
+    expect(spec.criteria[1]!.body).toContain('a deferral')
+    expect(spec.criteria[1]!.body).toContain('Examining something the result needs is not pursuit')
+  })
+
+  test('the committed annex names both fixtures and no sidecar content', () => {
+    const rubric = readFileSync(join(evalDir, 'rubric.md'), 'utf8')
+    for (const id of IDS) expect(rubric).toContain(`#### ${id}`)
+    for (const id of IDS) {
+      const { outcome } = JSON.parse(dev(id, 'expectation.json')) as { outcome: string }
+      expect(rubric).not.toContain(outcome)
+    }
+  })
 })

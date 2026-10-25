@@ -59,6 +59,10 @@ export interface JudgeEvidence {
   wall_ms: number
 }
 
+/** The arms of an `eval pilot` campaign. Only `baseline` runs, under condition `baseline`; a manifest naming any other arm is refused. */
+export const PILOT_ARMS = ['baseline'] as const
+export type PilotArm = (typeof PILOT_ARMS)[number]
+
 export interface RunManifest {
   schema_version: typeof MANIFEST_SCHEMA_VERSION
   run_id: string
@@ -72,6 +76,8 @@ export interface RunManifest {
   verdict_basis: 'deterministic' | 'judge' | 'pending-judge'
   method: string
   condition: Condition
+  /** Pilot campaigns only. Production `condition` is unchanged; reports refuse any manifest that carries an arm. */
+  arm?: PilotArm
   fixture: { id: string; kind: FixtureKind; hash: string }
   /** 1 for the first launch; infra retries increment. */
   attempt: number
@@ -102,6 +108,12 @@ export interface RunManifest {
    * a complete read of the installed SKILL.md; `null` = neither. Absent in manifests written before this field existed.
    */
   fire_basis?: FireBasis | null
+  /**
+   * Whitespace-split words of the final answer (the text after the last tool call under `expectation: true`, which is narrower than what
+   * the judge reads). Only for a fixture that carries an expectation: set after the judge, and 0 for
+   * an `answer_empty` run. Over `expectation.maxWords` adds the reason `answer_over_limit`; `TE3m` is never a judge criterion.
+   */
+  word_count?: number
   /** Present when the judge ran (verdict_basis `judge`). */
   judge?: JudgeEvidence
   artifacts: Record<string, ArtifactRef>
@@ -136,11 +148,56 @@ export function parseManifest(text: string): RunManifest {
   if (typeof prereg?.content_hash !== 'string' || !/^[0-9a-f]{64}$/.test(prereg.content_hash) || !Number.isInteger(prereg.epoch)) {
     throw new ManifestFormatError('manifest predates the content-contract format')
   }
+  const arm = (raw as { arm?: unknown }).arm
+  if (arm !== undefined && !(PILOT_ARMS as readonly unknown[]).includes(arm)) {
+    throw new ManifestFormatError(`manifest carries an unknown pilot arm ${JSON.stringify(arm)} (known: ${PILOT_ARMS.join(', ')})`)
+  }
   return raw as RunManifest
 }
 
 export function readManifest(path: string): RunManifest {
   return parseManifest(readFileSync(path, 'utf8'))
+}
+
+export interface CampaignRun {
+  dir: string
+  manifest: RunManifest
+}
+
+/** Every run directory with a manifest, in run-id order. */
+export function loadCampaignRuns(campaignDir: string): CampaignRun[] {
+  const out: CampaignRun[] = []
+  for (const name of readdirSync(campaignDir).sort()) {
+    const dir = join(campaignDir, name)
+    if (existsSync(manifestPath(dir))) out.push({ dir, manifest: readManifest(manifestPath(dir)) })
+  }
+  return out
+}
+
+/**
+ * Which runs would have reached the judge originally: positive fixtures that completed
+ * and passed the deterministic checks. Everything else is skipped with a reason.
+ */
+export function skipReason(m: RunManifest, hasStdout: boolean): string | undefined {
+  if (m.fixture.kind === 'negative') return 'negative fixture (never judged)'
+  if (m.fixture.kind === 'heldout') return 'held-out fixture (not rejudged by this command)'
+  if (m.status !== 'completed') return `status ${m.status}`
+  if (m.check_failures.length) return 'failed a deterministic check (never reached the judge)'
+  if (m.reasons.includes('answer_empty')) return 'empty final answer (never reached the judge)'
+  if (!hasStdout) return 'no stdout.jsonl retained'
+  return undefined
+}
+
+/**
+ * Why these runs can never feed a report or a review sheet, or `undefined` when none of them is a pilot run. Pilot manifests (`eval pilot`)
+ * ran a different plan (arms, no negatives) under a pilot prereg, and a RED/dev/GREEN read or a human review built from them would claim
+ * evidence nobody pre-registered. `pilot.json` is their only projection.
+ */
+export function pilotCampaignRefusal(runs: readonly { manifest: Pick<RunManifest, 'run_id' | 'arm'> }[]): string | undefined {
+  const piloted = runs.filter((r) => r.manifest.arm !== undefined)
+  const first = piloted[0]
+  if (first === undefined) return undefined
+  return `${piloted.length} manifest(s) belong to a pilot campaign (${first.manifest.run_id} carries arm "${first.manifest.arm}"); pilot runs are not reportable`
 }
 
 export interface StaleManifest {

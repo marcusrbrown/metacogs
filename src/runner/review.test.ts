@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 import { judgeRecordOf, quoteFragments } from './judge-record'
 import { type JudgeEvidence, type RunManifest, writeManifest } from './manifest'
-import { finalAnswerOf, reconcileCampaign, rejudgeCampaign, renderReviewSheets, rubricAnchors, skipReason, writeReview } from './review'
+import { finalAnswerOf, judgedAnswerOf, legend, reconcileCampaign, rejudgeCampaign, renderReviewSheets, rubricAnchors, skipReason, writeReview } from './review'
 import { parseRubric } from './judge'
 import type { JudgeInput } from './run'
 import { sha256 } from './workspace'
@@ -228,6 +228,39 @@ describe('renderReviewSheets (blind sheet + key)', () => {
     expect(head).toContain('review-key.md')
   })
 
+  test('the legend of a rubric that declares expectation: true says the judge read all assistant text in order and the card shows the final segment; the default legend is unchanged', () => {
+    const plain = legend('demo', 'c1', ['TE1', 'TE2'], 2, 0).join('\n')
+    const declared = legend('demo', 'c1', ['TE1', 'TE2'], 2, 0, { expectation: true }).join('\n')
+    expect(plain).toBe(legend('demo', 'c1', ['TE1', 'TE2'], 2, 0, { expectation: false }).join('\n'))
+    expect(plain).toContain('read the fixture prompt, the final answer, and the record')
+    expect(plain).not.toContain('final segment')
+    expect(declared).toContain('all of the agent\'s assistant text, in order')
+    expect(declared).toContain('final segment')
+    expect(declared).not.toContain('read the fixture prompt, the final answer, and the record')
+    // Everything else on the sheet is shared.
+    expect(declared).toContain('Only the 2 judge criteria (TE1, TE2)')
+    expect(declared).toContain('passes if and only if all 2 criteria pass')
+  })
+
+  test('a declared rubric reaches the legend through renderReviewSheets', () => {
+    const repo = tmp()
+    mkdirSync(join(repo, 'evals', 'demo'), { recursive: true })
+    writeFileSync(join(repo, 'evals', 'demo', 'rubric.md'), RUBRIC.replace('## What is being measured', '## Declarations\n\nexpectation: true\n\n## What is being measured'))
+    const campaign = tmp()
+    plant(campaign, '001-dev-d1-baseline-r1', 'ans', {}, judgeJson)
+    const { review } = renderReviewSheets(campaign, repo)
+    expect(review.slice(0, review.indexOf('## 001-'))).toContain('final segment')
+  })
+
+  test('a pilot campaign (manifests carrying an arm) never gets review sheets or a reconcile', () => {
+    const repo = repoWithRubric()
+    const campaign = tmp()
+    plant(campaign, '001-dev-d1-baseline-r1', 'ans', { arm: 'baseline' }, judgeJson)
+    expect(() => renderReviewSheets(campaign, repo)).toThrow(/pilot runs are not reportable/)
+    expect(() => writeReview(campaign, repo)).toThrow(/belong to a pilot campaign/)
+    expect(() => reconcileCampaign(campaign, 0.8)).toThrow(/belong to a pilot campaign/)
+  })
+
   test('review-key.md carries verdicts, quotes, attempts, and recorded outcomes under the same block ids', () => {
     const { repo, campaign } = campaignWithFixtures()
     const { review, key } = renderReviewSheets(campaign, repo)
@@ -315,6 +348,8 @@ describe('rejudgeCampaign (mocked judge)', () => {
       },
       fixtures: { dev: [fixture], negative: [] },
       judgePromptSha256: 'd'.repeat(64),
+      preregContentHash: 'c'.repeat(64),
+      judgeModelId: 'judge/x',
     })
     expect(rows.map((r) => [r.run_id, r.verdict])).toEqual([
       ['001-dev-d1-baseline-r1', 'pass'],
@@ -329,7 +364,11 @@ describe('rejudgeCampaign (mocked judge)', () => {
     const text = readFileSync(join(judged, 'judge.json'), 'utf8')
     expect(JSON.parse(text).criteria).toEqual([{ id: 'CF1', verdict: 'pass', quotes: ['a verbatim quote of the answer'] }])
     expect(rows[0]).toMatchObject({ prior_outcome: 'fail', judge_json_sha256: sha256(text) })
-    expect(JSON.parse(readFileSync(join(campaign, 'rejudge-summary.json'), 'utf8')).judge_prompt_sha256).toBe('d'.repeat(64))
+    const summary = JSON.parse(readFileSync(join(campaign, 'rejudge-summary.json'), 'utf8'))
+    expect(summary.judge_prompt_sha256).toBe('d'.repeat(64))
+    // The contract the rejudge was enforced under and the judge it pinned: what a pilot tally needs to trust judge.json later.
+    expect(summary.prereg_content_hash).toBe('c'.repeat(64))
+    expect(summary.judge_model_id).toBe('judge/x')
   })
 
   test('a changed fixture or a skill run without retained records is skipped, never judged on guesswork', async () => {
@@ -345,9 +384,88 @@ describe('rejudgeCampaign (mocked judge)', () => {
       },
       fixtures: { dev: [fixture], negative: [] },
       judgePromptSha256: 'd'.repeat(64),
+      preregContentHash: 'c'.repeat(64),
+      judgeModelId: 'judge/x',
     })
     expect(calls).toBe(0)
     expect(rows.map((r) => r.reason)).toEqual(['fixture missing or changed since the run', 'record contents not retained'])
+  })
+
+  test('declared expectation: rejudge forwards the fixture expectation and grades all assistant text, like the campaign', async () => {
+    const campaign = tmp()
+    const dir = plant(campaign, '001-dev-d1-baseline-r1', 'ignored')
+    const say = (text: string) => ev({ type: 'text', timestamp: 2, part: { type: 'text', text } })
+    const call = ev({ type: 'tool_use', timestamp: 2, part: { type: 'tool', tool: 'read', callID: 'c', state: { status: 'completed', input: {}, output: 'x' } } })
+    writeFileSync(join(dir, 'stdout.jsonl'), [say('Looking.'), call, say('Final.')].join('\n'))
+    const expectation = { outcome: 'names the constraint', excludedTopics: [], maxWords: 40 }
+    const seen: JudgeInput[] = []
+    const run = (declarations?: { expectation: boolean }) =>
+      rejudgeCampaign({
+        campaignDir: campaign,
+        judge: async (input) => (seen.push(input), { verdict: 'pass' as const }),
+        fixtures: { dev: [{ ...fixture, expectation }], negative: [] },
+        ...(declarations ? { declarations } : {}),
+        judgePromptSha256: 'd'.repeat(64),
+      preregContentHash: 'c'.repeat(64),
+      judgeModelId: 'judge/x',
+      })
+    await run({ expectation: true })
+    expect(seen[0]!.finalAnswer).toBe('Looking.\nFinal.')
+    expect(seen[0]!.fixture.expectation).toEqual(expectation)
+    await run()
+    expect(seen[1]!.finalAnswer).toBe('Looking.Final.')
+  })
+
+  test('a fixture without an expectation adds no expectation key; an answer_empty run is skipped', async () => {
+    const campaign = tmp()
+    plant(campaign, '001-dev-d1-baseline-r1', 'answer one')
+    plant(campaign, '002-dev-d1-baseline-r2', '', { outcome: 'fail', reasons: ['answer_empty'] })
+    const seen: JudgeInput[] = []
+    const rows = await rejudgeCampaign({
+      campaignDir: campaign,
+      judge: async (input) => (seen.push(input), { verdict: 'pass' as const }),
+      fixtures: { dev: [fixture], negative: [] },
+      judgePromptSha256: 'd'.repeat(64),
+      preregContentHash: 'c'.repeat(64),
+      judgeModelId: 'judge/x',
+    })
+    expect('expectation' in seen[0]!.fixture).toBe(false)
+    expect(rows.map((r) => [r.verdict, r.reason])).toEqual([['pass', undefined], ['skipped', 'empty final answer (never reached the judge)']])
+  })
+
+  test('a declared run whose final segment is empty is skipped even if the manifest lacks the reason', async () => {
+    const campaign = tmp()
+    const dir = plant(campaign, '001-dev-d1-baseline-r1', 'x')
+    const say = (text: string) => ev({ type: 'text', timestamp: 2, part: { type: 'text', text } })
+    const call = ev({ type: 'tool_use', timestamp: 2, part: { type: 'tool', tool: 'read', callID: 'c', state: { status: 'completed', input: {}, output: 'x' } } })
+    writeFileSync(join(dir, 'stdout.jsonl'), [say('A long plan.'), call].join('\n'))
+    let calls = 0
+    const rows = await rejudgeCampaign({
+      campaignDir: campaign,
+      judge: async () => (calls += 1, { verdict: 'pass' as const }),
+      fixtures: { dev: [fixture], negative: [] },
+      declarations: { expectation: true },
+      judgePromptSha256: 'd'.repeat(64),
+      preregContentHash: 'c'.repeat(64),
+      judgeModelId: 'judge/x',
+    })
+    expect(calls).toBe(0)
+    expect(rows[0]).toMatchObject({ verdict: 'skipped', reason: 'empty final answer (never reached the judge)' })
+  })
+
+  test('finalAnswerOf (the card excerpt) takes the final segment under the declaration; judgedAnswerOf is what the judge reads', () => {
+    const campaign = tmp()
+    const dir = plant(campaign, '001-dev-d1-baseline-r1', 'x')
+    const say = (text: string) => ev({ type: 'text', timestamp: 2, part: { type: 'text', text } })
+    const call = ev({ type: 'tool_use', timestamp: 2, part: { type: 'tool', tool: 'read', callID: 'c', state: { status: 'completed', input: {}, output: 'x' } } })
+    writeFileSync(join(dir, 'stdout.jsonl'), [say('Looking.'), call, say('Final.')].join('\n'))
+    expect(finalAnswerOf(dir)).toBe('Looking.Final.')
+    expect(finalAnswerOf(dir, { expectation: false })).toBe('Looking.Final.')
+    expect(finalAnswerOf(dir, { expectation: true })).toBe('Final.')
+    expect(judgedAnswerOf(dir)).toBe('Looking.Final.')
+    expect(judgedAnswerOf(dir, { expectation: false })).toBe('Looking.Final.')
+    expect(judgedAnswerOf(dir, { expectation: true })).toBe('Looking.\nFinal.')
+    expect(judgedAnswerOf(join(campaign, 'absent'), { expectation: true })).toBeUndefined()
   })
 
   test('skillReason names why held-out and negatives are not rejudged', () => {

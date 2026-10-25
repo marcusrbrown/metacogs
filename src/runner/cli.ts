@@ -13,33 +13,39 @@ import { AuthPassthroughError, DEFAULT_PASSTHROUGH, needlesOf, type PassthroughA
 import { CliproxyAuthError, cliproxyModelMismatch, type ResolvedCliproxy, resolveCliproxy } from './cliproxy'
 import { Git } from './git'
 import { findNearDuplicates, NEAR_DUPLICATE_THRESHOLD } from './neardup'
-import { HUMAN_REVIEW_FILE, loadCampaignRuns, reconcileCampaign, rejudgeCampaign, writeReview } from './review'
+import { HUMAN_REVIEW_FILE, reconcileCampaign, rejudgeCampaign, writeReview } from './review'
 import { type HumanReview, humanReviewBlock, summarize } from './human-review'
-import { createJudge } from './judge'
-import { findStaleManifests, ManifestFormatError } from './manifest'
+import { createJudge, parseDeclarations, parseRubric } from './judge'
+import { findStaleManifests, loadCampaignRuns, ManifestFormatError, pilotCampaignRefusal } from './manifest'
 import { removeLiveFixtures } from './env'
 import { killLiveGroups, opencodeAvailability } from './opencode'
 import { isLiveModel } from './scripted-provider'
-import { enforcePrereg, heldoutFingerprints, parsePrereg, type Prereg, preregRelPath, PreregRefusal } from './prereg'
+import { enforcePrereg, heldoutFingerprints, parsePrereg, type Prereg, preregCommitViolation, preregRelPath, PreregRefusal } from './prereg'
 import { buildDevReport, buildGreenReport, buildRedReport, type DevReport, type DevRegressionSource, type GreenReport, greenReportPath, loadCampaignManifests, recomputeDevRegression, validateDevReport, validateGreenReport, writeDevReport, writeGreenReport, writeReport } from './report'
-import { planRuns, type ProviderMode, runCampaign } from './run'
+import { isPilotArm, pilotPreregRel, planPilot, tallyPilotCampaign, writePilotTally } from './pilot'
+import { planRuns, type ProviderMode, runCampaign, tallyKey } from './run'
 import { claimHeldoutRead, CustodyError, hashSkillDir, heldoutDir, heldoutReadMarkerPath, resolveOutputDir, stateRoot } from './workspace'
 
 export const EXIT = { OK: 0, ERROR: 1, USAGE: 64, REFUSED: 3, CREDENTIAL_LEAK: 4, INTERRUPTED: 130 } as const
 
 const USAGE = `usage: bun run eval <red|green> --method <name> [options]
+       bun run eval pilot --method <name> --provider live [--arm baseline] [--prereg <repo-relative file>]
+                                                                    dev-only comparison of arms on evals/<m>/pilot/prereg.json; writes evals/<m>/pilot/pilot.json.
+                                                                    Never reported: report and review refuse its campaigns. Only --arm baseline runs in this build
        bun run eval report --method <name> [--campaign <dir>]
        bun run eval review --campaign <id|dir>                     write the blind review.md (fixture prompt, expected-answer notes, answer, record, an unmarked
                                                                    scoring table) and review-key.md (judge verdicts and quotes) into the campaign dir
        bun run eval review --campaign <id|dir> --reconcile         read the marked-up review.md against review-key.md: per-criterion agreement, run-outcome
                                                                    flips, human-review.json; updates a matching GREEN report's human_review block
-       bun run eval rejudge --campaign <id|dir> [--auth-passthrough opencode-go]
-                                                                   judge calls over retained answers, then review.md; manifests untouched
-
+       bun run eval rejudge --campaign <id|dir> [--auth-passthrough opencode-go] [--prereg <file>]
+                                                                    judge calls over retained answers, then review.md; manifests untouched
+       bun run eval rejudge --campaign <id|dir> --tally-only         pilot campaigns only: rebuild pilot.json from the verdicts already on disk; no judge call, no credentials
   --runs <n>              runs per condition per fixture (default: prereg runs_per_condition)
   --provider scripted|live   scripted = local stub (default for red and green --dev-only), live = the model pinned in the prereg through
                           OpenCode's gateway: opencode-go/* (Go subscription, the default and preferred) or opencode/* (Zen, bills credits).
                           The one-shot held-out read (green without --dev-only) refuses anything but --provider live
+  --arm baseline          pilot only: the arm to run (default: baseline, the only arm this runner supports)
+  --prereg <file>         pilot, and rejudge of a pilot campaign: the repo-relative prereg to enforce (default: evals/<m>/pilot/prereg.json)
   --fixture <id>          only this fixture (single-run debugging; marks the campaign as deviating from prereg)
   --rehearsal             green only: scripted dry run of the skill condition on dev + negative fixtures. Never loads held-out fixtures,
                           never claims the read marker, never feeds a report
@@ -69,6 +75,8 @@ export interface MainIO {
   opencodeAvailability?: typeof opencodeAvailability
   /** Hook for tests; production installs SIGINT/SIGTERM handlers. */
   installSignalHandlers?: (abort: () => void) => () => void
+  /** Hook for tests: the judge `rejudge` builds, so a pilot rejudge can run without a gateway. */
+  createJudge?: typeof createJudge
   cwd: string
 }
 
@@ -111,11 +119,47 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
   const { method, runs, provider, fixture, repo, out: outRoot } = parsed.values
   const devOnly = parsed.values['dev-only'] === true
   if ((mode === 'review' || mode === 'rejudge') && !extra.length) {
-    return campaignToolMain({ mode, campaign: parsed.values.campaign, repo, reconcile: parsed.values.reconcile === true, authFlag: parsed.values['auth-passthrough'], cliproxyFlag: parsed.values['auth-cliproxy'], cwd, env, out, err })
+    return campaignToolMain({
+      mode,
+      campaign: parsed.values.campaign,
+      repo,
+      reconcile: parsed.values.reconcile === true,
+      authFlag: parsed.values['auth-passthrough'],
+      cliproxyFlag: parsed.values['auth-cliproxy'],
+      preregFlag: parsed.values.prereg,
+      tallyOnly: parsed.values['tally-only'] === true,
+      cwd,
+      env,
+      out,
+      err,
+      availability: io.opencodeAvailability ?? opencodeAvailability,
+      makeJudge: io.createJudge ?? createJudge,
+    })
   }
   if (mode === 'report' && !extra.length && method) return reportMain({ method, repo, campaign: parsed.values.campaign, devOnly, green: parsed.values.green === true, cliproxyFlag: parsed.values['auth-cliproxy'], cwd, env, out, err })
-  if ((mode !== 'red' && mode !== 'green') || extra.length || !method) {
+  if ((mode !== 'red' && mode !== 'green' && mode !== 'pilot') || extra.length || !method) {
     err(USAGE)
+    return EXIT.USAGE
+  }
+  const isPilot = mode === 'pilot'
+  if (!isPilot && (parsed.values.arm !== undefined || parsed.values.prereg !== undefined)) {
+    err(`--arm and --prereg apply to pilot only\n${USAGE}`)
+    return EXIT.USAGE
+  }
+  if (isPilot && (devOnly || parsed.values.rehearsal === true || parsed.values['include-dev'])) {
+    err(`--dev-only, --rehearsal and --include-dev do not apply to pilot\n${USAGE}`)
+    return EXIT.USAGE
+  }
+  const armFlag = parsed.values.arm ?? 'baseline'
+  if (isPilot && !isPilotArm(armFlag)) {
+    err(`REFUSED: --arm ${armFlag}: this runner supports the baseline arm only; see evals/${method}/pilot/README.md`)
+    return EXIT.REFUSED
+  }
+  const arm = 'baseline' as const
+  // A pilot is a live experiment: a scripted run answers from a stub, so there is nothing to compare, and it would overwrite a real tally.
+  // Refused before any credential is fetched or the prereg is read.
+  if (isPilot && provider !== 'live') {
+    err('eval pilot requires --provider live')
     return EXIT.USAGE
   }
   if (devOnly && mode !== 'green') {
@@ -146,8 +190,22 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
     return EXIT.REFUSED
   }
   // The dev-only green and the rehearsal are separate runner modes: they can never plan, load, or hash held-out content.
-  const runMode = devOnly || rehearsal ? 'dev' : mode
+  const runMode = devOnly || rehearsal || isPilot ? 'dev' : mode
   const providerMode: ProviderMode = provider === 'live' ? 'live' : 'scripted'
+  const repoRoot = new Git(repo ?? cwd).toplevel()
+  const git = new Git(repoRoot)
+  // The pilot prereg is a repo-relative file; a path that leaves the repository is not a committed contract.
+  const pilotPreregPath = pilotPreregRel(repoRoot, method, parsed.values.prereg)
+  if (isPilot && pilotPreregPath === undefined) {
+    err(`REFUSED: --prereg ${parsed.values.prereg} is outside the repository`)
+    return EXIT.REFUSED
+  }
+  // Nor is a pilot prereg that is not committed and clean. Checked before any credential is fetched or any model is asked.
+  const uncommitted = isPilot && pilotPreregPath !== undefined ? preregCommitViolation(git, repoRoot, pilotPreregPath) : undefined
+  if (uncommitted) {
+    err(`REFUSED: ${uncommitted.message}`)
+    return EXIT.REFUSED
+  }
   let auth: PassthroughAuth = {}
   let cliproxy: ResolvedCliproxy | undefined
   try {
@@ -166,9 +224,6 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
     return EXIT.USAGE
   }
 
-  const repoRoot = new Git(repo ?? cwd).toplevel()
-  const git = new Git(repoRoot)
-
   const stale = findStaleManifests([join(repoRoot, 'evals', 'runs'), join(stateRoot(env), 'runs')])
   for (const s of stale) err(`warning: stale "running" manifest (a previous runner did not finish): ${s.path}`)
 
@@ -182,7 +237,7 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
     return EXIT.REFUSED
   }
 
-  const campaignId = `${method}-${rehearsal ? 'rehearsal' : runMode}-${new Date().toISOString().replace(/[:.]/g, '-')}`
+  const campaignId = `${method}-${rehearsal ? 'rehearsal' : isPilot ? 'pilot' : runMode}-${new Date().toISOString().replace(/[:.]/g, '-')}`
 
   const controller = new AbortController()
   const runsPerConditionOf = (p: Prereg) => runsOverride ?? p.runs_per_condition
@@ -192,12 +247,14 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
    */
   const preflight = (p: Prereg): number | string => {
     const ids = (set: Record<string, string>) => Object.entries(set).map(([id, hash]) => ({ id, text: '', hash }))
-    const shape = planRuns({
-      mode: runMode,
-      fixtures: { dev: ids(p.fixture_hashes.dev), negative: ids(p.fixture_hashes.negative), heldout: ids(p.fixture_hashes.heldout) },
-      runsPerCondition: runsPerConditionOf(p),
-      onlyFixture: fixture,
-    })
+    const shape = isPilot
+      ? planPilot({ arm, fixtures: ids(p.fixture_hashes.dev), runsPerCondition: runsPerConditionOf(p), onlyFixture: fixture })
+      : planRuns({
+          mode: runMode,
+          fixtures: { dev: ids(p.fixture_hashes.dev), negative: ids(p.fixture_hashes.negative), heldout: ids(p.fixture_hashes.heldout) },
+          runsPerCondition: runsPerConditionOf(p),
+          onlyFixture: fixture,
+        })
     if (shape.length === 0) {
       err(`nothing to run: the ${mode} plan for ${method} is empty (no fixtures?)`)
       return EXIT.ERROR
@@ -247,6 +304,7 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
       method,
       mode: runMode,
       heldoutDir: heldoutDir(method, env, undefined, repoRoot),
+      ...(isPilot && pilotPreregPath ? { preregPath: pilotPreregPath } : {}),
       // The marker is claimed once the prereg, skill, fixtures and rubric have all verified and before anything is handed to an agent or
       // judge, so any later outcome (a crash, an interrupt) still leaves the read on record, and a refusal that has nothing to do with the
       // held-out set cannot burn it. A directory that does not exist has nothing to burn.
@@ -282,14 +340,16 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
   if (typeof preflighted === 'number') return preflighted
   const campaignDir = preflighted
   const runsPerCondition = runsPerConditionOf(prereg)
-  const plan = planRuns({
-    mode: runMode,
-    fixtures: verification.content.fixtures,
-    runsPerCondition,
-    onlyFixture: fixture,
-  })
+  const plan = isPilot
+    ? planPilot({ arm, fixtures: verification.content.fixtures.dev, runsPerCondition, onlyFixture: fixture })
+    : planRuns({
+        mode: runMode,
+        fixtures: verification.content.fixtures,
+        runsPerCondition,
+        onlyFixture: fixture,
+      })
 
-  const judge = providerMode === 'live' ? createJudge({ repoRoot, method, model: prereg.judge_model_id, auth, signal: controller.signal }) : undefined
+  const judge = providerMode === 'live' ? (io.createJudge ?? createJudge)({ repoRoot, method, model: prereg.judge_model_id, auth, signal: controller.signal }) : undefined
 
   const deviates = runsPerCondition !== prereg.runs_per_condition || fixture !== undefined
   if (deviates) err('note: --runs/--fixture deviate from the prereg plan; this campaign is a debugging run, not evidence.')
@@ -308,6 +368,7 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
       campaignDir,
       runs: plan,
       judge: judge?.hook,
+      declarations: parseDeclarations(readFileSync(join(repoRoot, 'evals', method, 'rubric.md'), 'utf8')),
       auth,
       ...(cliproxy ? { cliproxyKeyName: cliproxy.keyName, leakNeedles: cliproxy.needles } : {}),
       signal: controller.signal,
@@ -319,7 +380,10 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
 
   out(`\nsummary: ${result.summaryPath}`)
   const planned: Record<string, number> = {}
-  for (const r of plan) planned[`${r.fixture.kind}/${r.fixture.id}/${r.condition}`] = (planned[`${r.fixture.kind}/${r.fixture.id}/${r.condition}`] ?? 0) + 1
+  for (const r of plan) {
+    const key = tallyKey({ kind: r.fixture.kind, fixtureId: r.fixture.id, condition: r.condition, ...(r.arm ? { arm: r.arm } : {}) })
+    planned[key] = (planned[key] ?? 0) + 1
+  }
   for (const key of new Set([...Object.keys(planned), ...Object.keys(result.tallies)])) {
     const t = result.tallies[key] ?? { attempted: 0, pass: 0, fail: 0, infra_error: 0, non_isolated: 0 }
     out(`  ${key}: pass ${t.pass}/${t.attempted} (planned ${planned[key] ?? 0})${t.infra_error ? ` · infra_error ${t.infra_error}` : ''}${t.non_isolated ? ` · non_isolated ${t.non_isolated}` : ''}`)
@@ -329,6 +393,22 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
   if (result.aborted === 'credential_leak') {
     err('ABORTED: credential_leak. Artifacts for that run were purged; see its manifest.')
     return EXIT.CREDENTIAL_LEAK
+  }
+  if (isPilot) {
+    try {
+      const pilotTally = tallyPilotCampaign(campaignDir, {
+        method,
+        prereg_content_hash: verification.contentHash,
+        judge_model_id: prereg.judge_model_id,
+        criteria: pilotCriteria(repoRoot, method),
+        fixtures: verification.content.fixtures.dev,
+      })
+      out(`wrote ${writePilotTally(repoRoot, pilotTally, out).slice(repoRoot.length + 1)} (arms: ${pilotTally.arms.join(', ')})`)
+    } catch (e) {
+      // The campaign is intact on disk; only the projection failed. Say how to redo it instead of crashing with a stack.
+      err(`REFUSED: ${(e as Error).message}\npilot.json was not written; the campaign is intact at ${campaignDir}. Fix the cause, then: bun run eval rejudge --campaign ${campaignId} --tally-only`)
+      return EXIT.REFUSED
+    }
   }
   if (result.aborted === 'provider_outage') {
     err('ABORTED: provider_outage. Three rate-limited attempts in a row; no further runs were launched. The summary lists what ran.')
@@ -345,11 +425,20 @@ interface CampaignToolArgs {
   repo?: string
   authFlag?: string
   cliproxyFlag?: string
+  /** `--prereg`: rejudge of a pilot campaign only. */
+  preregFlag?: string | undefined
+  /** `--tally-only`: rejudge of a pilot campaign only; rebuild pilot.json from the verdicts on disk, no judge call. */
+  tallyOnly?: boolean
   cwd: string
   env: Record<string, string | undefined>
   out: (line: string) => void
   err: (line: string) => void
+  availability: typeof opencodeAvailability
+  makeJudge: typeof createJudge
 }
+
+/** The judge criterion ids the pilot tally counts: the rubric's, which the prereg's `rubric_hash` has already pinned. */
+const pilotCriteria = (repoRoot: string, method: string): string[] => parseRubric(readFileSync(join(repoRoot, 'evals', method, 'rubric.md'), 'utf8')).criteria.map((c) => c.id)
 
 /** `--campaign` is a directory, or a campaign id under `evals/runs/` (then the state root's `runs/`, where held-out campaigns live). */
 export function resolveCampaignDir(value: string, repoRoot: string, cwd: string, env: Record<string, string | undefined>): string | undefined {
@@ -361,6 +450,14 @@ export function resolveCampaignDir(value: string, repoRoot: string, cwd: string,
 async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
   if (!a.campaign) {
     a.err(`${a.mode} needs --campaign <id|dir>\n${USAGE}`)
+    return EXIT.USAGE
+  }
+  if (a.tallyOnly && a.mode !== 'rejudge') {
+    a.err(`--tally-only applies to rejudge only\n${USAGE}`)
+    return EXIT.USAGE
+  }
+  if (a.preregFlag !== undefined && a.mode !== 'rejudge') {
+    a.err(`--prereg applies to rejudge of a pilot campaign only\n${USAGE}`)
     return EXIT.USAGE
   }
   const repoRoot = new Git(a.repo ?? a.cwd).toplevel()
@@ -381,6 +478,12 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
     a.err(`no run manifests in ${a.campaign}`)
     return EXIT.ERROR
   }
+  // Review sheets (and their reconcile) are for RED/GREEN campaigns. A pilot campaign's only projection is pilot.json; `rejudge` accepts it.
+  const pilotRefusal = a.mode === 'review' ? pilotCampaignRefusal(runs) : undefined
+  if (pilotRefusal !== undefined) {
+    a.err(`REFUSED: ${pilotRefusal}`)
+    return EXIT.REFUSED
+  }
   const method = runs[0]!.manifest.method
   if (a.reconcile) {
     if (a.mode !== 'review') {
@@ -390,22 +493,57 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
     return reconcileMain({ a, repoRoot, campaignDir, method })
   }
   if (a.mode === 'rejudge') {
+    // A pilot campaign (its manifests carry an arm) was run under the pilot prereg, not evals/<m>/prereg.json.
+    const isPilotCampaign = runs.some((r) => r.manifest.arm !== undefined)
+    if (isPilotCampaign && runs.some((r) => r.manifest.arm === undefined)) {
+      a.err(`REFUSED: ${campaignDir} mixes pilot manifests (with an arm) and ordinary ones; a campaign is one or the other`)
+      return EXIT.REFUSED
+    }
+    if (a.tallyOnly && !isPilotCampaign) {
+      a.err(`--tally-only applies to a pilot campaign only; ${a.campaign} carries no arm\n${USAGE}`)
+      return EXIT.USAGE
+    }
+    if (a.preregFlag !== undefined && !isPilotCampaign) {
+      a.err(`--prereg applies to a pilot campaign only; ${a.campaign} carries no arm (its prereg is evals/${method}/prereg.json)\n${USAGE}`)
+      return EXIT.USAGE
+    }
+    const preregPath = isPilotCampaign ? pilotPreregRel(repoRoot, method, a.preregFlag) : undefined
+    if (isPilotCampaign && preregPath === undefined) {
+      a.err(`REFUSED: --prereg ${a.preregFlag} is outside the repository`)
+      return EXIT.REFUSED
+    }
+    // The pilot prereg must be committed and clean before any credential is read or any judge is asked.
+    const uncommitted = preregPath !== undefined ? preregCommitViolation(new Git(repoRoot), repoRoot, preregPath) : undefined
+    if (uncommitted) {
+      a.err(`REFUSED: ${uncommitted.message}`)
+      return EXIT.REFUSED
+    }
     let auth: PassthroughAuth = {}
     let cliproxyOn = false
-    try {
-      const cliproxy = resolveCliproxy(a.cliproxyFlag, a.env, { live: true, passthroughFlag: a.authFlag })
-      cliproxyOn = cliproxy !== undefined
-      auth = cliproxy ? cliproxy.auth : readPassthroughAuth(parseAuthPassthrough(a.authFlag, a.env, DEFAULT_PASSTHROUGH))
-    } catch (e) {
-      if (e instanceof AuthPassthroughError || e instanceof CliproxyAuthError) {
-        a.err(`${e.message}\n${USAGE}`)
-        return EXIT.USAGE
+    // --tally-only makes no judge call, so it reads no credentials.
+    if (!a.tallyOnly) {
+      try {
+        const cliproxy = resolveCliproxy(a.cliproxyFlag, a.env, { live: true, passthroughFlag: a.authFlag })
+        cliproxyOn = cliproxy !== undefined
+        auth = cliproxy ? cliproxy.auth : readPassthroughAuth(parseAuthPassthrough(a.authFlag, a.env, DEFAULT_PASSTHROUGH))
+      } catch (e) {
+        if (e instanceof AuthPassthroughError || e instanceof CliproxyAuthError) {
+          a.err(`${e.message}\n${USAGE}`)
+          return EXIT.USAGE
+        }
+        throw e
       }
-      throw e
     }
     let verification: ReturnType<typeof enforcePrereg>
     try {
-      verification = enforcePrereg({ git: new Git(repoRoot), repoRoot, method, mode: 'red', heldoutDir: heldoutDir(method, a.env, undefined, repoRoot) })
+      verification = enforcePrereg({
+        git: new Git(repoRoot),
+        repoRoot,
+        method,
+        mode: isPilotCampaign ? 'dev' : 'red',
+        heldoutDir: heldoutDir(method, a.env, undefined, repoRoot),
+        ...(preregPath ? { preregPath } : {}),
+      })
     } catch (e) {
       if (e instanceof PreregRefusal || e instanceof CustodyError) {
         a.err(`REFUSED: ${e.message}`)
@@ -413,6 +551,21 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
       }
       throw e
     }
+    /** A pilot has no review sheets. Its only projection is pilot.json, rebuilt from the verdicts now on disk, keyed to this prereg. */
+    const writePilotFromDisk = (): number => {
+      let tally: ReturnType<typeof tallyPilotCampaign>
+      try {
+        // A rejudge rewrites judge.json under this prereg and leaves the manifests (and the hash they were run under) alone, so the
+        // tally trusts a judge.json only on the strength of rejudge-summary.json under this contract (see `tallyPilotCampaign`).
+        tally = tallyPilotCampaign(campaignDir, { method, prereg_content_hash: verification.contentHash, judge_model_id: verification.prereg.judge_model_id, criteria: pilotCriteria(repoRoot, method), fixtures: verification.content.fixtures.dev })
+      } catch (e) {
+        a.err(`REFUSED: ${(e as Error).message}`)
+        return EXIT.REFUSED
+      }
+      a.out(`wrote ${writePilotTally(repoRoot, tally, a.out).slice(repoRoot.length + 1)} (arms: ${tally.arms.join(', ')})`)
+      return EXIT.OK
+    }
+    if (a.tallyOnly) return writePilotFromDisk()
     const model = verification.prereg.judge_model_id
     if (!isLiveModel(model)) {
       a.err(`prereg pins judge ${model}; this runner only reaches opencode/*, opencode-go/*, openai/* and anthropic/* judges`)
@@ -423,21 +576,32 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
       a.err(`REFUSED: ${mismatch}`)
       return EXIT.REFUSED
     }
-    const availability = opencodeAvailability()
+    const availability = a.availability()
     if (!availability.available) {
       a.err(`cannot launch the pinned OpenCode: ${availability.reason}`)
       return EXIT.ERROR
     }
-    const judge = createJudge({ repoRoot, method, model, auth })
+    const judge = a.makeJudge({ repoRoot, method, model, auth })
     const rows = await rejudgeCampaign({
       campaignDir,
       judge: judge.hook,
       fixtures: verification.content.fixtures,
+      declarations: judge.spec.declarations,
       judgePromptSha256: judge.systemPromptSha256,
+      preregContentHash: verification.contentHash,
+      judgeModelId: model,
       log: a.out,
     })
     const count = (v: string) => rows.filter((r) => r.verdict === v).length
     a.out(`rejudged ${rows.length - count('skipped')} of ${rows.length} runs: pass ${count('pass')} · fail ${count('fail')} · judge_error ${count('judge_error')} · skipped ${count('skipped')} (manifests unchanged)`)
+    if (isPilotCampaign) {
+      const unreachable = rows.filter((r) => r.reason?.startsWith('judge unreachable'))
+      if (unreachable.length) {
+        a.err(`ABORTED: the judge could not be reached for ${unreachable.length} run(s) (${unreachable.map((r) => r.run_id).join(', ')}); their old verdicts are still on disk, so pilot.json was not written. Run rejudge again.`)
+        return EXIT.ERROR
+      }
+      return writePilotFromDisk()
+    }
   }
   let paths: ReturnType<typeof writeReview>
   try {
@@ -731,6 +895,8 @@ const OPTIONS = {
   runs: { type: 'string' },
   provider: { type: 'string' },
   fixture: { type: 'string' },
+  arm: { type: 'string' },
+  prereg: { type: 'string' },
   repo: { type: 'string' },
   out: { type: 'string' },
   campaign: { type: 'string' },
@@ -741,6 +907,7 @@ const OPTIONS = {
   reconcile: { type: 'boolean' },
   'dev-only': { type: 'boolean' },
   green: { type: 'boolean' },
+  'tally-only': { type: 'boolean' },
 } as const
 
 if (import.meta.main) {

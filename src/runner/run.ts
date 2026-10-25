@@ -12,8 +12,9 @@ import { join } from 'node:path'
 import { needlesOf, type PassthroughAuth, passthroughNames } from './auth'
 import { checkBudget, classifyHostOutcome, type CheckFailure, fireEvidence, helperVersionOf, listRecordFiles, runChecks } from './checks'
 import { destroyFixture } from './env'
-import { analyzeEvents, type EventSummary, isRateLimited } from './events'
+import { allAssistantText, analyzeEvents, type EventSummary, finalAnswerText, isRateLimited, parseEvents } from './events'
 import { checkDebugConfig, checkIsolation, type IsolationEvidence } from './isolation'
+import type { RubricDeclarations } from './judge'
 import { writeJudgeRecord } from './judge-record'
 import {
   type ArtifactRef,
@@ -22,13 +23,14 @@ import {
   type JudgeEvidence,
   MANIFEST_SCHEMA_VERSION,
   type Needle,
+  type PilotArm,
   type RunManifest,
   type RunOutcomeName,
   scanForLeaks,
   writeManifest,
 } from './manifest'
 import { debugConfig, OPENCODE_PIN, runArgv, sleepUnlessAborted, type SpawnResult, spawnCapture } from './opencode'
-import { type LoadedFixture, type PreregVerification } from './prereg'
+import { type Expectation, type LoadedFixture, type PreregVerification } from './prereg'
 import {
   gatewayOf,
   isLiveModel,
@@ -43,6 +45,7 @@ import {
   startScriptedProvider,
   upstreamFor,
 } from './scripted-provider'
+import { countWords, isOverLimit } from './word-limit'
 import { type Condition, createRunWorkspace, type FixtureKind, type RunWorkspace, sha256 } from './workspace'
 
 export { CredentialLeakError, isRateLimited }
@@ -53,8 +56,11 @@ export const SCRIPTED_MODEL = `${SPIKE_PROVIDER_ID}/${SPIKE_MODEL_ID}`
 // ── planning ───────────────────────────────────────────────────────────────
 
 export interface PlannedRun {
-  fixture: { id: string; kind: FixtureKind; text: string; hash: string }
+  /** `expectation` is evaluator-only (judge input); it never reaches the agent workspace or the manifest. */
+  fixture: { id: string; kind: FixtureKind; text: string; hash: string; expectation?: Expectation }
   condition: Condition
+  /** `eval pilot` only: the arm this run belongs to. Reports refuse manifests that carry one. */
+  arm?: PilotArm
   /** 1-based repetition for this fixture and condition. */
   index: number
 }
@@ -102,7 +108,13 @@ export function planRuns(input: PlanInput): PlannedRun[] {
       const ordered = (round + gi) % 2 === 0 ? g.conditions : [...g.conditions].reverse()
       for (const condition of ordered) {
         plan.push({
-          fixture: { id: g.fixture.id, kind: g.kind, text: g.fixture.text, hash: g.fixture.hash },
+          fixture: {
+            id: g.fixture.id,
+            kind: g.kind,
+            text: g.fixture.text,
+            hash: g.fixture.hash,
+            ...(g.fixture.expectation ? { expectation: g.fixture.expectation } : {}),
+          },
           condition,
           index: round,
         })
@@ -143,6 +155,7 @@ export interface JudgeInput {
   method: string
   condition: Condition
   fixture: PlannedRun['fixture']
+  /** The text under grading (the ANSWER block). Under `expectation: true` it is all assistant text, not only the final segment. */
   finalAnswer: string
   recordJson: string[]
   /** The campaign's interrupt: the judge's spawn and its backoff waits stop when it fires. */
@@ -179,6 +192,11 @@ export interface CampaignInput {
   scriptFor?: (run: PlannedRun) => readonly ScriptedStep[]
   finalText?: string
   judge?: JudgeHook
+  /**
+   * The rubric's declarations (`parseDeclarations`). `expectation: true`: the judge reads all assistant text joined with newlines, while the
+   * word limit and `answer_empty` use the final answer (the text after the last tool call). Absent: all text, as before.
+   */
+  declarations?: RubricDeclarations
   signal?: AbortSignal
   /** Default 2. */
   maxInfraRetries?: number
@@ -204,6 +222,7 @@ export interface RunResult {
   fixtureId: string
   kind: FixtureKind
   condition: Condition
+  arm?: PilotArm
   index: number
   attempt: number
   status: FinalStatus
@@ -233,9 +252,12 @@ export interface CampaignResult {
 
 const LEAK_NEEDLES: Needle[] = [{ label: 'scripted_placeholder_api_key', value: PLACEHOLDER_API_KEY }]
 
+/** `kind/fixture/condition`; a pilot run's arm stands in for the condition, since two arms can share one. */
+export const tallyKey = (r: { kind: FixtureKind; fixtureId: string; condition: Condition; arm?: PilotArm }): string => `${r.kind}/${r.fixtureId}/${r.arm ?? r.condition}`
+
 export function tallyResults(results: readonly RunResult[], infraErrors: readonly RunResult[] = []): Record<string, Tally> {
   const tallies: Record<string, Tally> = {}
-  const tallyFor = (r: RunResult) => (tallies[`${r.kind}/${r.fixtureId}/${r.condition}`] ??= { attempted: 0, pass: 0, fail: 0, infra_error: 0, non_isolated: 0 })
+  const tallyFor = (r: RunResult) => (tallies[tallyKey(r)] ??= { attempted: 0, pass: 0, fail: 0, infra_error: 0, non_isolated: 0 })
   for (const r of results) {
     const t = tallyFor(r)
     if (r.outcome === 'pass') t.pass += 1
@@ -421,7 +443,7 @@ function isolationViolated(evidence: IsolationEvidence, completed: boolean): boo
 async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, attempt: number): Promise<RunResult> {
   const { verification } = c
   const prereg = verification.prereg
-  const runId = `${pad(seq)}-${run.fixture.kind}-${run.fixture.id}-${run.condition}-r${run.index}${attempt > 1 ? `-a${attempt}` : ''}`
+  const runId = `${pad(seq)}-${run.fixture.kind}-${run.fixture.id}-${run.arm ?? run.condition}-r${run.index}${attempt > 1 ? `-a${attempt}` : ''}`
   const runDir = join(c.campaignDir, runId)
   mkdirSync(runDir, { recursive: true, mode: 0o700 })
 
@@ -444,6 +466,7 @@ async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, at
     verdict_basis: 'deterministic',
     method: c.method,
     condition: run.condition,
+    ...(run.arm ? { arm: run.arm } : {}),
     fixture: { id: run.fixture.id, kind: run.fixture.kind, hash: run.fixture.hash },
     attempt,
     skill: null,
@@ -477,6 +500,7 @@ async function executeAttempt(c: CampaignInput, run: PlannedRun, seq: number, at
     fixtureId: run.fixture.id,
     kind: run.fixture.kind,
     condition: run.condition,
+    ...(run.arm ? { arm: run.arm } : {}),
     index: run.index,
     attempt,
     status,
@@ -648,8 +672,16 @@ async function runAttempt(c: CampaignInput, run: PlannedRun, state: AttemptState
         manifest.check_failures = checks.failures
         const reasons = checks.failures.map((f: CheckFailure) => f.code)
         const needsJudge = run.fixture.kind !== 'negative'
+        // Under `expectation: true` the judge reads every assistant text part, so a tangent developed before a tool call is graded; the
+        // final answer (the text after the last tool call) is the result excerpt, the word-limit segment, and the `answer_empty` test.
+        const replyEvents = c.declarations?.expectation ? parseEvents(spawn.stdout).events : undefined
+        const finalAnswer = replyEvents ? finalAnswerText(replyEvents) : events.assistantText
+        const judgedAnswer = replyEvents ? allAssistantText(replyEvents) : events.assistantText
         if (!checks.ok) {
           final = settle('completed', 'fail', reasons)
+        } else if (needsJudge && c.declarations?.expectation && finalAnswer.trim() === '') {
+          manifest.word_count = 0
+          final = settle('completed', 'fail', ['answer_empty'])
         } else if (needsJudge && c.judge) {
           let verdict: JudgeVerdict
           try {
@@ -657,7 +689,7 @@ async function runAttempt(c: CampaignInput, run: PlannedRun, state: AttemptState
               method: c.method,
               condition: run.condition,
               fixture: run.fixture,
-              finalAnswer: events.assistantText,
+              finalAnswer: judgedAnswer,
               recordJson: records.map((r) => r.content),
               signal,
             })
@@ -676,10 +708,16 @@ async function runAttempt(c: CampaignInput, run: PlannedRun, state: AttemptState
               manifest.judge = verdict.evidence
               manifest.artifacts['judge.json'] = writeJudgeRecord(runDir, verdict.evidence)
             }
-            final =
-              verdict.verdict === 'pass'
-                ? settle('completed', 'pass', [])
-                : settle('completed', 'fail', verdict.verdict === 'judge_error' ? ['judge_error'] : ['judge_fail'])
+            // The word limit (TE3m) is mechanical and runs after the judge, so the TE verdicts are on the manifest either way.
+            const limit = run.fixture.expectation?.maxWords
+            let overLimit = false
+            if (limit !== undefined) {
+              const words = countWords(finalAnswer)
+              manifest.word_count = words
+              overLimit = isOverLimit(words, limit)
+            }
+            const judgeReasons = [...(verdict.verdict === 'pass' ? [] : [verdict.verdict === 'judge_error' ? 'judge_error' : 'judge_fail']), ...(overLimit ? ['answer_over_limit'] : [])]
+            final = judgeReasons.length === 0 ? settle('completed', 'pass', []) : settle('completed', 'fail', judgeReasons)
           }
         } else if (needsJudge) {
           // No judge wired: the checks passed, but nothing has graded the answer. No outcome until a judge does.
