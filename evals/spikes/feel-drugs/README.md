@@ -1,6 +1,6 @@
 # feel/drugs mechanism spike
 
-An experiment with a human read, not a method: no prereg, rubric, judge, tally or matrix cell. It has no epoch: with no prereg there is nothing to version, and the frozen prompt hash below is its only contract. Plan: `docs/plans/2026-10-25-001-feat-feel-drugs-spike-plan.md`. Requirements: `docs/brainstorms/2026-10-25-feel-drugs-spike-requirements.md`.
+An experiment with a human read, not a method: no prereg, rubric, judge, tally or matrix cell. Epoch 1 of this spike; the frozen prompt hash below is its only contract. Plan: `docs/plans/2026-10-25-001-feat-feel-drugs-spike-plan.md`. Requirements: `docs/brainstorms/2026-10-25-feel-drugs-spike-requirements.md`.
 
 The question: do upstream's `feel` and `drugs` change what a model produces when it composes the fields in a tool call and reads the frame back, compared with reading the same frame as skill text and writing the fields in its reply, and does the model family matter? Upstream is pinned to `inanna-malick/metacog@3d89bb30cd26369fdcd242fd704f66641dca327c` (MIT). Both tools are stateless text templates there.
 
