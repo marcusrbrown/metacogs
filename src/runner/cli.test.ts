@@ -7,9 +7,9 @@ import { defaultInstallSignalHandlers, EXIT, main, type MainIO } from './cli'
 import { createFixture, destroyFixture } from './env'
 import { opencodeAvailability, spawnCapture } from './opencode'
 import { parseRubric } from './judge'
-import { preregContentHash } from './prereg'
+import { canonicalizeText, expectationHash, preregContentHash, saltedHash } from './prereg'
 import { sha256 } from './workspace'
-import { buildHappyChain, JUDGED_RUBRIC_TEXT, scaffoldMethod, TestRepo, writePrereg } from './test-support'
+import { buildHappyChain, JUDGED_RUBRIC_TEXT, scaffoldMethod, TEST_SALT, TestRepo, writePrereg } from './test-support'
 
 const cleanup: (() => void)[] = []
 afterAll(() => {
@@ -719,12 +719,12 @@ describe('pilot', () => {
       tool_calls: 0,
       wall_ms: 1,
     })
-    // What `rejudge --tally-only` computes from the committed rubric; a rejudge records the same hash in rejudge-summary.json.
+    // A rejudge records the hash of the judge prompt it used. Here it is the real one, so a rule that trusted the prompt hash alone would accept these runs.
     const REAL_PROMPT = sha256(parseRubric(JUDGED_RUBRIC_TEXT).systemPrompt)
     const fakeJudge = (hook: (input: unknown) => Promise<unknown>) =>
       (() => ({ hook, spec: { systemPrompt: 'S', declarations: { expectation: true }, criteria: [], overclaimPatterns: [] }, systemPromptSha256: REAL_PROMPT, rubricSha256: 'e'.repeat(64) })) as never
 
-    async function plantedPilot(opts: { prereg?: boolean; summary?: boolean; maxWords?: number; words?: number } = {}) {
+    async function plantedPilot(opts: { prereg?: boolean; summary?: boolean; maxWords?: number; words?: number; manifestCurrent?: boolean } = {}) {
       const { repo, scaffold } = chainRepo(JUDGED_RUBRIC_TEXT, opts.maxWords === undefined ? undefined : { dev: { d1: { outcome: 'o', excludedTopics: [], maxWords: opts.maxWords } } })
       if (opts.prereg !== false) {
         repo.write(PILOT_PREREG, `${JSON.stringify(scaffold.prereg, null, 2)}\n`)
@@ -748,7 +748,8 @@ describe('pilot', () => {
         check_failures: [],
         records: [],
         artifacts: {},
-        prereg: { content_hash: 'f'.repeat(64), epoch: 1 },
+        // 'f…' stands for the contract the run was made under; `manifestCurrent` makes it the committed one.
+        prereg: { content_hash: opts.manifestCurrent ? preregContentHash(scaffold.prereg) : 'f'.repeat(64), epoch: 1 },
         model: { pinned: 'opencode/agent-x', returned: [] },
         ...(opts.words !== undefined ? { word_count: opts.words } : {}),
         judge: evidence('pass'),
@@ -757,11 +758,12 @@ describe('pilot', () => {
       writeFileSync(join(dir, 'stdout.jsonl'), say('The answer.'))
       writeFileSync(join(dir, 'judge.json'), JUDGE_JSON)
       // Default: the state a finished rejudge leaves, so the verdicts on disk are provably from the current judge prompt.
-      if (opts.summary !== false) writeSummary(dirname(dir), REAL_PROMPT, [{ run_id: '001-dev-d1-baseline-r1', verdict: 'pass', judge_json_sha256: sha256(JUDGE_JSON) }])
+      if (opts.summary !== false) writeSummary(dirname(dir), preregContentHash(scaffold.prereg), [{ run_id: '001-dev-d1-baseline-r1', verdict: 'pass', judge_json_sha256: sha256(JUDGE_JSON) }])
       return { repo, scaffold, dir }
     }
     const JUDGE_JSON = JSON.stringify({ redacted_input_sha256: 'c'.repeat(64), model_pinned: 'm', model_returned: ['m'], criteria: [{ id: 'TE1', verdict: 'pass', quotes: ['q'] }, { id: 'TE2', verdict: 'pass', quotes: ['q'] }], attempts: 1 })
-    const writeSummary = (campaignDir: string, prompt: string, runs: object[]) => writeFileSync(join(campaignDir, 'rejudge-summary.json'), JSON.stringify({ judge_prompt_sha256: prompt, runs }))
+    const writeSummary = (campaignDir: string, contract: string, runs: object[]) =>
+      writeFileSync(join(campaignDir, 'rejudge-summary.json'), JSON.stringify({ judge_prompt_sha256: REAL_PROMPT, prereg_content_hash: contract, judge_model_id: 'opencode-go/judge-model-x', runs }))
     /** A second run in the same campaign, copied from the first with `over` applied to its manifest. */
     async function plantSecondRun(dir: string, over: Record<string, unknown>) {
       const { writeManifest, readManifest } = await import('./manifest')
@@ -807,7 +809,7 @@ describe('pilot', () => {
       expect(written.prereg_content_hash).toBe(preregContentHash(scaffold.prereg))
       expect(written.tally.baseline!.d1).toMatchObject({ runs: 1, criteria: { TE1: 1, TE2: 1 }, all_pass: 1 })
       expect(readFileSync(join(dir, 'manifest.json'), 'utf8')).toBe(before)
-      expect(readFileSync(join(repo.dir, 'evals', 'runs', CAMPAIGN, 'rejudge-summary.json'), 'utf8')).toContain(REAL_PROMPT) // read, never rewritten
+      expect(readFileSync(join(repo.dir, 'evals', 'runs', CAMPAIGN, 'rejudge-summary.json'), 'utf8')).toContain('"prereg_content_hash"') // read, never rewritten
     })
 
     test('review and review --reconcile refuse a pilot campaign with the message report uses, and write nothing', async () => {
@@ -835,7 +837,7 @@ describe('pilot', () => {
       }
     })
 
-    test('--tally-only is refused when no rejudge under the current judge prompt backs the verdicts, naming the run dir', async () => {
+    test('--tally-only is refused when no rejudge under the current contract backs the verdicts, naming the run dir', async () => {
       const { repo } = await plantedPilot({ summary: false })
       const t = io()
       expect(await main(tallyOnlyArgs(repo), t.io)).toBe(EXIT.REFUSED)
@@ -843,13 +845,13 @@ describe('pilot', () => {
       expect(existsSync(pilotJson(repo))).toBe(false)
     })
 
-    test('--tally-only is refused after a rubric edit that was not followed by a rejudge, and accepted once it is', async () => {
+    test('--tally-only is refused after a contract change that was not followed by a rejudge, and accepted once it is', async () => {
       const { repo, dir } = await plantedPilot()
-      // The summary is for the judge prompt of the rubric as it was before the edit.
+      // The summary is for the contract as it was before the change.
       writeSummary(dirname(dir), 'e'.repeat(64), [{ run_id: '001-dev-d1-baseline-r1', verdict: 'pass', judge_json_sha256: sha256(JUDGE_JSON) }])
       const refused = io()
       expect(await main(tallyOnlyArgs(repo), refused.io)).toBe(EXIT.REFUSED)
-      expect(refused.lines.err.join('\n')).toContain('judge prompt')
+      expect(refused.lines.err.join('\n')).toContain('contract')
       expect(existsSync(pilotJson(repo))).toBe(false)
       // The rejudge rewrites judge.json and the summary under the current prompt.
       const rejudge = io()
@@ -861,10 +863,79 @@ describe('pilot', () => {
       expect(existsSync(pilotJson(repo))).toBe(true)
     })
 
+    describe('a verdict is bound to the whole contract it was made under, not only to the judge prompt', () => {
+      const rejudgeOk = async (repo: TestRepo, verdict: 'pass' | 'fail' = 'pass') => {
+        const t = io()
+        t.io.createJudge = fakeJudge(async () => ({ verdict, evidence: evidence(verdict) }))
+        expect(await main(rejudgeArgs(repo), t.io)).toBe(EXIT.OK)
+      }
+      /** Commit a changed pilot contract. The judge prompt (the rubric) is untouched in every case. */
+      const recommit = (repo: TestRepo, prereg: object, extra: Record<string, string> = {}) => {
+        for (const [path, text] of Object.entries(extra)) repo.write(path, text)
+        repo.write(PILOT_PREREG, `${JSON.stringify(prereg, null, 2)}\n`)
+        repo.commit('test: change the pilot contract', [PILOT_PREREG, ...Object.keys(extra)])
+      }
+      const refusedAfter = async (repo: TestRepo) => {
+        const before = readFileSync(pilotJson(repo), 'utf8')
+        const t = io()
+        expect(await main(tallyOnlyArgs(repo), t.io)).toBe(EXIT.REFUSED)
+        expect(t.lines.err.join('\n')).toContain('001-dev-d1-baseline-r1')
+        expect(readFileSync(pilotJson(repo), 'utf8')).toBe(before)
+      }
+
+      test('(i) an expectation-only change (and its hash) after the rejudge is refused', async () => {
+        const { repo, scaffold } = await plantedPilot({ summary: false, maxWords: 50, words: 9 })
+        await rejudgeOk(repo)
+        const sidecar = { outcome: 'o', excludedTopics: [], maxWords: 60 }
+        recommit(repo, { ...scaffold.prereg, expectation_hashes: { dev: { d1: expectationHash(TEST_SALT, sidecar) }, heldout: {} } }, { 'evals/demo/fixtures/dev/d1.expectation.json': `${JSON.stringify(sidecar)}\n` })
+        await refusedAfter(repo)
+      })
+
+      test('(ii) a fixture-text change (and its hash) after the rejudge is refused', async () => {
+        const { repo, scaffold } = await plantedPilot({ summary: false })
+        await rejudgeOk(repo)
+        const text = 'Dev fixture: choose a database for the service, and say why.\n'
+        recommit(repo, { ...scaffold.prereg, fixture_hashes: { ...scaffold.prereg.fixture_hashes, dev: { d1: saltedHash(TEST_SALT, canonicalizeText(text)) } } }, { 'evals/demo/fixtures/dev/d1.md': text })
+        await refusedAfter(repo)
+      })
+
+      test('(iii) a judge_model_id-only change after the rejudge is refused', async () => {
+        const { repo, scaffold } = await plantedPilot({ summary: false })
+        await rejudgeOk(repo)
+        recommit(repo, { ...scaffold.prereg, judge_model_id: 'opencode-go/judge-model-y' })
+        await refusedAfter(repo)
+      })
+
+      test('run under contract A, rejudge under B, restore A: B\'s judge.json is not accepted; the tally uses the manifests\' own verdicts (A)', async () => {
+        const { repo, scaffold } = await plantedPilot({ summary: false, manifestCurrent: true })
+        recommit(repo, { ...scaffold.prereg, judge_model_id: 'opencode-go/judge-model-y' })
+        await rejudgeOk(repo, 'fail') // B's judge fails TE2; judge.json and the summary now say so, under B
+        const underB = JSON.parse(readFileSync(pilotJson(repo), 'utf8')) as { tally: { baseline: { d1: { criteria: Record<string, number> } } } }
+        expect(underB.tally.baseline.d1.criteria.TE2).toBe(0)
+        recommit(repo, scaffold.prereg) // back to A
+        const t = io()
+        expect(await main(tallyOnlyArgs(repo), t.io)).toBe(EXIT.OK)
+        const underA = JSON.parse(readFileSync(pilotJson(repo), 'utf8')) as { prereg_content_hash: string; tally: { baseline: { d1: { criteria: Record<string, number>; all_pass: number } } } }
+        expect(underA.prereg_content_hash).toBe(preregContentHash(scaffold.prereg))
+        expect(underA.tally.baseline.d1).toMatchObject({ criteria: { TE1: 1, TE2: 1 }, all_pass: 1 })
+      })
+
+      test('a rejudge under the current contract is accepted from judge.json, by the rejudge itself and by a later --tally-only', async () => {
+        const { repo } = await plantedPilot({ summary: false })
+        await rejudgeOk(repo, 'fail')
+        const first = readFileSync(pilotJson(repo), 'utf8')
+        expect(JSON.parse(first).tally.baseline.d1.criteria).toEqual({ TE1: 1, TE2: 0 })
+        rmSync(pilotJson(repo))
+        const t = io()
+        expect(await main(tallyOnlyArgs(repo), t.io)).toBe(EXIT.OK)
+        expect(readFileSync(pilotJson(repo), 'utf8')).toBe(first)
+      })
+    })
+
     test('--tally-only is refused when the rejudge skipped a run, naming it', async () => {
-      const { repo, dir } = await plantedPilot()
+      const { repo, dir, scaffold } = await plantedPilot()
       await plantSecondRun(dir, {})
-      writeSummary(dirname(dir), REAL_PROMPT, [
+      writeSummary(dirname(dir), preregContentHash(scaffold.prereg), [
         { run_id: '001-dev-d1-baseline-r1', verdict: 'pass', judge_json_sha256: sha256(JUDGE_JSON) },
         { run_id: '002-dev-d1-baseline-r1', prior_outcome: 'pass', verdict: 'skipped', reason: 'fixture missing or changed since the run' },
       ])
@@ -885,15 +956,16 @@ describe('pilot', () => {
     })
 
     test('manifests that recorded different agent models are refused, and the tally carries the recorded model, not the prereg\'s', async () => {
-      const { repo, dir } = await plantedPilot()
+      const { repo, dir, scaffold } = await plantedPilot()
+      const current = preregContentHash(scaffold.prereg)
       const second = await plantSecondRun(dir, { model: { pinned: 'opencode/agent-y', returned: [] } })
-      writeSummary(dirname(dir), REAL_PROMPT, ['001-dev-d1-baseline-r1', '002-dev-d1-baseline-r1'].map((run_id) => ({ run_id, verdict: 'pass', judge_json_sha256: sha256(JUDGE_JSON) })))
+      writeSummary(dirname(dir), current, ['001-dev-d1-baseline-r1', '002-dev-d1-baseline-r1'].map((run_id) => ({ run_id, verdict: 'pass', judge_json_sha256: sha256(JUDGE_JSON) })))
       const refused = io()
       expect(await main(tallyOnlyArgs(repo), refused.io)).toBe(EXIT.REFUSED)
       expect(refused.lines.err.join('\n')).toContain('agent model')
       expect(existsSync(pilotJson(repo))).toBe(false)
       rmSync(second, { recursive: true })
-      writeSummary(dirname(dir), REAL_PROMPT, [{ run_id: '001-dev-d1-baseline-r1', verdict: 'pass', judge_json_sha256: sha256(JUDGE_JSON) }])
+      writeSummary(dirname(dir), current, [{ run_id: '001-dev-d1-baseline-r1', verdict: 'pass', judge_json_sha256: sha256(JUDGE_JSON) }])
       const ok = io()
       expect(await main(tallyOnlyArgs(repo), ok.io)).toBe(EXIT.OK)
       expect((JSON.parse(readFileSync(pilotJson(repo), 'utf8')) as { agent_model_id: string }).agent_model_id).toBe('opencode/agent-x')

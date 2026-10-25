@@ -348,6 +348,8 @@ describe('rejudgeCampaign (mocked judge)', () => {
       },
       fixtures: { dev: [fixture], negative: [] },
       judgePromptSha256: 'd'.repeat(64),
+      preregContentHash: 'c'.repeat(64),
+      judgeModelId: 'judge/x',
     })
     expect(rows.map((r) => [r.run_id, r.verdict])).toEqual([
       ['001-dev-d1-baseline-r1', 'pass'],
@@ -362,7 +364,11 @@ describe('rejudgeCampaign (mocked judge)', () => {
     const text = readFileSync(join(judged, 'judge.json'), 'utf8')
     expect(JSON.parse(text).criteria).toEqual([{ id: 'CF1', verdict: 'pass', quotes: ['a verbatim quote of the answer'] }])
     expect(rows[0]).toMatchObject({ prior_outcome: 'fail', judge_json_sha256: sha256(text) })
-    expect(JSON.parse(readFileSync(join(campaign, 'rejudge-summary.json'), 'utf8')).judge_prompt_sha256).toBe('d'.repeat(64))
+    const summary = JSON.parse(readFileSync(join(campaign, 'rejudge-summary.json'), 'utf8'))
+    expect(summary.judge_prompt_sha256).toBe('d'.repeat(64))
+    // The contract the rejudge was enforced under and the judge it pinned: what a pilot tally needs to trust judge.json later.
+    expect(summary.prereg_content_hash).toBe('c'.repeat(64))
+    expect(summary.judge_model_id).toBe('judge/x')
   })
 
   test('a changed fixture or a skill run without retained records is skipped, never judged on guesswork', async () => {
@@ -378,6 +384,8 @@ describe('rejudgeCampaign (mocked judge)', () => {
       },
       fixtures: { dev: [fixture], negative: [] },
       judgePromptSha256: 'd'.repeat(64),
+      preregContentHash: 'c'.repeat(64),
+      judgeModelId: 'judge/x',
     })
     expect(calls).toBe(0)
     expect(rows.map((r) => r.reason)).toEqual(['fixture missing or changed since the run', 'record contents not retained'])
@@ -398,6 +406,8 @@ describe('rejudgeCampaign (mocked judge)', () => {
         fixtures: { dev: [{ ...fixture, expectation }], negative: [] },
         ...(declarations ? { declarations } : {}),
         judgePromptSha256: 'd'.repeat(64),
+      preregContentHash: 'c'.repeat(64),
+      judgeModelId: 'judge/x',
       })
     await run({ expectation: true })
     expect(seen[0]!.finalAnswer).toBe('Looking.\nFinal.')
@@ -416,6 +426,8 @@ describe('rejudgeCampaign (mocked judge)', () => {
       judge: async (input) => (seen.push(input), { verdict: 'pass' as const }),
       fixtures: { dev: [fixture], negative: [] },
       judgePromptSha256: 'd'.repeat(64),
+      preregContentHash: 'c'.repeat(64),
+      judgeModelId: 'judge/x',
     })
     expect('expectation' in seen[0]!.fixture).toBe(false)
     expect(rows.map((r) => [r.verdict, r.reason])).toEqual([['pass', undefined], ['skipped', 'empty final answer (never reached the judge)']])
@@ -434,6 +446,8 @@ describe('rejudgeCampaign (mocked judge)', () => {
       fixtures: { dev: [fixture], negative: [] },
       declarations: { expectation: true },
       judgePromptSha256: 'd'.repeat(64),
+      preregContentHash: 'c'.repeat(64),
+      judgeModelId: 'judge/x',
     })
     expect(calls).toBe(0)
     expect(rows[0]).toMatchObject({ verdict: 'skipped', reason: 'empty final answer (never reached the judge)' })

@@ -282,6 +282,10 @@ export interface RejudgeInput {
   /** The rubric's declarations: which text counts as the answer. Absent: all text. */
   declarations?: RubricDeclarations
   judgePromptSha256: string
+  /** The prereg content hash this rejudge was enforced under: it names the whole contract (fixtures, expectations, rubric, models, bars) the new verdicts belong to. */
+  preregContentHash: string
+  /** The judge model the rejudge pinned. */
+  judgeModelId: string
   log?: (line: string) => void
 }
 
@@ -332,7 +336,7 @@ export async function rejudgeCampaign(input: RejudgeInput): Promise<RejudgeRow[]
     rows.push({ run_id: manifest.run_id, prior_outcome: prior, verdict: verdict.verdict, ...(ref ? { judge_json_sha256: ref.sha256 } : {}) })
     input.log?.(`${manifest.run_id}: ${prior} → ${verdict.verdict}`)
   }
-  const summary = { judge_prompt_sha256: input.judgePromptSha256, runs: rows }
+  const summary = { judge_prompt_sha256: input.judgePromptSha256, prereg_content_hash: input.preregContentHash, judge_model_id: input.judgeModelId, runs: rows }
   const text = `${JSON.stringify(summary, null, 2)}\n`
   writeFileSync(join(input.campaignDir, 'rejudge-summary.json'), text, { mode: 0o600 })
   return rows
