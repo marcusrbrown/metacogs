@@ -202,3 +202,18 @@ Not automated and not run yet. `src/plugin/integration.test.ts` covers the plugi
 2. Send one message and read the request (`opencode run --print-logs`, or a recording provider). Expect the system text to hold one `<SYSTEMATIC_WORKFLOWS>` block and one `<METACOGS_GUIDANCE>` block, each once.
 3. Run `opencode debug config`. Expect `command.feel` and `command.drugs` with the `(metacogs) ` prefix and no key shared with Systematic's commands.
 4. Expect `synthesis` and `counterfactual` in the skill list. Systematic applies its own per-agent skill rules, which can hide the metacogs skills from the agents it manages; note any agent that loses them.
+
+## Guided reads: harness
+
+`src/spike/feel-drugs/guided.ts` runs the plugin arms against the packed package (`bun run spike:guided`). The model is offered, per arm:
+
+| Arm | Read | Permission | Offered tools |
+| --- | --- | --- | --- |
+| N1 | 1 | every built-in tool denied | none |
+| P1 | 1 | the same, with `skill` limited to `synthesis` and `counterfactual` | `metacogs_feel`, `metacogs_drugs`, `skill` |
+| N2 | 2 | the shell, the network and outside directories denied; the rest at the host default | GPT: `apply_patch`, `glob`, `grep`, `read`, `skill`, `task`, `todowrite`. Anthropic: `edit`, `glob`, `grep`, `read`, `skill`, `task`, `todowrite`, `write` |
+| P2 | 2 | as N2, with the plugin loaded | N2's tools plus `metacogs_feel` and `metacogs_drugs` |
+
+A run is `completed` only if the offered names, the plugin tools' property names and their `required` lists match that table; otherwise it is `tools_missing` or `tools_extra`. Read 2 lists `customize-opencode` beside the plugin skills. Read 1 uses the four prompts in `prompts.md`; read 2 adds the two in `coding-prompts.md`, and a metacogs call on those is recorded as unwanted.
+
+Live runs refuse unless `prompts_sha256`, `guidance_sha256` and (read 2) `coding_prompts_sha256` in this README match the files. None of the last two is recorded yet. `--cells one-per-model` (or `<prompt>@<model>`) runs a first pass, and a later full run keeps those runs.

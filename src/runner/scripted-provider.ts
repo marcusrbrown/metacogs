@@ -227,8 +227,11 @@ export function startScriptedProvider(
   }
 }
 
-/** Provider block for `OPENCODE_CONFIG`/`OPENCODE_CONFIG_CONTENT`. Placeholder key, zero cost. */
-export function scriptedProviderConfig(baseUrl: string): Record<string, unknown> {
+/**
+ * Provider block for `OPENCODE_CONFIG`/`OPENCODE_CONFIG_CONTENT`. Placeholder key, zero cost. `modelId` lets a test
+ * stand in for a model family: the host chooses its tool set and agent prompt from the model id.
+ */
+export function scriptedProviderConfig(baseUrl: string, modelId: string = SPIKE_MODEL_ID): Record<string, unknown> {
   return {
     [SPIKE_PROVIDER_ID]: {
       name: 'Metacogs Spike Provider',
@@ -236,8 +239,8 @@ export function scriptedProviderConfig(baseUrl: string): Record<string, unknown>
       env: [],
       npm: '@ai-sdk/openai-compatible',
       models: {
-        [SPIKE_MODEL_ID]: {
-          id: SPIKE_MODEL_ID,
+        [modelId]: {
+          id: modelId,
           name: 'Metacogs Spike Model',
           attachment: false,
           reasoning: false,

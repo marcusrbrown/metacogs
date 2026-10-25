@@ -184,6 +184,37 @@ describe('classifyStatus', () => {
   })
 })
 
+describe('classifyStatus with an expected tool set and prefix (guided arms)', () => {
+  const ev = (...events: object[]) => `${events.map((e) => JSON.stringify(e)).join('\n')}\n`
+  const GOOD = ev({ type: 'step_start' }, { type: 'text', part: { text: 'an answer' } })
+  const PLUGIN_TOOLS = ['metacogs_feel', 'metacogs_drugs'] as const
+  const input = { timedOut: false, exitCode: 0, stdout: GOOD, arm: 'P1', offered: [...PLUGIN_TOOLS, 'skill'], expectTools: true, expectedTools: PLUGIN_TOOLS, toolPrefix: 'metacogs_' }
+
+  test('completed when the arm expects the tools and both are offered', () => {
+    expect(classifyStatus(input)).toEqual({ status: 'completed', reasons: [] })
+  })
+
+  test('a missing expected tool is tools_missing', () => {
+    expect(classifyStatus({ ...input, offered: ['metacogs_feel', 'skill'] })).toEqual({ status: 'tools_missing', reasons: ['expected_tools_not_offered'] })
+  })
+
+  test('an arm that expects no tools and is offered one with the prefix is host_error unexpected_tools_offered', () => {
+    expect(classifyStatus({ ...input, arm: 'N1', expectTools: false, offered: ['metacogs_feel'] })).toEqual({ status: 'host_error', reasons: ['unexpected_tools_offered'] })
+    expect(classifyStatus({ ...input, arm: 'N1', expectTools: false, offered: ['read'] })).toEqual({ status: 'completed', reasons: [] })
+  })
+
+  test('the default prefix does not see tools with another prefix', () => {
+    expect(classifyStatus({ timedOut: false, exitCode: 0, stdout: GOOD, arm: 'A', offered: ['metacogs_feel'] })).toEqual({ status: 'completed', reasons: [] })
+  })
+
+  test('the parameters change nothing for the spike arms: B still expects metacog_feel and metacog_drugs', () => {
+    const base = { timedOut: false, exitCode: 0, stdout: GOOD, offered: ['metacog_feel', 'metacog_drugs'] }
+    expect(classifyStatus({ ...base, arm: 'B' }).status).toBe('completed')
+    expect(classifyStatus({ ...base, arm: 'B', offered: ['metacog_feel'] }).status).toBe('tools_missing')
+    expect(classifyStatus({ ...base, arm: 'A' }).status).toBe('host_error')
+  })
+})
+
 describe('withBackoff', () => {
   const record = (status: RunRecord['status']) => ({ status }) as RunRecord
 
@@ -330,6 +361,42 @@ describe('the live freeze', () => {
       }),
     ).rejects.toThrow(/frozen|prompt/i)
     expect(fetched).toBe(false)
+  })
+})
+
+describe('checkFrozen for another file and key', () => {
+  const GUIDANCE = { path: ['plugin', 'guidance.md'], key: 'guidance_sha256', noun: 'guidance file', notFrozen: 'the guidance is not frozen' } as const
+  const repo = (guidance: string | null, readme: string | null) => {
+    const root = tmp('feel-drugs-repo-')
+    if (guidance !== null) {
+      mkdirSync(join(root, 'plugin'), { recursive: true })
+      writeFileSync(join(root, 'plugin', 'guidance.md'), guidance)
+    }
+    if (readme !== null) {
+      mkdirSync(join(root, 'evals', 'spikes', 'feel-drugs'), { recursive: true })
+      writeFileSync(join(root, 'evals', 'spikes', 'feel-drugs', 'README.md'), readme)
+    }
+    return root
+  }
+
+  test('passes when the README records that key for that file', () => {
+    expect(checkFrozen(repo('# g\n', `guidance_sha256: ${sha256('# g\n')}\n`), GUIDANCE)).toEqual({ ok: true, sha256: sha256('# g\n') })
+  })
+
+  test('refuses a missing file, a missing key, a prompts key where the guidance key is wanted, and a mismatch, naming the file', () => {
+    const reason = (check: ReturnType<typeof checkFrozen>) => (check.ok ? '' : check.reason)
+    expect(reason(checkFrozen(repo(null, 'x\n'), GUIDANCE))).toContain('plugin/guidance.md')
+    expect(reason(checkFrozen(repo('g\n', 'no hash\n'), GUIDANCE))).toContain('guidance_sha256')
+    expect(checkFrozen(repo('g\n', `prompts_sha256: ${sha256('g\n')}\n`), GUIDANCE)).toMatchObject({ ok: false })
+    const edited = checkFrozen(repo('b\n', `guidance_sha256: ${sha256('a\n')}\n`), GUIDANCE)
+    expect(reason(edited)).toContain('does not match')
+    expect(reason(edited)).toContain('the guidance is not frozen')
+  })
+
+  test('the default target is still prompts.md and prompts_sha256, with the same messages', () => {
+    const root = repo(null, 'x\n')
+    expect(checkFrozen(root)).toEqual({ ok: false, reason: 'live runs need the frozen prompt file evals/spikes/feel-drugs/prompts.md' })
+    expect(checkFrozen(repo(null, null))).toEqual({ ok: false, reason: 'live runs need the frozen prompt file evals/spikes/feel-drugs/prompts.md' })
   })
 })
 

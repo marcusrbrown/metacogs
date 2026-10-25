@@ -8,7 +8,7 @@ import { heldoutFingerprints } from './prereg'
 import { toolUses } from './events'
 import { opencodeAvailability } from './opencode'
 import { plantSkill, runOpencode } from './spike/isolation'
-import { scriptedProviderConfig } from './scripted-provider'
+import { SPIKE_MODEL_ID, SPIKE_PROVIDER_ID, scriptedProviderConfig } from './scripted-provider'
 import {
   assertInstalledSkills,
   buildConfig,
@@ -303,6 +303,12 @@ describe('run workspace plugin entry and explicit expected skills', () => {
     const ws = base({ condition: 'skill', skillSource: { name: 'frames', dir }, expectedSkills: ['frames', 'synthesis'] })
     expect(readdirSync(join(ws.fixture.workspace, '.agents', 'skills'))).toEqual(['frames'])
     expect(ws.expectedSkills).toEqual(['frames', 'synthesis'])
+  })
+
+  test('a scripted provider takes a model id to stand in for a model family; the default is the spike model', () => {
+    const models = (ws: ReturnType<typeof base>) => Object.keys((ws.config.provider as Record<string, { models: Record<string, unknown> }>)[SPIKE_PROVIDER_ID]!.models)
+    expect(models(base({ provider: { kind: 'scripted', url: 'http://127.0.0.1:1/v1', modelId: 'gpt-scripted' } }))).toEqual(['gpt-scripted'])
+    expect(models(base())).toEqual([SPIKE_MODEL_ID])
   })
 
   test('without the new fields nothing about the config or the expected skills changes', () => {

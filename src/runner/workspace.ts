@@ -283,7 +283,7 @@ export function copySkillDir(source: string, dest: string): void {
 // ── the run workspace ──────────────────────────────────────────────────────
 
 export type ProviderWiring =
-  | { kind: 'scripted'; url: string }
+  | { kind: 'scripted'; url: string; /** Model id under the scripted provider, to stand in for a model family. Default: the spike model. */ modelId?: string }
   | { kind: 'live'; recordingProxyUrl: string }
 
 export interface RunWorkspaceInput {
@@ -377,7 +377,7 @@ function populateRunWorkspace(input: RunWorkspaceInput, fixture: Fixture): RunWo
 
   const providerConfig =
     provider.kind === 'scripted'
-      ? scriptedProviderConfig(provider.url)
+      ? scriptedProviderConfig(provider.url, provider.modelId)
       : input.cliproxy
         ? cliproxyProviderConfig(provider.recordingProxyUrl)
         : { [providerOf(input.model)]: { options: { baseURL: provider.recordingProxyUrl } } }

@@ -2,13 +2,13 @@
  * Test fixtures for running the pinned OpenCode host against a plugin: an isolated lab (workspace, HOME, XDG dirs, a
  * scripted provider) and the packed metacogs package, built, packed once and extracted. Not imported by production code.
  */
-import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 import { buildChildEnv, createFixture, destroyFixture, type Fixture } from '../runner/env'
 import { type OpencodeEvent, parseEvents } from '../runner/events'
-import { systemTexts } from '../runner/isolation'
+import { isMainRequest, systemTexts } from '../runner/isolation'
 import { opencodeArgv, spawnCapture, type SpawnResult } from '../runner/opencode'
 import {
   type RecordedRequest,
@@ -18,7 +18,7 @@ import {
   scriptedProviderConfig,
   startScriptedProvider,
 } from '../runner/scripted-provider'
-import { buildConfig, gitInit } from '../runner/workspace'
+import { buildConfig, gitInit, sha256 } from '../runner/workspace'
 import { packPlugin, REPO_ROOT, writePlugin } from './build'
 
 export const HOST_MODEL = `${SPIKE_PROVIDER_ID}/${SPIKE_MODEL_ID}`
@@ -42,9 +42,9 @@ export const systemOf = (request: RecordedRequest): string => systemTexts(reques
 export const userTexts = (request: RecordedRequest): string[] => (bodyOf(request).messages ?? []).filter((m) => m.role === 'user').map((m) => String(m.content))
 export const skillNames = (request: RecordedRequest): string[] => [...systemOf(request).matchAll(/<name>([^<]+)<\/name>/g)].map((m) => m[1] ?? '')
 
-/** The request the user's prompt went into: its system text starts with the host's own prompt. With no tools offered it is still this one. */
+/** The requests the user's prompt went into: the system text holds the host's own agent prompt. With no tools offered they still are. */
 export function mainRequests(requests: readonly RecordedRequest[]): RecordedRequest[] {
-  return requests.filter((r) => systemOf(r).startsWith('You are opencode'))
+  return requests.filter(isMainRequest)
 }
 
 export function mainRequest(requests: readonly RecordedRequest[]): RecordedRequest {
@@ -73,6 +73,11 @@ function installedConfigDir(): Promise<string> {
   return template.ready
 }
 
+/** Copies the installed config dir into a fixture's `opencodeConfigDir`; run the host with `OFFLINE_NPM` afterwards. */
+export async function seedConfigDir(fixture: Fixture): Promise<void> {
+  cpSync(await installedConfigDir(), fixture.opencodeConfigDir, { recursive: true })
+}
+
 export interface HostRun {
   result: SpawnResult
   requests: RecordedRequest[]
@@ -86,6 +91,8 @@ export interface HostRunOptions {
   steps?: ScriptedStep[]
   limit?: { context: number; output: number }
   timeoutMs?: number
+  /** Model id under the scripted provider, to stand in for a model family. Default: the spike model. */
+  modelId?: string
 }
 
 export class HostLab {
@@ -123,16 +130,17 @@ export class HostLab {
 
   async run(options: HostRunOptions): Promise<HostRun> {
     if (this.useTemplate && !this.seeded) {
-      cpSync(await installedConfigDir(), this.fixture.opencodeConfigDir, { recursive: true })
+      await seedConfigDir(this.fixture)
       this.seeded = true
     }
     const provider = startScriptedProvider({ steps: options.steps ?? [] })
     try {
-      const providerConfig = scriptedProviderConfig(provider.url) as Record<string, { models: Record<string, Record<string, unknown>> }>
-      if (options.limit) providerConfig[SPIKE_PROVIDER_ID]!.models[SPIKE_MODEL_ID]!.limit = options.limit
+      const modelId = options.modelId ?? SPIKE_MODEL_ID
+      const providerConfig = scriptedProviderConfig(provider.url, modelId) as Record<string, { models: Record<string, Record<string, unknown>> }>
+      if (options.limit) providerConfig[SPIKE_PROVIDER_ID]!.models[modelId]!.limit = options.limit
       const config = buildConfig({ permission: options.permission ?? BASE_PERMISSION, provider: providerConfig, ...(options.config ? { extra: options.config } : {}) })
       const env = buildChildEnv({ fixture: this.fixture, config, ...(this.useTemplate ? { extra: OFFLINE_NPM } : {}) })
-      const argv = options.args[0] === 'debug' ? opencodeArgv(...options.args) : opencodeArgv('run', '--format', 'json', '--model', HOST_MODEL, ...options.args)
+      const argv = options.args[0] === 'debug' ? opencodeArgv(...options.args) : opencodeArgv('run', '--format', 'json', '--model', `${SPIKE_PROVIDER_ID}/${modelId}`, ...options.args)
       const result = await spawnCapture(argv, { cwd: this.fixture.workspace, env, timeoutMs: options.timeoutMs ?? 180_000 })
       return { result, requests: provider.requests, events: parseEvents(result.stdout).events }
     } finally {
@@ -154,6 +162,8 @@ export interface PackedPlugin {
   /** `file://` URL of the built entry. */
   spec: string
   skillsDir: string
+  /** SHA-256 of the packed tarball. */
+  tarballSha256: string
 }
 
 let packedDir: string | undefined
@@ -179,7 +189,7 @@ export function packedPlugin(): Promise<PackedPlugin> {
     if (tar.exitCode !== 0) throw new Error(`tar failed: ${tar.stderr.toString().slice(0, 300)}`)
     const root = realpathSync(join(unpacked, 'package'))
     linkRuntimeDependency(root)
-    return { root, spec: specFor(root), skillsDir: join(root, 'skills') }
+    return { root, spec: specFor(root), skillsDir: join(root, 'skills'), tarballSha256: sha256(readFileSync(tarball)) }
   })()
   return packed
 }

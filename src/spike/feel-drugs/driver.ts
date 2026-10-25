@@ -159,16 +159,30 @@ export function loadPrompts(repoRoot = REPO_ROOT): SpikePrompt[] {
 
 export type FrozenCheck = { ok: true; sha256: string } | { ok: false; reason: string }
 
-/** The README records `prompts_sha256: <hex>`; live runs need it to equal the hash of the committed prompt file. */
-export function checkFrozen(repoRoot = REPO_ROOT): FrozenCheck {
-  const promptsPath = spikeFile(repoRoot, 'prompts.md')
+/** A file whose hash the README records under `key`: live runs need the two to agree. */
+export interface FrozenTarget {
+  /** Repo-relative path segments. */
+  path: readonly string[]
+  /** The README line is `<key>: <hex>`. */
+  key: string
+  /** What the file is, for messages ("prompt file"). */
+  noun: string
+  /** The refusal's closing phrase ("the prompts are not frozen"). */
+  notFrozen: string
+}
+
+export const PROMPTS_TARGET: FrozenTarget = { path: [...SPIKE_DIR, 'prompts.md'], key: 'prompts_sha256', noun: 'prompt file', notFrozen: 'the prompts are not frozen' }
+
+/** The README records `<key>: <hex>`; live runs need it to equal the hash of the committed file. Default: `prompts.md`. */
+export function checkFrozen(repoRoot = REPO_ROOT, target: FrozenTarget = PROMPTS_TARGET): FrozenCheck {
+  const filePath = join(repoRoot, ...target.path)
   const readmePath = spikeFile(repoRoot, 'README.md')
-  if (!existsSync(promptsPath)) return { ok: false, reason: `live runs need the frozen prompt file ${SPIKE_DIR.join('/')}/prompts.md` }
-  if (!existsSync(readmePath)) return { ok: false, reason: `live runs need ${SPIKE_DIR.join('/')}/README.md to record the prompt file hash` }
-  const recorded = /^prompts_sha256:\s*`?([0-9a-f]{64})`?\s*$/m.exec(readFileSync(readmePath, 'utf8'))?.[1]
-  if (!recorded) return { ok: false, reason: 'the README records no prompts_sha256: <hex> line; the prompts are not frozen' }
-  const actual = sha256(readFileSync(promptsPath))
-  if (actual !== recorded) return { ok: false, reason: `the prompt file hash ${actual.slice(0, 12)} does not match the README's ${recorded.slice(0, 12)}; the prompts are not frozen` }
+  if (!existsSync(filePath)) return { ok: false, reason: `live runs need the frozen ${target.noun} ${target.path.join('/')}` }
+  if (!existsSync(readmePath)) return { ok: false, reason: `live runs need ${SPIKE_DIR.join('/')}/README.md to record the ${target.noun} hash` }
+  const recorded = new RegExp(`^${target.key}:\\s*\`?([0-9a-f]{64})\`?\\s*$`, 'm').exec(readFileSync(readmePath, 'utf8'))?.[1]
+  if (!recorded) return { ok: false, reason: `the README records no ${target.key}: <hex> line; ${target.notFrozen}` }
+  const actual = sha256(readFileSync(filePath))
+  if (actual !== recorded) return { ok: false, reason: `the ${target.noun} hash ${actual.slice(0, 12)} does not match the README's ${recorded.slice(0, 12)}; ${target.notFrozen}` }
   return { ok: true, sha256: actual }
 }
 
@@ -212,10 +226,19 @@ export function classifyStatus(input: {
   exitCode: number
   /** The host's raw `--format json` stream. */
   stdout: string
-  arm: Arm
+  arm: string
   offered: readonly string[]
+  /** Whether the arm must be offered `expectedTools`. Default: only arm B. */
+  expectTools?: boolean
+  /** The tools an arm that expects tools must be offered. Default: the spike's `metacog_feel` and `metacog_drugs`. */
+  expectedTools?: readonly string[]
+  /** An arm that expects no tools must not be offered any tool with this prefix. Default: `metacog_`. */
+  toolPrefix?: string
 }): { status: RunStatus; reasons: string[] } {
   const { timedOut, exitCode, stdout, arm, offered } = input
+  const expectTools = input.expectTools ?? arm === 'B'
+  const expectedTools = input.expectedTools ?? EXPECTED_TOOLS
+  const toolPrefix = input.toolPrefix ?? `${MCP_SERVER_NAME}_`
   if (timedOut) return { status: 'timeout', reasons: ['timeout'] }
   const events = analyzeEvents(stdout)
   if (isRateLimited(events.hostErrors)) return { status: 'rate_limited', reasons: ['provider_429'] }
@@ -226,14 +249,14 @@ export function classifyStatus(input: {
   if (parsed.events.length === 0 && parsed.nonJsonLines.length === 0) return { status: 'host_error', reasons: ['no_events'] }
   if (events.unrecognized.length > 0) return { status: 'host_error', reasons: ['unrecognized_events'] }
   if (events.stepFinishCount === 0 && events.assistantText.trim() === '') return { status: 'host_error', reasons: ['no_completion'] }
-  const hasTools = EXPECTED_TOOLS.every((t) => offered.includes(t))
-  if (arm !== 'B' && offered.some((t) => t.startsWith(`${MCP_SERVER_NAME}_`))) return { status: 'host_error', reasons: ['unexpected_tools_offered'] }
-  if (arm === 'B' && !hasTools) return { status: 'tools_missing', reasons: ['expected_tools_not_offered'] }
+  const hasTools = expectedTools.every((t) => offered.includes(t))
+  if (!expectTools && offered.some((t) => t.startsWith(toolPrefix))) return { status: 'host_error', reasons: ['unexpected_tools_offered'] }
+  if (expectTools && !hasTools) return { status: 'tools_missing', reasons: ['expected_tools_not_offered'] }
   return { status: 'completed', reasons: [] }
 }
 
 /** Retries a rate-limited run after 30, 60 and 120 s; the last result stands. */
-export async function withBackoff<T extends { status: RunStatus }>(attempt: () => Promise<T>, sleep: (ms: number) => Promise<void>): Promise<T> {
+export async function withBackoff<T extends { status: string }>(attempt: () => Promise<T>, sleep: (ms: number) => Promise<void>): Promise<T> {
   let result = await attempt()
   for (const ms of BACKOFF_MS) {
     if (result.status !== 'rate_limited') break

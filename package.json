@@ -38,6 +38,7 @@
     "scan:secrets": "bun src/scan/secrets.ts",
     "spike:feel-drugs": "bun src/spike/feel-drugs/driver.ts",
     "spike:feel-drugs:sheet": "bun src/spike/feel-drugs/sheet.ts",
+    "spike:guided": "bun src/spike/feel-drugs/guided.ts",
     "version": "changeset version && bun run generate",
     "release": "bun src/release/release.ts"
   },

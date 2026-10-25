@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 
-import { startScriptedProvider, type ScriptedProviderServer, type ScriptedStep } from './scripted-provider'
+import { SPIKE_MODEL_ID, SPIKE_PROVIDER_ID, scriptedProviderConfig, startScriptedProvider, type ScriptedProviderServer, type ScriptedStep } from './scripted-provider'
 
 const servers: ScriptedProviderServer[] = []
 afterEach(() => {
@@ -125,5 +125,19 @@ describe('steps by turn and round', () => {
   test('the title request is never scripted, even with turns', async () => {
     const server = start({ steps: [], turns: [[call('a')]] })
     expect((await ask(server, [{ role: 'system', content: TITLE_PROMPT }, user('Generate a title'), user('one')])).text).toBe('spike title')
+  })
+})
+
+describe('scriptedProviderConfig', () => {
+  const models = (config: Record<string, unknown>) => (config[SPIKE_PROVIDER_ID] as { models: Record<string, { id: string }> }).models
+
+  test('the default model id is the spike model', () => {
+    expect(Object.keys(models(scriptedProviderConfig('http://x/v1')))).toEqual([SPIKE_MODEL_ID])
+  })
+
+  test("a model id stands in for a model family and is the model entry's id", () => {
+    const entry = models(scriptedProviderConfig('http://x/v1', 'gpt-scripted'))
+    expect(Object.keys(entry)).toEqual(['gpt-scripted'])
+    expect(entry['gpt-scripted']?.id).toBe('gpt-scripted')
   })
 })

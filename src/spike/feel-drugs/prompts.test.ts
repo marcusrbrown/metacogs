@@ -4,6 +4,7 @@ import { join } from 'node:path'
 
 import { sha256 } from '../../runner/workspace'
 import { checkFrozen, loadPrompts, NUDGE, parsePrompts } from './driver'
+import { loadCodingPrompts } from './guided'
 
 const ROOT = new URL('../../..', import.meta.url).pathname.replace(/\/$/, '')
 const FILE = readFileSync(join(ROOT, 'evals', 'spikes', 'feel-drugs', 'prompts.md'), 'utf8')
@@ -50,5 +51,40 @@ describe('the spike prompts', () => {
   test('the README records the hash of the nudge string, exactly as appended', () => {
     const readme = readFileSync(join(ROOT, 'evals', 'spikes', 'feel-drugs', 'README.md'), 'utf8')
     expect(/^nudge_sha256:\s*`?([0-9a-f]{64})`?\s*$/m.exec(readme)?.[1]).toBe(sha256(NUDGE))
+  })
+})
+
+describe('the guided read 2 coding prompts', () => {
+  const FILE_CODING = readFileSync(join(ROOT, 'evals', 'spikes', 'feel-drugs', 'coding-prompts.md'), 'utf8')
+  const coding = loadCodingPrompts(ROOT)
+  /** The prose list, plus the names of the plugin, its skills and its tools: a coding prompt that says any of them steers the read. */
+  const CODING_BANNED = [...BANNED, 'metacog', 'plugin', 'skill', 'synthesis', 'counterfactual', 'guidance', 'persona']
+
+  test('two prompts, c1 and c2, each marked coding with a one-line rationale', () => {
+    expect(coding.map((p) => p.id)).toEqual(['c1', 'c2'])
+    expect([...FILE_CODING.matchAll(/^## c\d \((\w+)\)/gm)].map((m) => m[1])).toEqual(['coding', 'coding'])
+    for (const p of coding) {
+      expect(p.rationale.length).toBeGreaterThan(10)
+      expect(p.rationale).not.toContain('\n')
+    }
+  })
+
+  test.each(CODING_BANNED)('no coding prompt contains "%s" (case-insensitive)', (word) => {
+    for (const p of coding) expect(p.text.toLowerCase()).not.toContain(word)
+  })
+
+  test('the prompts are plain plan-only asks: bounded length, a plan requested, files left alone, no instructions about how to think', () => {
+    for (const p of coding) {
+      expect(p.text.length).toBeLessThanOrEqual(400)
+      expect(p.text).toMatch(/\bplan\b/i)
+      expect(p.text).toMatch(/plan only/i)
+      expect(p.text).toMatch(/don't change any files/i)
+      expect(p.text).not.toMatch(/step by step|think (deeply|carefully)|take a moment|slow down/i)
+    }
+  })
+
+  test('the lexical check itself catches a violation', () => {
+    const bad = parsePrompts('## c1\n\n> Plan the change with the metacogs plugin.\n\nRationale: r\n')
+    expect(CODING_BANNED.filter((w) => bad[0]!.text.toLowerCase().includes(w))).toEqual(['metacog', 'plugin'])
   })
 })
