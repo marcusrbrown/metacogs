@@ -101,6 +101,8 @@ interface Plant {
   stdout?: string
   /** The prereg content hash the manifest was produced under (default: the CTX hash). */
   hash?: string
+  /** The agent model the manifest records (default: agent/x). */
+  agent?: string
 }
 
 const CAMPAIGN_ID = 'demo-pilot-2026-10-24T00-00-00-000Z'
@@ -127,6 +129,7 @@ function plantCampaign(plants: Plant[]): string {
       records: [],
       artifacts: {},
       prereg: { content_hash: p.hash ?? 'a'.repeat(64), epoch: 1 },
+      model: { pinned: p.agent ?? 'agent/x', returned: [] },
       ...(p.judge ? { judge: p.judge } : {}),
     }
     writeManifest(dir, base as never)
@@ -136,6 +139,20 @@ function plantCampaign(plants: Plant[]): string {
 }
 
 const CTX = { method: 'demo', prereg_content_hash: 'a'.repeat(64), agent_model_id: 'agent/x', judge_model_id: 'judge/x', criteria: ['TE1', 'TE2'] }
+
+const PROMPT = 'f'.repeat(64)
+const JUDGE_JSON = JSON.stringify({ redacted_input_sha256: 'c'.repeat(64), model_pinned: 'm', model_returned: ['m'], criteria: [{ id: 'TE1', verdict: 'pass', quotes: ['q'] }, { id: 'TE2', verdict: 'pass', quotes: ['q'] }], attempts: 1 })
+
+/** What a rejudge leaves behind for a run: `judge.json` and a `rejudge-summary.json` row that names its hash. */
+function plantRejudge(campaign: string, rows: { run: string; verdict?: string; judgeJson?: string | null; hash?: string | null }[], prompt = PROMPT): void {
+  const summaryRows = rows.map((r) => {
+    const text = r.judgeJson === undefined ? JUDGE_JSON : r.judgeJson
+    if (text !== null) writeFileSync(join(campaign, r.run, 'judge.json'), text)
+    const hash = r.hash === undefined ? (text === null ? undefined : sha256(text)) : (r.hash ?? undefined)
+    return { run_id: r.run, prior_outcome: 'pass', verdict: r.verdict ?? 'pass', ...(hash ? { judge_json_sha256: hash } : {}) }
+  })
+  writeFileSync(join(campaign, 'rejudge-summary.json'), JSON.stringify({ judge_prompt_sha256: prompt, runs: summaryRows }))
+}
 
 describe('tallyPilotCampaign', () => {
   test('per arm × fixture counts: each judge criterion, all passed, over limit, empty, skill loaded', () => {
@@ -207,9 +224,66 @@ describe('tallyPilotCampaign', () => {
     expect(() => tallyPilotCampaign(dir, CTX)).toThrow(/prereg/)
   })
 
-  test('allowRejudged skips the hash comparison: a rejudge rewrote the verdicts under the current prereg', () => {
-    const dir = plantCampaign([{ arm: 'baseline', fixture: 'd1', judge: evidence('pass', 'pass'), hash: 'b'.repeat(64) }])
-    expect(tallyPilotCampaign(dir, CTX, { allowRejudged: true }).tally.baseline!.d1).toMatchObject({ runs: 1 })
+  describe('rejudgedUnder: a run from another prereg hash counts only if a rejudge under the current judge prompt wrote its judge.json', () => {
+    const OLD = 'b'.repeat(64)
+    const R1 = '001-dev-d1-baseline-r1'
+    const R2 = '002-dev-d1-baseline-r1'
+    const two = () => plantCampaign([{ arm: 'baseline', fixture: 'd1', hash: OLD }, { arm: 'baseline', fixture: 'd1', hash: OLD }])
+    const under = { rejudgedUnder: { judgePromptSha256: PROMPT } }
+
+    test('accepted when the summary names the current prompt and the run\'s judge.json hash', () => {
+      const dir = two()
+      plantRejudge(dir, [{ run: R1 }, { run: R2 }])
+      expect(tallyPilotCampaign(dir, CTX, under).tally.baseline!.d1).toMatchObject({ runs: 2, criteria: { TE1: 2, TE2: 2 } })
+    })
+
+    test('refused without a summary: the verdicts on disk predate the current contract', () => {
+      const dir = two()
+      writeFileSync(join(dir, R1, 'judge.json'), JUDGE_JSON)
+      expect(() => tallyPilotCampaign(dir, CTX, under)).toThrow(new RegExp(`${R1}.*rejudge`))
+    })
+
+    test('refused when the summary is for another judge prompt (the rubric was edited after the rejudge)', () => {
+      const dir = two()
+      plantRejudge(dir, [{ run: R1 }, { run: R2 }], 'e'.repeat(64))
+      expect(() => tallyPilotCampaign(dir, CTX, under)).toThrow(/judge prompt/)
+    })
+
+    test('refused when a run was skipped by the rejudge, naming it', () => {
+      const dir = two()
+      plantRejudge(dir, [{ run: R1 }, { run: R2, verdict: 'skipped', judgeJson: JUDGE_JSON, hash: null }])
+      expect(() => tallyPilotCampaign(dir, CTX, under)).toThrow(new RegExp(R2))
+    })
+
+    test('refused when judge.json is not the file the rejudge wrote', () => {
+      const dir = two()
+      plantRejudge(dir, [{ run: R1 }, { run: R2 }])
+      writeFileSync(join(dir, R2, 'judge.json'), JUDGE_JSON.replace('"pass"', '"fail"'))
+      expect(() => tallyPilotCampaign(dir, CTX, under)).toThrow(new RegExp(R2))
+    })
+
+    test('a run that never reached the judge (a timeout) needs no provenance; its counts come from the manifest', () => {
+      const dir = plantCampaign([{ arm: 'baseline', fixture: 'd1', hash: OLD, status: 'timeout', reasons: ['timeout'] }])
+      expect(tallyPilotCampaign(dir, CTX, under).tally.baseline!.d1).toMatchObject({ runs: 1, all_pass: 0 })
+    })
+
+    test('a run under the current hash needs no summary', () => {
+      const dir = plantCampaign([{ arm: 'baseline', fixture: 'd1', judge: evidence('pass', 'pass') }])
+      expect(tallyPilotCampaign(dir, CTX, under).tally.baseline!.d1).toMatchObject({ runs: 1 })
+    })
+  })
+
+  test('the agent model on the tally is the one the manifests recorded, not the caller\'s', () => {
+    const dir = plantCampaign([{ arm: 'baseline', fixture: 'd1', agent: 'recorded/model', judge: evidence('pass', 'pass') }])
+    expect(tallyPilotCampaign(dir, CTX).agent_model_id).toBe('recorded/model')
+  })
+
+  test('manifests that recorded different agent models are refused, naming both', () => {
+    const dir = plantCampaign([
+      { arm: 'baseline', fixture: 'd1', agent: 'agent/one', judge: evidence('pass', 'pass') },
+      { arm: 'baseline', fixture: 'd1', agent: 'agent/two', judge: evidence('pass', 'pass') },
+    ])
+    expect(() => tallyPilotCampaign(dir, CTX)).toThrow(/agent\/one.*agent\/two|agent\/two.*agent\/one/)
   })
 
   test('manifests from two campaigns in one directory are refused', () => {
@@ -421,7 +495,6 @@ describe('baseline pilot, end to end (fake host)', () => {
     const tally = tallyPilotCampaign(campaignDir, {
       method: 'demo',
       prereg_content_hash: verification.contentHash,
-      agent_model_id: verification.prereg.agent_model_id,
       judge_model_id: verification.prereg.judge_model_id,
       criteria: ['TE1', 'TE2'],
     })
@@ -434,7 +507,9 @@ describe('baseline pilot, end to end (fake host)', () => {
     })
     const path = writePilotTally(repo.dir, tally)
     const written = JSON.parse(readFileSync(path, 'utf8')) as PilotTally
-    expect(written).toMatchObject({ arms: ['baseline'], method: 'demo', prereg_content_hash: verification.contentHash, agent_model_id: 'opencode/big-pickle', judge_model_id: 'judge/other-family' })
+    expect(written).toMatchObject({ arms: ['baseline'], method: 'demo', prereg_content_hash: verification.contentHash, agent_model_id: tally.agent_model_id, judge_model_id: 'judge/other-family' })
+    // The tally names the model the manifests recorded (the fake host's), not the prereg's pin.
+    expect(tally.agent_model_id).toBe('metacogs-spike-provider/metacogs-spike-model')
     expect(written.tally).toEqual(tally.tally)
     expect(path.endsWith(join('evals', 'demo', 'pilot', 'pilot.json'))).toBe(true)
 

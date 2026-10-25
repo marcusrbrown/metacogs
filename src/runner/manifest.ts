@@ -175,6 +175,20 @@ export function loadCampaignRuns(campaignDir: string): CampaignRun[] {
 }
 
 /**
+ * Which runs would have reached the judge originally: positive fixtures that completed
+ * and passed the deterministic checks. Everything else is skipped with a reason.
+ */
+export function skipReason(m: RunManifest, hasStdout: boolean): string | undefined {
+  if (m.fixture.kind === 'negative') return 'negative fixture (never judged)'
+  if (m.fixture.kind === 'heldout') return 'held-out fixture (not rejudged by this command)'
+  if (m.status !== 'completed') return `status ${m.status}`
+  if (m.check_failures.length) return 'failed a deterministic check (never reached the judge)'
+  if (m.reasons.includes('answer_empty')) return 'empty final answer (never reached the judge)'
+  if (!hasStdout) return 'no stdout.jsonl retained'
+  return undefined
+}
+
+/**
  * Why these runs can never feed a report or a review sheet, or `undefined` when none of them is a pilot run. Pilot manifests (`eval pilot`)
  * ran a different plan (arms, no negatives) under a pilot prereg, and a RED/dev/GREEN read or a human review built from them would claim
  * evidence nobody pre-registered. `pilot.json` is their only projection.

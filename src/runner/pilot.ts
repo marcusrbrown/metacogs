@@ -13,9 +13,10 @@ import { isAbsolute, join, relative, resolve } from 'node:path'
 
 import { isSkillContentLoad, parseEvents, toolUses } from './events'
 import { readJudgeRecord } from './judge-record'
-import { loadCampaignRuns, PILOT_ARMS, type PilotArm, type RunManifest } from './manifest'
+import { loadCampaignRuns, PILOT_ARMS, type PilotArm, type RunManifest, skipReason } from './manifest'
 import type { LoadedFixture } from './prereg'
 import type { PlannedRun } from './run'
+import { sha256 } from './workspace'
 
 export { PILOT_ARMS, type PilotArm }
 
@@ -124,32 +125,81 @@ export interface PilotContext {
   judge_model_id: string
 }
 
-export interface TallyContext extends PilotContext {
+export interface TallyContext extends Omit<PilotContext, 'agent_model_id'> {
   /** The rubric's judge criterion ids (`parseRubric(...).criteria`), in rubric order. Each gets a pass count per cell. */
   criteria: readonly string[]
 }
 
 export interface TallyOptions {
   /**
-   * Skip the check that every manifest was produced under `ctx.prereg_content_hash`. Only the rejudge path sets it: a rejudge
-   * rewrites `judge.json` under the current prereg and never touches the manifests, so they keep the hash they were run under.
+   * Set by the rejudge path only. A rejudge rewrites `judge.json` under the current prereg and never touches the manifests, so they
+   * keep the hash they were run under. Such a run counts only if it reached the judge originally and `rejudge-summary.json` proves
+   * that a rejudge under this judge prompt wrote its current `judge.json` (see `judgingProvenance`); any other run is refused.
    */
-  allowRejudged?: boolean
+  rejudgedUnder?: { judgePromptSha256: string }
+}
+
+interface SummaryRow {
+  verdict: string
+  judge_json_sha256?: string
+}
+
+/** The rows of `rejudge-summary.json` by run id, with the judge prompt hash the rejudge recorded; `undefined` when there is no readable summary. */
+function readRejudgeSummary(campaignDir: string): { prompt: string; rows: Map<string, SummaryRow> } | undefined {
+  const path = join(campaignDir, 'rejudge-summary.json')
+  if (!existsSync(path)) return undefined
+  try {
+    const raw = JSON.parse(readFileSync(path, 'utf8')) as { judge_prompt_sha256?: unknown; runs?: unknown }
+    if (typeof raw.judge_prompt_sha256 !== 'string' || !Array.isArray(raw.runs)) return undefined
+    const rows = new Map<string, SummaryRow>()
+    for (const r of raw.runs as { run_id?: unknown; verdict?: unknown; judge_json_sha256?: unknown }[]) {
+      if (typeof r.run_id === 'string' && typeof r.verdict === 'string') rows.set(r.run_id, { verdict: r.verdict, ...(typeof r.judge_json_sha256 === 'string' ? { judge_json_sha256: r.judge_json_sha256 } : {}) })
+    }
+    return { prompt: raw.judge_prompt_sha256, rows }
+  } catch {
+    return undefined
+  }
+}
+
+/** Why the run's `judge.json` cannot be shown to come from a rejudge under `judgePromptSha256`, or `undefined` when it can. */
+function judgingProvenance(runDir: string, runId: string, summary: ReturnType<typeof readRejudgeSummary>, judgePromptSha256: string): string | undefined {
+  if (summary === undefined) return 'there is no readable rejudge-summary.json in the campaign'
+  if (summary.prompt !== judgePromptSha256) return `its rejudge was under judge prompt ${summary.prompt.slice(0, 12)}, not the current ${judgePromptSha256.slice(0, 12)} (the rubric changed after it)`
+  const row = summary.rows.get(runId)
+  if (row === undefined) return 'the rejudge summary has no row for it'
+  if (row.verdict === 'skipped' || row.judge_json_sha256 === undefined) return 'the rejudge skipped it or wrote no judge.json for it'
+  const path = join(runDir, 'judge.json')
+  if (!existsSync(path)) return 'it has no judge.json'
+  if (sha256(readFileSync(path, 'utf8')) !== row.judge_json_sha256) return 'its judge.json is not the file the rejudge wrote'
+  return undefined
 }
 
 /**
- * Counts one pilot campaign into `arm → fixture → cell`. A manifest without an `arm` means this is not a pilot campaign, and a
- * manifest produced under another prereg content hash is refused unless `allowRejudged`: its verdicts are not the current prereg's.
+ * Counts one pilot campaign into `arm → fixture → cell`. A manifest without an `arm` means this is not a pilot campaign.
+ *
+ * A manifest produced under another prereg content hash is refused: its verdicts are not the current prereg's. The one exception is
+ * the rejudge path (`options.rejudgedUnder`), where a run that reached the judge originally must have a `judge.json` that a rejudge
+ * under the current judge prompt wrote; a run that never reached the judge (a timeout, an empty answer) has no verdict to vouch for.
+ * The agent model on the tally is the one the manifests recorded, and manifests that disagree are refused.
  */
 export function tallyPilotCampaign(campaignDir: string, ctx: TallyContext, options: TallyOptions = {}): PilotTally {
   const tally: PilotTally['tally'] = {}
   const campaignIds = new Set<string>()
+  const agentModels = new Set<string>()
+  const { rejudgedUnder } = options
+  const summary = rejudgedUnder ? readRejudgeSummary(campaignDir) : undefined
   for (const { dir: runDir, manifest: m } of loadCampaignRuns(campaignDir)) {
     if (m.arm === undefined) throw new Error(`${m.run_id} carries no arm: ${campaignDir} is not a pilot campaign`)
-    if (!options.allowRejudged && m.prereg.content_hash !== ctx.prereg_content_hash) {
-      throw new Error(`${runDir} was run under prereg ${m.prereg.content_hash.slice(0, 12)}, not the current ${ctx.prereg_content_hash.slice(0, 12)}; rejudge the campaign under the current prereg before tallying it`)
+    if (m.prereg.content_hash !== ctx.prereg_content_hash) {
+      const mismatch = `${runDir} was run under prereg ${m.prereg.content_hash.slice(0, 12)}, not the current ${ctx.prereg_content_hash.slice(0, 12)}`
+      if (rejudgedUnder === undefined) throw new Error(`${mismatch}; rejudge the campaign under the current prereg before tallying it`)
+      if (skipReason(m, true) === undefined) {
+        const why = judgingProvenance(runDir, m.run_id, summary, rejudgedUnder.judgePromptSha256)
+        if (why !== undefined) throw new Error(`${mismatch}, and its verdicts are not from a rejudge under the current contract: ${why}. Run \`rejudge\` (without --tally-only) first`)
+      }
     }
     campaignIds.add(m.campaign_id)
+    agentModels.add(m.model.pinned)
     if (!COUNTED_STATUSES.includes(m.status)) continue
     const cell = ((tally[m.arm] ??= {})[m.fixture.id] ??= emptyCell(ctx.criteria))
     const verdicts = verdictsOf(runDir, m)
@@ -162,11 +212,14 @@ export function tallyPilotCampaign(campaignDir: string, ctx: TallyContext, optio
     if (skillLoadedIn(runDir)) cell.skill_loaded += 1
   }
   if (campaignIds.size > 1) throw new Error(`${campaignDir} holds manifests from more than one campaign (${[...campaignIds].sort().join(', ')})`)
+  if (agentModels.size > 1) throw new Error(`${campaignDir} holds manifests that recorded different agent models (${[...agentModels].sort().join(', ')})`)
+  const [agentModel] = agentModels
+  if (agentModel === undefined) throw new Error(`${campaignDir} holds no run manifests`)
   const campaigns: PilotTally['campaigns'] = {}
   const [campaignId] = campaignIds
   if (campaignId !== undefined) for (const arm of PILOT_ARMS) if (tally[arm] !== undefined) campaigns[arm] = campaignId
   const { criteria: _criteria, ...context } = ctx
-  return projectPilot({ ...context, tally, campaigns })
+  return projectPilot({ ...context, agent_model_id: agentModel, tally, campaigns })
 }
 
 function assertKnownArm(arm: string, where: string): asserts arm is PilotArm {

@@ -16,7 +16,7 @@ import { allAssistantText, analyzeEvents, finalAnswerText, parseEvents } from '.
 import { type HumanReview, reconcile } from './human-review'
 import { type JudgeCriterion, parseRubric, type RubricDeclarations } from './judge'
 import { type JudgeRecord, readJudgeRecord, writeJudgeRecord } from './judge-record'
-import { type CampaignRun, loadCampaignRuns, pilotCampaignRefusal, type RunManifest } from './manifest'
+import { type CampaignRun, loadCampaignRuns, pilotCampaignRefusal, type RunManifest, skipReason } from './manifest'
 import type { LoadedFixture } from './prereg'
 import type { JudgeHook } from './run'
 
@@ -293,19 +293,7 @@ export interface RejudgeRow {
   judge_json_sha256?: string
 }
 
-/**
- * Which runs would have reached the judge originally: positive fixtures that completed
- * and passed the deterministic checks. Everything else is skipped with a reason.
- */
-export function skipReason(m: RunManifest, hasStdout: boolean): string | undefined {
-  if (m.fixture.kind === 'negative') return 'negative fixture (never judged)'
-  if (m.fixture.kind === 'heldout') return 'held-out fixture (not rejudged by this command)'
-  if (m.status !== 'completed') return `status ${m.status}`
-  if (m.check_failures.length) return 'failed a deterministic check (never reached the judge)'
-  if (m.reasons.includes('answer_empty')) return 'empty final answer (never reached the judge)'
-  if (!hasStdout) return 'no stdout.jsonl retained'
-  return undefined
-}
+export { skipReason }
 
 export async function rejudgeCampaign(input: RejudgeInput): Promise<RejudgeRow[]> {
   const rows: RejudgeRow[] = []

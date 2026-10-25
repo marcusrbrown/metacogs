@@ -24,7 +24,7 @@ import { enforcePrereg, heldoutFingerprints, parsePrereg, type Prereg, preregRel
 import { buildDevReport, buildGreenReport, buildRedReport, type DevReport, type DevRegressionSource, type GreenReport, greenReportPath, loadCampaignManifests, recomputeDevRegression, validateDevReport, validateGreenReport, writeDevReport, writeGreenReport, writeReport } from './report'
 import { isPilotArm, pilotPreregRel, planPilot, tallyPilotCampaign, writePilotTally } from './pilot'
 import { planRuns, type ProviderMode, runCampaign, tallyKey } from './run'
-import { claimHeldoutRead, CustodyError, hashSkillDir, heldoutDir, heldoutReadMarkerPath, resolveOutputDir, stateRoot } from './workspace'
+import { claimHeldoutRead, CustodyError, hashSkillDir, heldoutDir, heldoutReadMarkerPath, resolveOutputDir, sha256, stateRoot } from './workspace'
 
 export const EXIT = { OK: 0, ERROR: 1, USAGE: 64, REFUSED: 3, CREDENTIAL_LEAK: 4, INTERRUPTED: 130 } as const
 
@@ -394,9 +394,8 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
       const pilotTally = tallyPilotCampaign(campaignDir, {
         method,
         prereg_content_hash: verification.contentHash,
-        agent_model_id: prereg.agent_model_id,
         judge_model_id: prereg.judge_model_id,
-        criteria: pilotCriteria(repoRoot, method),
+        criteria: pilotRubric(repoRoot, method).criteria,
       })
       out(`wrote ${writePilotTally(repoRoot, pilotTally, out).slice(repoRoot.length + 1)} (arms: ${pilotTally.arms.join(', ')})`)
     } catch (e) {
@@ -432,8 +431,14 @@ interface CampaignToolArgs {
   makeJudge: typeof createJudge
 }
 
-/** The judge criterion ids the pilot tally counts: the rubric's, which the prereg's `rubric_hash` has already pinned. */
-const pilotCriteria = (repoRoot: string, method: string): string[] => parseRubric(readFileSync(join(repoRoot, 'evals', method, 'rubric.md'), 'utf8')).criteria.map((c) => c.id)
+/**
+ * What the pilot tally reads from the rubric, which the prereg's `rubric_hash` has already pinned: the judge criterion ids it counts,
+ * and the hash of the judge prompt a rejudge under this rubric records in `rejudge-summary.json`.
+ */
+function pilotRubric(repoRoot: string, method: string): { criteria: string[]; judgePromptSha256: string } {
+  const spec = parseRubric(readFileSync(join(repoRoot, 'evals', method, 'rubric.md'), 'utf8'))
+  return { criteria: spec.criteria.map((c) => c.id), judgePromptSha256: sha256(spec.systemPrompt) }
+}
 
 /** `--campaign` is a directory, or a campaign id under `evals/runs/` (then the state root's `runs/`, where held-out campaigns live). */
 export function resolveCampaignDir(value: string, repoRoot: string, cwd: string, env: Record<string, string | undefined>): string | undefined {
@@ -541,14 +546,16 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
       throw e
     }
     /** A pilot has no review sheets. Its only projection is pilot.json, rebuilt from the verdicts now on disk, keyed to this prereg. */
-    const writePilotFromDisk = (): number => {
+    const writePilotFromDisk = (usedPrompt?: string): number => {
       let tally: ReturnType<typeof tallyPilotCampaign>
       try {
-        // A rejudge rewrites judge.json under this prereg and leaves the manifests (and the hash they were run under) alone.
+        // A rejudge rewrites judge.json under this prereg and leaves the manifests (and the hash they were run under) alone, so the
+        // tally takes a run from another hash only on the strength of rejudge-summary.json (see `tallyPilotCampaign`).
+        const rubric = pilotRubric(repoRoot, method)
         tally = tallyPilotCampaign(
           campaignDir,
-          { method, prereg_content_hash: verification.contentHash, agent_model_id: verification.prereg.agent_model_id, judge_model_id: verification.prereg.judge_model_id, criteria: pilotCriteria(repoRoot, method) },
-          { allowRejudged: true },
+          { method, prereg_content_hash: verification.contentHash, judge_model_id: verification.prereg.judge_model_id, criteria: rubric.criteria },
+          { rejudgedUnder: { judgePromptSha256: usedPrompt ?? rubric.judgePromptSha256 } },
         )
       } catch (e) {
         a.err(`REFUSED: ${(e as Error).message}`)
@@ -590,7 +597,7 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
         a.err(`ABORTED: the judge could not be reached for ${unreachable.length} run(s) (${unreachable.map((r) => r.run_id).join(', ')}); their old verdicts are still on disk, so pilot.json was not written. Run rejudge again.`)
         return EXIT.ERROR
       }
-      return writePilotFromDisk()
+      return writePilotFromDisk(judge.systemPromptSha256)
     }
   }
   let paths: ReturnType<typeof writeReview>
