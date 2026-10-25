@@ -22,13 +22,21 @@ prompts_sha256: 47b31dcde9b9414f604f118f4497796cf09ac4beefebb6735680c89124753e60
 
 Status: approved by the owner as committed. Any edit to `prompts.md` needs the hash above recomputed (`shasum -a 256 evals/spikes/feel-drugs/prompts.md`) in the same commit.
 
+## Nudged variant
+
+`--nudge` appends one sentence to the frozen prompt text sent to the model; `prompts.md` and its hash above are untouched, and the freeze check still applies to them. The appended string is a blank line plus the sentence, exactly `\n\nUse your available tools or skills before answering.` (constant `NUDGE` in `src/spike/feel-drugs/driver.ts`), recorded here by the hash of those bytes:
+
+nudge_sha256: c84b43edf63e9c9460b445a262dd490de3d791321d869d6e24f20d51663756fa
+
+Each `run.json` records `variant` (`unprompted` or `nudged`; runs from before the field read as `unprompted`). Nudged campaigns carry `-nudged` in their id. The sheet renders the unprompted runs first and the nudged runs in a separate top-level section.
+
 ## Running
 
 ```sh
 # $0 smoke run against the scripted provider (a local stub, no credential, no network)
 bun run spike:feel-drugs --model openai/gpt-6-luna --arm B --runs 1 --probe
 
-# live: one invocation per model, 24 runs each (needs the frozen prompts and a CLIProxyAPI key name)
+# live: one invocation per model, 24 runs each (add --nudge for the nudged variant) (needs the frozen prompts and a CLIProxyAPI key name)
 bun run spike:feel-drugs --provider live --auth-cliproxy <key-name> --model openai/gpt-6-luna
 
 # render the read sheet from the retained campaign dirs

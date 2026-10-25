@@ -13,6 +13,7 @@ import {
   checkFrozen,
   classifyStatus,
   EXPECTED_TOOLS,
+  NUDGE,
   MCP_SERVER_NAME,
   parseArgs,
   parsePrompts,
@@ -44,6 +45,11 @@ describe('parseArgs', () => {
     expect(o.runs).toBe(2)
     expect(o.provider).toBe('scripted')
     expect(o.probe).toBe(false)
+    expect(o.nudge).toBe(false)
+  })
+
+  test('--nudge is a switch', () => {
+    expect(parseArgs(['--nudge']).nudge).toBe(true)
   })
 
   test('repeatable flags', () => {
@@ -60,6 +66,12 @@ describe('parseArgs', () => {
     [['--model'], /--model/],
   ])('rejects %j', (argv, message) => {
     expect(() => parseArgs(argv as string[])).toThrow(message)
+  })
+})
+
+describe('the nudge', () => {
+  test('is exactly one blank line and one sentence', () => {
+    expect(NUDGE).toBe('\n\nUse your available tools or skills before answering.')
   })
 })
 
@@ -221,6 +233,26 @@ describe('the live freeze', () => {
   })
 })
 
+describe('the live freeze with --nudge', () => {
+  test('still stops on an unfrozen prompt file before any credential is fetched', async () => {
+    const root = tmp('feel-drugs-repo-')
+    const dir = join(root, 'evals', 'spikes', 'feel-drugs')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'prompts.md'), 'a\n')
+    writeFileSync(join(dir, 'README.md'), `prompts_sha256: ${'0'.repeat(64)}\n`)
+    let fetched = false
+    await expect(
+      runSpike(parseArgs(['--nudge', '--provider', 'live', '--auth-cliproxy', 'k']), {
+        repoRoot: root,
+        outRoot: tmp(),
+        resolveCliproxy: () => ((fetched = true), undefined),
+        log: () => {},
+      }),
+    ).rejects.toThrow(/frozen/i)
+    expect(fetched).toBe(false)
+  })
+})
+
 describe.skipIf(!opencodeAvailability().available)('against the pinned host, scripted provider ($0)', () => {
   const run = async (argv: string[], deps: Parameters<typeof runSpike>[1] = {}) => {
     const outRoot = tmp('feel-drugs-out-')
@@ -364,5 +396,43 @@ describe.skipIf(!opencodeAvailability().available)('against the pinned host, scr
       expect(line).toMatch(/called: metacog_feel/)
     },
     180_000,
+  )
+
+  // What reaches the model: the host wraps a multi-word argv message in double quotes (evals/runner/README.md, "Quirk"),
+  // so the nudge arrives inside the same quoted string as the prompt, blank line and all. Pinned so the form is on record.
+  const userTexts = (dir: string): string[] => {
+    const bodies = JSON.parse(readFileSync(join(dir, 'requests.json'), 'utf8')) as { tools?: unknown; messages?: { role: string; content: unknown }[] }[]
+    const first = bodies.find((b) => Array.isArray(b.tools) && b.tools.length > 0)
+    return (first?.messages ?? []).filter((m) => m.role === 'user').map((m) => String(m.content))
+  }
+
+  test(
+    'without --nudge the frozen prompt is sent as is; with it the sentence is appended once, and the record says which',
+    async () => {
+      const plain = await run(['--arm', 'A', '--runs', '1', '--model', 'openai/gpt-6-luna'])
+      expect(userTexts(join(plain.campaignDir, 'A-t1-1'))).toEqual([`"${PROMPT.text}"`])
+      expect(plain.records[0]).toMatchObject({ variant: 'unprompted', prompt_hash: sha256(PROMPT.text) })
+      expect(plain.campaignDir).not.toContain('nudged')
+
+      const nudged = await run(['--nudge', '--arm', 'A', '--runs', '1', '--model', 'openai/gpt-6-luna'])
+      const sent = userTexts(join(nudged.campaignDir, 'A-t1-1'))
+      expect(sent).toEqual([`"${PROMPT.text}${NUDGE}"`])
+      expect(sent[0]!.split('Use your available tools or skills before answering.')).toHaveLength(2)
+      // the frozen prompt's own hash is unchanged, so the sheet still matches it to prompts.md
+      expect(nudged.records[0]).toMatchObject({ variant: 'nudged', prompt_hash: sha256(PROMPT.text) })
+      expect(nudged.campaignDir).toContain('nudged')
+      expect(JSON.parse(readFileSync(join(nudged.campaignDir, 'A-t1-1', 'run.json'), 'utf8')).variant).toBe('nudged')
+    },
+    240_000,
+  )
+
+  test(
+    'the nudge reaches arm B and C runs the same way',
+    async () => {
+      const { campaignDir, records } = await run(['--nudge', '--arm', 'B', '--arm', 'C', '--runs', '1', '--model', 'openai/gpt-6-luna'])
+      expect(records.map((r) => [r.arm, r.variant, r.status])).toEqual([['B', 'nudged', 'completed'], ['C', 'nudged', 'completed']])
+      for (const dir of ['B-t1-1', 'C-t1-1']) expect(userTexts(join(campaignDir, dir))).toEqual([`"${PROMPT.text}${NUDGE}"`])
+    },
+    240_000,
   )
 })

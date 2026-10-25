@@ -42,6 +42,9 @@ export const SKILL_NAME = 'metacog-frames'
 const METHOD = 'feel-drugs-spike'
 export const RUN_TIMEOUT_MS = 300_000
 export const BACKOFF_MS = [30_000, 60_000, 120_000] as const
+/** `--nudge` appends exactly this to the frozen prompt text. The README records its sha256. */
+export const NUDGE = '\n\nUse your available tools or skills before answering.'
+export type Variant = 'unprompted' | 'nudged'
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url)).replace(/\/$/, '')
 const SERVER_PATH = fileURLToPath(new URL('./server.ts', import.meta.url))
@@ -58,6 +61,8 @@ export interface SpikeOptions {
   runs: number
   provider: 'scripted' | 'live'
   probe: boolean
+  /** Append `NUDGE` to every prompt sent. `prompts.md` and its freeze are untouched. */
+  nudge: boolean
   authCliproxy: string | undefined
 }
 
@@ -71,6 +76,7 @@ export function parseArgs(argv: readonly string[]): SpikeOptions {
       runs: { type: 'string' },
       provider: { type: 'string' },
       probe: { type: 'boolean' },
+      nudge: { type: 'boolean' },
       'auth-cliproxy': { type: 'string' },
     },
     strict: true,
@@ -90,6 +96,7 @@ export function parseArgs(argv: readonly string[]): SpikeOptions {
     runs,
     provider,
     probe: values.probe ?? false,
+    nudge: values.nudge ?? false,
     authCliproxy: values['auth-cliproxy'],
   }
 }
@@ -224,6 +231,8 @@ export interface ToolCallRecord {
 
 export interface RunRecord {
   schema_version: 1
+  /** Absent in run records written before the nudged variant; readers treat that as `unprompted`. */
+  variant: Variant
   arm: Arm
   model: string
   /** The model the host was pointed at: the scripted stub's id in scripted mode, otherwise `model`. */
@@ -305,6 +314,7 @@ async function runOnce(c: RunContext): Promise<RunRecord> {
   const { options, deps, model, prompt, arm } = c
   const live = options.provider === 'live'
   const signal = deps.signal ?? new AbortController().signal
+  const sent = options.nudge ? `${prompt.text}${NUDGE}` : prompt.text
   rmSync(c.runDir, { recursive: true, force: true })
 
   const server = live ? startRecordingProxy(CLIPROXY_UPSTREAM) : startScriptedProvider({ steps: (deps.scriptFor ?? ((a) => defaultScript(a)))(arm, prompt), finalText: deps.finalText })
@@ -317,7 +327,7 @@ async function runOnce(c: RunContext): Promise<RunRecord> {
       method: METHOD,
       condition: setup.skillSource ? 'skill' : 'baseline',
       fixtureId: prompt.id,
-      fixtureText: prompt.text,
+      fixtureText: sent,
       provider: live ? { kind: 'live', recordingProxyUrl: server.url } : { kind: 'scripted', url: server.url },
       model: hostModel,
       permission: setup.permission,
@@ -336,7 +346,7 @@ async function runOnce(c: RunContext): Promise<RunRecord> {
     const dbg = await debugConfig({ ...base, timeoutMs: 120_000, signal })
     const dbgVerdict = dbg.json === undefined ? { passed: false } : checkDebugConfig(dbg.json, ws.config)
     const spawn = dbgVerdict.passed
-      ? await spawnCapture(runArgv(hostModel, prompt.text), { ...base, timeoutMs: deps.runTimeoutMs ?? RUN_TIMEOUT_MS, signal })
+      ? await spawnCapture(runArgv(hostModel, sent), { ...base, timeoutMs: deps.runTimeoutMs ?? RUN_TIMEOUT_MS, signal })
       : { stdout: '', stderr: dbg.result.stderr, exitCode: dbg.result.exitCode, timedOut: false, wallMs: dbg.result.wallMs }
     if (live) await Bun.sleep(50) // let the proxy's response scan settle
 
@@ -362,6 +372,7 @@ async function runOnce(c: RunContext): Promise<RunRecord> {
     const answer = allAssistantText(parseEvents(spawn.stdout).events)
     const record: RunRecord = {
       schema_version: 1,
+      variant: options.nudge ? 'nudged' : 'unprompted',
       arm,
       model,
       host_model: hostModel,
@@ -449,7 +460,7 @@ export async function runSpike(options: SpikeOptions, deps: SpikeDeps = {}): Pro
   const stamp = (deps.now ?? (() => new Date()))().toISOString().replace(/[:.]/g, '-')
 
   for (const model of options.models) {
-    const campaignDir = join(outRoot, `${modelSlug(model)}-${stamp}`)
+    const campaignDir = join(outRoot, `${modelSlug(model)}${options.nudge ? '-nudged' : ''}-${stamp}`)
     campaignDirs.push(campaignDir)
     const plan = options.probe
       ? options.arms.map((arm) => ({ prompt: selected[0]!, arm, index: 1 }))

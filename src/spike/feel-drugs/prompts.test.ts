@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { checkFrozen, loadPrompts, parsePrompts } from './driver'
+import { sha256 } from '../../runner/workspace'
+import { checkFrozen, loadPrompts, NUDGE, parsePrompts } from './driver'
 
 const ROOT = new URL('../../..', import.meta.url).pathname.replace(/\/$/, '')
 const FILE = readFileSync(join(ROOT, 'evals', 'spikes', 'feel-drugs', 'prompts.md'), 'utf8')
@@ -44,5 +45,10 @@ describe('the spike prompts', () => {
 
   test('the README records the hash of the committed prompt file, so the prompts are frozen', () => {
     expect(checkFrozen(ROOT)).toMatchObject({ ok: true })
+  })
+
+  test('the README records the hash of the nudge string, exactly as appended', () => {
+    const readme = readFileSync(join(ROOT, 'evals', 'spikes', 'feel-drugs', 'README.md'), 'utf8')
+    expect(/^nudge_sha256:\s*`?([0-9a-f]{64})`?\s*$/m.exec(readme)?.[1]).toBe(sha256(NUDGE))
   })
 })

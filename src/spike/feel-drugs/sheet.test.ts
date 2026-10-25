@@ -4,7 +4,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { sha256 } from '../../runner/workspace'
-import type { RunRecord, SpikePrompt } from './driver'
+import { NUDGE, type RunRecord, type SpikePrompt } from './driver'
 import { loadRuns, redactPaths, renderSheet, writeSheet } from './sheet'
 
 const cleanup: (() => void)[] = []
@@ -28,6 +28,7 @@ function record(overrides: Partial<RunRecord> & Pick<RunRecord, 'arm' | 'model' 
   const prompt = PROMPTS.find((p) => p.id === overrides.prompt_id)!
   return {
     schema_version: 1,
+    variant: 'unprompted',
     host_model: 'metacogs-spike-provider/metacogs-spike-model',
     provider: 'scripted',
     prompt_hash: sha256(prompt.text),
@@ -60,6 +61,8 @@ function writeCampaign(root: string, name: string, records: RunRecord[]): string
 
 const LUNA = 'openai/gpt-6-luna'
 const HAIKU = 'anthropic/claude-haiku-5-5'
+const SOL = 'openai/gpt-6.1-sol'
+const OPUS = 'anthropic/claude-opus-5-5'
 const INSTRUCTION = '---\nname: metacog-frames\n---\n\n```\n<sigil>\n```\n'
 
 describe('redactPaths', () => {
@@ -182,6 +185,56 @@ describe('renderSheet', () => {
     const stale = record({ arm: 'A', model: LUNA, prompt_id: 'p1', run: 1, prompt_hash: 'f'.repeat(64) })
     const s = renderSheet({ runs: [stale], prompts: PROMPTS, skillInstruction: INSTRUCTION, sources: [] })
     expect(s).toMatch(/prompt text not found/i)
+  })
+})
+
+describe('variants and model order', () => {
+  const unprompted = [LUNA, HAIKU, SOL, OPUS].reverse().map((model) => record({ arm: 'A', model, prompt_id: 'p1', run: 1, answer: `unprompted ${model}` }))
+  const nudged = [OPUS, SOL, HAIKU, LUNA].map((model) => record({ arm: 'B', model, prompt_id: 'p1', run: 1, variant: 'nudged', answer: `nudged ${model}` }))
+  const sheet = renderSheet({ runs: [...nudged, ...unprompted], prompts: PROMPTS, skillInstruction: INSTRUCTION, sources: [] })
+  const NUDGED_HEADING = '# Told to use it (nudged)'
+
+  test('the unprompted section comes first and the nudged one is a separate top-level section', () => {
+    const at = sheet.indexOf(NUDGED_HEADING)
+    expect(at).toBeGreaterThan(0)
+    expect(sheet.split(`\n${NUDGED_HEADING}\n`)).toHaveLength(2)
+    const [before, after] = [sheet.slice(0, at), sheet.slice(at)]
+    for (const model of [LUNA, HAIKU, SOL, OPUS]) {
+      expect(before).toContain(`unprompted ${model}`)
+      expect(before).not.toContain(`nudged ${model}`)
+      expect(after).toContain(`nudged ${model}`)
+      expect(after).not.toContain(`unprompted ${model}`)
+    }
+  })
+
+  test('the nudged section opens with the nudge sentence verbatim', () => {
+    const after = sheet.slice(sheet.indexOf(NUDGED_HEADING))
+    const sentence = NUDGE.trim()
+    expect(after.slice(0, after.indexOf('## p1'))).toContain(sentence)
+    expect(sheet.slice(0, sheet.indexOf(NUDGED_HEADING))).not.toContain(sentence)
+  })
+
+  test('each section groups prompt, then model, then arm, with models in the order luna, haiku, sol, opus', () => {
+    for (const part of [sheet.slice(0, sheet.indexOf(NUDGED_HEADING)), sheet.slice(sheet.indexOf(NUDGED_HEADING))]) {
+      const models = [...part.matchAll(/^### (.+)$/gm)].map((m) => m[1])
+      expect(models).toEqual([LUNA, HAIKU, SOL, OPUS])
+    }
+  })
+
+  test('runs from before the field existed read as unprompted, and a sheet with no nudged runs has no nudged section', () => {
+    const { variant: _v, ...legacy } = record({ arm: 'A', model: LUNA, prompt_id: 'p1', run: 1, answer: 'old run' })
+    const s = renderSheet({ runs: [legacy as unknown as RunRecord], prompts: PROMPTS, skillInstruction: INSTRUCTION, sources: [] })
+    expect(s).toContain('old run')
+    expect(s).not.toContain(NUDGED_HEADING)
+  })
+
+  test('loadRuns fills in the variant for run records written before the field', () => {
+    const root = tmp()
+    const { variant: _v, ...legacy } = record({ arm: 'A', model: LUNA, prompt_id: 'p1', run: 1 })
+    const dir = join(root, 'c')
+    mkdirSync(join(dir, 'A-p1-1'), { recursive: true })
+    writeFileSync(join(dir, 'A-p1-1', 'run.json'), JSON.stringify(legacy))
+    expect(loadRuns(dir)[0]?.variant).toBe('unprompted')
   })
 })
 

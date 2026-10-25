@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url'
 import { parseArgs as parseNodeArgs } from 'node:util'
 
 import { sha256 } from '../../runner/workspace'
-import { ARMS, loadPrompts, MODELS, type RunRecord, SKILL_NAME, type SpikePrompt } from './driver'
+import { ARMS, loadPrompts, NUDGE, type RunRecord, SKILL_NAME, type SpikePrompt } from './driver'
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url)).replace(/\/$/, '')
 const SPIKE_DIR = ['evals', 'spikes', 'feel-drugs'] as const
@@ -53,7 +53,8 @@ export function loadRuns(campaignDir: string): RunRecord[] {
     if (!existsSync(file)) continue
     const parsed = JSON.parse(readFileSync(file, 'utf8')) as { schema_version?: unknown }
     if (parsed.schema_version !== 1) throw new Error(`${entry.name}/run.json has an unsupported schema_version (${String(parsed.schema_version)})`)
-    runs.push(parsed as RunRecord)
+    const record = parsed as RunRecord
+    runs.push({ ...record, variant: record.variant ?? 'unprompted' })
   }
   if (runs.length === 0) throw new Error(`no runs found under ${basename(campaignDir)}`)
   return runs
@@ -68,9 +69,11 @@ function fenced(text: string): string {
   return `${fence}\n${text}\n${fence}`
 }
 
+/** Order within every prompt: the four models of the campaigns, then anything else alphabetically. */
+const SHEET_MODEL_ORDER = ['openai/gpt-6-luna', 'anthropic/claude-haiku-5-5', 'openai/gpt-6.1-sol', 'anthropic/claude-opus-5-5'] as const
 const modelRank = (model: string): number => {
-  const i = (MODELS as readonly string[]).indexOf(model)
-  return i === -1 ? MODELS.length : i
+  const i = (SHEET_MODEL_ORDER as readonly string[]).indexOf(model)
+  return i === -1 ? SHEET_MODEL_ORDER.length : i
 }
 
 const byKey = <T>(items: readonly T[], key: (item: T) => string): Map<string, T[]> => {
@@ -109,6 +112,29 @@ function renderRun(run: RunRecord): string {
   return lines.join('\n')
 }
 
+function renderPromptSections(runs: readonly RunRecord[], prompts: readonly SpikePrompt[]): string[] {
+  const out: string[] = []
+  const byPrompt = byKey(runs, (r) => r.prompt_id)
+  const promptOrder = [...prompts.map((p) => p.id).filter((id) => byPrompt.has(id)), ...[...byPrompt.keys()].filter((id) => !prompts.some((p) => p.id === id)).sort()]
+  for (const id of promptOrder) {
+    const group = byPrompt.get(id) ?? []
+    const prompt = prompts.find((p) => p.id === id)
+    out.push(`## ${id}`, '')
+    const stale = group.find((r) => !prompt || r.prompt_hash !== sha256(prompt.text))
+    if (prompt && !stale) out.push('Prompt:', '', ...prompt.text.split('\n').map((l) => `> ${l}`), '', `Rationale: ${prompt.rationale}`, '')
+    else out.push(`Prompt text not found for hash ${(stale ?? group[0])?.prompt_hash.slice(0, 12) ?? '?'}: the prompt file differs from the one these runs used.`, '')
+
+    const byModel = byKey(group, (r) => r.model)
+    for (const model of [...byModel.keys()].sort((a, b) => modelRank(a) - modelRank(b) || (a < b ? -1 : 1))) {
+      out.push(`### ${model}`, '')
+      const sorted = [...(byModel.get(model) ?? [])].sort((a, b) => ARMS.indexOf(a.arm) - ARMS.indexOf(b.arm) || a.run - b.run)
+      for (const run of sorted) out.push(renderRun(run))
+    }
+  }
+
+  return out
+}
+
 export function renderSheet(input: SheetInput): string {
   const { runs, prompts } = input
   const out: string[] = [
@@ -126,22 +152,21 @@ export function renderSheet(input: SheetInput): string {
     '',
   ]
 
-  const byPrompt = byKey(runs, (r) => r.prompt_id)
-  const promptOrder = [...prompts.map((p) => p.id).filter((id) => byPrompt.has(id)), ...[...byPrompt.keys()].filter((id) => !prompts.some((p) => p.id === id)).sort()]
-  for (const id of promptOrder) {
-    const group = byPrompt.get(id) ?? []
-    const prompt = prompts.find((p) => p.id === id)
-    out.push(`## ${id}`, '')
-    const stale = group.find((r) => !prompt || r.prompt_hash !== sha256(prompt.text))
-    if (prompt && !stale) out.push('Prompt:', '', ...prompt.text.split('\n').map((l) => `> ${l}`), '', `Rationale: ${prompt.rationale}`, '')
-    else out.push(`Prompt text not found for hash ${(stale ?? group[0])?.prompt_hash.slice(0, 12) ?? '?'}: the prompt file differs from the one these runs used.`, '')
-
-    const byModel = byKey(group, (r) => r.model)
-    for (const model of [...byModel.keys()].sort((a, b) => modelRank(a) - modelRank(b) || (a < b ? -1 : 1))) {
-      out.push(`### ${model}`, '')
-      const sorted = [...(byModel.get(model) ?? [])].sort((a, b) => ARMS.indexOf(a.arm) - ARMS.indexOf(b.arm) || a.run - b.run)
-      for (const run of sorted) out.push(renderRun(run))
-    }
+  const variantOf = (r: RunRecord) => r.variant ?? 'unprompted'
+  out.push(...renderPromptSections(runs.filter((r) => variantOf(r) === 'unprompted'), prompts))
+  const nudgedRuns = runs.filter((r) => variantOf(r) === 'nudged')
+  if (nudgedRuns.length > 0) {
+    out.push(
+      '# Told to use it (nudged)',
+      '',
+      'Every prompt in this section is the same frozen prompt as above with one sentence appended after a blank line:',
+      '',
+      fenced(NUDGE.trim()),
+      '',
+      'There is no nudged arm A. The host wraps a multi-word message in double quotes, so the model receives the prompt and the sentence inside one quoted string, as it did for every unprompted run.',
+      '',
+      ...renderPromptSections(nudgedRuns, prompts),
+    )
   }
 
   // Safety net over the whole document: every recorded workspace and home, plus the generic fixture patterns.
