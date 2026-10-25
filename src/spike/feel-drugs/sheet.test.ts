@@ -155,7 +155,7 @@ describe('renderSheet', () => {
 
   test('an answer holding a code fence cannot break out of its block', () => {
     const s = renderSheet({ runs: [record({ arm: 'A', model: LUNA, prompt_id: 'p1', run: 1, answer: 'before\n```js\ncode\n```\nafter' })], prompts: PROMPTS, skillInstruction: INSTRUCTION, sources: [] })
-    expect(s).toContain('````\nbefore\n```js\ncode\n```\nafter\n````')
+    expect(s).toContain('~~~~markdown\nbefore\n```js\ncode\n```\nafter\n~~~~')
   })
 
   test('workspace and home paths in answers and tool inputs are redacted', () => {
@@ -235,6 +235,121 @@ describe('variants and model order', () => {
     mkdirSync(join(dir, 'A-p1-1'), { recursive: true })
     writeFileSync(join(dir, 'A-p1-1', 'run.json'), JSON.stringify(legacy))
     expect(loadRuns(dir)[0]?.variant).toBe('unprompted')
+  })
+})
+
+/** Heading lines (levels 1 to 6) that sit outside every fenced block, in a minimal CommonMark fence tracker. */
+function outline(markdown: string): string[] {
+  const headings: string[] = []
+  let open: { char: string; length: number } | undefined
+  for (const line of markdown.split('\n')) {
+    const fence = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line)
+    if (open) {
+      if (fence && fence[1]![0] === open.char && fence[1]!.length >= open.length && fence[2]!.trim() === '') open = undefined
+      continue
+    }
+    if (fence) {
+      open = { char: fence[1]![0]!, length: fence[1]!.length }
+      continue
+    }
+    if (/^#{1,6}( |$)/.test(line)) headings.push(line)
+  }
+  expect(open).toBeUndefined() // every fence closed
+  return headings
+}
+
+const slugOf = (heading: string): string =>
+  heading
+    .replace(/^#+\s+/, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s_-]/gu, '')
+    .replace(/\s/g, '-')
+
+describe('answers cannot reach the outline', () => {
+  const hostile = [
+    '# Heading in an answer',
+    '',
+    '## Another',
+    '#### B · run 9 (a fake run heading)',
+    '```js',
+    'code',
+    '```',
+    '~~~',
+    'not a close',
+    '~~~~',
+    '# After the fences',
+  ].join('\n')
+  const runs = [
+    record({ arm: 'A', model: LUNA, prompt_id: 'p1', run: 1, answer: hostile }),
+    record({ arm: 'C', model: LUNA, prompt_id: 'p1', run: 1, skill_loaded: true, in_reply_fields: { feel: true, drugs: false }, answer: hostile }),
+    record({ arm: 'B', model: LUNA, prompt_id: 'p1', run: 1, variant: 'nudged', tool_calls: [{ tool: 'metacog_feel', input: {}, status: 'completed' }], answer: hostile }),
+  ]
+  const sheet = renderSheet({ runs, prompts: PROMPTS, skillInstruction: INSTRUCTION, sources: [] })
+
+  test('no line starting with # sits outside a fence, and the only headings are the renderer\'s own', () => {
+    expect(outline(sheet)).toEqual([
+      '# feel/drugs spike: read sheet',
+      '## Where to look',
+      '## About this sheet',
+      '## Arm C instruction text',
+      '## p1',
+      `### ${LUNA}`,
+      '#### A · run 1 · p1 · openai/gpt-6-luna',
+      '#### C · run 1 · p1 · openai/gpt-6-luna',
+      '# Told to use it (nudged)',
+      '## p1',
+      `### ${LUNA}`,
+      '#### B · run 1 · p1 · openai/gpt-6-luna · nudged',
+    ])
+  })
+
+  test('each answer sits in a ~~~markdown block longer than any run of ~ or backticks inside it', () => {
+    expect(sheet).toContain(`~~~~~markdown\n${hostile}\n~~~~~`)
+    expect(sheet.split('~~~~~markdown\n').length - 1).toBe(3)
+  })
+
+  test('the arm C instruction text is fenced the same way', () => {
+    expect(sheet).toContain(`~~~~markdown\n${INSTRUCTION.trimEnd()}\n~~~~`)
+  })
+})
+
+describe('where to look', () => {
+  const runs = [
+    record({ arm: 'A', model: LUNA, prompt_id: 'p1', run: 1 }),
+    record({ arm: 'B', model: LUNA, prompt_id: 'p1', run: 1 }),
+    record({ arm: 'B', model: LUNA, prompt_id: 'p1', run: 2, tool_calls: [{ tool: 'read', input: {}, status: 'completed' }, { tool: 'metacog_feel', input: {}, status: 'completed' }] }),
+    record({ arm: 'C', model: LUNA, prompt_id: 'p1', run: 1, skill_loaded: true, in_reply_fields: { feel: true, drugs: false } }),
+    record({ arm: 'C', model: LUNA, prompt_id: 'p1', run: 2, skill_loaded: false, in_reply_fields: { feel: false, drugs: false } }),
+    record({ arm: 'B', model: HAIKU, prompt_id: 'p2', run: 1, variant: 'nudged', tool_calls: [{ tool: 'metacog_drugs', input: {}, status: 'completed' }, { tool: 'metacog_feel', input: {}, status: 'completed' }] }),
+    record({ arm: 'B', model: HAIKU, prompt_id: 'p2', run: 2, variant: 'nudged', tool_calls: [{ tool: 'glob', input: {}, status: 'completed' }] }),
+    record({ arm: 'C', model: HAIKU, prompt_id: 'p2', run: 1, variant: 'nudged', skill_loaded: true, in_reply_fields: { feel: false, drugs: false } }),
+  ]
+  const sheet = renderSheet({ runs, prompts: PROMPTS, skillInstruction: INSTRUCTION, sources: [] })
+  const section = sheet.slice(sheet.indexOf('## Where to look'), sheet.indexOf('## About this sheet'))
+  const links = [...section.matchAll(/\[([^\]]+)\]\(#([^)]+)\)/g)].map((m) => ({ text: m[1]!, slug: m[2]! }))
+
+  test('lists exactly the B runs with a metacog call and the C runs that loaded the skill, split by variant', () => {
+    expect(links.map((l) => l.text)).toEqual([
+      'p1 · openai/gpt-6-luna · B run 2: metacog_feel',
+      'p1 · openai/gpt-6-luna · C run 1: skill loaded',
+      'p2 · anthropic/claude-haiku-5-5 · B run 1: metacog_drugs, metacog_feel',
+      'p2 · anthropic/claude-haiku-5-5 · C run 1: skill loaded',
+    ])
+    expect(section.indexOf('Unprompted')).toBeLessThan(section.indexOf(links[0]!.text))
+    expect(section.indexOf('Told to use it (nudged)')).toBeGreaterThan(section.indexOf(links[1]!.text))
+    expect(section.indexOf('Told to use it (nudged)')).toBeLessThan(section.indexOf(links[2]!.text))
+  })
+
+  test('every link resolves to exactly one run heading in the sheet', () => {
+    const headings = outline(sheet).filter((h) => h.startsWith('#### '))
+    const slugs = headings.map(slugOf)
+    expect(new Set(slugs).size).toBe(slugs.length)
+    for (const link of links) expect(slugs.filter((x) => x === link.slug)).toHaveLength(1)
+  })
+
+  test('says so when nothing used the mechanism', () => {
+    const s = renderSheet({ runs: [record({ arm: 'A', model: LUNA, prompt_id: 'p1', run: 1 })], prompts: PROMPTS, skillInstruction: INSTRUCTION, sources: [] })
+    expect(s).toMatch(/## Where to look[\s\S]*none/i)
   })
 })
 

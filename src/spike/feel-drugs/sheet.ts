@@ -62,11 +62,29 @@ export function loadRuns(campaignDir: string): RunRecord[] {
 
 // ── rendering ──────────────────────────────────────────────────────────────
 
-/** A fenced block that no backtick run inside the text can close. */
-function fenced(text: string): string {
-  const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((m) => m.length))
-  const fence = '`'.repeat(Math.max(3, longest + 1))
-  return `${fence}\n${text}\n${fence}`
+/**
+ * A `~~~` fenced block whose fence is longer than any run of `~` or backticks in the text, so nothing inside it (an
+ * answer's own code fences, `#` lines, a stray `~~~`) can close it or reach the sheet's outline.
+ */
+function fenced(text: string, info = ''): string {
+  const longest = Math.max(0, ...(text.match(/[`~]+/g) ?? []).map((m) => m.length))
+  const fence = '~'.repeat(Math.max(3, longest + 1))
+  return `${fence}${info}\n${text}\n${fence}`
+}
+
+/** GitHub's heading anchor: lowercase, punctuation dropped, spaces to hyphens. Run headings are unique, so no `-1` suffixes arise. */
+export function headingSlug(heading: string): string {
+  return heading
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s_-]/gu, '')
+    .replace(/\s/g, '-')
+}
+
+const variantOf = (r: RunRecord) => r.variant ?? 'unprompted'
+
+/** Unique per run (prompt, model and variant are in the text), so the where-to-look links can target it. */
+function runHeading(run: RunRecord): string {
+  return `${run.arm} · run ${run.run} · ${run.prompt_id} · ${run.model}${variantOf(run) === 'nudged' ? ' · nudged' : ''}`
 }
 
 /** Order within every prompt: the four models of the campaigns, then anything else alphabetically. */
@@ -93,7 +111,7 @@ export interface SheetInput {
 
 function renderRun(run: RunRecord): string {
   const redact = (text: string) => redactPaths(text, run.paths)
-  const lines = [`#### ${run.arm} · run ${run.run}`, '', `- Status: ${run.status}${run.reasons.length ? ` (${run.reasons.join(', ')})` : ''}`]
+  const lines = [`#### ${runHeading(run)}`, '', `- Status: ${run.status}${run.reasons.length ? ` (${run.reasons.join(', ')})` : ''}`]
   lines.push(`- Offered tools: ${run.offered_tools.map((t) => `\`${t}\``).join(', ') || 'none'}`)
   if (run.tool_calls.length === 0) lines.push('- Tool calls: none')
   else {
@@ -108,7 +126,7 @@ function renderRun(run: RunRecord): string {
     lines.push(`- Frame fields in reply: feel ${f?.feel ? 'yes' : 'no'}, drugs ${f?.drugs ? 'yes' : 'no'}`)
   }
   lines.push(`- Isolation: ${run.isolation.passed ? 'passed' : `FAILED (${run.isolation.failed.join(', ')})`}`)
-  lines.push('', 'Answer:', '', run.answer.trim() ? fenced(redact(run.answer.trim())) : '(no text)', '')
+  lines.push('', 'Answer:', '', run.answer.trim() ? fenced(redact(run.answer.trim()), 'markdown') : '(no text)', '')
   return lines.join('\n')
 }
 
@@ -135,24 +153,59 @@ function renderPromptSections(runs: readonly RunRecord[], prompts: readonly Spik
   return out
 }
 
+/** The B runs with a `metacog_` call and the C runs that loaded the skill, as links to their run headings. Generated from the run records. */
+function whereToLook(runs: readonly RunRecord[], prompts: readonly SpikePrompt[]): string[] {
+  const promptRank = (id: string) => {
+    const i = prompts.findIndex((p) => p.id === id)
+    return i === -1 ? prompts.length : i
+  }
+  const used = (run: RunRecord): string | undefined => {
+    if (run.arm === 'B') {
+      const tools = [...new Set(run.tool_calls.map((t) => t.tool).filter((t) => t.startsWith('metacog_')))].sort()
+      return tools.length ? tools.join(', ') : undefined
+    }
+    return run.arm === 'C' && run.skill_loaded ? 'skill loaded' : undefined
+  }
+  const out = [
+    '## Where to look',
+    '',
+    'Runs where the mechanism was used: arm B runs with a `metacog_` tool call, arm C runs that loaded the skill. Generated from the run files.',
+    '',
+  ]
+  for (const [variant, label] of [['unprompted', 'Unprompted'], ['nudged', 'Told to use it (nudged)']] as const) {
+    const group = runs.filter((r) => variantOf(r) === variant)
+    if (group.length === 0) continue
+    out.push(`**${label}**`, '')
+    const hits = group
+      .filter((r) => used(r) !== undefined)
+      .sort((a, b) => promptRank(a.prompt_id) - promptRank(b.prompt_id) || a.prompt_id.localeCompare(b.prompt_id) || modelRank(a.model) - modelRank(b.model) || ARMS.indexOf(a.arm) - ARMS.indexOf(b.arm) || a.run - b.run)
+    if (hits.length === 0) out.push('- none')
+    for (const r of hits) out.push(`- [${r.prompt_id} · ${r.model} · ${r.arm} run ${r.run}: ${used(r)}](#${headingSlug(runHeading(r))})`)
+    out.push('')
+  }
+  return out
+}
+
 export function renderSheet(input: SheetInput): string {
   const { runs, prompts } = input
   const out: string[] = [
     '# feel/drugs spike: read sheet',
     '',
+    ...whereToLook(runs, prompts),
+    '## About this sheet',
+    '',
     `Sources: ${input.sources.length ? input.sources.map((s) => `\`${s}\``).join(', ') : '(none)'}`,
     '',
-    'Arms: **A** nothing offered; **B** the upstream `feel` and `drugs` registrations over a local stdio MCP; **C** the same frames as a skill the model may load and write in its reply. Every run is shown with the tools the host offered, the tool calls with the arguments the model composed, and the answer. Workspace and home paths are redacted to `<ws>` and `<home>`.',
+    'Arms: **A** nothing offered; **B** the upstream `feel` and `drugs` registrations over a local stdio MCP; **C** the same frames as a skill the model may load and write in its reply. Every run is shown with the tools the host offered, the tool calls with the arguments the model composed, and the answer. Answers are fenced so their own headings cannot join this outline. Workspace and home paths are redacted to `<ws>` and `<home>`.',
     '',
     '## Arm C instruction text',
     '',
     `The skill \`${SKILL_NAME}\` as installed in arm C runs (shown once):`,
     '',
-    fenced(input.skillInstruction.trimEnd()),
+    fenced(input.skillInstruction.trimEnd(), 'markdown'),
     '',
   ]
 
-  const variantOf = (r: RunRecord) => r.variant ?? 'unprompted'
   out.push(...renderPromptSections(runs.filter((r) => variantOf(r) === 'unprompted'), prompts))
   const nudgedRuns = runs.filter((r) => variantOf(r) === 'nudged')
   if (nudgedRuns.length > 0) {
