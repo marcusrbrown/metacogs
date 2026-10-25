@@ -3,16 +3,19 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { analyzeEvents, parseEvents, toolUses } from '../../runner/events'
+import { parseEvents, toolUses } from '../../runner/events'
 import { CredentialLeakError } from '../../runner/manifest'
 import { opencodeAvailability } from '../../runner/opencode'
 import { sha256 } from '../../runner/workspace'
 import {
   armSetup,
+  assertInside,
+  assertPromptId,
   BACKOFF_MS,
   checkFrozen,
   classifyStatus,
   EXPECTED_TOOLS,
+  main,
   NUDGE,
   MCP_SERVER_NAME,
   parseArgs,
@@ -134,12 +137,30 @@ describe('armSetup', () => {
 })
 
 describe('classifyStatus', () => {
-  const clean = analyzeEvents('')
+  const ev = (...events: object[]) => `${events.map((e) => JSON.stringify(e)).join('\n')}\n`
+  const textEvent = { type: 'text', part: { text: 'an answer' } }
+  const finish = { type: 'step_finish', part: { reason: 'stop', tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } } } }
+  const GOOD = ev({ type: 'step_start' }, textEvent, finish)
   const both = [...EXPECTED_TOOLS, 'read']
-  const input = { timedOut: false, exitCode: 0, events: clean, arm: 'B' as const, offered: both }
+  const input = { timedOut: false, exitCode: 0, stdout: GOOD, arm: 'B' as const, offered: both }
 
-  test('completed when the run exits clean and arm B offered both tools', () => {
+  test('completed when the run exits clean, the stream is understood and shows completion, and arm B offered both tools', () => {
     expect(classifyStatus(input)).toEqual({ status: 'completed', reasons: [] })
+  })
+
+  test('fails closed on an unusable stream: no events, unrecognized events, no completion evidence', () => {
+    expect(classifyStatus({ ...input, stdout: '' })).toEqual({ status: 'host_error', reasons: ['no_events'] })
+    expect(classifyStatus({ ...input, stdout: '\n  \n' })).toEqual({ status: 'host_error', reasons: ['no_events'] })
+    expect(classifyStatus({ ...input, stdout: `${GOOD}${ev({ type: 'surprise' })}` })).toEqual({ status: 'host_error', reasons: ['unrecognized_events'] })
+    expect(classifyStatus({ ...input, stdout: `${GOOD}not json at all\n` })).toEqual({ status: 'host_error', reasons: ['unrecognized_events'] })
+    expect(classifyStatus({ ...input, stdout: `${GOOD}${ev({ type: 'text', part: {} })}` })).toEqual({ status: 'host_error', reasons: ['unrecognized_events'] })
+    expect(classifyStatus({ ...input, stdout: ev({ type: 'step_start' }) })).toEqual({ status: 'host_error', reasons: ['no_completion'] })
+    expect(classifyStatus({ ...input, stdout: ev({ type: 'step_start' }, { type: 'tool_use', part: { tool: 'read', state: { status: 'completed' } } }) })).toEqual({ status: 'host_error', reasons: ['no_completion'] })
+  })
+
+  test('either a step_finish or assistant text is completion evidence', () => {
+    expect(classifyStatus({ ...input, stdout: ev(textEvent) }).status).toBe('completed')
+    expect(classifyStatus({ ...input, stdout: ev(finish) }).status).toBe('completed')
   })
 
   test('arm B without either expected tool is tools_missing, not a quiet arm A', () => {
@@ -154,11 +175,11 @@ describe('classifyStatus', () => {
   })
 
   test('timeout, rate limit and host errors', () => {
-    expect(classifyStatus({ ...input, timedOut: true, exitCode: -1 }).status).toBe('timeout')
-    const limited = analyzeEvents(`${JSON.stringify({ type: 'error', error: { name: 'APIError', data: { message: 'x', statusCode: 429 } } })}\n`)
-    expect(classifyStatus({ ...input, events: limited, exitCode: 1 }).status).toBe('rate_limited')
-    const broken = analyzeEvents(`${JSON.stringify({ type: 'error', error: { name: 'APIError', data: { message: 'boom', statusCode: 500 } } })}\n`)
-    expect(classifyStatus({ ...input, events: broken, exitCode: 1 }).status).toBe('host_error')
+    expect(classifyStatus({ ...input, timedOut: true, exitCode: -1, stdout: '' }).status).toBe('timeout')
+    const limited = ev({ type: 'error', error: { name: 'APIError', data: { message: 'x', statusCode: 429 } } })
+    expect(classifyStatus({ ...input, stdout: limited, exitCode: 1 }).status).toBe('rate_limited')
+    const broken = ev({ type: 'error', error: { name: 'APIError', data: { message: 'boom', statusCode: 500 } } })
+    expect(classifyStatus({ ...input, stdout: broken, exitCode: 1 }).status).toBe('host_error')
     expect(classifyStatus({ ...input, exitCode: 2 }).status).toBe('host_error')
   })
 })
@@ -189,6 +210,85 @@ describe('withBackoff', () => {
     await withBackoff(async () => (calls++, record('timeout')), async () => {})
     expect(calls).toBe(1)
   })
+})
+
+const BAD_IDS = ['x/../../victim', '../a', 'a/b', '/etc/victim', '..', '.', '', 'A1', '-a', 'a b', 'a'.repeat(33), 'a\\b', 'a\u0000b']
+
+describe('prompt ids and the run directory', () => {
+  test('ids match ^[a-z0-9][a-z0-9-]{0,31}$', () => {
+    for (const id of ['p1', 'a', '0', 'p-1', 'a'.repeat(32)]) expect(() => assertPromptId(id)).not.toThrow()
+    for (const id of BAD_IDS) expect(() => assertPromptId(id)).toThrow(/prompt id/i)
+  })
+
+  test('parsePrompts rejects an id that could leave the campaign directory', () => {
+    for (const id of ['x/../../victim', '../a', 'a/b', '/etc/victim']) {
+      expect(() => parsePrompts(`## ${id}\n\n> t\n\nRationale: r\n`)).toThrow(/prompt id/i)
+    }
+  })
+
+  test('assertInside accepts only a path strictly inside the campaign directory', () => {
+    const base = '/state/spikes/campaign'
+    expect(() => assertInside(base, `${base}/A-p1-1`)).not.toThrow()
+    for (const bad of [base, `${base}/..`, `${base}/../victim`, `${base}/A/../../victim`, '/state/spikes/campaign-evil/A-p1-1', '/etc/passwd', 'relative/path']) {
+      expect(() => assertInside(base, bad)).toThrow(/outside|inside/i)
+    }
+  })
+
+  test('runSpike refuses an injected prompt with a bad id before touching the disk, and a sibling dir survives', async () => {
+    const outRoot = tmp('feel-drugs-out-')
+    const victim = join(outRoot, 'victim')
+    mkdirSync(victim)
+    writeFileSync(join(victim, 'keep.txt'), 'keep')
+    for (const id of ['x/../../victim', '../victim', 'a/b', victim]) {
+      await expect(
+        runSpike(parseArgs(['--arm', 'A', '--runs', '1', '--model', 'openai/gpt-6-luna']), { outRoot, prompts: [{ id, text: 't', rationale: 'r' }], log: () => {} }),
+      ).rejects.toThrow(/prompt id/i)
+    }
+    expect(readdirSync(outRoot)).toEqual(['victim'])
+    expect(readFileSync(join(victim, 'keep.txt'), 'utf8')).toBe('keep')
+  })
+
+  test('--prompt with a bad id is refused too', async () => {
+    const outRoot = tmp('feel-drugs-out-')
+    await expect(runSpike(parseArgs(['--prompt', '../x', '--model', 'openai/gpt-6-luna']), { outRoot, prompts: [PROMPT], log: () => {} })).rejects.toThrow(/prompt id/i)
+    expect(readdirSync(outRoot)).toEqual([])
+  })
+})
+
+describe.skipIf(!opencodeAvailability().available)('the exit code', () => {
+  const quiet = () => {}
+
+  test('0 when every requested cell has a completed run, 1 when one still has none after the rerun', async () => {
+    const outRoot = tmp('feel-drugs-out-')
+    const ok = await main(['--arm', 'A', '--runs', '1', '--model', 'openai/gpt-6-luna'], { outRoot, prompts: [PROMPT], log: quiet })
+    expect(ok).toBe(0)
+    let attempts = 0
+    const bad = await main(['--arm', 'B', '--runs', '1', '--model', 'openai/gpt-6-luna'], {
+      outRoot: tmp('feel-drugs-out-'),
+      prompts: [PROMPT],
+      log: quiet,
+      tweakArm: (_arm, setup) => ((attempts += 1), { ...setup, configExtra: undefined }),
+      scriptFor: () => [],
+    })
+    expect(bad).toBe(1)
+    expect(attempts).toBe(2) // the run, then one rerun at the end
+  }, 240_000)
+
+  test('a failed cell is rerun once at the end and the final status stands', async () => {
+    let attempts = 0
+    const logs: string[] = []
+    const summary = await runSpike(parseArgs(['--arm', 'B', '--runs', '1', '--model', 'openai/gpt-6-luna']), {
+      outRoot: tmp('feel-drugs-out-'),
+      prompts: [PROMPT],
+      log: (l) => void logs.push(l),
+      tweakArm: (_arm, setup) => ((attempts += 1), attempts === 1 ? { ...setup, configExtra: undefined } : setup),
+      scriptFor: () => [],
+    })
+    expect(attempts).toBe(2)
+    expect(summary.records).toHaveLength(1)
+    expect(summary.records[0]?.status).toBe('completed')
+    expect(logs.join('\n')).toMatch(/rerun/i)
+  }, 240_000)
 })
 
 describe('the live freeze', () => {

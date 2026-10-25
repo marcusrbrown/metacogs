@@ -54,6 +54,7 @@ export function loadRuns(campaignDir: string): RunRecord[] {
     const parsed = JSON.parse(readFileSync(file, 'utf8')) as { schema_version?: unknown }
     if (parsed.schema_version !== 1) throw new Error(`${entry.name}/run.json has an unsupported schema_version (${String(parsed.schema_version)})`)
     const record = parsed as RunRecord
+    assertLive(record, `campaign ${basename(campaignDir)}, run ${entry.name}`)
     runs.push({ ...record, variant: record.variant ?? 'unprompted' })
   }
   if (runs.length === 0) throw new Error(`no runs found under ${basename(campaignDir)}`)
@@ -109,9 +110,15 @@ export interface SheetInput {
   sources: readonly string[]
 }
 
+/** The sheet is evidence from live models; a scripted stub run must never be read as one. */
+function assertLive(run: RunRecord, where: string): void {
+  if (run.provider !== 'live') throw new Error(`${where}: provider is "${String(run.provider)}"; the sheet renders live campaigns only`)
+}
+
 function renderRun(run: RunRecord): string {
   const redact = (text: string) => redactPaths(text, run.paths)
   const lines = [`#### ${runHeading(run)}`, '', `- Status: ${run.status}${run.reasons.length ? ` (${run.reasons.join(', ')})` : ''}`]
+  lines.push(`- Host model: \`${run.host_model}\``)
   lines.push(`- Offered tools: ${run.offered_tools.map((t) => `\`${t}\``).join(', ') || 'none'}`)
   if (run.tool_calls.length === 0) lines.push('- Tool calls: none')
   else {
@@ -188,6 +195,7 @@ function whereToLook(runs: readonly RunRecord[], prompts: readonly SpikePrompt[]
 
 export function renderSheet(input: SheetInput): string {
   const { runs, prompts } = input
+  for (const run of runs) assertLive(run, `run ${run.arm}-${run.prompt_id}-${run.run} (${run.model})`)
   const out: string[] = [
     '# feel/drugs spike: read sheet',
     '',

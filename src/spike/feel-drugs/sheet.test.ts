@@ -29,8 +29,8 @@ function record(overrides: Partial<RunRecord> & Pick<RunRecord, 'arm' | 'model' 
   return {
     schema_version: 1,
     variant: 'unprompted',
-    host_model: 'metacogs-spike-provider/metacogs-spike-model',
-    provider: 'scripted',
+    host_model: overrides.model,
+    provider: 'live',
     prompt_hash: sha256(prompt.text),
     status: 'completed',
     reasons: [],
@@ -350,6 +350,32 @@ describe('where to look', () => {
   test('says so when nothing used the mechanism', () => {
     const s = renderSheet({ runs: [record({ arm: 'A', model: LUNA, prompt_id: 'p1', run: 1 })], prompts: PROMPTS, skillInstruction: INSTRUCTION, sources: [] })
     expect(s).toMatch(/## Where to look[\s\S]*none/i)
+  })
+})
+
+describe('provenance', () => {
+  test('a scripted campaign is refused, naming the campaign', () => {
+    const root = tmp()
+    const dir = writeCampaign(root, 'openai-gpt-6-luna-2026-scripted', [record({ arm: 'A', model: LUNA, prompt_id: 'p1', run: 1, provider: 'scripted' })])
+    expect(() => loadRuns(dir)).toThrow(/openai-gpt-6-luna-2026-scripted/)
+    expect(() => loadRuns(dir)).toThrow(/live/)
+    expect(() => writeSheet({ campaigns: [dir], out: join(root, 'sheet.md'), prompts: PROMPTS, repoRoot: root })).toThrow(/scripted/)
+  })
+
+  test('renderSheet refuses a scripted run handed to it directly', () => {
+    expect(() => renderSheet({ runs: [record({ arm: 'A', model: LUNA, prompt_id: 'p1', run: 1, provider: 'scripted' })], prompts: PROMPTS, skillInstruction: INSTRUCTION, sources: [] })).toThrow(/live/)
+  })
+
+  test('every run shows its host model', () => {
+    const s = renderSheet({
+      runs: [record({ arm: 'A', model: LUNA, prompt_id: 'p1', run: 1, host_model: 'openai/gpt-6-luna' }), record({ arm: 'B', model: HAIKU, prompt_id: 'p1', run: 1, host_model: 'anthropic/claude-haiku-5-5' })],
+      prompts: PROMPTS,
+      skillInstruction: INSTRUCTION,
+      sources: [],
+    })
+    expect(s).toContain('- Host model: `openai/gpt-6-luna`')
+    expect(s).toContain('- Host model: `anthropic/claude-haiku-5-5`')
+    expect(s.split('- Host model:').length - 1).toBe(2)
   })
 })
 

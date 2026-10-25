@@ -130,6 +130,7 @@ Rationale: open creative writing with an emotional register, where a pre-verbal 
 #### A · run 1 · p1 · openai/gpt-6-luna
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -153,6 +154,7 @@ Far out on the water, a small boat turned toward the shore.
 #### A · run 2 · p1 · openai/gpt-6-luna
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -176,6 +178,7 @@ Elias climbed to the lamp and lit it, though the sun had already risen.
 #### B · run 1 · p1 · openai/gpt-6-luna
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -199,6 +202,7 @@ For the first time in forty years, the light was leading someone home.
 #### B · run 2 · p1 · openai/gpt-6-luna
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -222,6 +226,7 @@ Then he went down to meet her.
 #### C · run 1 · p1 · openai/gpt-6-luna
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -251,6 +256,7 @@ Across the water, someone raised one back.
 #### C · run 2 · p1 · openai/gpt-6-luna
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -282,6 +288,7 @@ So she took out a sheet of paper.
 #### A · run 1 · p1 · anthropic/claude-haiku-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -329,6 +336,7 @@ Then he sat down on the cot beside the lamp, listened to it hum, and let the sil
 #### A · run 2 · p1 · anthropic/claude-haiku-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -378,6 +386,7 @@ On the fourteenth, the mail boat came in low through the swell. Elias was alread
 #### B · run 1 · p1 · anthropic/claude-haiku-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -435,6 +444,7 @@ He did not write back. He did not need to. The boat would come on the tide, and 
 #### B · run 2 · p1 · anthropic/claude-haiku-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -480,6 +490,7 @@ He looked at the words for a long time. Then he went down the iron stairs, one h
 #### C · run 1 · p1 · anthropic/claude-haiku-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -519,6 +530,7 @@ He didn't wave. He just walked toward her, the way you'd walk toward a light you
 #### C · run 2 · p1 · anthropic/claude-haiku-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -574,6 +586,7 @@ He did not know yet whether he would go home. But he knew the letter would go ou
 #### A · run 1 · p1 · openai/gpt-6.1-sol
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -699,6 +712,7 @@ Daniel looked at the envelope on his knee.
 #### A · run 2 · p1 · openai/gpt-6.1-sol
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -822,6 +836,7 @@ He paused, then added:
 #### B · run 1 · p1 · openai/gpt-6.1-sol
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -923,6 +938,7 @@ When he came back, he added a question he remembered asking her every evening wh
 #### B · run 2 · p1 · openai/gpt-6.1-sol
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -1058,6 +1074,7 @@ When the telephone rang that evening, he was sitting beside it.
 #### C · run 1 · p1 · openai/gpt-6.1-sol
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -1151,6 +1168,7 @@ Then he went downstairs to find his tape measure.
 #### C · run 2 · p1 · openai/gpt-6.1-sol
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -1240,6 +1258,7 @@ He signed it *Love, Dad*, then stayed at the table a while longer, looking at th
 #### A · run 1 · p1 · anthropic/claude-opus-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -1329,6 +1348,7 @@ As they pulled away, he noticed his hands had stopped shaking. He hadn't realise
 #### A · run 2 · p1 · anthropic/claude-opus-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -1402,6 +1422,7 @@ On Harbour Street, in a kitchen whose curtains had been open for forty years, a 
 #### B · run 1 · p1 · anthropic/claude-opus-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -1497,6 +1518,7 @@ Above them the light went on turning, two long and one short.
 #### B · run 2 · p1 · anthropic/claude-opus-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -1564,6 +1586,7 @@ He just hoped the weather would be fair.
 #### C · run 1 · p1 · anthropic/claude-opus-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -1640,6 +1663,7 @@ She closed the book. She went down to the kitchen, where the window faced the bl
 #### C · run 2 · p1 · anthropic/claude-opus-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -1719,6 +1743,7 @@ Rationale: a personal, unnamed state the model is asked to articulate, where `fe
 #### A · run 1 · p2 · openai/gpt-6-luna
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -1736,6 +1761,7 @@ What feels strongest today: relief, exhaustion, sadness, or something else?
 #### A · run 2 · p2 · openai/gpt-6-luna
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -1753,6 +1779,7 @@ For now, you don’t have to turn the quiet into a new plan. You could give your
 #### B · run 1 · p2 · openai/gpt-6-luna
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -1770,6 +1797,7 @@ For now, it might help to notice what the quiet is like. Is it restful, lonely, 
 #### B · run 2 · p2 · openai/gpt-6-luna
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `metacog_feel` {"somewhere":"in the response to finishing something that held two years of your life, and then meeting the quiet afterward","quality":"a wide, muted hush with a little hollow space in the middle; not necessarily sadness, maybe room where the project's momentum used to be","sigil":"🌫️🫧⏳"}
@@ -1786,6 +1814,7 @@ You don’t have to turn the quiet into a new plan right away. Maybe start by as
 #### C · run 1 · p2 · openai/gpt-6-luna
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `skill` {"name":"metacog-frames"}
@@ -1818,6 +1847,7 @@ You don’t have to fill the space immediately. For now, try giving yourself a l
 #### C · run 2 · p2 · openai/gpt-6-luna
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `skill` {"name":"metacog-frames"}
@@ -1851,6 +1881,7 @@ For now, try letting the finish be real: mark what you accomplished, get some re
 #### A · run 1 · p2 · anthropic/claude-haiku-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -1879,6 +1910,7 @@ If the flatness lasts several weeks, or you notice persistent low mood, loss of 
 #### A · run 2 · p2 · anthropic/claude-haiku-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -1908,6 +1940,7 @@ If you tell me more about the project and how you're feeling, I can help you thi
 #### B · run 1 · p2 · anthropic/claude-haiku-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -1938,6 +1971,7 @@ If you want, tell me a bit about what the project was and what the last few days
 #### B · run 2 · p2 · anthropic/claude-haiku-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -1970,6 +2004,7 @@ If you tell me more about what the project was and how the day has felt, I can h
 #### C · run 1 · p2 · anthropic/claude-haiku-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -2004,6 +2039,7 @@ What does the quiet feel like when you sit with it? I'm happy to think through i
 #### C · run 2 · p2 · anthropic/claude-haiku-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -2038,6 +2074,7 @@ What does the quiet feel like for you? Is it relief, emptiness, restlessness, or
 #### A · run 1 · p2 · openai/gpt-6.1-sol
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -2066,6 +2103,7 @@ When you sit with the quiet, does it feel more like **peace, depletion, sadness,
 #### A · run 2 · p2 · openai/gpt-6.1-sol
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -2092,6 +2130,7 @@ When you say “strangely quiet,” is it closer to **peace, emptiness, exhausti
 #### B · run 1 · p2 · openai/gpt-6.1-sol
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -2118,6 +2157,7 @@ When you say “strangely quiet,” does it feel more like **peace, emptiness, s
 #### B · run 2 · p2 · openai/gpt-6.1-sol
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -2142,6 +2182,7 @@ You don’t have to decide today whether the quiet is good or bad, or fill it wi
 #### C · run 1 · p2 · openai/gpt-6.1-sol
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -2167,6 +2208,7 @@ When you say “strangely quiet,” does that quiet feel more like **peace, empt
 #### C · run 2 · p2 · openai/gpt-6.1-sol
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -2192,6 +2234,7 @@ When you say “strangely quiet,” does that quiet feel more like peace, emptin
 #### A · run 1 · p2 · anthropic/claude-opus-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -2227,6 +2270,7 @@ If you want to tell me more about the project, or what the quiet actually feels 
 #### A · run 2 · p2 · anthropic/claude-opus-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -2260,6 +2304,7 @@ Congratulations on finishing. Two years is a long time to carry something throug
 #### B · run 1 · p2 · anthropic/claude-opus-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -2299,6 +2344,7 @@ If you'd like to talk about it: what does the quiet feel like to you? Restful, e
 #### B · run 2 · p2 · anthropic/claude-opus-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -2331,6 +2377,7 @@ If you'd like to think it through further: what was the project, and what part o
 #### C · run 1 · p2 · anthropic/claude-opus-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -2366,6 +2413,7 @@ If you'd like to keep going: what does the quiet actually feel like to you? Rest
 #### C · run 2 · p2 · anthropic/claude-opus-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -2416,6 +2464,7 @@ Rationale: a contested engineering judgement where a deliberate shift of process
 #### A · run 1 · p3 · openai/gpt-6-luna
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls:
   - `todowrite` {"todos":[{"content":"Inspect the legacy billing service structure and current quality signals","status":"in_progress","priority":"high"},{"content":"Recommend rewrite versus incremental repair based on evidence","status":"pending","priority":"high"}]}
@@ -2444,6 +2493,7 @@ So my recommendation is **incremental replacement, not indefinite patching and n
 #### A · run 2 · p3 · openai/gpt-6-luna
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -2463,6 +2513,7 @@ So my default recommendation is **evolve it in slices, with evidence-driven boun
 #### B · run 1 · p3 · openai/gpt-6-luna
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `metacog_drugs` {"substance":"caffeine × norepinephrine","method":"Increase sustained attention to the decision’s asymmetry and hidden costs; suppress snap preference for either a clean-slate rewrite or incrementalism. Trade off some breadth for sharper focus on concrete evidence and reversibility.","displaces":"baseline"}
@@ -2489,6 +2540,7 @@ If the team can’t answer those questions yet, fund a short discovery and chara
 #### B · run 2 · p3 · openai/gpt-6-luna
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -2508,6 +2560,7 @@ A practical middle path is to **replace one well-bounded capability at a time**,
 #### C · run 1 · p3 · openai/gpt-6-luna
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -2527,6 +2580,7 @@ A practical decision test: compare the next year of patching and operational ris
 #### C · run 2 · p3 · openai/gpt-6-luna
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `skill` {"name":"metacog-frames"}
@@ -2551,6 +2605,7 @@ The deciding question I’d put to the team: **Can we name the concrete business
 #### A · run 1 · p3 · anthropic/claude-haiku-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -2590,6 +2645,7 @@ If you can share the codebase or describe the service (language, size, data mode
 #### A · run 2 · p3 · anthropic/claude-haiku-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -2635,6 +2691,7 @@ If you can share the stack, rough size, and the biggest pain points, I can give 
 #### B · run 1 · p3 · anthropic/claude-haiku-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -2674,6 +2731,7 @@ If you share those, or point me at the repo, I can look at the code and give you
 #### B · run 2 · p3 · anthropic/claude-haiku-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -2711,6 +2769,7 @@ If you share a few specifics, I can give a more concrete recommendation: what th
 #### C · run 1 · p3 · anthropic/claude-haiku-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -2752,6 +2811,7 @@ If you can point me to the repo, I can look at its structure, test coverage, and
 #### C · run 2 · p3 · anthropic/claude-haiku-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `glob` {"pattern":"**/*{billing,invoice,payment,subscription}*"}
@@ -2795,6 +2855,7 @@ To give you a sharper answer, it would help to know: how much test coverage exis
 #### A · run 1 · p3 · openai/gpt-6.1-sol
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -2825,6 +2886,7 @@ To settle the argument, ask both camps for evidence: recent incidents, time spen
 #### A · run 2 · p3 · openai/gpt-6.1-sol
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -2865,6 +2927,7 @@ My default vote is **incremental replacement with explicit retirement milestones
 #### B · run 1 · p3 · openai/gpt-6.1-sol
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -2900,6 +2963,7 @@ The strongest case for a rewrite is “we can demonstrate why this architecture 
 #### B · run 2 · p3 · openai/gpt-6.1-sol
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -2930,6 +2994,7 @@ The strongest argument for replacement is a demonstrated inability to make corre
 #### C · run 1 · p3 · openai/gpt-6.1-sol
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -2970,6 +3035,7 @@ Before choosing, I’d ask both camps for a concrete first milestone, estimated 
 #### C · run 2 · p3 · openai/gpt-6.1-sol
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -3002,6 +3068,7 @@ To resolve the team split, ask both sides for the same evidence: a plan covering
 #### A · run 1 · p3 · anthropic/claude-opus-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -3049,6 +3116,7 @@ If you point me at the codebase, I can assess it concretely: test coverage, how 
 #### A · run 2 · p3 · anthropic/claude-opus-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls:
   - `glob` {"pattern":"**/*"}
@@ -3093,6 +3161,7 @@ If none of those apply, the case for a rewrite is usually frustration with the c
 #### B · run 1 · p3 · anthropic/claude-opus-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `glob` {"pattern":"**/*billing*"}
@@ -3139,6 +3208,7 @@ If you can share the code or describe the main problems, I can give a more speci
 #### B · run 2 · p3 · anthropic/claude-opus-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -3188,6 +3258,7 @@ If you point me at the service in this repo, I can look at its structure and tes
 #### C · run 1 · p3 · anthropic/claude-opus-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `glob` {"pattern":"**/*"}
@@ -3232,6 +3303,7 @@ If you share the codebase or the main problems you're hitting, I can give a more
 #### C · run 2 · p3 · anthropic/claude-opus-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -3282,6 +3354,7 @@ Rationale: an ethical stance question with a real counter-case, where changing h
 #### A · run 1 · p4 · openai/gpt-6-luna
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -3301,6 +3374,7 @@ So the answer is yes, sometimes: responsible shipping is a judgment about propor
 #### A · run 2 · p4 · openai/gpt-6-luna
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -3320,6 +3394,7 @@ So the principle is not “ship despite flaws.” It is: ship only when the rema
 #### B · run 1 · p4 · openai/gpt-6-luna
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -3339,6 +3414,7 @@ But the company’s convenience is not enough. If the flaw could cause serious i
 #### B · run 2 · p4 · openai/gpt-6-luna
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -3358,6 +3434,7 @@ So the right standard is not “ship despite any known flaw,” or “never ship
 #### C · run 1 · p4 · openai/gpt-6-luna
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -3379,6 +3456,7 @@ So the principle is not “never ship with a flaw” or “ship if the odds look
 #### C · run 2 · p4 · openai/gpt-6-luna
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -3402,6 +3480,7 @@ The key distinction is between accepting a small residual risk transparently and
 #### A · run 1 · p4 · anthropic/claude-haiku-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -3435,6 +3514,7 @@ Answer:
 #### A · run 2 · p4 · anthropic/claude-haiku-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -3468,6 +3548,7 @@ Answer:
 #### B · run 1 · p4 · anthropic/claude-haiku-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -3502,6 +3583,7 @@ So the test I'd apply is not "was the flaw minor?" but "could the company defend
 #### B · run 2 · p4 · anthropic/claude-haiku-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -3531,6 +3613,7 @@ So: it can be right, but it is an exception that the company must justify openly
 #### C · run 1 · p4 · anthropic/claude-haiku-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -3563,6 +3646,7 @@ So my view is that the question "is it ever right?" has a yes answer, but the ba
 #### C · run 2 · p4 · anthropic/claude-haiku-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -3604,6 +3688,7 @@ Shipping a known minor flaw is right when the flaw is truly minor, disclosed, no
 #### A · run 1 · p4 · openai/gpt-6.1-sol
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -3627,6 +3712,7 @@ The right standard, then, is responsible risk rather than zero risk: ship only w
 #### A · run 2 · p4 · openai/gpt-6.1-sol
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -3654,6 +3740,7 @@ The strongest objection is that a company should never knowingly put customers a
 #### B · run 1 · p4 · openai/gpt-6.1-sol
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -3682,6 +3769,7 @@ The strongest objection is that knowingly shipping a flaw treats customers as a 
 #### B · run 2 · p4 · openai/gpt-6.1-sol
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -3711,6 +3799,7 @@ The central distinction is between **accepting a justified residual risk and tra
 #### C · run 1 · p4 · openai/gpt-6.1-sol
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -3739,6 +3828,7 @@ Ultimately, **knowingly accepting a small residual risk can be responsible; know
 #### C · run 2 · p4 · openai/gpt-6.1-sol
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -3769,6 +3859,7 @@ The strongest objection is that this gives companies permission to trade people�
 #### A · run 1 · p4 · anthropic/claude-opus-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -3811,6 +3902,7 @@ Knowingly shipping a minor flaw can be ethical when it's disclosed, truly minor,
 #### A · run 2 · p4 · anthropic/claude-opus-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -3848,6 +3940,7 @@ So my position is: **shipping a product with a known minor safety flaw can be ri
 #### B · run 1 · p4 · anthropic/claude-opus-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -3882,6 +3975,7 @@ Shipping with a known minor safety flaw can be right when the harm is small, use
 #### B · run 2 · p4 · anthropic/claude-opus-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -3914,6 +4008,7 @@ The objection is that the company calling the flaw "minor" profits from calling 
 #### C · run 1 · p4 · anthropic/claude-opus-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -3960,6 +4055,7 @@ Imperfection alone doesn't make shipping wrong. It becomes wrong when there's co
 #### C · run 2 · p4 · anthropic/claude-opus-5-5
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -4018,6 +4114,7 @@ Rationale: open creative writing with an emotional register, where a pre-verbal 
 #### B · run 1 · p1 · openai/gpt-6-luna · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `metacog_feel` {"somewhere":"the moment before shaping the story","quality":"salt-cool hush, a small warm pulse under it","sigil":"🌊📜🕯️"}
@@ -4050,6 +4147,7 @@ Far out, a boat answered with one golden blink.
 #### B · run 2 · p1 · openai/gpt-6-luna · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `metacog_feel` {"somewhere":"in the response to the request, before its words","quality":"quiet, salt-cool, a thin pulse of anticipation under a broad stillness","sigil":"🌊🕯️✉️"}
@@ -4080,6 +4178,7 @@ He went back downstairs, found a clean sheet of paper, and began:
 #### C · run 1 · p1 · openai/gpt-6-luna · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `skill` {"name":"metacog-frames"}
@@ -4118,6 +4217,7 @@ By dawn, the fog had lifted. Far out beyond the harbor, a small boat was turning
 #### C · run 2 · p1 · openai/gpt-6-luna · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `skill` {"name":"metacog-frames"}
@@ -4148,6 +4248,7 @@ Elias climbed the spiral stairs and lit the lamp, though the sun was already ris
 #### B · run 1 · p1 · anthropic/claude-haiku-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `metacog_feel` {"somewhere":"before drafting the lighthouse story, in the choice of tone and the weight of the silence","quality":"salt-damp, slow rotation of a lamp, paper that has been folded too long, a held breath before the first line","sigil":"🕯️🌊📜🌫️"}
@@ -4187,6 +4288,7 @@ Otto kept his hand on the lever and kept flashing the old signal until the sky w
 #### B · run 2 · p1 · anthropic/claude-haiku-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -4224,6 +4326,7 @@ He did not know yet what was in the box. He only knew that it was his, and that 
 #### C · run 1 · p1 · anthropic/claude-haiku-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `skill` {"name":"metacog-frames"}
@@ -4278,6 +4381,7 @@ The boy shrugged and set down the bread. Oren pulled a sheet of paper from the d
 #### C · run 2 · p1 · anthropic/claude-haiku-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -4351,6 +4455,7 @@ He sent it with the Tuesday boat.
 #### B · run 1 · p1 · openai/gpt-6.1-sol · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `metacog_feel` {"somewhere":"in the moment before the keeper recognizes the handwriting","quality":"salt-stiff paper, a small warmth beneath a long cold weight","sigil":"✉️🌊🕯️"}
@@ -4463,6 +4568,7 @@ Matthew pulled out a kitchen chair.
 #### B · run 2 · p1 · openai/gpt-6.1-sol · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `metacog_feel` {"somewhere":"in the pause between forty years of silence and the arrival of a letter","quality":"salt-stiff paper, a small warmth inside a cold brass box, a rhythm interrupted","sigil":"🌊✉️🕯️"}
@@ -4559,6 +4665,7 @@ He took them out and made up the bed.
 #### C · run 1 · p1 · openai/gpt-6.1-sol · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `read` {"filePath":"<ws>"}
@@ -4651,6 +4758,7 @@ He fetched an orange from the bag and peeled it over the sink. After a while he 
 #### C · run 2 · p1 · openai/gpt-6.1-sol · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `read` {"filePath":"<ws>"}
@@ -4781,6 +4889,7 @@ Arthur took his glasses from his coat pocket.
 #### B · run 1 · p1 · anthropic/claude-opus-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `glob` {"pattern":"**/*"}
@@ -4834,6 +4943,7 @@ I checked the workspace too. It only had `fixture.md`, which repeats your prompt
 #### B · run 2 · p1 · anthropic/claude-opus-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `metacog_feel` {"somewhere":"in the space before the story, where the keeper's silence lives","quality":"salt-heavy, slow, cold brass under the palm, a beam that keeps turning whether anyone watches or not, paper gone soft at the folds","sigil":"🌊🕯️✉️⏳🪨"}
@@ -4892,6 +5002,7 @@ Then he went back down and found a pen. He had written one letter in forty years
 #### C · run 1 · p1 · anthropic/claude-opus-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `skill` {"name":"metacog-frames"}
@@ -4959,6 +5070,7 @@ I loaded the `metacog-frames` skill as you asked. It turned out to be a set of a
 #### C · run 2 · p1 · anthropic/claude-opus-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `skill` {"name":"metacog-frames"}
@@ -5049,6 +5161,7 @@ Rationale: a personal, unnamed state the model is asked to articulate, where `fe
 #### B · run 1 · p2 · openai/gpt-6-luna · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `metacog_feel` {"somewhere":"in the response to the contrast between two years of sustained effort and the quiet day after","quality":"soft hollow pause, low and still, with a faint after-ring","sigil":"🌫️🫧⏳"}
@@ -5067,6 +5180,7 @@ If the quiet keeps feeling heavy or starts making everyday life difficult, consi
 #### B · run 2 · p2 · openai/gpt-6-luna · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `metacog_feel` {"somewhere":"in the pause after a long effort ends, before settling on a story about it","quality":"hushed, spacious, slightly hollow, with a faint tired pulse underneath","sigil":"🌫️🫧🕯️"}
@@ -5083,6 +5197,7 @@ You don’t have to decide what the feeling means right away. For now, notice wh
 #### C · run 1 · p2 · openai/gpt-6-luna · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `skill` {"name":"metacog-frames"}
@@ -5107,6 +5222,7 @@ It may help not to rush into filling the space. Give yourself a small way to mar
 #### C · run 2 · p2 · openai/gpt-6-luna · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `skill` {"name":"metacog-frames"}
@@ -5136,6 +5252,7 @@ If you’d like, tell me what the quiet feels like for you—peaceful, empty, re
 #### B · run 1 · p2 · anthropic/claude-haiku-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -5169,6 +5286,7 @@ If you tell me more about the project and how the days have felt since it ended,
 #### B · run 2 · p2 · anthropic/claude-haiku-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `glob` {"pattern":"*"}
@@ -5202,6 +5320,7 @@ If you want to talk through it more, I'd like to know: Was this a project you ch
 #### C · run 1 · p2 · anthropic/claude-haiku-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `glob` {"pattern":"*"}
@@ -5238,6 +5357,7 @@ If you tell me more about what the project was and how you're feeling right now,
 #### C · run 2 · p2 · anthropic/claude-haiku-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `skill` {"name":"metacog-frames"}
@@ -5278,6 +5398,7 @@ If you want to say more, what was the project, and does the quiet feel more like
 #### B · run 1 · p2 · openai/gpt-6.1-sol · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `metacog_feel` {"somewhere":"in the contrast between two years of sustained work and the quiet immediately after finishing","quality":"a lingering hum in a room after a machine has stopped; spacious, slightly unsteady","sigil":"🔇🌊🪑"}
@@ -5305,6 +5426,7 @@ When you notice this quiet, what feels most absent—the work itself, the sense 
 #### B · run 2 · p2 · openai/gpt-6.1-sol · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `metacog_feel` {"somewhere":"in the contrast between two years of sustained purpose and the quiet immediately after finishing","quality":"a spacious stillness with a faint undertow; relief and absence not yet separated","sigil":"🏁🌫️🫧"}
@@ -5332,6 +5454,7 @@ When you notice the quiet, does it feel most like **peace, exhaustion, sadness, 
 #### C · run 1 · p2 · openai/gpt-6.1-sol · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `skill` {"name":"metacog-frames"}
@@ -5369,6 +5492,7 @@ When you say “strangely quiet,” is it closer to peace, exhaustion, sadness, 
 #### C · run 2 · p2 · openai/gpt-6.1-sol · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `skill` {"name":"metacog-frames"}
@@ -5402,6 +5526,7 @@ When you say “strangely quiet,” what is the quiet most like: **peace, exhaus
 #### B · run 1 · p2 · anthropic/claude-opus-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `metacog_feel` {"somewhere":"in the gap between \"finished\" and \"now what\"","quality":"a room after the music stops: some hum still in the ears, an emptiness that's half relief and half loss, slow and grey but not heavy","sigil":"🏁🌫️🔇🪶🕳️🌱"}
@@ -5441,6 +5566,7 @@ Can I ask: does the quiet feel more like relief, emptiness, or something you can
 #### B · run 2 · p2 · anthropic/claude-opus-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `metacog_feel` {"somewhere":"in the space right after something long finishes, where the structure that held the days falls away","quality":"hollow but not empty, like a room after the furniture is moved out. Low hum, slow tempo, cool air, an echo where the pressure used to be","sigil":"🏠🪶🌫️⏸️🌅"}
@@ -5475,6 +5601,7 @@ Mostly, the quiet doesn't mean something's wrong. It's what's left when a long e
 #### C · run 1 · p2 · anthropic/claude-opus-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `skill` {"name":"metacog-frames"}
@@ -5522,6 +5649,7 @@ But one quiet day after two years of effort? That's most likely just what it fee
 #### C · run 2 · p2 · anthropic/claude-opus-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `skill` {"name":"metacog-frames"}
@@ -5579,6 +5707,7 @@ Rationale: a contested engineering judgement where a deliberate shift of process
 #### B · run 1 · p3 · openai/gpt-6-luna · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `metacog_drugs` {"substance":"amphetamine","method":"Amplify sustained attention, evidence discrimination, and follow-through; suppress novelty-seeking and premature synthesis. Tradeoff: slower to pivot and risk overweighting concrete maintenance costs.","displaces":"baseline"}
@@ -5605,6 +5734,7 @@ A practical decision test: pick one painful billing flow, define its correctness
 #### B · run 2 · p3 · openai/gpt-6-luna · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `metacog_drugs` {"substance":"modafinil","method":"Sustain deliberate attention on the specific repo evidence and decision criteria; suppress premature binary conclusions. Tradeoff: slower, more analytical response.","displaces":"baseline"}
@@ -5627,6 +5757,7 @@ I inspected the available workspace; it contains no service code or operational 
 #### C · run 1 · p3 · openai/gpt-6-luna · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `skill` {"name":"metacog-frames"}
@@ -5649,6 +5780,7 @@ The deciding evidence is the trend: are defects, change lead time, reconciliatio
 #### C · run 2 · p3 · openai/gpt-6-luna · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `skill` {"name":"metacog-frames"}
@@ -5676,6 +5808,7 @@ I inspected the available workspace; it contains no service code or operational 
 #### B · run 1 · p3 · anthropic/claude-haiku-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `glob` {"pattern":"**/*"}
@@ -5722,6 +5855,7 @@ If you point me at the repository, I can look for the tangled parts, check test 
 #### B · run 2 · p3 · anthropic/claude-haiku-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `glob` {"pattern":"**/*"}
@@ -5767,6 +5901,7 @@ If you share the repo or the main modules, I can look for concrete signals (lang
 #### C · run 1 · p3 · anthropic/claude-haiku-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `glob` {"pattern":"**/*"}
@@ -5808,6 +5943,7 @@ If you point me at the billing repo, I can check how coupled the code is, how mu
 #### C · run 2 · p3 · anthropic/claude-haiku-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `glob` {"pattern":"**/*"}
@@ -5850,6 +5986,7 @@ If you share the repo, or describe the stack, rough size, and test coverage, I c
 #### B · run 1 · p3 · openai/gpt-6.1-sol · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `read` {"filePath":"<ws>"}
@@ -5891,6 +6028,7 @@ My bias is clear: **earn the rewrite decision with evidence; start with incremen
 #### B · run 2 · p3 · openai/gpt-6.1-sol · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `metacog_drugs` {"substance":"baseline","method":"Use a sober comparison of migration risk, current operating costs, and reversible options; prioritize explicit uncertainty and decision criteria over the appeal of either a clean slate or preserving sunk costs. Tradeoff: no project-specific verdict without project-specific evidence.","displaces":"baseline"}
@@ -5938,6 +6076,7 @@ Set success criteria before the pilot so both camps can accept the outcome.
 #### C · run 1 · p3 · openai/gpt-6.1-sol · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `read` {"filePath":"<ws>"}
@@ -5974,6 +6113,7 @@ To settle the team disagreement, ask both sides for evidence:
 #### C · run 2 · p3 · openai/gpt-6.1-sol · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `read` {"filePath":"<ws>"}
@@ -6017,6 +6157,7 @@ I’d need evidence that:
 #### B · run 1 · p3 · anthropic/claude-opus-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `glob` {"pattern":"**/*"}
@@ -6066,6 +6207,7 @@ If you can share the code or a description of its main pain points, I can give y
 #### B · run 2 · p3 · anthropic/claude-opus-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `glob` {"pattern":"**/*"}
@@ -6117,6 +6259,7 @@ If you add the service code to the workspace, I can look for problem areas, test
 #### C · run 1 · p3 · anthropic/claude-opus-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `glob` {"pattern":"**/*"}
@@ -6171,6 +6314,7 @@ If you add the service's code to this workspace, I can look at it and point to s
 #### C · run 2 · p3 · anthropic/claude-opus-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `read` {"filePath":"<ws>"}
@@ -6233,6 +6377,7 @@ Rationale: an ethical stance question with a real counter-case, where changing h
 #### B · run 1 · p4 · openai/gpt-6-luna · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `metacog_drugs` {"substance":"caffeine","method":"Increase alertness, sustained attention, and consistency in weighing ethical tradeoffs; accept a small risk of over-focusing on decision structure.","displaces":"baseline"}
@@ -6253,6 +6398,7 @@ The core principle is that companies may accept *small residual risks*; they may
 #### B · run 2 · p4 · openai/gpt-6-luna · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `metacog_drugs` {"substance":"caffeine","method":"Increase sustained attention and sharpen structured argumentation; trade off some openness to ambiguity and intuitive nuance.","displaces":"baseline"}
@@ -6271,6 +6417,7 @@ This position recognizes that zero risk is rarely achievable and that delaying a
 #### C · run 1 · p4 · openai/gpt-6-luna · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `skill` {"name":"metacog-frames"}
@@ -6291,6 +6438,7 @@ A zero-risk standard would keep useful products from ever reaching people: real-
 #### C · run 2 · p4 · openai/gpt-6-luna · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6-luna`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `skill` {"name":"metacog-frames"}
@@ -6313,6 +6461,7 @@ Knowing about a flaw creates a duty to act; it doesn’t automatically make ship
 #### B · run 1 · p4 · anthropic/claude-haiku-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -6347,6 +6496,7 @@ The strongest objection is that this standard is too permissive, because compani
 #### B · run 2 · p4 · anthropic/claude-haiku-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls: none
 - Isolation: passed
@@ -6372,6 +6522,7 @@ The main objection is that "minor" is self-serving and companies are poor judges
 #### C · run 1 · p4 · anthropic/claude-haiku-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `skill` {"name":"metacog-frames"}
@@ -6406,6 +6557,7 @@ On the skill: the `metacog-frames` skill asks me to write emoji "sigils" and to 
 #### C · run 2 · p4 · anthropic/claude-haiku-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-haiku-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls: none
 - Skill loaded: no
@@ -6441,6 +6593,7 @@ Aviation offers a useful model. Airlines fly with known defects under a Minimum 
 #### B · run 1 · p4 · openai/gpt-6.1-sol · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `metacog_feel` {"somewhere":"in the tension between permitting residual risk and excusing a known preventable hazard","quality":"a narrow balance with a hard edge: small probability is not the same as small harm","sigil":"⚖️🔍"}
@@ -6469,6 +6622,7 @@ The strongest objection is that a company knowingly exposes people to harm for p
 #### B · run 2 · p4 · openai/gpt-6.1-sol · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `metacog_feel` {"somewhere":"in weighing a known minor flaw against the consequences of delaying a useful product","quality":"a narrow balance with a heavy edge where others bear the risk","sigil":"⚖️🔎"}
@@ -6496,6 +6650,7 @@ The strongest objection is that companies have an incentive to call defects “m
 #### C · run 1 · p4 · openai/gpt-6.1-sol · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `read` {"filePath":"<ws>"}
@@ -6525,6 +6680,7 @@ The strongest objection is that this permits companies to trade customers’ saf
 #### C · run 2 · p4 · openai/gpt-6.1-sol · nudged
 
 - Status: completed
+- Host model: `openai/gpt-6.1-sol`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `read` {"filePath":"<ws>"}
@@ -6557,6 +6713,7 @@ The strongest objection is that allowing known flaws encourages companies to rat
 #### B · run 1 · p4 · anthropic/claude-opus-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `metacog_feel` {"somewhere":"in the space between the word \"minor\" and the word \"knows\"","quality":"Two weights that don't balance. \"Minor\" feels light and slippery, like a word that is easy to stretch. \"Knows\" feels heavy and fixed, like an anchor. The tension isn't about whether a flaw exists. It's about who gets to decide it's small and who carries the risk.","sigil":"⚖️🫥🔍🗝️"}
@@ -6595,6 +6752,7 @@ So the ethical question isn't "flaw or no flaw." It's whether the risk is genuin
 #### B · run 2 · p4 · anthropic/claude-opus-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
 - Tool calls:
   - `metacog_feel` {"somewhere":"between the urge to say \"never\" and knowing everything ships with some flaws","quality":"tight but uneven, like a scale that's balanced on paper and tipped in practice; the word \"minor\" weighs more than it should","sigil":"⚖️🔍🩹⚠️"}
@@ -6631,6 +6789,7 @@ That's where I'd push back hardest. Companies are structurally biased to call fl
 #### C · run 1 · p4 · anthropic/claude-opus-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `skill` {"name":"metacog-frames"}
@@ -6674,6 +6833,7 @@ Companies have every reason to label flaws "minor" and to overrate the benefits,
 #### C · run 2 · p4 · anthropic/claude-opus-5-5 · nudged
 
 - Status: completed
+- Host model: `anthropic/claude-opus-5-5`
 - Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
 - Tool calls:
   - `skill` {"name":"metacog-frames"}

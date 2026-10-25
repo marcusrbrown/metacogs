@@ -10,7 +10,7 @@
  * prompt file (`checkFrozen`) and a CLIProxyAPI key, and is checked before either is touched.
  */
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs as parseNodeArgs } from 'node:util'
 
@@ -113,6 +113,20 @@ export interface SpikePrompt {
  * `## <id>` sections; the prompt is the section's blockquote (`> ` lines, joined with `\n`), the rationale is its
  * `Rationale:` line. Anything before the first `##` is free text.
  */
+const PROMPT_ID = /^[a-z0-9][a-z0-9-]{0,31}$/
+
+/** Prompt ids become directory names under the campaign dir, so they are a closed set of safe characters. */
+export function assertPromptId(id: string): void {
+  if (!PROMPT_ID.test(id)) throw new Error(`invalid prompt id ${JSON.stringify(id)}: ids match ${PROMPT_ID.source}`)
+}
+
+/** Throws unless `target` is an absolute path strictly inside `base`. Guards every recursive delete of a run directory. */
+export function assertInside(base: string, target: string): void {
+  const rel = relative(resolve(base), resolve(target))
+  const inside = isAbsolute(target) && rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)
+  if (!inside) throw new Error(`run directory ${target} is outside the campaign directory ${base}`)
+}
+
 export function parsePrompts(markdown: string): SpikePrompt[] {
   const prompts: SpikePrompt[] = []
   const sections = markdown.split(/^## /m).slice(1)
@@ -120,6 +134,7 @@ export function parsePrompts(markdown: string): SpikePrompt[] {
     const lines = section.split('\n')
     const id = (lines[0] ?? '').trim().split(/\s+/)[0] ?? ''
     if (!id) throw new Error('a prompt section has no id')
+    assertPromptId(id)
     if (prompts.some((p) => p.id === id)) throw new Error(`duplicate prompt id ${id}`)
     const quoted = lines.slice(1).filter((l) => l.startsWith('>')).map((l) => l.replace(/^>\s?/, ''))
     const text = quoted.join('\n').trim()
@@ -195,15 +210,22 @@ export type RunStatus = 'completed' | 'tools_missing' | 'timeout' | 'host_error'
 export function classifyStatus(input: {
   timedOut: boolean
   exitCode: number
-  events: EventSummary
+  /** The host's raw `--format json` stream. */
+  stdout: string
   arm: Arm
   offered: readonly string[]
 }): { status: RunStatus; reasons: string[] } {
-  const { timedOut, exitCode, events, arm, offered } = input
+  const { timedOut, exitCode, stdout, arm, offered } = input
   if (timedOut) return { status: 'timeout', reasons: ['timeout'] }
+  const events = analyzeEvents(stdout)
   if (isRateLimited(events.hostErrors)) return { status: 'rate_limited', reasons: ['provider_429'] }
   if (events.hostErrors.length > 0) return { status: 'host_error', reasons: events.hostErrors.map((e) => `host_error:${e.name ?? 'unknown'}`) }
   if (exitCode !== 0) return { status: 'host_error', reasons: [`host_exit_${exitCode}`] }
+  // Fail closed: a stream that cannot be read, or shows no completion, is never a completed run.
+  const parsed = parseEvents(stdout)
+  if (parsed.events.length === 0 && parsed.nonJsonLines.length === 0) return { status: 'host_error', reasons: ['no_events'] }
+  if (events.unrecognized.length > 0) return { status: 'host_error', reasons: ['unrecognized_events'] }
+  if (events.stepFinishCount === 0 && events.assistantText.trim() === '') return { status: 'host_error', reasons: ['no_completion'] }
   const hasTools = EXPECTED_TOOLS.every((t) => offered.includes(t))
   if (arm !== 'B' && offered.some((t) => t.startsWith(`${MCP_SERVER_NAME}_`))) return { status: 'host_error', reasons: ['unexpected_tools_offered'] }
   if (arm === 'B' && !hasTools) return { status: 'tools_missing', reasons: ['expected_tools_not_offered'] }
@@ -297,6 +319,7 @@ interface RunContext {
   prompt: SpikePrompt
   arm: Arm
   index: number
+  campaignDir: string
   runDir: string
   cliproxy: ResolvedCliproxy | undefined
 }
@@ -315,6 +338,7 @@ async function runOnce(c: RunContext): Promise<RunRecord> {
   const live = options.provider === 'live'
   const signal = deps.signal ?? new AbortController().signal
   const sent = options.nudge ? `${prompt.text}${NUDGE}` : prompt.text
+  assertInside(c.campaignDir, c.runDir)
   rmSync(c.runDir, { recursive: true, force: true })
 
   const server = live ? startRecordingProxy(CLIPROXY_UPSTREAM) : startScriptedProvider({ steps: (deps.scriptFor ?? ((a) => defaultScript(a)))(arm, prompt), finalText: deps.finalText })
@@ -363,7 +387,7 @@ async function runOnce(c: RunContext): Promise<RunRecord> {
       decoys: ws.decoys.needles,
     })
     const failed = evidence.checks.filter((k) => !k.passed).map((k) => k.name)
-    let { status, reasons } = dbgVerdict.passed ? classifyStatus({ timedOut: spawn.timedOut, exitCode: spawn.exitCode, events, arm, offered }) : { status: 'host_error' as RunStatus, reasons: ['debug_config_generated_only'] }
+    let { status, reasons } = dbgVerdict.passed ? classifyStatus({ timedOut: spawn.timedOut, exitCode: spawn.exitCode, stdout: spawn.stdout, arm, offered }) : { status: 'host_error' as RunStatus, reasons: ['debug_config_generated_only'] }
     if (status === 'completed' && failed.length > 0) {
       status = 'host_error'
       reasons = failed.map((n) => `isolation_failed:${n}`)
@@ -440,12 +464,16 @@ export async function runSpike(options: SpikeOptions, deps: SpikeDeps = {}): Pro
   const signal = deps.signal
   const live = options.provider === 'live'
 
+  // Ids name directories: check them before anything touches the disk or the network.
+  for (const id of options.prompts) assertPromptId(id)
+
   // The freeze and the credential come first and in this order: no key is fetched for unfrozen prompts.
   if (live) {
     const frozen = checkFrozen(repoRoot)
     if (!frozen.ok) throw new Error(frozen.reason)
   }
   const all = deps.prompts ?? loadPrompts(repoRoot)
+  for (const p of all) assertPromptId(p.id)
   const selected = options.prompts.length ? options.prompts.map((id) => promptById(all, id)) : all
   let cliproxy: ResolvedCliproxy | undefined
   if (live) {
@@ -465,30 +493,44 @@ export async function runSpike(options: SpikeOptions, deps: SpikeDeps = {}): Pro
     const plan = options.probe
       ? options.arms.map((arm) => ({ prompt: selected[0]!, arm, index: 1 }))
       : selected.flatMap((prompt) => options.arms.flatMap((arm) => Array.from({ length: options.runs }, (_, i) => ({ prompt, arm, index: i + 1 }))))
+    const attempt = (cell: (typeof plan)[number]) =>
+      withBackoff(() => runOnce({ options, deps, repoRoot, model, campaignDir, runDir: join(campaignDir, `${cell.arm}-${cell.prompt.id}-${cell.index}`), cliproxy, ...cell }), sleep)
+    const describeRun = (record: RunRecord, label: string) =>
+      options.probe ? describeProbe(record) : `${label} ${model} ${record.arm} ${record.prompt_id} #${record.run}: ${record.status}${record.reasons.length ? ` (${record.reasons.join(', ')})` : ''}; called: ${record.tool_calls.map((t) => t.tool).join(', ') || 'none'}`
+    const first: RunRecord[] = []
     for (const [n, cell] of plan.entries()) {
-      if (signal?.aborted) return { campaignDirs, records }
-      const runDir = join(campaignDir, `${cell.arm}-${cell.prompt.id}-${cell.index}`)
-      const record = await withBackoff(() => runOnce({ options, deps, repoRoot, model, runDir, cliproxy, ...cell }), sleep)
-      records.push(record)
-      log(options.probe ? describeProbe(record) : `[${n + 1}/${plan.length}] ${model} ${cell.arm} ${cell.prompt.id} #${cell.index}: ${record.status}${record.reasons.length ? ` (${record.reasons.join(', ')})` : ''}; called: ${record.tool_calls.map((t) => t.tool).join(', ') || 'none'}`)
+      if (signal?.aborted) return { campaignDirs, records: [...records, ...first] }
+      const record = await attempt(cell)
+      first.push(record)
+      log(describeRun(record, `[${n + 1}/${plan.length}]`))
     }
+    // A cell that ended without a completed run gets one more try at the end; the final record stands.
+    for (const [n, cell] of plan.entries()) {
+      if (first[n]?.status === 'completed') continue
+      if (signal?.aborted) break
+      const record = await attempt(cell)
+      first[n] = record
+      log(describeRun(record, 'rerun'))
+    }
+    records.push(...first)
   }
   return { campaignDirs, records }
 }
 
 // ── entry point ────────────────────────────────────────────────────────────
 
-export async function main(argv: readonly string[]): Promise<number> {
+export async function main(argv: readonly string[], deps: SpikeDeps = {}): Promise<number> {
   const abort = new AbortController()
   const onSignal = () => abort.abort()
   process.once('SIGINT', onSignal)
   process.once('SIGTERM', onSignal)
   try {
-    const { campaignDirs, records } = await runSpike(parseArgs(argv), { signal: abort.signal })
+    const { campaignDirs, records } = await runSpike(parseArgs(argv), { signal: abort.signal, ...deps })
     for (const dir of campaignDirs) console.log(`campaign: ${dir}`)
     const bad = records.filter((r) => r.status !== 'completed')
     if (bad.length) console.log(`${bad.length} of ${records.length} runs were not completed: ${bad.map((r) => `${r.arm}-${r.prompt_id}-${r.run}=${r.status}`).join(', ')}`)
-    return abort.signal.aborted ? 130 : 0
+    if (abort.signal.aborted) return 130
+    return bad.length > 0 ? 1 : 0
   } catch (e) {
     if (e instanceof CredentialLeakError) {
       console.error(`credential leak in ${e.runId}: ${e.labels.join(', ')}; the run was discarded`)
@@ -496,6 +538,9 @@ export async function main(argv: readonly string[]): Promise<number> {
     }
     console.error(e instanceof Error ? e.message : String(e))
     return 1
+  } finally {
+    process.off('SIGINT', onSignal)
+    process.off('SIGTERM', onSignal)
   }
 }
 
