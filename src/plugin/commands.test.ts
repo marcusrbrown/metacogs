@@ -23,6 +23,10 @@ describe('the command templates', () => {
     expect(COMMANDS.drugs.template).toMatch(/pass that text as one string for `substance`/)
   })
 
+  test.each(['feel', 'drugs'] as const)('%s tells the model to drop the quotes the host puts around several words', (name) => {
+    expect(COMMANDS[name].template).toContain('Several words arrive in double quotes; drop those quotes before using the text.')
+  })
+
   test.each(['feel', 'drugs'] as const)('%s has no shell injection, file reference or HTML', (name) => {
     const { template } = COMMANDS[name]
     expect(template).not.toContain('!')

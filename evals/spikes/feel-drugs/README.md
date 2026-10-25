@@ -177,7 +177,7 @@ The read covers these four prompts and these four models, not the tools in gener
 
 ## Plugin host probes
 
-What OpenCode `1.19.4` does with an object plugin, asserted at $0 against the scripted provider in `src/plugin/probe.test.ts` (a throwaway probe plugin, loaded by `file://`). One line per question:
+What OpenCode `1.19.4` does with an object plugin, asserted at $0 against the scripted provider in `src/plugin/probe.test.ts` (a throwaway probe plugin, loaded by `file://`). The suite runs only with `METACOGS_HOST_PROBES=1`, on a host pin bump. One line per question:
 
 - **Object plugin id.** A `file://` object plugin without an `id` is not loaded: the host logs `must export id`, the run still exits 0, and the plugin's tools are absent.
 - **Default plugins switch.** A `file://` plugin loads under `OPENCODE_DISABLE_DEFAULT_PLUGINS=1`, so plugin arms do not unset it.

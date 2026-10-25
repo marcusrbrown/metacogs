@@ -2,7 +2,8 @@
  * Host probes for the metacogs plugin: how OpenCode 1.19.4 treats an object plugin loaded by `file://`, its `config`
  * and `experimental.chat.system.transform` hooks, commands, skill paths and permissions. Every probe runs the pinned
  * host against the scripted provider ($0). The probe plugin is a throwaway module that records what the host does with
- * it; the findings are summarised in `evals/spikes/feel-drugs/README.md`, "Plugin host probes".
+ * it; the findings are summarised in `evals/spikes/feel-drugs/README.md`, "Plugin host probes". The suite takes minutes and
+ * runs only with `METACOGS_HOST_PROBES=1`, on a host pin bump.
  */
 import { afterAll, describe, expect, test } from 'bun:test'
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -215,7 +216,7 @@ const probe = (name: string, body: (lab: Lab) => Promise<void>) =>
   )
 const callStep = (name: string, id = 'call_1', args: Record<string, unknown> = {}): ScriptedStep => ({ toolCalls: [{ id, name, arguments: args }] })
 
-describe.skipIf(!opencodeAvailability().available)('plugin host behaviour on the pinned host (scripted provider, $0)', () => {
+describe.skipIf(process.env.METACOGS_HOST_PROBES !== '1' || !opencodeAvailability().available)('plugin host behaviour on the pinned host (scripted provider, $0)', () => {
   probe(
     'a file:// object plugin loads under OPENCODE_DISABLE_DEFAULT_PLUGINS=1 and offers its tool; the env stays set',
     async (lab) => {
