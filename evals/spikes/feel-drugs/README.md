@@ -174,3 +174,22 @@ Recorded verbatim:
 - drugs - (the ones that used it); tool vs skill: tool
 
 The read covers these four prompts and these four models, not the tools in general.
+
+## Plugin host probes
+
+What OpenCode `1.19.4` does with an object plugin, asserted at $0 against the scripted provider in `src/plugin/probe.test.ts` (a throwaway probe plugin, loaded by `file://`). One line per question:
+
+- **Object plugin id.** A `file://` object plugin without an `id` is not loaded: the host logs `must export id`, the run still exits 0, and the plugin's tools are absent.
+- **Default plugins switch.** A `file://` plugin loads under `OPENCODE_DISABLE_DEFAULT_PLUGINS=1`, so plugin arms do not unset it.
+- **`debug config`.** It shows what the hooks add: `command.<name>` and `skills.paths`, plus the non-empty `plugin` array and a `plugin_origins` list (`spec`, `source`, `scope`). A run with no plugin has `command: {}`, `plugin: []`, and no `skills` or `plugin_origins` key. The expected-config object for plugin arms allows `command.{feel,drugs}`, one `skills.paths` entry, the `plugin` entry and `plugin_origins`.
+- **`$ARGUMENTS`.** One word arrives raw (`caffeine`), several words arrive JSON-quoted (`"two words"`, the known argv quirk), and no argument arrives as the empty string, so `<args></args>` and the template's empty-arguments branch apply.
+- **Skill-name precedence.** A plugin `skills.paths` copy and `.agents/skills` copies (project, HOME) of one name are listed once and one copy loads, but the winner is not stable: in 6 runs of one fixture with the plugin loaded the plugin copy won 3 and the project copy 3, and in 6 runs with the copies alone the project copy won 5 and the HOME copy 1. There is no precedence to document; the docs say to remove the `.agents/skills` copy when the plugin is installed. A skill that exists only in the plugin path always loads.
+- **Title and summary signatures.** The title request starts `You are a title generator. You output ONLY a thread title.`, which matches Systematic's `You are a title generator`. Systematic's `You are a helpful AI assistant tasked with summarizing conversations` does not appear on 1.19.4: the compaction request starts `You are a context summarization agent.` The guidance constant gains that string; the transform hook fires for the title request and the compaction request, both with a `sessionID`.
+- **Built-in tools after the deny set.** Denying `glob`, `grep`, `list`, `read`, `edit`, `bash`, `task`, `todowrite`, `question`, `webfetch`, `websearch`, `lsp` and `skill` leaves no tool at all: the main request carries no `tools` array, so N1's main request is found by its `You are opencode` system text and not by `hasTools`. With the plugin loaded and only its skills allowed, the offered tools are exactly the plugin's tools and `skill`.
+- **Same plugin in two config layers.** The same spec in two layers is one entry: `server()` runs once, the project layer's options replace the file layer's, and the tool is offered once.
+- **Two distinct plugins.** Both load. They share a tool name by last-loaded-wins (the project layer over the file layer, and the later array entry over the earlier), and each transform hook runs, so a plugin that only appends adds one block per instance; the guidance strips existing blocks before it appends.
+- **`permission.skill` and per-agent lists.** `skill: deny`, `skill: {"*": "deny"}` and an agent-level `{"*": "deny"}` remove the `skill` tool and list no skills, the plugin's included. A per-name allow keeps the named skill, and a per-name deny hides just that one.
+- **Session replay after uninstall.** A resumed session replays the old `tool_calls` entry (`probe_tool`) and its result as history while the tool is no longer offered, and the run exits 0. Whether a real provider accepts that history is not tested at $0, so the docs say to start a new session after removing the plugin.
+- **Stale `skills.paths`.** A path added by an earlier plugin config does not survive a fresh config load; the host keeps no copy, so no scrub is needed.
+- **Config-dir install.** The first run that loads a plugin makes the host run `npm install @opencode-ai/plugin` in `OPENCODE_CONFIG_DIR` (about 20 s, over the network). The probe tests install it once and copy the directory into each fixture, with `npm_config_offline=true`.
+- **Not run.** `Agent.generate` (the `opencode agent create` path) also triggers the transform hook, with no `sessionID` (read from the 1.19.4 binary, not run).
