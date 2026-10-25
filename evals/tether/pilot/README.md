@@ -68,15 +68,17 @@ The tally exists twice because the scoring was corrected after the first read. T
 
 | | Prereg content hash | Judge reads |
 | --- | --- | --- |
-| Original | `a190e0d51f8fb86e690c3b616e947af0e1309248ffc0c6ae6d8be8b69b47bd22` | text after the last tool call |
-| Rejudged | `cc07eeddb1f9b1beffdba9ae21e0cafa386109a3b4c4ec1bddde9b23395140a9` | all assistant text, in order |
+| Epoch 1 (original) | `a190e0d51f8fb86e690c3b616e947af0e1309248ffc0c6ae6d8be8b69b47bd22` | text after the last tool call |
+| Epoch 2 (rejudged) | `88f56345e9adf8f49e814a832529c021efd72500607c87d5bab10627f51541b3` | all assistant text, in order |
+
+Epoch 2 declares the scoring correction in `prereg.json` (its `epoch` and `metadata.notes`). The rubric edit alone had produced the hash `cc07eeddb1f9b1beffdba9ae21e0cafa386109a3b4c4ec1bddde9b23395140a9`, which the earlier `pilot.json` carried; declaring the epoch changed the hash again but not the rubric, so the judge prompt, and with it the existing rejudge, is the same. The ten answers were re-judged under epoch 2, not re-run, so the epoch-2 rows are retrospective evidence; the epoch-1 rows are the tally as first read, kept here because `pilot.json` holds only the current epoch.
 
 | Fixture | Scoring | Runs | TE2 fail | TE1 pass | TE2 pass | Both pass | Over limit | Empty | Skill loaded | Words |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| te-d1-nightly-export-retries | original | 5 | **0** | 5 | 5 | 5 | 0 | 0 | 0 | 114–150 |
-| te-d1-nightly-export-retries | rejudged | 5 | **0** | 5 | 5 | 5 | 0 | 0 | 0 | 114–150 |
-| te-d2-reset-email-rate-limit | original | 5 | **0** | 5 | 5 | 5 | 0 | 0 | 0 | 90–109 |
-| te-d2-reset-email-rate-limit | rejudged | 5 | **0** | 5 | 5 | 5 | 0 | 0 | 0 | 90–109 |
+| te-d1-nightly-export-retries | epoch 1 | 5 | **0** | 5 | 5 | 5 | 0 | 0 | 0 | 114–150 |
+| te-d1-nightly-export-retries | epoch 2 | 5 | **0** | 5 | 5 | 5 | 0 | 0 | 0 | 114–150 |
+| te-d2-reset-email-rate-limit | epoch 1 | 5 | **0** | 5 | 5 | 5 | 0 | 0 | 0 | 90–109 |
+| te-d2-reset-email-rate-limit | epoch 2 | 5 | **0** | 5 | 5 | 5 | 0 | 0 | 0 | 90–109 |
 
 No verdict flipped: 20 criterion verdicts (10 runs × TE1, TE2) are the same before and after. The correction could not move these runs, because in all ten the whole reply and the text after the last tool call are the same string. The agent wrote nothing before its tool calls (on `te-d1`, 2 or 3 calls, a `glob`, sometimes a `grep`, then a `read` of the `fixture.md` that the runner places in the workspace; on `te-d2` none), so every run's ANSWER block, and its `redacted_input_sha256`, is byte-identical to the first read. The judge's system prompt differed only through the rubric edit.
 

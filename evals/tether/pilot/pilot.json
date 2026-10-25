@@ -1,7 +1,7 @@
 {
   "schema_version": 3,
   "method": "tether",
-  "prereg_content_hash": "cc07eeddb1f9b1beffdba9ae21e0cafa386109a3b4c4ec1bddde9b23395140a9",
+  "prereg_content_hash": "88f56345e9adf8f49e814a832529c021efd72500607c87d5bab10627f51541b3",
   "agent_model_id": "openai/gpt-6-luna",
   "judge_model_id": "anthropic/claude-haiku-5-5",
   "arms": [
