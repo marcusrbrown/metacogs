@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { availableSkillsFromRequests, checkDebugConfig, checkIsolation, failedChecks, type IsolationInput, systemPromptSent, systemTexts } from './isolation'
+import { availableSkillsFromRequests, checkDebugConfig, checkIsolation, failedChecks, type IsolationInput, offeredTools, systemPromptSent, systemTexts } from './isolation'
 import type { RecordedRequest } from './scripted-provider'
 
 const skillsBlock = (names: string[]) =>
@@ -73,6 +73,40 @@ describe('wire formats reaching the recording proxy (CLIProxyAPI gateway)', () =
   test('a user message that merely quotes the prompt is not a system message', () => {
     expect(systemPromptSent({ messages: [{ role: 'user', content: 'You are an agent.' }] }, 'You are an agent.')).toBe(false)
     expect(availableSkillsFromRequests([{ hasTools: true, round: 0, body: { messages: [{ role: 'user', content: skillsBlock(['demo']) }], tools } }])).toBeNull()
+  })
+})
+
+describe('offeredTools', () => {
+  // Shapes only: synthesized, none of this is a retained request body.
+  const withTools = (body: Record<string, unknown>): RecordedRequest => ({ hasTools: true, round: 0, body })
+  const titleRequest: RecordedRequest = { hasTools: false, round: 0, body: { messages: [{ role: 'user', content: 'title' }] } }
+
+  test('chat completions: function.name', () => {
+    const r = withTools({ messages: [], tools: [{ type: 'function', function: { name: 'bash', description: 'd', parameters: {} } }, { type: 'function', function: { name: 'metacog_feel' } }] })
+    expect(offeredTools([r])).toEqual(['bash', 'metacog_feel'])
+  })
+
+  test('Responses: top-level name', () => {
+    const r = withTools({ input: [], tools: [{ type: 'function', name: 'bash', description: 'd', parameters: {}, strict: false }, { type: 'function', name: 'metacog_drugs', strict: false }] })
+    expect(offeredTools([r])).toEqual(['bash', 'metacog_drugs'])
+  })
+
+  test('Anthropic: top-level name with input_schema', () => {
+    const r = withTools({ system: 's', messages: [], tools: [{ name: 'bash', description: 'd', input_schema: { type: 'object' } }, { name: 'metacog_feel', input_schema: { type: 'object' } }] })
+    expect(offeredTools([r])).toEqual(['bash', 'metacog_feel'])
+  })
+
+  test('unions across every request that carries tools, ignoring the tool-less title request, no duplicates', () => {
+    const a = withTools({ tools: [{ name: 'bash' }, { name: 'skill' }] })
+    const b = withTools({ tools: [{ function: { name: 'skill' } }, { function: { name: 'metacog_feel' } }] })
+    expect(offeredTools([titleRequest, a, b])).toEqual(['bash', 'skill', 'metacog_feel'])
+  })
+
+  test('no tool-capable request, malformed entries and a missing tools array yield nothing', () => {
+    expect(offeredTools([])).toEqual([])
+    expect(offeredTools([titleRequest])).toEqual([])
+    expect(offeredTools([withTools({ tools: [null, 3, {}, { function: {} }, { name: 7 }] })])).toEqual([])
+    expect(offeredTools([withTools({})])).toEqual([])
   })
 })
 

@@ -89,14 +89,24 @@ export function availableSkillsFromRequests(requests: readonly RecordedRequest[]
   return [...block.matchAll(/<name>([^<]+)<\/name>/g)].map((m) => m[1] ?? '')
 }
 
-/** Names of tools offered to the model on the tool-capable request. */
+/** A tool entry's name on any wire: chat completions `function.name`, Responses and Anthropic `name`. */
+function toolName(tool: unknown): string {
+  if (!isRecord(tool)) return ''
+  const name = isRecord(tool.function) ? tool.function.name : tool.name
+  return typeof name === 'string' ? name : ''
+}
+
+/** Names of tools offered to the model, unioned over every tool-capable request, first-seen order. */
 export function offeredTools(requests: readonly RecordedRequest[]): string[] {
-  const main = requests.find((r) => r.hasTools)
-  const body = isRecord(main?.body) ? main.body : {}
-  const tools = Array.isArray(body.tools) ? body.tools : []
-  return tools
-    .map((t) => (isRecord(t) && isRecord(t.function) ? String(t.function.name) : ''))
-    .filter(Boolean)
+  const names = new Set<string>()
+  for (const request of requests) {
+    if (!request.hasTools || !isRecord(request.body) || !Array.isArray(request.body.tools)) continue
+    for (const tool of request.body.tools) {
+      const name = toolName(tool)
+      if (name) names.add(name)
+    }
+  }
+  return [...names]
 }
 
 // ── debug config ───────────────────────────────────────────────────────────
