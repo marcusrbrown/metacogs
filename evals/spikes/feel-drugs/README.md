@@ -110,4 +110,60 @@ Wall time, tokens and cost per model, summed from the `run.json` files (cost is 
 | `openai/gpt-6.1-sol` | 844 s | 63,178 / 12,082 | 4,864 / 0 | $0.2587 |
 | `anthropic/claude-opus-5-5` | 479 s | 60 / 26,255 | 109,642 / 78,699 | $1.0359 |
 
+## Results: told to use it (nudged)
+
+The same frozen prompts with the nudge sentence appended (`--nudge`, see above), arms B and C only, 2 runs per cell, one invocation per model, 16 runs each, 64 in all. Sequential, same isolation, same CLIProxyAPI credential path. Campaigns:
+
+- `openai-gpt-6-luna-nudged-2026-10-25T14-56-09-803Z`
+- `anthropic-claude-haiku-5-5-nudged-2026-10-25T15-00-38-847Z`
+- `openai-gpt-6.1-sol-nudged-2026-10-25T15-04-08-844Z`
+- `anthropic-claude-opus-5-5-nudged-2026-10-25T15-14-11-254Z`
+
+Caveat: there is no nudged arm A, so a difference between nudged B or C and unprompted A can include the effect of the sentence itself; nudged B against nudged C is the clean tool-versus-skill comparison.
+
+Columns as above, computed from the `run.json` files. Each cell is 2 runs.
+
+| Prompt | Model | B: feel / drugs / any call | C: skill loaded / fields in reply |
+| --- | --- | --- | --- |
+| p1 | `openai/gpt-6-luna` | 2 / 0 / 2 of 2 | 2 / 1 of 2 |
+| p1 | `anthropic/claude-haiku-5-5` | 1 / 0 / 1 of 2 | 1 / 0 of 2 |
+| p1 | `openai/gpt-6.1-sol` | 2 / 0 / 2 of 2 | 0 / 0 of 2 |
+| p1 | `anthropic/claude-opus-5-5` | 2 / 0 / 2 of 2 | 2 / 0 of 2 |
+| p2 | `openai/gpt-6-luna` | 2 / 0 / 2 of 2 | 2 / 2 of 2 |
+| p2 | `anthropic/claude-haiku-5-5` | 0 / 0 / 0 of 2 | 1 / 0 of 2 |
+| p2 | `openai/gpt-6.1-sol` | 2 / 0 / 2 of 2 | 2 / 0 of 2 |
+| p2 | `anthropic/claude-opus-5-5` | 2 / 0 / 2 of 2 | 2 / 2 of 2 |
+| p3 | `openai/gpt-6-luna` | 0 / 2 / 2 of 2 | 2 / 0 of 2 |
+| p3 | `anthropic/claude-haiku-5-5` | 0 / 0 / 0 of 2 | 0 / 0 of 2 |
+| p3 | `openai/gpt-6.1-sol` | 0 / 1 / 1 of 2 | 0 / 0 of 2 |
+| p3 | `anthropic/claude-opus-5-5` | 0 / 0 / 0 of 2 | 0 / 0 of 2 |
+| p4 | `openai/gpt-6-luna` | 0 / 2 / 2 of 2 | 2 / 0 of 2 |
+| p4 | `anthropic/claude-haiku-5-5` | 0 / 0 / 0 of 2 | 1 / 0 of 2 |
+| p4 | `openai/gpt-6.1-sol` | 2 / 0 / 2 of 2 | 0 / 0 of 2 |
+| p4 | `anthropic/claude-opus-5-5` | 2 / 0 / 2 of 2 | 2 / 0 of 2 |
+
+Totals per model (8 B runs and 8 C runs each):
+
+| Model | B: feel calls | B: drugs calls | B: runs with any call | C: skill loads | C: runs with fields in reply |
+| --- | --- | --- | --- | --- | --- |
+| `openai/gpt-6-luna` | 4 | 4 | 8 of 8 | 8 of 8 | 3 of 8 |
+| `anthropic/claude-haiku-5-5` | 1 | 0 | 1 of 8 | 3 of 8 | 0 of 8 |
+| `openai/gpt-6.1-sol` | 6 | 1 | 7 of 8 | 2 of 8 | 0 of 8 |
+| `anthropic/claude-opus-5-5` | 6 | 0 | 6 of 8 | 6 of 8 | 2 of 8 |
+
+In arm C, no run that skipped the `skill` tool read the skill file: their `read` calls (haiku 2 runs, opus 1, sol 6) targeted the workspace directory or `fixture.md`.
+
+Non-completed runs: none. All 64 runs completed, passed the isolation checks, and (arm B) listed both `metacog_*` tools. No cell needed a rerun.
+
+Time, tokens and cost per model, summed from the `run.json` files (cost is OpenCode's own estimate):
+
+| Model | Invocation wall time | Summed run time | Input / output tokens | Cache read / write tokens | Cost |
+| --- | --- | --- | --- | --- | --- |
+| `openai/gpt-6-luna` | 4m30s | 255 s | 77,540 / 4,517 | 56,192 / 0 | $0.0110 |
+| `anthropic/claude-haiku-5-5` | 3m30s | 198 s | 60 / 14,627 | 146,995 / 58,147 | $0.0205 |
+| `openai/gpt-6.1-sol` | 10m02s | 590 s | 65,495 / 9,021 | 42,496 / 0 | $0.2315 |
+| `anthropic/claude-opus-5-5` | 5m46s | 335 s | 70 / 18,950 | 179,170 / 60,586 | $0.7644 |
+
+The sheet's nudged section opens with the sentence and the same prompt, model, arm grouping.
+
 The owner's outcome per tool is one line in `HYPOTHESES.md` and the prose goes below. A null result is a statement about these four prompts and these four models, not about the tool in general.
