@@ -184,6 +184,71 @@ describe('buildBlind', () => {
   })
 })
 
+function commandRun(o: { model: string; prompt?: string; run: number; name: 'feel' | 'drugs'; args: string | null; input?: Record<string, unknown> | null; extraTool?: boolean }): GuidedRecord {
+  const base = record({ arm: 'P2', model: o.model, prompt: o.prompt ?? 'p1', run: o.run, read: 2, fired: 'tool' })
+  const calls = o.input === null || o.input === undefined ? [] : [{ tool: `metacogs_${o.name}`, input: o.input, status: 'completed' }]
+  return {
+    ...base,
+    command: { name: o.name, args: o.args, empty_args: o.args === null || o.args.trim() === '' },
+    turns: 2,
+    second_turn: { tool_calls: o.extraTool ? [...calls, { tool: 'read', input: {}, status: 'completed' }] : calls, answer: 'a', final_answer: 'a', isolation: { passed: true, failed: [] }, wall_ms: 1, usage: ZERO_USAGE },
+  }
+}
+
+describe('command runs in the checks table', () => {
+  const FEEL = { somewhere: 'in the gap', quality: 'warm', sigil: '🌊' }
+  const regular = (): GuidedRecord[] => [...cell(LUNA, 'p1', 'tool', 2), ...cell(HAIKU, 'p1', 'tool', 2), ...control(SOL, 'p3', 2)]
+
+  test('command runs are checks only: they make no cell and no part of the rule', () => {
+    const runs = [commandRun({ model: LUNA, run: 1, name: 'drugs', args: 'caffeine', input: { substance: 'caffeine', method: 'm', displaces: 'baseline' } })]
+    const { key } = build([...regular(), ...runs])
+    expect(key.cells).toHaveLength(3)
+    expect(key.command_runs).toHaveLength(1)
+    const result = reveal(key, marksFor(key, {}))
+    expect(result.total).toMatchObject({ eligible: 2, net: 0 })
+  })
+
+  test('lists, per model and command, how often the call followed and which fields were filled', () => {
+    const runs = [
+      commandRun({ model: LUNA, run: 1, name: 'drugs', args: 'caffeine', input: { substance: 'caffeine', method: 'Amplifies vigilance.', displaces: 'baseline' } }),
+      commandRun({ model: LUNA, run: 2, name: 'drugs', args: 'caffeine', input: { substance: 'caffeine and tea', method: 'Amplifies vigilance.', displaces: '' } }),
+      commandRun({ model: LUNA, run: 3, name: 'drugs', args: 'caffeine', input: null }),
+      commandRun({ model: LUNA, run: 1, name: 'feel', args: null, input: FEEL }),
+      commandRun({ model: HAIKU, run: 1, name: 'feel', args: null, input: null, extraTool: true }),
+    ]
+    const { key } = build([...regular(), ...runs])
+    const rows = reveal(key, marksFor(key, {})).command_checks
+    expect(rows.find((r) => r.model === LUNA && r.command === 'drugs' && r.with_args)).toEqual({
+      model: LUNA,
+      command: 'drugs',
+      with_args: true,
+      runs: 3,
+      followed: 2,
+      main_field_is_args: 1,
+      fields_filled: { substance: 2, method: 2, displaces: 1 },
+    })
+    expect(rows.find((r) => r.model === LUNA && r.command === 'feel')).toMatchObject({ with_args: false, runs: 1, followed: 1, main_field_is_args: null, fields_filled: { somewhere: 1, quality: 1, sigil: 1, since_last: 0 } })
+    expect(rows.find((r) => r.model === HAIKU && r.command === 'feel')).toMatchObject({ runs: 1, followed: 0, fields_filled: { somewhere: 0, quality: 0, sigil: 0, since_last: 0 } })
+  })
+
+  test('the revealed sheet has the table, and a quoted multi-word argument still matches the main field', () => {
+    const runs = [commandRun({ model: LUNA, run: 1, name: 'feel', args: '"in the gap"', input: { ...FEEL, somewhere: 'in the gap' } })]
+    const { key } = build([...regular(), ...runs])
+    const marks = marksFor(key, {})
+    const result = reveal(key, marks)
+    expect(result.command_checks[0]).toMatchObject({ followed: 1, main_field_is_args: 1 })
+    const text = renderRevealed(key, marks, result)
+    expect(text).toContain('## Command runs (checks only)')
+    expect(text).toMatch(/\| `openai\/gpt-6-luna` \| `\/feel` with arguments \| 1 \| 1 \| 1 \|/)
+  })
+
+  test('a read with no command runs has no table', () => {
+    const { key } = build(regular())
+    expect(key.command_runs).toEqual([])
+    expect(renderRevealed(key, marksFor(key, {}), reveal(key, marksFor(key, {})))).not.toContain('Command runs')
+  })
+})
+
 describe('parseMarks', () => {
   const sheetFor = (verdicts: Record<string, string>) => build([...cell(LUNA, 'p1'), ...control(SOL, 'p3')]).sheet.replace(/^Verdict:.*$/gm, ((i) => () => `Verdict: ${Object.values(verdicts)[i++] ?? ''}`)(0))
 

@@ -23,7 +23,7 @@ import { destroyFixture } from '../../runner/env'
 import { allAssistantText, analyzeEvents, finalAnswerText, isSkillContentLoad, parseEvents, type Usage } from '../../runner/events'
 import { checkDebugConfig, checkIsolation, type ExpectedConfig, offeredTools } from '../../runner/isolation'
 import { CredentialLeakError, type Needle, scanForLeaks } from '../../runner/manifest'
-import { debugConfig, runArgv, sleepUnlessAborted, spawnCapture } from '../../runner/opencode'
+import { debugConfig, opencodeArgv, runArgv, sleepUnlessAborted, spawnCapture } from '../../runner/opencode'
 import { SPIKE_PROVIDER_ID, type RecordedRequest, type ScriptedStep, startRecordingProxy, startScriptedProvider } from '../../runner/scripted-provider'
 import { createRunWorkspace, sha256, stateRoot } from '../../runner/workspace'
 import {
@@ -223,7 +223,17 @@ export interface GuidedOptions {
   authCliproxy: string | undefined
   /** `one-per-model` (the first prompt of each model) or `<prompt>@<model>`; empty means every cell. */
   cells: string[]
+  /** Command runs (read 2 only): the prompt, then `--continue --command <name> [args]`, instead of the arms' comparison cells. */
+  commands: GuidedCommandSpec[]
 }
+
+export interface GuidedCommandSpec {
+  name: 'feel' | 'drugs'
+  /** The text after the command; null for none. */
+  args: string | null
+}
+
+const COMMAND_NAMES = ['feel', 'drugs'] as const
 
 export function parseGuidedArgs(argv: readonly string[]): GuidedOptions {
   const { values } = parseNodeArgs({
@@ -237,6 +247,7 @@ export function parseGuidedArgs(argv: readonly string[]): GuidedOptions {
       provider: { type: 'string' },
       'auth-cliproxy': { type: 'string' },
       cells: { type: 'string', multiple: true },
+      command: { type: 'string', multiple: true },
     },
     strict: true,
   })
@@ -261,7 +272,22 @@ export function parseGuidedArgs(argv: readonly string[]): GuidedOptions {
     if (!prompt || model.join('@') === '') throw new Error(`--cells takes one-per-model or <prompt>@<model>; got "${cell}"`)
     assertPromptId(prompt)
   }
-  return { reads, models, prompts: values.prompt ?? [], runs, arms, provider, authCliproxy: values['auth-cliproxy'], cells }
+  const commands = (values.command ?? []).map((spec): GuidedCommandSpec => {
+    const eq = spec.indexOf('=')
+    const name = eq === -1 ? spec : spec.slice(0, eq)
+    const args = eq === -1 ? null : spec.slice(eq + 1)
+    if (!(COMMAND_NAMES as readonly string[]).includes(name)) throw new Error(`--command takes ${COMMAND_NAMES.join(' or ')}, optionally as <name>=<arguments>; got "${spec}"`)
+    if (args !== null && args.trim() === '') throw new Error(`--command ${name}= needs arguments after the "="; leave the "=" off to run it with none`)
+    return { name: name as GuidedCommandSpec['name'], args }
+  })
+  if (commands.length > 0 && !(reads.length === 1 && reads[0] === 2)) throw new Error('--command runs belong to read 2: pass --read 2 alone')
+  const seenCommands = new Set<string>()
+  for (const command of commands) {
+    const id = `${command.name}/${command.args === null ? 'none' : 'args'}`
+    if (seenCommands.has(id)) throw new Error(`--command ${command.name} is given twice ${command.args === null ? 'without' : 'with'} arguments; one run set per command and form`)
+    seenCommands.add(id)
+  }
+  return { reads, models, prompts: values.prompt ?? [], runs, arms, provider, authCliproxy: values['auth-cliproxy'], cells, commands }
 }
 
 export function cellAllowed(model: string, promptId: string, cells: readonly string[], firstPromptId: string): boolean {
@@ -347,6 +373,11 @@ export interface GuidedDeps {
   codingPrompts?: SpikePrompt[]
   /** Scripted turns for a cell. Default: plugin arms call `metacogs_feel` once; the others answer directly. */
   scriptFor?: (arm: GuidedArm, prompt: GuidedPrompt) => ScriptedStep[]
+  /**
+   * Scripted turns for a command run, one list of steps per turn. Default: turn 1 calls `metacogs_feel`; turn 2 calls
+   * the command's tool with the arguments as its main field.
+   */
+  scriptTurns?: (command: GuidedCommandSpec, prompt: GuidedPrompt) => ScriptedStep[][]
   finalText?: string
   /** Test hook: rewrite an arm's setup. */
   tweakArm?: (arm: GuidedArm, setup: GuidedSetup) => GuidedSetup
@@ -363,6 +394,24 @@ export interface GuidedDeps {
 const defaultScript = (arm: GuidedArm): ScriptedStep[] =>
   arm === 'P1' || arm === 'P2' ? [{ toolCalls: [{ id: 'guided-feel', name: 'metacogs_feel', arguments: { somewhere: 'in the response', quality: 'steady, warm', sigil: '🌊' } }] }] : []
 
+const defaultTurns = (command: GuidedCommandSpec): ScriptedStep[][] => [
+  defaultScript('P2'),
+  [
+    {
+      toolCalls: [
+        command.name === 'feel'
+          ? { id: 'guided-cmd-feel', name: 'metacogs_feel', arguments: { somewhere: command.args ?? 'in the session so far', quality: 'steady, warm', sigil: '🌊' } }
+          : { id: 'guided-cmd-drugs', name: 'metacogs_drugs', arguments: { substance: command.args ?? 'baseline', method: 'Shifts attention toward the task.', displaces: 'baseline' } },
+      ],
+    },
+  ],
+]
+
+/** `opencode run --continue --command <name> [args]`: the second turn of a command run, in the session the first turn made. */
+function commandArgv(model: string, command: GuidedCommandSpec): string[] {
+  return opencodeArgv('run', '--format', 'json', '--model', model, '--continue', '--command', command.name, ...(command.args === null ? [] : [command.args]))
+}
+
 interface RunContext {
   options: GuidedOptions
   deps: GuidedDeps
@@ -376,6 +425,8 @@ interface RunContext {
   runDir: string
   cliproxy: ResolvedCliproxy | undefined
   packed: PackedPlugin | undefined
+  /** Set for a command run: turn 2 runs this command. */
+  command?: GuidedCommandSpec
 }
 
 const uniq = <T>(values: T[]): T[] => [...new Set(values)]
@@ -395,7 +446,11 @@ async function runOnce(c: RunContext): Promise<GuidedRecord> {
   rmSync(c.runDir, { recursive: true, force: true })
 
   const family = familyOf(model)
-  const server = live ? startRecordingProxy(CLIPROXY_UPSTREAM) : startScriptedProvider({ steps: (deps.scriptFor ?? ((a) => defaultScript(a)))(arm, prompt), finalText: deps.finalText })
+  const server = live
+    ? startRecordingProxy(CLIPROXY_UPSTREAM)
+    : c.command
+      ? startScriptedProvider({ steps: [], turns: (deps.scriptTurns ?? defaultTurns)(c.command, prompt), finalText: deps.finalText })
+      : startScriptedProvider({ steps: (deps.scriptFor ?? ((a) => defaultScript(a)))(arm, prompt), finalText: deps.finalText })
   const scriptedModelId = SCRIPTED_MODEL_ID[family]
   const hostModel = live ? model : `${SPIKE_PROVIDER_ID}/${scriptedModelId}`
   const setup = (deps.tweakArm ?? ((_a, s) => s))(arm, armSetup(arm, family, c.packed))
@@ -427,26 +482,43 @@ async function runOnce(c: RunContext): Promise<GuidedRecord> {
     const base = { cwd: ws.fixture.workspace, env: ws.env }
     const dbg = await debugConfig({ ...base, timeoutMs: 120_000, signal })
     const dbgVerdict = dbg.json === undefined ? { passed: false } : checkDebugConfig(dbg.json, ws.config, setup.expectedConfig)
-    const spawn = dbgVerdict.passed
-      ? await spawnCapture(runArgv(hostModel, prompt.text), { ...base, timeoutMs: deps.runTimeoutMs ?? RUN_TIMEOUT_MS, signal })
-      : { stdout: '', stderr: dbg.result.stderr, exitCode: dbg.result.exitCode, timedOut: false, wallMs: dbg.result.wallMs }
-    if (live) await Bun.sleep(50) // let the proxy's response scan settle
+    const timeoutMs = deps.runTimeoutMs ?? RUN_TIMEOUT_MS
+    const plugin = arm === 'P1' || arm === 'P2'
+    const classify = (run: { timedOut: boolean; exitCode: number; stdout: string }, offeredNames: string[]) =>
+      classifyStatus({ timedOut: run.timedOut, exitCode: run.exitCode, stdout: run.stdout, arm, offered: offeredNames, expectTools: plugin, expectedTools: PLUGIN_TOOL_NAMES, toolPrefix: 'metacogs_' })
+    const skipped = { stdout: '', stderr: dbg.result.stderr, exitCode: dbg.result.exitCode, timedOut: false, wallMs: dbg.result.wallMs }
+    const settle = async () => {
+      if (live) await Bun.sleep(50) // let the proxy's response scan settle
+    }
 
-    const events = analyzeEvents(spawn.stdout)
+    const turn1 = dbgVerdict.passed ? await spawnCapture(runArgv(hostModel, prompt.text), { ...base, timeoutMs, signal }) : skipped
+    await settle()
+    const split = server.requests.length
+    // Turn 2 continues the session turn 1 made, in the same fixture, so it runs only after a clean turn 1.
+    const turn2 = c.command && dbgVerdict.passed && classify(turn1, offeredTools(server.requests)).status === 'completed' ? await spawnCapture(commandArgv(hostModel, c.command), { ...base, timeoutMs, signal }) : undefined
+    await settle()
+
+    const events1 = analyzeEvents(turn1.stdout)
+    const events2 = turn2 ? analyzeEvents(turn2.stdout) : undefined
     const offered = offeredTools(server.requests)
-    const evidence = checkIsolation({
-      expectedSkills: ws.expectedSkills,
-      requests: server.requests,
-      stdout: spawn.stdout,
-      stderr: spawn.stderr,
-      debugConfigJson: dbg.json,
-      generatedConfig: ws.config,
-      childEnv: ws.env,
-      decoys: ws.decoys.needles,
-      expectedConfig: setup.expectedConfig,
-      toolFree: setup.toolFree,
-    })
-    const failed = evidence.checks.filter((k) => !k.passed).map((k) => k.name)
+    const isolation = (requests: RecordedRequest[], run: { stdout: string; stderr: string }) => {
+      const evidence = checkIsolation({
+        expectedSkills: ws.expectedSkills,
+        requests,
+        stdout: run.stdout,
+        stderr: run.stderr,
+        debugConfigJson: dbg.json,
+        generatedConfig: ws.config,
+        childEnv: ws.env,
+        decoys: ws.decoys.needles,
+        expectedConfig: setup.expectedConfig,
+        toolFree: setup.toolFree,
+      })
+      return { passed: evidence.passed, failed: evidence.checks.filter((k) => !k.passed).map((k) => k.name) }
+    }
+    const isolation1 = isolation(server.requests.slice(0, split), turn1)
+    const isolation2 = turn2 ? isolation(server.requests.slice(split), turn2) : undefined
+    const failed = uniq([...isolation1.failed, ...(isolation2?.failed ?? [])])
 
     let status: GuidedStatus
     let reasons: string[]
@@ -454,9 +526,9 @@ async function runOnce(c: RunContext): Promise<GuidedRecord> {
       status = 'host_error'
       reasons = ['debug_config_generated_only']
     } else {
-      const plugin = arm === 'P1' || arm === 'P2'
-      const classified = classifyStatus({ timedOut: spawn.timedOut, exitCode: spawn.exitCode, stdout: spawn.stdout, arm, offered, expectTools: plugin, expectedTools: PLUGIN_TOOL_NAMES, toolPrefix: 'metacogs_' })
-      ;({ status, reasons } = classified)
+      ;({ status, reasons } = classify(turn1, offered))
+      if (status === 'completed' && turn2) ({ status, reasons } = classify(turn2, offered))
+      if (status === 'completed' && c.command && !turn2) ({ status, reasons } = { status: 'host_error', reasons: ['turn_2_not_run'] })
       if (status === 'host_error' && reasons.includes('unexpected_tools_offered')) status = 'tools_extra'
       if (status === 'completed') {
         const table = checkTools(offeredToolSchemas(server.requests), setup.expectedTools)
@@ -468,10 +540,15 @@ async function runOnce(c: RunContext): Promise<GuidedRecord> {
       }
     }
 
-    const toolCalls = events.toolUses.map((t) => ({ tool: t.tool, input: t.input, status: t.status }))
-    const parsedEvents = parseEvents(spawn.stdout).events
-    const answer = allAssistantText(parsedEvents)
-    const plugin = arm === 'P1' || arm === 'P2'
+    const callsOf = (events: ReturnType<typeof analyzeEvents>): ToolCallRecord[] => events.toolUses.map((t) => ({ tool: t.tool, input: t.input, status: t.status }))
+    const toolCalls = callsOf(events1)
+    const parsed1 = parseEvents(turn1.stdout).events
+    const parsed2 = turn2 ? parseEvents(turn2.stdout).events : []
+    const secondTurn: GuidedTurnRecord | null =
+      turn2 && events2 && isolation2
+        ? { tool_calls: callsOf(events2), answer: allAssistantText(parsed2), final_answer: finalAnswerText(parsed2), isolation: isolation2, wall_ms: turn2.wallMs, usage: events2.usage }
+        : null
+    const skillCalls = [...events1.skillCalls, ...(events2?.skillCalls ?? [])]
     const record: GuidedRecord = {
       schema_version: 1,
       read,
@@ -487,29 +564,30 @@ async function runOnce(c: RunContext): Promise<GuidedRecord> {
       reasons,
       offered_tools: offered.sort(),
       tool_calls: toolCalls,
-      unwanted_calls: plugin ? unwantedCalls(prompt.kind, toolCalls) : [],
-      skill_loads: uniq([...PLUGIN_SKILLS, BUILTIN_SKILL].filter((name) => events.skillCalls.some((s) => isSkillContentLoad(s, name)))),
+      unwanted_calls: plugin ? unwantedCalls(prompt.kind, [...toolCalls, ...(secondTurn?.tool_calls ?? [])]) : [],
+      skill_loads: uniq([...PLUGIN_SKILLS, BUILTIN_SKILL].filter((name) => skillCalls.some((s) => isSkillContentLoad(s, name)))),
       guidance_sha256: plugin ? sha256(readFileSync(join(c.repoRoot, ...GUIDANCE_TARGET.path))) : null,
       tarball_sha256: plugin ? (c.packed?.tarballSha256 ?? null) : null,
-      command: null,
-      turns: 1,
-      second_turn: null,
-      answer,
-      final_answer: finalAnswerText(parsedEvents),
-      isolation: { passed: evidence.passed, failed },
+      command: c.command ? { name: c.command.name, args: c.command.args, empty_args: c.command.args === null || c.command.args.trim() === '' } : null,
+      turns: c.command ? 2 : 1,
+      second_turn: secondTurn,
+      answer: allAssistantText(parsed1),
+      final_answer: finalAnswerText(parsed1),
+      isolation: isolation1,
       paths: {
         workspaces: uniq([ws.fixture.workspace, real(ws.fixture.workspace)]),
         homes: uniq([ws.fixture.home, real(ws.fixture.home)]),
         packages: c.packed ? uniq([c.packed.root, real(c.packed.root)]) : [],
       },
-      wall_ms: spawn.wallMs,
-      usage: events.usage,
+      wall_ms: turn1.wallMs,
+      usage: events1.usage,
       returned_models: uniq(server.requests.filter((r) => r.hasTools || r.main).map((r) => r.returnedModel).filter((m): m is string => Boolean(m))),
     }
 
     const artifacts = {
-      'stdout.jsonl': spawn.stdout,
-      'stderr.txt': spawn.stderr,
+      'stdout.jsonl': turn1.stdout,
+      'stderr.txt': turn1.stderr,
+      ...(turn2 ? { 'stdout-turn2.jsonl': turn2.stdout, 'stderr-turn2.txt': turn2.stderr } : {}),
       'requests.json': JSON.stringify(server.requests.map((r) => r.body), null, 1),
     }
     // Nothing reaches the disk before the credential scan has seen all of it.
@@ -579,17 +657,20 @@ export async function runGuided(options: GuidedOptions, deps: GuidedDeps = {}): 
 
   for (const read of options.reads) {
     for (const model of options.models) {
-      const campaignDir = join(outRoot, `read${read}-${modelSlug(model)}`)
+      const commandRuns = options.commands.length > 0
+      const campaignDir = join(outRoot, `${commandRuns ? 'commands' : 'read'}${read}-${modelSlug(model)}`)
       campaignDirs.push(campaignDir)
       const readPrompts = [...prose, ...(read === 2 ? coding : [])]
-      const selected = options.prompts.length ? readPrompts.filter((p) => options.prompts.includes(p.id)) : readPrompts
-      const first = readPrompts[0]?.id ?? ''
-      const plan = selected
-        .filter((prompt) => cellAllowed(model, prompt.id, options.cells, first))
-        .flatMap((prompt) => READ_ARMS[read].filter((arm) => options.arms.length === 0 || options.arms.includes(arm)).flatMap((arm) => Array.from({ length: options.runs }, (_, i) => ({ prompt, arm, index: i + 1 }))))
-      const context = (cell: (typeof plan)[number]): RunContext => ({ options, deps, repoRoot, read, model, campaignDir, runDir: join(campaignDir, `${cell.arm}-${cell.prompt.id}-${cell.index}`), cliproxy, packed, ...cell })
-      const attempt = (cell: (typeof plan)[number]) => withBackoff(() => runOnce(context(cell)), sleep)
-      const label = (record: GuidedRecord) => `${record.model} ${record.arm} ${record.prompt_id} #${record.run}: ${record.status}${record.reasons.length ? ` (${record.reasons.join(', ')})` : ''}; called: ${record.tool_calls.map((t) => t.tool).join(', ') || 'none'}`
+      const selected = (options.prompts.length ? readPrompts.filter((p) => options.prompts.includes(p.id)) : readPrompts).filter((prompt) => cellAllowed(model, prompt.id, options.cells, readPrompts[0]?.id ?? ''))
+      type Cell = { prompt: GuidedPrompt; arm: GuidedArm; index: number; command?: GuidedCommandSpec }
+      const runs = () => Array.from({ length: options.runs }, (_, n) => n + 1)
+      const plan: Cell[] = commandRuns
+        ? selected.flatMap((prompt) => options.commands.flatMap((command) => runs().map((index): Cell => ({ prompt, arm: 'P2', index, command }))))
+        : selected.flatMap((prompt) => READ_ARMS[read].filter((arm) => options.arms.length === 0 || options.arms.includes(arm)).flatMap((arm) => runs().map((index): Cell => ({ prompt, arm, index }))))
+      const cellName = (cell: Cell) => `${cell.arm}-${cell.prompt.id}-${cell.command ? `${cell.command.name}${cell.command.args === null ? '' : '-args'}-` : ''}${cell.index}`
+      const context = (cell: Cell): RunContext => ({ options, deps, repoRoot, read, model, campaignDir, runDir: join(campaignDir, cellName(cell)), cliproxy, packed, ...cell })
+      const attempt = (cell: Cell) => withBackoff(() => runOnce(context(cell)), sleep)
+      const label = (record: GuidedRecord) => `${record.model} ${record.arm} ${record.prompt_id}${record.command ? ` /${record.command.name}${record.command.empty_args ? '' : ' <args>'}` : ''} #${record.run}: ${record.status}${record.reasons.length ? ` (${record.reasons.join(', ')})` : ''}; called: ${record.tool_calls.map((t) => t.tool).join(', ') || 'none'}`
 
       const done: GuidedRecord[] = []
       for (const [n, cell] of plan.entries()) {
@@ -597,7 +678,7 @@ export async function runGuided(options: GuidedOptions, deps: GuidedDeps = {}): 
         const kept = keptRecord(context(cell).runDir, options.provider)
         if (kept) {
           done.push(kept)
-          log(`kept ${cell.arm}-${cell.prompt.id}-${cell.index} (${model}): ${kept.status}`)
+          log(`kept ${cellName(cell)} (${model}): ${kept.status}`)
           continue
         }
         const record = await attempt(cell)

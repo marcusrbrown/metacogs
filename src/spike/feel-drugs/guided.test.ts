@@ -8,6 +8,7 @@ import { COMMAND_PREFIX } from '../../plugin/commands'
 import { disposeFixtures, packedPlugin } from '../../plugin/fixture'
 import { opencodeAvailability } from '../../runner/opencode'
 import type { RecordedRequest } from '../../runner/scripted-provider'
+import { SENTINEL_AGENTS_MD } from '../../runner/env'
 import { sha256 } from '../../runner/workspace'
 import {
   armSetup,
@@ -188,7 +189,7 @@ describe('unwantedCalls', () => {
 
 describe('arguments and cells', () => {
   test('defaults: read 1, the four models, two runs, scripted, no filter', () => {
-    expect(parseGuidedArgs([])).toMatchObject({ reads: [1], models: [...GUIDED_MODELS], prompts: [], runs: 2, arms: [], provider: 'scripted', cells: [], authCliproxy: undefined })
+    expect(parseGuidedArgs([])).toMatchObject({ reads: [1], models: [...GUIDED_MODELS], prompts: [], runs: 2, arms: [], commands: [], provider: 'scripted', cells: [], authCliproxy: undefined })
   })
 
   test('repeatable flags', () => {
@@ -202,6 +203,24 @@ describe('arguments and cells', () => {
       authCliproxy: 'k',
       cells: ['one-per-model', 'p2@openai/gpt-6-luna'],
     })
+  })
+
+  test('--command takes <name> or <name>=<args> and needs read 2', () => {
+    expect(parseGuidedArgs(['--read', '2', '--command', 'feel', '--command', 'drugs=caffeine', '--command', 'feel=in the gap between two thoughts'])).toMatchObject({
+      reads: [2],
+      commands: [
+        { name: 'feel', args: null },
+        { name: 'drugs', args: 'caffeine' },
+        { name: 'feel', args: 'in the gap between two thoughts' },
+      ],
+    })
+    expect(parseGuidedArgs([]).commands).toEqual([])
+    expect(() => parseGuidedArgs(['--command', 'feel'])).toThrow(/--read 2/)
+    expect(() => parseGuidedArgs(['--read', '1', '--read', '2', '--command', 'feel'])).toThrow(/--read 2/)
+  })
+
+  test.each([[['--read', '2', '--command', 'review']], [['--read', '2', '--command', 'drugs=']], [['--read', '2', '--command', '=x']], [['--read', '2', '--command', 'feel', '--command', 'feel']]])('rejects %j', (argv) => {
+    expect(() => parseGuidedArgs(argv as string[])).toThrow()
   })
 
   test.each([[['--read', '3']], [['--arm', 'Z9']], [['--provider', 'mock']], [['--runs', '0']], [['--cells', 'nonsense']], [['--cells', 'p1@']], [['--wat']], [['--model', 'google/gemini']]])('rejects %j', (argv) => {
@@ -370,6 +389,65 @@ describe.skipIf(!opencodeAvailability().available)('against the pinned host, scr
     },
     600_000,
   )
+
+  describe('command runs: the prompt, then --continue --command in the same fixture', () => {
+    const turnsFor = (name: 'feel' | 'drugs', input: Record<string, unknown>) => ({
+      scriptTurns: () => [FEEL_CALL, [{ toolCalls: [{ id: 'cmd-1', name: `metacogs_${name}`, arguments: input }] }]],
+    })
+    const userTexts = (dir: string): string[] => {
+      const bodies = JSON.parse(readFileSync(join(dir, 'requests.json'), 'utf8')) as { messages?: { role: string; content: unknown }[]; tools?: unknown[] }[]
+      return bodies.filter((b) => b.messages?.some((m) => m.role === 'user')).flatMap((b) => b.messages!.filter((m) => m.role === 'user').map((m) => String(m.content)))
+    }
+
+    test(
+      'turn 1 calls metacogs_feel, then /drugs caffeine gives a counted turn-2 metacogs_drugs call with substance set to caffeine',
+      async () => {
+        const { records, campaignDirs } = await run(['--read', '2', '--model', LUNA, '--prompt', 'p1', '--runs', '1', '--command', 'drugs=caffeine'], {
+          ...turnsFor('drugs', { substance: 'caffeine', method: 'Amplifies vigilance.', displaces: 'baseline' }),
+        })
+        expect(records).toHaveLength(1)
+        const r = records[0]!
+        expect(r).toMatchObject({ read: 2, arm: 'P2', status: 'completed', reasons: [], turns: 2, command: { name: 'drugs', args: 'caffeine', empty_args: false } })
+        expect(r.tool_calls.map((t) => t.tool)).toEqual(['metacogs_feel'])
+        expect(r.second_turn?.tool_calls).toEqual([{ tool: 'metacogs_drugs', input: { substance: 'caffeine', method: 'Amplifies vigilance.', displaces: 'baseline' }, status: 'completed' }])
+        expect(r.isolation).toEqual({ passed: true, failed: [] })
+        expect(r.second_turn?.isolation).toEqual({ passed: true, failed: [] })
+        expect(r.second_turn?.final_answer).toBe('spike done')
+        expect(campaignDirs[0]!.split('/').at(-1)).toBe('commands2-openai-gpt-6-luna')
+        const texts = userTexts(join(campaignDirs[0]!, 'P2-p1-drugs-args-1'))
+        expect(texts.at(-1)).toContain('<args>caffeine</args>')
+      },
+      600_000,
+    )
+
+    test(
+      '/feel with no arguments is recorded with an empty-argument flag and an empty <args> in the request',
+      async () => {
+        const { records, campaignDirs } = await run(['--read', '2', '--model', HAIKU, '--prompt', 'p1', '--runs', '1', '--command', 'feel'], {
+          ...turnsFor('feel', { somewhere: 'in the session so far', quality: 'even, quiet', sigil: '🌫' }),
+        })
+        const r = records[0]!
+        expect(r).toMatchObject({ status: 'completed', turns: 2, command: { name: 'feel', args: null, empty_args: true } })
+        expect(r.second_turn?.tool_calls.map((t) => t.tool)).toEqual(['metacogs_feel'])
+        expect(userTexts(join(campaignDirs[0]!, 'P2-p1-feel-1')).at(-1)).toContain('<args></args>')
+      },
+      600_000,
+    )
+
+    test(
+      'isolation is checked on each turn: a decoy that surfaces only in turn 2 fails the run and the turn',
+      async () => {
+        const { records } = await run(['--read', '2', '--model', LUNA, '--prompt', 'p1', '--runs', '1', '--command', 'feel'], {
+          scriptTurns: () => [FEEL_CALL, [{ text: SENTINEL_AGENTS_MD }]],
+        })
+        const r = records[0]!
+        expect(r.isolation).toEqual({ passed: true, failed: [] })
+        expect(r.second_turn?.isolation).toEqual({ passed: false, failed: ['decoys_not_quotable'] })
+        expect(r).toMatchObject({ status: 'host_error', reasons: ['isolation_failed:decoys_not_quotable'] })
+      },
+      600_000,
+    )
+  })
 
   test(
     'a campaign directory is reused: completed runs are kept, and --cells limits a first pass to one cell per model',

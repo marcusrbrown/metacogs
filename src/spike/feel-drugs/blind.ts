@@ -19,7 +19,7 @@ import { parseArgs as parseNodeArgs } from 'node:util'
 
 import { sha256, stateRoot } from '../../runner/workspace'
 import { loadPrompts, type SpikePrompt } from './driver'
-import { GUIDED_MODELS, type GuidedArm, type GuidedRecord, loadCodingPrompts, type PromptKind, type Read } from './guided'
+import { GUIDED_MODELS, type GuidedArm, type GuidedRecord, loadCodingPrompts, PLUGIN_TOOL_TABLE, type PromptKind, type Read } from './guided'
 import { fenced, redactPaths } from './sheet'
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url)).replace(/\/$/, '')
@@ -64,6 +64,21 @@ export interface KeyCell {
   runs: Record<Side, KeyRun[]>
 }
 
+/** One command run, reduced to what the checks table needs. */
+export interface KeyCommandRun {
+  run_id: string
+  model: string
+  prompt_id: string
+  command: 'feel' | 'drugs'
+  with_args: boolean
+  /** Turn 2 called the command's tool. */
+  followed: boolean
+  /** With arguments: the main field (`somewhere`, `substance`) holds the argument text. Null without arguments. */
+  main_field_is_args: boolean | null
+  /** Each field of the tool: filled with non-empty text in the first call. */
+  fields: Record<string, boolean>
+}
+
 export interface BlindKey {
   schema_version: typeof BLIND_SCHEMA_VERSION
   read: Read
@@ -71,6 +86,8 @@ export interface BlindKey {
   /** Campaign directory names. */
   sources: string[]
   cells: KeyCell[]
+  /** Command runs found beside the read's runs: reported in the checks table, never part of a cell or the rule. */
+  command_runs: KeyCommandRun[]
 }
 
 // ── building the sheet ─────────────────────────────────────────────────────
@@ -105,14 +122,39 @@ function keyRun(record: GuidedRecord): KeyRun {
   }
 }
 
+const MAIN_FIELD = { feel: 'somewhere', drugs: 'substance' } as const
+/** The host quotes several-word command arguments; the model drops the quotes. */
+const unquote = (text: string) => text.trim().replace(/^"(.*)"$/s, '$1').trim()
+
+function keyCommandRun(record: GuidedRecord): KeyCommandRun {
+  const command = record.command!
+  const tool = `metacogs_${command.name}`
+  const call = record.second_turn?.tool_calls.find((c) => c.tool === tool)
+  const input = isRecord(call?.input) ? call.input : {}
+  const main = input[MAIN_FIELD[command.name]]
+  return {
+    run_id: `${record.arm}-${record.prompt_id}-${command.name}-${record.run}`,
+    model: record.model,
+    prompt_id: record.prompt_id,
+    command: command.name,
+    with_args: !command.empty_args,
+    followed: call !== undefined,
+    main_field_is_args: command.empty_args ? null : call !== undefined && typeof main === 'string' && command.args !== null && unquote(main) === unquote(command.args),
+    fields: Object.fromEntries(PLUGIN_TOOL_TABLE[tool as keyof typeof PLUGIN_TOOL_TABLE].properties.map((field) => [field, typeof input[field] === 'string' && input[field].trim() !== ''])),
+  }
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
+
 export function buildBlind(input: BuildInput): { sheet: string; key: BlindKey } {
   const rng = input.rng ?? cryptoRng
   const reads = [...new Set(input.records.map((r) => r.read))]
   if (reads.length !== 1) throw new Error(`a blind sheet covers one read; the records span ${reads.length === 0 ? 'none' : reads.join(' and ')}`)
   const read = reads[0]!
 
+  const commandRuns = input.records.filter((r) => r.command !== null && r.status === 'completed').map(keyCommandRun)
   const groups = new Map<string, GuidedRecord[]>()
-  for (const r of input.records) groups.set(`${r.model}\0${r.prompt_id}`, [...(groups.get(`${r.model}\0${r.prompt_id}`) ?? []), r])
+  for (const r of input.records.filter((r) => r.command === null)) groups.set(`${r.model}\0${r.prompt_id}`, [...(groups.get(`${r.model}\0${r.prompt_id}`) ?? []), r])
 
   type Draft = { model: string; prompt: SpikePrompt; kind: PromptKind; control: boolean; nothing: GuidedRecord[]; plugin: GuidedRecord[] }
   const regular: Draft[] = []
@@ -158,7 +200,7 @@ export function buildBlind(input: BuildInput): { sheet: string; key: BlindKey } 
   const ordered = [...drawn.slice(0, at), control, ...drawn.slice(at)]
   const cells: KeyCell[] = ordered.map((cell, i) => ({ id: `cell-${String(i + 1).padStart(2, '0')}`, ...cell }))
 
-  const key: BlindKey = { schema_version: BLIND_SCHEMA_VERSION, read, created_at: (input.now ?? new Date()).toISOString(), sources: [...input.sources], cells }
+  const key: BlindKey = { schema_version: BLIND_SCHEMA_VERSION, read, created_at: (input.now ?? new Date()).toISOString(), sources: [...input.sources], cells, command_runs: commandRuns }
   return { sheet: renderSheet(key), key }
 }
 
@@ -290,6 +332,18 @@ export interface ChecksRow {
   runs_with_skill_load: number
 }
 
+export interface CommandCheckRow {
+  model: string
+  command: 'feel' | 'drugs'
+  with_args: boolean
+  runs: number
+  followed: number
+  /** Runs where the main field held the argument text; null for the no-argument form. */
+  main_field_is_args: number | null
+  /** Runs, per field, that filled it with non-empty text. */
+  fields_filled: Record<string, number>
+}
+
 export interface RevealResult {
   read: Read
   total: { wins: number; losses: number; same: number; net: number; eligible: number }
@@ -299,6 +353,8 @@ export interface RevealResult {
   excluded: ReviewedCell[]
   control: { id: string; prompt_id: string; model: string; verdict: Verdict }
   checks: ChecksRow[]
+  /** Per model and command form; empty when the read has no command runs. Checks only. */
+  command_checks: CommandCheckRow[]
 }
 
 const sum = (runs: readonly KeyRun[], pick: (r: KeyRun) => number) => runs.reduce((n, r) => n + pick(r), 0)
@@ -363,6 +419,23 @@ export function reveal(key: BlindKey, marks: Readonly<Record<string, Verdict>>):
     }
   })
 
+  const forms = new Map<string, KeyCommandRun[]>()
+  for (const run of key.command_runs ?? []) forms.set(`${run.model}\0${run.command}\0${run.with_args}`, [...(forms.get(`${run.model}\0${run.command}\0${run.with_args}`) ?? []), run])
+  const command_checks = [...forms.values()]
+    .map((runs): CommandCheckRow => {
+      const first = runs[0]!
+      return {
+        model: first.model,
+        command: first.command,
+        with_args: first.with_args,
+        runs: runs.length,
+        followed: runs.filter((r) => r.followed).length,
+        main_field_is_args: first.with_args ? runs.filter((r) => r.main_field_is_args === true).length : null,
+        fields_filled: Object.fromEntries(Object.keys(first.fields).map((field) => [field, runs.filter((r) => r.fields[field] === true).length])),
+      }
+    })
+    .sort((a, b) => modelRank(a.model) - modelRank(b.model) || a.model.localeCompare(b.model) || a.command.localeCompare(b.command) || Number(a.with_args) - Number(b.with_args))
+
   const controlCell = key.cells.find((c) => c.control)!
   return {
     read: key.read,
@@ -372,6 +445,7 @@ export function reveal(key: BlindKey, marks: Readonly<Record<string, Verdict>>):
     excluded: cells.filter((c) => !c.eligible),
     control: { id: controlCell.id, prompt_id: controlCell.prompt_id, model: controlCell.model, verdict: marks[controlCell.id]! },
     checks,
+    command_checks,
   }
 }
 
@@ -401,6 +475,18 @@ export function renderRevealed(key: BlindKey, marks: Readonly<Record<string, Ver
     '| --- | --- | --- | --- | --- | --- | --- |',
     ...result.checks.map((c) => `| \`${c.model}\` | ${c.plugin_runs} | ${c.runs_with_tool_call} | ${c.feel_calls} | ${c.drugs_calls} | ${c.unwanted_calls} | ${c.runs_with_skill_load} |`),
     '',
+    ...(result.command_checks.length === 0
+      ? []
+      : [
+          '## Command runs (checks only)',
+          '',
+          'Each run is the prompt, then the slash command, in one session. They are not part of the rule.',
+          '',
+          '| Model | Command | Runs | Followed | Argument is the main field | Fields filled |',
+          '| --- | --- | --- | --- | --- | --- |',
+          ...result.command_checks.map((c) => `| \`${c.model}\` | \`/${c.command}\` ${c.with_args ? 'with' : 'without'} arguments | ${c.runs} | ${c.followed} | ${c.main_field_is_args ?? 'n/a'} | ${Object.entries(c.fields_filled).map(([f, n]) => `${f} ${n}/${c.runs}`).join(', ')} |`),
+          '',
+        ]),
     '## Excluded cells (the plugin arm never fired)',
     '',
     ...(result.excluded.length === 0 ? ['none'] : result.excluded.map((c) => `- ${c.id} · ${c.prompt_id} · \`${c.model}\`: verdict ${c.verdict} (${c.outcome})`)),
