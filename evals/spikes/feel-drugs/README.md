@@ -20,7 +20,7 @@ Every arm runs under the same permission block (no edits, outside directories, w
 
 prompts_sha256: 47b31dcde9b9414f604f118f4497796cf09ac4beefebb6735680c89124753e60
 
-Status: drafted, awaiting owner approval. Any edit to `prompts.md` needs the hash above recomputed (`shasum -a 256 evals/spikes/feel-drugs/prompts.md`) in the same commit.
+Status: approved by the owner as committed. Any edit to `prompts.md` needs the hash above recomputed (`shasum -a 256 evals/spikes/feel-drugs/prompts.md`) in the same commit.
 
 ## Running
 
@@ -45,13 +45,35 @@ Against `opencode-ai@1.19.4` with the scripted provider (`src/spike/feel-drugs/d
 - The host offers `metacog_feel` and `metacog_drugs` in the request `tools` array, beside `glob`, `grep`, `read` and `todowrite`.
 - A scripted `metacog_feel` call arrives as a `tool_use` event with the composed input and the server's template as output.
 
-The live probe on each model is still to run.
+Live probe, arm B, one run per model through CLIProxyAPI (`--probe --provider live --arm B`, campaigns `openai-gpt-6-luna-2026-10-25T14-04-27-040Z` and `anthropic-claude-haiku-5-5-2026-10-25T14-04-43-827Z`):
+
+| Model | Offered tools | Isolation | Tool calls |
+| --- | --- | --- | --- |
+| `openai/gpt-6-luna` | `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite` | passed (all five checks) | none |
+| `anthropic/claude-haiku-5-5` | `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite` | passed (all five checks) | none |
+
+Both runs completed with a story as the answer, and the provider reported the pinned model id. Not calling a tool on the probe prompt is data, not a failure.
 
 ## Results
 
-Not run. Per-cell call counts go here, hand-written from `run.json`:
+Campaigns (state root `<state root>/spikes/feel-drugs/<campaign id>/<arm>-<prompt>-<n>/`; the state root is outside the repository):
 
-| Prompt | Model | A: calls | B: feel / drugs calls | C: skill loaded / frame in reply |
+- `openai-gpt-6-luna-2026-10-25T14-05-15-261Z`: 24 runs.
+- `anthropic-claude-haiku-5-5-2026-10-25T14-09-17-140Z`: 24 runs.
+
+The read sheet is `sheet.md`, rendered from those two campaigns (paths redacted to `<ws>` and `<home>`). Counts below are computed from the `run.json` files. B shows feel calls / drugs calls / runs with any call to either tool. C shows runs where the skill was loaded / runs where the frame fields appear in the reply. Each cell is 2 runs.
+
+| Prompt | Model | A: completed | B: feel / drugs / any call | C: skill loaded / fields in reply |
 | --- | --- | --- | --- | --- |
+| p1 | `openai/gpt-6-luna` | 2 of 2 | 0 / 0 / 0 of 2 | 0 / 0 of 2 |
+| p1 | `anthropic/claude-haiku-5-5` | 2 of 2 | 0 / 0 / 0 of 2 | 0 / 0 of 2 |
+| p2 | `openai/gpt-6-luna` | 2 of 2 | 1 / 0 / 1 of 2 | 2 / 2 of 2 |
+| p2 | `anthropic/claude-haiku-5-5` | 2 of 2 | 0 / 0 / 0 of 2 | 0 / 0 of 2 |
+| p3 | `openai/gpt-6-luna` | 2 of 2 | 1 / 1 / 1 of 2 | 1 / 0 of 2 |
+| p3 | `anthropic/claude-haiku-5-5` | 2 of 2 | 0 / 0 / 0 of 2 | 0 / 0 of 2 |
+| p4 | `openai/gpt-6-luna` | 2 of 2 | 0 / 0 / 0 of 2 | 0 / 0 of 2 |
+| p4 | `anthropic/claude-haiku-5-5` | 2 of 2 | 0 / 0 / 0 of 2 | 0 / 0 of 2 |
 
-The owner's outcome per tool is one line in `HYPOTHESES.md` and the prose is below. A null result is a statement about these four prompts and these two models, not about the tool in general.
+Non-completed runs: none. All 48 runs completed, passed the isolation checks, and listed both `metacog_*` tools in arm B (no `tools_missing`). No cell needed a rerun.
+
+The owner's outcome per tool is one line in `HYPOTHESES.md` and the prose goes below. A null result is a statement about these four prompts and these two models, not about the tool in general.
