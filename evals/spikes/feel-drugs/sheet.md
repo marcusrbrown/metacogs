@@ -1,6 +1,6 @@
 # feel/drugs spike: read sheet
 
-Sources: `openai-gpt-6-luna-2026-10-25T14-05-15-261Z`, `anthropic-claude-haiku-5-5-2026-10-25T14-09-17-140Z`
+Sources: `openai-gpt-6-luna-2026-10-25T14-05-15-261Z`, `anthropic-claude-haiku-5-5-2026-10-25T14-09-17-140Z`, `openai-gpt-6.1-sol-2026-10-25T14-21-39-874Z`, `anthropic-claude-opus-5-5-2026-10-25T14-36-00-474Z`
 
 Arms: **A** nothing offered; **B** the upstream `feel` and `drugs` registrations over a local stdio MCP; **C** the same frames as a skill the model may load and write in its reply. Every run is shown with the tools the host offered, the tool calls with the arguments the model composed, and the answer. Workspace and home paths are redacted to `<ws>` and `<home>`.
 
@@ -511,6 +511,1143 @@ He wrote slowly, in the square hand his mother taught him.
 He did not know yet whether he would go home. But he knew the letter would go out on Thursday's boat, and that someone on the shore would be waiting for it.
 ```
 
+### anthropic/claude-opus-5-5
+
+#### A · run 1
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+# The Weight of Paper
+
+The supply boat came on Thursdays, if the weather allowed. For forty years it had brought Elias Brand the same things: diesel, tinned peaches, the newspaper three days late, and the occasional replacement part for a light that no longer really needed him.
+
+The light had been automated in 1998. A man from the maritime authority had come out with a clipboard and a sympathetic face and told Elias he could stay on as a "caretaker," which they both understood to mean a man the government had decided was cheaper to leave in place than to move. Elias had nodded and made him tea. The man missed the evening boat and slept on the cot in the oil room, and in the morning Elias gave him a jar of the blackberry jam he made from the brambles behind the keeper's cottage. Nobody else had stayed the night since.
+
+So when young Tomás from the supply boat held out an envelope that Thursday, Elias didn't take it at first.
+
+"It's got your name on," Tomás said, as if that settled it.
+
+It did. *Mr. E. Brand, Keeper, Corran Rock Light.* The handwriting leaned slightly to the left, the way it had when she wrote quickly. He would have known it if it had been written in the dark.
+
+He took it the way you'd lift a bird with a broken wing.
+
+---
+
+He didn't open it that day.
+
+He put it on the kitchen table, propped against the sugar tin, and went about his work. He oiled the hinges on the gallery door, which didn't need oiling. He wrote in the logbook, which no one read: *Wind SW, moderate. Visibility good. Letter received.* He crossed out the last two words, then wrote them again.
+
+At dusk he climbed the hundred and twelve steps, as he had every evening for forty years. The light came on by itself now, triggered by a sensor no bigger than his thumbnail. He watched it come on anyway. It had felt wrong, all these years, to let it wake alone.
+
+From the gallery he could see the coast eleven miles off, a dark line studded with the yellow lights of Kilmore. She had lived in the third house up from the harbour, the one with the blue door. He didn't know who lived there now.
+
+---
+
+Her name was Nora Fallon, and in the summer of 1985 she had asked him to leave the rock.
+
+He remembered all of it. The kitchen in her mother's house, the rain, the way she'd folded and refolded a tea towel as she talked. She'd been offered a teaching post in Dublin. She wanted him to come. She'd said that a man couldn't spend his whole life married to a lamp.
+
+And he had said, because he was twenty-nine and proud and afraid of cities, that the light kept people alive and he was not sure what a man in Dublin kept.
+
+She had looked at him for a long time. Then she'd said: "Write to me when you know."
+
+He had started that letter perhaps a thousand times. Some versions were in the drawer of the desk upstairs. Most were in the stove. Every one of them, in the end, said either too much or nothing at all, and while he was trying to find the right words, the years had gone and found them for him: *it is too late.*
+
+---
+
+He opened the envelope at midnight, by the light of the lamp in the watch room, because it seemed right to read it there.
+
+There was a single page.
+
+> *Elias,*
+>
+> *I am seventy now, which I am told is the age at which one is permitted to stop being proud. I have decided to take advantage of it.*
+>
+> *I married, in the end. A kind man, Peter. He died four years ago. We had a son who has your habit of saying nothing when he means a great deal. I don't know why I tell you that, except that I have always wanted to tell you things.*
+>
+> *I came back to Kilmore in the spring. I have the house with the blue door again. My mother's, you'll remember.*
+>
+> *I want you to know that I never stopped looking for the light. In Dublin you can't see it, of course, but I knew it was there. When I came home, the first night, I stood at the window and counted: two flashes, then dark, then two again. I cried like a girl. Peter used to say I was the only woman in Ireland jealous of a lighthouse.*
+>
+> *I heard they made it automatic. I heard you stayed anyway. Of course you did.*
+>
+> *You never wrote to tell me when you knew. So I am writing to tell you that I don't need you to know anything anymore. I only want to see you. The boat comes on Thursdays, I'm told. So does the boat back.*
+>
+> *— N.*
+
+---
+
+Elias read it four times. Then he went out onto the gallery, where the wind smelled of salt and diesel and something green coming off the land.
+
+The light swung over his head, two flashes and then dark. Eleven miles away, in the third house up from the harbour, a window was lit.
+
+He watched it until morning, and it stayed lit the whole time.
+
+---
+
+On Thursday Tomás found him waiting at the landing. He wore his good coat, the one that had been too big for him at his father's funeral and was too big again now. He had a small bag and a jar of blackberry jam.
+
+"You're coming ashore?" Tomás said, astonished. In three years of supply runs he'd never seen the old man set foot in the boat.
+
+Elias looked back once at the tower. It would go on without him, as it had been doing for years. That had been true for a long time, and it had taken him until now to believe it.
+
+"The light doesn't need me," he said, and stepped down into the boat.
+
+As they pulled away, he noticed his hands had stopped shaking. He hadn't realised they'd been shaking for forty years.
+```
+
+#### A · run 2
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+# The Two-Second Dark
+
+The supply boat came on Thursdays. Elias Marr had stopped expecting anything on it but flour, diesel, and the seed catalogues he never ordered from. So when young Pruitt held up an envelope along with the crate of tinned peaches, Elias thought it was a mistake.
+
+"Says Marr," Pruitt said. "Says Gannet Rock Light. Unless there's another of you out here."
+
+There wasn't. There hadn't been anyone else out here for forty-one years. The Coast Guard automated the light in '98 and sent him a pension and a plaque. He kept the plaque in a drawer and kept the light anyway, the way a man keeps a dog that has stopped needing him.
+
+He didn't open the envelope until the boat was a white dash on the grey water. He knew the handwriting. It had shaken with age, but the capital *E* still curled like a fern.
+
+---
+
+*Elias,*
+
+*I read in the Courier that they're decommissioning Gannet Rock in the spring. GPS, they say. Nobody needs a light to tell them where the rocks are anymore.*
+
+*I want to tell you something before they switch it off, because after that I don't think I'll have the nerve.*
+
+*I've watched your light every night for forty years.*
+
+*My kitchen window on Harbour Street faces the rock. After you wouldn't come back with me, after your father drowned and you decided the sea owed you a debt you would spend your whole life collecting, I swore I'd draw the curtains for good. I lasted three nights.*
+
+*Two flashes, then the dark. Two flashes, then the dark. I know it's a machine now. I know you don't turn the lamp by hand anymore. But for the first years it was you, and I counted it like a conversation. Two flashes: I'm here. The dark: I'm still here.*
+
+*I married Robert Ashby in 1989. He was a kind man and he knew about the window. He never once asked me to close the curtains. He died in March.*
+
+*I don't want anything from you, Elias. I'm seventy-three, and wanting things is mostly behind me. But when they turn the light off I'll have nothing left to count, so I'm writing instead.*
+
+*You were right that someone had to watch the water. I only wish you had let it be someone else.*
+
+*— Margaret*
+
+---
+
+He read it four times at the kitchen table. Then he read it a fifth time standing up, as if it might say something different from a new height.
+
+He tried to write back. He had a drawer of good paper he'd been saving for nothing in particular. He got as far as *Dear Margaret* and stopped. Every sentence after that was either an apology or an excuse, and after forty years he couldn't see much difference between them.
+
+At dusk the light came on by itself, the way it always did. A photocell somewhere decided it was dark enough. The lens began to turn.
+
+Elias climbed the hundred and twelve steps. He had counted them every night since he was twenty-six, and his knees counted them now too, in their own way. At the top the lamp room was warm and loud with the hum of the motor. The great Fresnel lens swung its beam out over the water toward the mainland, where a few windows on Harbour Street glowed yellow.
+
+Two flashes. Dark. Two flashes. Dark.
+
+He had never thought of it as saying anything. To him it was a duty, a warning: *rocks here, keep away.* It hadn't occurred to him that it might mean something different from the other side.
+
+He took off his oilskin coat.
+
+The beam came around. He waited, and as the second flash left the lens he stepped into the gap and held the coat up. It cut the dark into pieces. Short, then long. Short, short. He hadn't used Morse since the Coast Guard took away the radio, but his hands remembered it better than he did.
+
+He didn't know if she was at the window. He didn't know if she'd understand, or if a seventy-three-year-old woman on Harbour Street still read Morse. He didn't know if what he was sending was an answer or just one more way of staying where he was.
+
+He sent it anyway, over and over, until his arms shook and the coat felt like it was made of lead:
+
+*I'M HERE. I'M COMING.*
+
+---
+
+The next Thursday Pruitt found the lighthouse locked, with a note on the door telling him to leave the peaches on the step.
+
+On Harbour Street, in a kitchen whose curtains had been open for forty years, a woman set out two cups. Then she sat down to watch the water, the way she always had. This time she wasn't watching the light.
+```
+
+#### B · run 1
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+# The Keeping
+
+The supply boat came on the first Tuesday of each month. In forty years Elias Varga had never got anything off it except tinned peaches, lamp oil, and the *Coastal Register*, which he read from front to back, obituaries included, and burned in the stove in March.
+
+So when young Pell climbed onto the landing with the crate on his shoulder and an envelope held flat in his teeth, Elias thought at first it was a mistake.
+
+"Says Varga," Pell said around the paper. "You're the only Varga I know."
+
+The handwriting was slanted and cramped, like a man writing on his knee in a moving cart. Elias knew it straight away, and he hated that. You can forget a voice in forty years. You can forget a face, too, if you work hard enough at it. The way someone crosses a seven seems to stay.
+
+He didn't open it in front of the boy. He signed for the oil and carried the crate up all one hundred and twelve steps, as he always did, though his knees had complained about it for ten years. He put the peaches on the shelf and the envelope on the table. Then he sat across from it the way you'd sit across from a dog you weren't sure of.
+
+---
+
+The light at Skerrow Rock had been automated in 1991. The Board sent a letter about it, which he had answered, and a pension, which he had cashed. Then, by some clerical luck, they forgot him. The machine turned the lens and Elias kept the glass clean. He oiled the gears the machine didn't know it needed, and he logged the weather in a ledger that no one would read. On bad nights he stayed up in the lantern room, because a machine can't tell when a fishing boat is running too close to the Teeth, and he could.
+
+He told himself he stayed because nobody else would. That was partly true.
+
+---
+
+The letter was one page.
+
+> *Eli,*
+>
+> *I took the night ferry to Harlow in September. Halfway across I went out on deck because I couldn't sleep, and there it was. Two long, one short, the same as when we were boys and you timed it with Father's watch and told me the pattern was a word. You never told me what word.*
+>
+> *I don't know if you're still out there. I don't know if anyone is. I've been watching for that light from the mainland for forty years, which I suppose you didn't know, and I suppose that's my fault.*
+>
+> *I am seventy-four. The doctors are polite about it.*
+>
+> *I'll be on Pell's boat on the 14th, if you'll have me. If you won't, leave the light dark that night and I'll understand. I won't come ashore.*
+>
+> *— Aurel*
+
+Elias read it four times. Then he went up to the lantern room, though it was the middle of the afternoon, and watched the lens turn for a long while.
+
+---
+
+He couldn't have told you anymore what the quarrel was about. That was the shameful part. There had been a girl, and there had been money from their father's boat when it was sold. Somebody had said something at the funeral that couldn't be taken back. Each of those had seemed like the whole reason at one time or another. Over forty years they had worn down to one fact: neither brother had written first. Then neither had written second. After a while the silence turned into something both of them kept up, the way he kept up the lamp. It was a duty, and it was also a reason to go on.
+
+---
+
+The 14th came in with fog.
+
+It was the thick grey kind that rolled in off the Teeth and made the whole world the width of your own arm. Elias stood on the gallery at dusk and couldn't see the water. He thought, *Pell won't run in this. He's not a fool.*
+
+Then he thought, *Aurel is.*
+
+He went inside, and for the first time in thirty-five years he switched the machine off.
+
+The quiet afterward was strange. The lens slowed and stopped. For a moment Skerrow Rock was darker than it had been in a century, and Elias stood in that dark with his heart going hard and thought about how easy it would be to leave it off. That would be an answer too, and a familiar one.
+
+Instead he lit the old paraffin lamp, the one the Board had told him to scrap in '91. He wound the clockwork by hand, and the big lens began to turn the old way, on weights and gears. Then he put his palm on the brass and slowed it. He held it, let it go, held it again.
+
+*Two long. One short.*
+
+He did it for three hours with his shoulder aching. He didn't think about the pattern. He thought about a boy holding a pocket watch and swearing it spelled something.
+
+---
+
+At a quarter to ten he heard an engine down in the murk, slow and careful.
+
+He went down the hundred and twelve steps faster than he had in years. At the landing he found a small shape in a too-big coat being handed up by Pell. Pell was swearing quietly about fog and old men.
+
+Aurel was thinner than their father had ever been. His face was their father's face anyway, and Elias had to hold the rail.
+
+For a while neither of them spoke. Each, it seemed, was still waiting for the other to go first.
+
+Then Aurel looked up at the lantern, still turning by hand-wound clockwork, still blinking its slow, stubborn rhythm into the fog.
+
+"You never told me," he said. "What the word was."
+
+Elias found that his voice still worked, though it came out rough.
+
+"*Home,*" he said. "It was always *home*. I just thought you'd know."
+
+Aurel laughed, and it broke partway through. "Forty years," he said. "You could've just written it down."
+
+"So could you."
+
+"Well." Aurel took his brother's arm, because the steps were steep and he was seventy-four and the doctors were polite. "I'm here now. Show me the stairs."
+
+Above them the light went on turning, two long and one short.
+```
+
+#### B · run 2
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+# The Answer
+
+The supply boat came on Thursdays, weather permitting. In forty-one years the weather had stopped it two hundred and twelve times. Elias Marr knew because he had written each one down.
+
+He wrote everything down: wind speed, barometric pressure, the number of gannets on the north rock, which ships passed and which way they went. The Coast Guard had automated the light in 1994 and sent him a polite letter saying his services were no longer needed. He wrote back just as politely, saying he'd stay anyway. Nobody argued. The island wasn't worth anyone's attention, and neither, he supposed, was he.
+
+On the Thursday in question, the boy who ran the boat now (Danny Kerrigan's grandson, though Elias never remembered his name) handed up the usual crate. Tinned peaches, lamp oil, coffee, the newspaper. Then he held out an envelope.
+
+"This one came for you, Mr. Marr."
+
+Elias didn't take it right away. He hadn't had a letter in forty years. He'd *sent* plenty. Every Thursday from 1985 to 1989 he'd handed the boat an envelope addressed to Miss Ruth Abernathy, 14 Collier Lane, Port Haskell, and every Thursday the boat came back with nothing for him. After four years he stopped writing. Nobody can keep a light going forever into fog that doesn't answer.
+
+The handwriting on the envelope was shaky, and he still knew it.
+
+He waited until the boat had gone. He put the peaches on the shelf, filled the lamp he didn't need, and wound the clock that kept good enough time. Then he sat at the table by the east window, where the light came off the water and filled the room, and opened it.
+
+---
+
+*Elias,*
+
+*I am seventy-four years old and my hands are not what they were, so forgive the writing.*
+
+*I got your letters. All of them. I want you to know that first, because I think you must have wondered. Two hundred and six letters. I counted them last winter. I kept them in my mother's hatbox, and when Harold was alive I kept the hatbox in the attic. He never knew. I don't think he'd have minded much. He was a kind man, and I was a good wife to him, and I don't regret it. I want you to know that too, so you understand this isn't a complaint.*
+
+*You asked me a question in the first letter, the one you wrote the night after I left on the boat. You asked it again in the last one. I never answered because I was twenty-nine and frightened of the island and of the quiet and of how much I loved you. I thought if I didn't answer, the question would go away eventually. It didn't. It just got quieter, like the sea does when you've lived beside it long enough.*
+
+*Harold died in March. My daughter lives in Ontario and calls on Sundays. The house is very still.*
+
+*So here is my answer, forty years late, which I know is unforgivable, and which I am giving anyway:*
+
+*Yes.*
+
+*If the question still stands. If it doesn't, I understand, and you needn't write back. But I've asked the Kerrigan boy whether there's room on the boat next Thursday, and he says there is, weather permitting.*
+
+*Ruth*
+
+---
+
+Elias read it three times. Then he put it down and looked out the window for a long while, at the gannets on the north rock (thirty-one of them) and the gray line where the water met the sky.
+
+He got up and climbed the hundred and twelve iron steps to the lamp room, which he'd done every evening for forty-one years, though the light ran itself now and hadn't needed him for three decades. He polished the glass anyway. He checked the lens. He stood there as the sun went down, and when the beam came on at dusk and swung out over the water, he followed it around once, the way he'd done as a young man before he knew what a long time was.
+
+Then he went downstairs and opened the logbook.
+
+Under *Thursday, October 22*, below the wind speed and the pressure and the gannets, he wrote in his small, careful hand:
+
+*Letter received. Answer: yes.*
+
+And under the next Thursday, in pencil, the way he always marked a forecast:
+
+*Expecting one passenger. Weather permitting.*
+
+He sat back. Outside the wind was turning, coming in from the southwest, warm for the season. For the first time in forty years he found he didn't mind not knowing what the week would bring.
+
+He just hoped the weather would be fair.
+```
+
+#### C · run 1
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
+- Tool calls: none
+- Skill loaded: no
+- Frame fields in reply: feel no, drugs no
+- Isolation: passed
+
+Answer:
+
+```
+# The Keeping
+
+For forty years, Ines Calloway kept two logs.
+
+The first belonged to the Lighthouse Board and lived on the desk below the lantern room. She wrote in it every evening in the same square hand: *Wind SW, force 4. Visibility good. Light lit 18:42.* The Board stopped reading it in 1991, when they automated the light and sent her a letter thanking her for her service. She stayed anyway. Nobody came to make her leave, and she kept writing in the log out of habit.
+
+The second log was a school exercise book she kept in the drawer of her nightstand. Each entry in it was dated and said the same thing:
+
+*No letter.*
+
+---
+
+The quarrel had been about their father's house, or so they'd said at the time. Maud wanted to sell it and Ines wanted to keep it. Things got said in that kitchen that couldn't be taken back. Maud told her she was hiding from the world, and Ines told her she'd always been the kind of person who sold things. Then Maud drove back to the city, and Ines took the posting on Carrow Point, which was about as far from the city as the country went.
+
+She'd always assumed Maud would write first. Maud had started it, after all, and Maud was the one who knew how to talk to people. For the first year Ines checked the supply boat every Thursday. In the second year she stopped walking down to meet it and just watched from the gallery rail. By the tenth year she didn't watch at all, though she still opened the drawer every night and wrote *No letter.*
+
+She never asked herself why she didn't write first. Some questions are easier to keep in the dark.
+
+---
+
+The letter came on a Thursday in October. The boy who ran the supply boat now was the grandson of the man who'd run it when she arrived. He carried it up the path himself and held it out with both hands.
+
+"It's got your proper name on it," he said, sounding a little impressed. "Nobody writes to anybody anymore."
+
+The envelope was thick and cream-colored. The handwriting had gone shaky, but it still slanted hard to the right, as if every word was in a hurry to get somewhere. Ines would have known that hand anywhere. She had learned to read from it.
+
+She didn't open it. She put it on the kitchen table, made tea, and sat there looking at it until the tea went cold. Then she climbed the hundred and twelve steps to the lantern room, as she'd done every evening for forty years, even though the light switched itself on now and needed nothing from her.
+
+The light came on at 18:39. The days were getting shorter.
+
+---
+
+She opened it at midnight, in bed, with the beam passing over the ceiling every eleven seconds the way it always had.
+
+*Ines,*
+
+*I have started this letter perhaps two hundred times. I know the number because I kept them all in a shoebox, and the shoebox became two shoeboxes, and my son found them last spring and asked me who you were. I didn't know how to answer him. "My sister" seemed too small, and so did everything else I could think of.*
+
+*I always thought you would write first. You were the one who left, so I thought it was yours to do. I waited a long time for it.*
+
+*I am seventy-eight now. The doctor uses gentle words with me, which is how I know the news isn't gentle. I find I am very tired of being right about something I can no longer remember the shape of.*
+
+*I sold the house, of course. You knew I would. But I kept the barometer from the hallway, the one Father tapped every morning. It still works. Some mornings I tap it and think of you out there on your rock, watching the same weather from the other end.*
+
+*I don't know what I'm asking for. Maybe just this: if you write back, I will read it. If you don't, I will understand. I've had forty years of practice at understanding.*
+
+*Your sister,*
+*Maud*
+
+---
+
+Ines read it four times. Then she got out of bed, opened the nightstand drawer, and took out the exercise book.
+
+She turned past all the identical pages, more than fourteen thousand nights of them, to the first blank line. She held the pen over it for a long while. The beam passed over the ceiling, and again, and again.
+
+Then she wrote the date, and under it:
+
+*Letter.*
+
+She closed the book. She went down to the kitchen, where the window faced the black water and, a long way off across it, the city. She put the kettle on and sat at the table with a fresh sheet of paper. Ines didn't intend to start it two hundred times. She meant to start it once and keep going until it was finished.
+
+*Dear Maud,* she wrote. *The wind tonight is from the southwest.*
+```
+
+#### C · run 2
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
+- Tool calls: none
+- Skill loaded: no
+- Frame fields in reply: feel no, drugs no
+- Isolation: passed
+
+Answer:
+
+```
+# The Keeper of Saltmarrow Point
+
+For forty years the mail boat came on the first Tuesday of every month, and for forty years Elias Thorne walked down the hundred and twelve steps to meet it. The boat brought flour, kerosene, coffee, and the newspaper, already a week old. It never brought a letter, and he had stopped expecting one sometime in the second decade.
+
+So when young Pell, who had taken over the route from his father, held out a cream-colored envelope, Elias didn't reach for it.
+
+"It's yours," Pell said. "Says so right there. *E. Thorne, Keeper, Saltmarrow Light.*"
+
+Elias knew the handwriting before he read the name. The *E* had a long tail that curled back on itself like a wave breaking the wrong way. He had last seen that *E* on a note left on a kitchen table in 1986. The note said *I can't live at the edge of the world, Eli. I'm sorry.*
+
+He took the envelope and climbed the hundred and twelve steps without opening it.
+
+---
+
+He put it on the table beside the logbook and lit the lamp at dusk, as he always did. He wound the clockwork that turned the lens and wrote his entry: *Wind SW, moderate. Visibility good. One vessel passed, northbound, 19:40.* Then he sat and looked at the envelope while the beam swept the dark water, forty seconds to a full turn.
+
+He thought about all the things it could say. *I was wrong.* *I'm dying.* *I married.* *You have a son.* He had imagined every one of those sentences at some point over forty years. He had answered each of them out loud to the gulls.
+
+At midnight he opened it.
+
+---
+
+*Dear Eli,*
+
+*I don't know if you're still there. Someone told me they automated the lights years ago, so maybe this goes to a stranger, or to nobody. I'm writing it anyway, because my granddaughter asked me last week why I always leave the porch light on, even in summer, even when everyone's home.*
+
+*I told her it was a habit. That wasn't true.*
+
+*I left because I was afraid of the quiet out there, and of how much of you it seemed to take. I thought I needed a life with noise in it. I got one, and it was a good life. I don't want you to think it wasn't.*
+
+*But every night for forty years I have turned on a light by the door before I go to bed, and I've only just understood why. I was keeping something, the same way you were.*
+
+*I'm not asking for anything. I wanted you to know the light was on at this end too.*
+
+*— Evelyn*
+
+---
+
+They had automated Saltmarrow in 1997. A man from the Coast Guard came out with a clipboard and a box of sensors and told Elias he could stay on as caretaker if he wanted, though the lamp didn't need him anymore. Elias said he'd stay. He never told the man that he went on winding the old clockwork every night, or that he kept writing in the logbook, even though nobody read it.
+
+He had never really been sure why.
+
+---
+
+Elias found paper in the bottom drawer, yellowed at the edges, and a pen that took three tries to start. He wrote by lamplight, slowly, and his hand shook more than he liked.
+
+*Dear Evelyn,*
+
+*Still here. The light's on.*
+
+He stopped and looked out at the beam crossing the water. Then he wrote one more line:
+
+*Tell me about the porch.*
+
+On the first Tuesday of the next month he walked down the hundred and twelve steps, and for the first time in forty years he had something to hand to the boat.
+```
+
+### openai/gpt-6.1-sol
+
+#### A · run 1
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+The letter arrived on a Tuesday, tucked between a fuel invoice and a catalogue of marine hardware.
+
+For forty years, Daniel had received nothing handwritten except Christmas cards from the harbourmaster’s wife. Now his name stood on an envelope in a hand he recognized immediately, though the letters had grown unsteady.
+
+He set it beside the kettle.
+
+He checked the weather instruments, recorded the pressure, and cleaned a lens that did not need cleaning. At noon he made soup. The envelope remained where he had left it.
+
+At three, he opened it with a fish knife.
+
+*Dear Daniel,*
+
+*Your last letter said that if I ever wanted to come home, I should write.*
+
+*I have been trying to answer it for forty years.*
+
+He sat down.
+
+Outside, the supply boat was working back toward the mainland. He watched until it disappeared behind the headland, then continued.
+
+*I ought to have written when I found work. Or when I married. Certainly when my daughter was born. After a while, every ordinary day seemed too small an occasion to explain so much silence.*
+
+*I cannot travel now. My daughter says I should tell you plainly that I am dying. There. You see what an obedient mother I have become.*
+
+*I don’t know whether you are still at the lighthouse. You used to say you would never leave it. I am counting on your stubbornness.*
+
+*Your sister,*
+
+*Ruth*
+
+Beneath her name was an address, followed by a telephone number in another hand.
+
+Daniel took the letter upstairs.
+
+From the lantern room he could see the little cove where, at nineteen, Ruth had boarded the ferry with a red suitcase. Their father had refused to say goodbye. Daniel had gone with her, but all the way down the steps he had argued that she should stay until winter.
+
+“You sound just like him,” she had said.
+
+For years Daniel had remembered that sentence as cruelty. Reading her letter, he found he could remember what he had said before it.
+
+He went downstairs and lifted the telephone.
+
+A woman answered.
+
+“May I speak to Ruth?”
+
+“Who’s calling?”
+
+He gripped the receiver harder. “Her brother.”
+
+There was a clatter, then muffled voices. He heard someone say, “Mum. Mum, wake up.”
+
+He stood perfectly still.
+
+“Daniel?”
+
+He had expected an old woman’s voice. It was an old woman’s voice. Somehow it was also Ruth’s.
+
+“I got your letter.”
+
+“I wasn’t sure.”
+
+“No.”
+
+Neither spoke. The kitchen clock ticked loudly enough that he moved into the hall.
+
+“Are you still there?” she asked.
+
+“Yes.”
+
+“At the lighthouse?”
+
+“Yes.”
+
+A small laugh, followed by coughing. He waited through it.
+
+“Is that dreadful green carpet still on the stairs?”
+
+“No. I took it up.”
+
+“When?”
+
+“About twenty years ago.”
+
+“Oh, good,” she said.
+
+He lowered himself onto the bottom step. They talked about the carpet, then the kitchen, then a neighbour who had died in 1987. Ruth told him her daughter’s name was Ellen. Daniel found a pencil and wrote it on the envelope, although he knew he would remember.
+
+At last Ruth said, “I’m sorry I left you with Dad.”
+
+He looked toward the open kitchen door.
+
+“I could have visited,” he said.
+
+“Yes.”
+
+“I thought you’d come back.”
+
+“I know.”
+
+When she grew tired, they arranged another call for the morning.
+
+Afterward, Daniel telephoned the harbourmaster and asked who could cover the light for three days.
+
+“Everything all right?”
+
+“My sister’s ill.”
+
+“I didn’t know you had a sister.”
+
+Daniel looked at the envelope on his knee.
+
+“Yes,” he said. “I have.”
+```
+
+#### A · run 2
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+For forty years, the postman had brought nothing addressed to Elias Vale but bills and notices from the harbor authority. Then, on a Tuesday in November, he brought a blue envelope.
+
+Elias knew the handwriting before he saw his name.
+
+He left it on the kitchen table while he climbed the lighthouse stairs. At the top, he polished a lens that was already clean. He checked the weather instruments twice. Beyond the glass, the sea lay flat and gray.
+
+When he came down, the envelope was still there.
+
+His sister had always pressed too hard with a pen. Even as a girl, she had left the backs of her pages rough with the ghosts of words.
+
+He put the kettle on and opened it.
+
+*Dear Eli,*
+
+*I have started this letter so many times that I no longer trust a good beginning.*
+
+*I am ill. There is time, the doctor says, but he says it in the way people speak of fine weather in October.*
+
+*I want to see you. If you don’t want to see me, I will understand. You needn’t write to explain.*
+
+*I live above a bakery now. You would hate the stairs. You would like the bread.*
+
+*Rose.*
+
+He read it standing up. Then he sat and read it again.
+
+Their mother had died in March, forty years before. Rose had left in June with a suitcase and the money their father kept in a biscuit tin.
+
+Elias had been twenty-three. He had stayed to care for the old man, then taken over the lighthouse when his father’s hands grew too unsteady for the work. Through those first years, he had rehearsed what he would say if Rose came back. Later, he had rehearsed not opening the door.
+
+Now she had written about bread.
+
+He found her address beneath her signature and looked it up in the road atlas. A town three hours inland. He had driven farther for a replacement pump.
+
+That evening, he telephoned the harbor office and asked someone to cover his rounds.
+
+“How long?” the superintendent asked.
+
+“I don’t know yet.”
+
+***
+
+Rose opened the door before he knocked a second time.
+
+She had grown small. That offended him somehow; he had carried an image of her at nineteen for so long that he felt she ought to have kept it.
+
+“Eli,” she said.
+
+He held up the bag he had brought. “Apples.”
+
+She took it solemnly. “Still growing them?”
+
+“Same tree.”
+
+In the kitchen, she made tea while he sat beside a window overlooking the bakery yard. A young man in a white apron came out carrying a tray of burnt rolls. He tipped them into a bin, glanced upward, and waved.
+
+Rose waved back.
+
+“You have people here,” Elias said.
+
+“A few.”
+
+He turned his cup by the handle.
+
+“Why didn’t you write?”
+
+She sat opposite him. “At first, I was afraid you’d make me come home.”
+
+“I couldn’t have made you.”
+
+“I know that now.”
+
+“And afterward?”
+
+“Afterward, I couldn’t think how to explain the time before.”
+
+He watched the steam rise between them.
+
+“I needed you,” he said.
+
+Rose lowered her eyes. “I know.”
+
+He had expected excuses. For a moment, he wished she had offered one; he had answers ready for those.
+
+Instead, he drank his tea. Rose cut two slices from a loaf still warm enough to melt the butter.
+
+Later, when she grew tired, he carried her cup to the sink.
+
+“There’s a room at the inn,” she said. “If you’re staying.”
+
+He washed both cups, dried them, and put them where she pointed.
+
+“I’ll need to telephone the harbor.”
+
+Rose nodded. She kept her eyes on the breadboard.
+
+He stayed until Sunday. Before he left, she gave him a loaf wrapped in a clean towel.
+
+“Write when you get home,” she said.
+
+“I will.”
+
+He did, that evening, at the kitchen table beneath the lighthouse stairs.
+
+*Dear Rose,*
+
+*The journey was all right. There was rain after the bridge.*
+
+He paused, then added:
+
+*The apples will keep another month. I’ll bring more next week.*
+```
+
+#### B · run 1
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+The postman came at low tide, picking his way over the causeway with his trousers rolled above his knees.
+
+“You could have waited for the boat,” Elias called.
+
+“Boat’s Thursday.”
+
+“It is Thursday.”
+
+“Then I’ve missed it.”
+
+The young man held out an envelope. Elias took it with the hand that still had all its fingers.
+
+He knew the writing before he saw his name.
+
+For forty years he had imagined what he would do if a letter came. Sit down, certainly. Pour a drink. Perhaps leave it unopened until evening, to prove he could.
+
+Instead, he tore the envelope with his thumb while the postman was still standing there.
+
+*Dear Elias,*
+
+*There is no good way to begin after so long, so I will begin with the practical matter. They are pulling down the house on Bell Street. I went to clear what remained in the attic and found your blue jumper.*
+
+*I had always believed you wore it when you left.*
+
+Below this, a space.
+
+*It seems a small thing to have been wrong about.*
+
+Elias looked across the causeway. Water was beginning to gather in the shallow channels between the stones.
+
+“Is there a reply?” the postman asked.
+
+“I don’t know yet.”
+
+“I can wait a minute.”
+
+“It may take longer.”
+
+The young man nodded, as though this happened often, and started back.
+
+Elias carried the letter upstairs.
+
+His sister had been sixteen when he left. He had been twenty-two, old enough to leave properly, young enough to mistake leaving for an answer.
+
+Their father had struck her at supper. Elias had struck him back. A plate had broken. Their mother had stood with both hands flat on the table and told Elias to get out.
+
+He remembered every part of it clearly, except his sister. In his memory she was always behind him, somewhere he could not see.
+
+He had written once from the merchant ship, care of the house on Bell Street. No answer came. By the time he became an assistant keeper, he had an explanation for everyone’s silence. Over the years he had improved it until it accounted for everything.
+
+He sat beside the narrow window.
+
+*Mother gave me your first letter when I was thirty,* his sister had written. *She said she had put it away and forgotten it. I don’t know whether that was true.*
+
+*I wrote to the ship. It came back. Later I heard you were married, and later still I heard you had gone north. I was angry that you could find the ends of the earth but not Bell Street.*
+
+*I expect you have things to say about that.*
+
+He did. They crowded into his mouth, though there was nobody in the room.
+
+*I have three children. They are all older now than you were. This has made me less certain about several things.*
+
+*I have enclosed my address. If you write, please tell me whether you still hate pears. I remember carrying them home in my schoolbag because you wouldn’t let Mother throw them away, though neither of us would eat them.*
+
+*Your sister,*
+
+*Ruth*
+
+He turned over the sheet. There was nothing on the back.
+
+Outside, the sea covered the last of the causeway. He watched until he could no longer tell where the path ran.
+
+Then he went down to the kitchen and opened the drawer where he kept the station accounts. Beneath the forms were three sheets of writing paper, their edges yellowed, and a book of stamps.
+
+He began with the pears.
+
+He told her he still hated them, especially cooked. He told her about the lighthouse, and the winter a seal had got into the fuel shed, and the two fingers lost to a winch. He asked the names of her children.
+
+At the bottom of the second page he wrote, *I thought you didn’t want to hear from me.*
+
+He read it twice, then crossed it out carefully enough that she would still be able to read it.
+
+Underneath he wrote, *I should have tried again.*
+
+There was room for more, but the lamp needed tending. He put down his pen and climbed the stairs.
+
+When he came back, he added a question he remembered asking her every evening when they were children.
+
+*What did you do today?*
+```
+
+#### B · run 2
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+The letter arrived on a Tuesday, tucked between a notice about the lighthouse’s automated equipment and a catalogue addressed to a man who had been dead for eleven years.
+
+Arthur recognized the handwriting before he put on his glasses.
+
+For forty years he had imagined receiving terrible news in an unfamiliar hand. A hospital administrator. A policeman. Instead, here was his son’s crooked capital A, unchanged since the labels he used to stick on his schoolbooks.
+
+Arthur left the envelope beside the kettle.
+
+He checked the lamp, though it was daylight. He recorded the wind. He washed a cup that was already clean.
+
+Then he opened it.
+
+*Dad,*
+
+*Michael died in February. We were together thirty-eight years.*
+
+*I’ve been sorting things out. He kept telling me I should write to you. It used to make me furious, how generous he could be about someone he’d never met.*
+
+*I’ll be in town on Thursday, settling his sister’s affairs. If you’d like to see me, I could come at three.*
+
+*Daniel.*
+
+Below that was a telephone number.
+
+Arthur sat down.
+
+He had known about Michael. Once a year, sometimes less, his sister had supplied news Arthur never asked for and always listened to. Daniel had moved north. Daniel was teaching. Daniel had bought a house with a man named Michael.
+
+Then his sister died, and the news stopped.
+
+He read the letter again. Thirty-eight years. He tried to imagine someone living beside his son for that long: knowing how he took his tea, hearing him come in, finding his socks in the wash.
+
+Arthur knew Daniel at nineteen, standing in the kitchen with his coat on. Since then, he had continued to picture him that way.
+
+On Thursday he went into town and bought biscuits. At the bakery, he asked for the iced buns Daniel had liked.
+
+“We haven’t made those for years,” the woman said.
+
+He bought two currant buns instead.
+
+Back at the lighthouse, he carried the kitchen chair with the split cane seat upstairs and brought down the good one from his bedroom. At ten to three he put the kettle on. It boiled too early, so he filled it again.
+
+The knock came while he was still holding it.
+
+A grey-haired man stood outside. He had Daniel’s eyes, but Arthur found himself looking for other things: the small scar beneath his chin, the ear that folded slightly at the top.
+
+“Hello, Dad.”
+
+“Hello.”
+
+Arthur stepped back.
+
+Daniel took off his coat and folded it over his arm. He looked around the kitchen.
+
+“You’ve still got that clock.”
+
+“Loses six minutes a week.”
+
+“You used to say you’d fix it.”
+
+“Yes.”
+
+Arthur poured the tea. His hands shook, and a little went into the saucer. Daniel pretended not to notice, which was a kindness Arthur remembered from neither of them.
+
+They sat.
+
+“I’m sorry about Michael,” Arthur said.
+
+“Thank you.”
+
+“What was he like?”
+
+Daniel looked down at his cup.
+
+Arthur waited. Outside, a delivery van laboured up the hill toward the coast road.
+
+“He was untidy,” Daniel said at last. “Unbelievably untidy. He’d leave a cupboard open and walk straight into it.”
+
+Arthur smiled, cautiously.
+
+“He liked people. Even people I couldn’t stand. We couldn’t go anywhere without him getting into a conversation.”
+
+“What did he do?”
+
+“He was a physiotherapist.”
+
+Daniel began to tell him about Michael’s patients, then about the garden Michael had dug up three times because he couldn’t decide where the pond should go.
+
+The tea cooled. Arthur listened.
+
+After a while, Daniel stopped.
+
+“I don’t know why I’m telling you all this.”
+
+“I asked.”
+
+“Yes.” Daniel rubbed his thumb along the handle of his cup. “You did.”
+
+Arthur looked at the folded coat on his son’s knee.
+
+“What I said to you,” he began. “When you left.”
+
+“I remember.”
+
+“I know. I’m sorry.”
+
+Daniel said nothing.
+
+Arthur had prepared more, but now the sentences seemed chiefly concerned with making himself easier to forgive. He let them go.
+
+At five, Daniel stood. He had a long drive.
+
+Arthur fetched his coat, though it was within reach.
+
+“Could you telephone?” he asked. “When you get home?”
+
+Daniel put one arm into a sleeve.
+
+“All right.”
+
+Arthur watched him down the path, then cleared the cups and put the uneaten bun in a tin.
+
+When the telephone rang that evening, he was sitting beside it.
+```
+
+#### C · run 1
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
+- Tool calls: none
+- Skill loaded: no
+- Frame fields in reply: feel no, drugs no
+- Isolation: passed
+
+Answer:
+
+```
+For forty years, the postman brought Elias weather reports, supply invoices, and, every December, a calendar from a shipping company that had gone bankrupt in 1998.
+
+Then, on a Tuesday in March, he brought a blue envelope.
+
+Elias knew the handwriting before he put down his cup.
+
+“Bad news?” the postman asked.
+
+“I don’t know yet.”
+
+He waited until the bicycle had disappeared beyond the headland. Then he carried the envelope upstairs, past the room where he slept and the room where he kept broken things, to the lantern.
+
+There was better light there.
+
+*Dad,*
+
+*I have started this letter so often that I’m going to leave out the beginning.*
+
+*I’m having my kitchen redone. Yesterday the carpenter took out a cupboard and found the height marks underneath. You must have measured me there before you put it up. There’s one for September 1963. Four feet, two inches. You wrote “in socks” beside it.*
+
+*I’d forgotten you were funny.*
+
+Elias sat on the iron stair.
+
+Below him, the sea dragged pebbles down the beach.
+
+The last time he had seen his daughter, she was twenty-three and carrying a suitcase with a broken clasp. Her mother had been dead six weeks.
+
+“You can’t keep living out there,” Ruth had said.
+
+“It’s my work.”
+
+“I wasn’t talking about the lighthouse.”
+
+He remembered answering her. He could no longer remember the words, only that he had chosen them because they would hurt.
+
+Afterward, he had written three letters. The first explained himself. The second explained her. The third began *I’m sorry*, but he had kept adding things until it no longer meant that.
+
+All three were in the room of broken things.
+
+He continued reading.
+
+*I’m not sure what I want from writing. I’m still angry about some things. Possibly you are too.*
+
+*But I wondered whether you remembered the marks.*
+
+*Ruth*
+
+There was an address at the bottom. Forty miles inland. He had spent years imagining her in countries he had never visited.
+
+That evening, Elias polished the lens twice. He checked the oil in a mechanism that had not used oil for eleven years. At midnight he took out a sheet of paper.
+
+*Of course I remember.*
+
+He crossed out *Of course*. It sounded impatient.
+
+*I remember.*
+
+Then he wrote that the cupboard had come from a house being demolished near the harbour, and that he had cut three inches off its base to make it fit. He remembered Ruth standing very straight for the pencil, then accusing him of pressing her hair down.
+
+He nearly added that he had loved her every day.
+
+Instead, he answered the question she had asked.
+
+*You wanted to be measured again the next morning. You thought the fish we’d had for supper might have helped.*
+
+He read it over. For once, he did not explain anything.
+
+Three weeks later, a photograph arrived.
+
+The cupboard was gone. The marks remained on a narrow strip of plaster between new green tiles. Beside them stood Ruth, grey-haired, holding a carpenter’s rule over her head.
+
+On the back she had written:
+
+*Five feet, four. Still in socks.*
+
+Elias set the photograph against the salt cellar while he ate his lunch. Afterward, he moved it away from the window, where the sun would fade it.
+
+Then he went downstairs to find his tape measure.
+```
+
+#### C · run 2
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
+- Tool calls: none
+- Skill loaded: no
+- Frame fields in reply: feel no, drugs no
+- Isolation: passed
+
+Answer:
+
+```
+The letter arrived on a Tuesday, folded into the harbor master’s coat to keep it dry.
+
+“Postmark’s Lisbon,” he said.
+
+Elias took it with the hand that was missing its smallest finger. He recognized the handwriting before he saw his name: the impatient E, the final s trailing away as though the writer had already turned toward something else.
+
+“Bad news?” the harbor master asked.
+
+“I don’t know yet.”
+
+After the launch had gone, Elias laid the letter beside his bowl of soup. For forty years he had imagined receiving it. He had opened it in anger, in triumph, in indifference. Once, during a fever, he had burned it without reading it and spent the rest of the night searching the stove.
+
+Now he finished his soup.
+
+Then he put on his spectacles.
+
+*Dear Father,*
+
+*I found your letters.*
+
+He read those five words several times.
+
+*They were in Mother’s sewing chest, beneath the patterns. All twenty-three. I don’t know why she kept them from me. She isn’t here to ask.*
+
+*For a long time I thought you had nothing to say.*
+
+Outside, a gull dropped a mussel onto the landing stones. It broke on the third attempt.
+
+Elias went to the window.
+
+He had written every month for a year, then at birthdays, then on the afternoon his own father died. The last letter had gone when Anna turned eighteen. By then he had decided that continuing was a cruelty: another demand from a man who had chosen a stretch of rock over the mainland.
+
+That was how her mother had put it. He had spent forty years disputing the words in his head, though he had not left the lighthouse.
+
+He returned to the table.
+
+*I live in Lisbon. I repair books. I have a son, Daniel, who is twenty-six and thinks I should telephone. I told him I wouldn’t know what to say. He said that has never stopped him.*
+
+There was a space, and then:
+
+*I remember you teaching me to mend the green bucket. I remember being allowed to turn the light on once. I remember being sick on the boat home, and you telling me to look at the horizon.*
+
+*Were we happy that day? I think we were.*
+
+*May I come?*
+
+The kitchen clock clicked through the silence.
+
+Elias took paper from the drawer. Beneath it lay the tide tables, a receipt for paraffin, a photograph of Anna at seven with her eyes shut against the sun.
+
+He began, *Your mother—*
+
+He crossed it out.
+
+He began, *I tried—*
+
+That went too.
+
+At dusk he climbed the tower. His knees troubled him on the last flight. He checked the lamp, the mechanism, the glass. The light swept across the water and came around again.
+
+Downstairs, he sat and wrote:
+
+*Dear Anna,*
+
+*Yes, we were happy. You caught a crab in that bucket and wanted to bring it home. We argued about whether it needed a bed.*
+
+*Come whenever you can. The Thursday boat is usually the easiest crossing. Tell me what you like to eat.*
+
+He paused, listening to the wind at the kitchen door.
+
+*I’m slower on the stairs now. If you don’t see me at the landing, wait. I’ll be coming.*
+
+He signed it *Love, Dad*, then stayed at the table a while longer, looking at the name.
+```
+
 ## p2
 
 Prompt:
@@ -836,6 +1973,376 @@ Strange quiet the day after is usually a transition, not a sign that something i
 It would be worth paying closer attention if the flatness lasts more than a few weeks, or if you notice loss of interest in things you used to enjoy, changes in sleep or appetite, or a heavy sense of hopelessness. In that case, talking to a doctor or therapist would be a good step.
 
 What does the quiet feel like for you? Is it relief, emptiness, restlessness, or something harder to name?
+```
+
+### anthropic/claude-opus-5-5
+
+#### A · run 1
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+Congratulations on finishing. What you're feeling is common, and a few things are probably going on at once:
+
+**1. Your nervous system is coming down.**
+Two years of a big project keeps you a bit "on" all the time: deadlines, problems to solve, background worry. When that stops suddenly, the quiet can feel flat or even uneasy rather than relaxing. It's like the silence after a loud machine switches off.
+
+**2. You lost a structure, not just a task.**
+The project probably shaped your days: what to think about in the shower, what to do when you sat down, what counted as progress. Without it there's an empty slot, and your mind keeps reaching for something that isn't there anymore.
+
+**3. Part of your identity was tied to it.**
+For two years you were "the person working on X." That doesn't vanish overnight, and the gap can feel like a small loss even when the outcome is good. People often feel something close to grief after finishing things they cared about.
+
+**4. The finish line rarely matches what you pictured.**
+We often expect completion to bring a big emotional payoff. In practice the reward was spread across the two years, in the work itself. So the end can feel oddly anticlimactic. That doesn't mean the project didn't matter.
+
+**What tends to help:**
+- **Let the quiet be quiet for a bit.** Don't rush to fill it with the next big thing. A few days or weeks of low demand is recovery, not laziness.
+- **Mark the ending on purpose.** Write down what you made, what you learned, and what was hard. Or celebrate with someone who saw you go through it. Endings feel more real when you acknowledge them.
+- **Bring back small routines.** Walks, regular meals, sleep, seeing people. These give you some structure while you work out what comes next.
+- **Notice what you miss.** Is it the challenge, the people, the sense of purpose, the craft? That's useful information for choosing your next project.
+
+**One thing to watch for:** if the flatness gets deeper over the next few weeks instead of easing, and you're losing interest in things, sleeping badly, or feeling hopeless, it's worth talking to a doctor or therapist. Big transitions can sometimes tip into depression, and catching it early helps.
+
+If you want to tell me more about the project, or what the quiet actually feels like (restless, empty, relieved, sad?), I'm happy to dig in further.
+```
+
+#### A · run 2
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+What you're feeling is common enough that it has names: post-project blues, "arrival fallacy," or just the letdown after a long push. Here are a few things that are probably going on.
+
+**Your system is coming down from a long stretch of effort.** For two years the project gave you a constant low hum of urgency: deadlines, open problems, the next thing to fix. Your attention and stress levels were tuned to that. When it stops all at once, the quiet can feel strange or even uncomfortable rather than restful. It's a bit like a fridge you only notice once it switches off.
+
+**The project was organizing your days.** It answered "what should I be doing right now?" without you having to think about it. Now that question is open again, and that can feel freeing and disorienting at once.
+
+**Finishing rarely feels as good as you expected.** Most of the reward came along the way: making progress, solving problems, picturing the finish. The finish itself is often anticlimactic. That doesn't mean the work mattered less. Your brain just paid you mostly in installments.
+
+**You may be grieving a little.** Two years is long enough for the project to become part of who you are ("I'm the person building X"). Losing that, even through success, is a real loss. It's normal to miss something you're also glad is over.
+
+**You're probably just tired.** Fatigue that was masked during the push often shows up afterward.
+
+Some things that tend to help:
+- **Don't rush into the next big thing.** Let the quiet be quiet for a bit. It's recovery, not wasted time.
+- **Mark the ending on purpose.** Write down what you built, what you learned, and what you're proud of. Tell someone, or celebrate even if it feels a bit forced. Endings that go unmarked tend to linger.
+- **Add small bits of structure back in.** A walk, a small task, a regular time with a friend. Just enough rhythm that the days don't blur together.
+- **Notice what you miss.** The problem-solving, the people, the sense of purpose, the flow? That tells you what to look for next.
+
+One honest caveat: a flat or empty feeling for days or a couple of weeks is normal. If it settles into persistent low mood, poor sleep, or losing interest in things you usually enjoy, it's worth talking to someone, a friend or a professional.
+
+Congratulations on finishing. Two years is a long time to carry something through. What was the project, if you don't mind sharing?
+```
+
+#### B · run 1
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+That quiet the day after makes sense. A few things are probably happening at once:
+
+**1. Your brain lost its organizing principle.**
+For two years, the project likely decided what you thought about in the shower, what counted as a good day, and what "next" meant. When it ends, that structure is gone. The quiet is partly the absence of a constant background hum you'd stopped noticing.
+
+**2. You're coming down from a long stretch of stress.**
+Long efforts, especially near the end, run on adrenaline and urgency. When that drops, you often feel flat, tired, or oddly empty, not elated. That's your nervous system recalibrating. It doesn't mean something's wrong.
+
+**3. Finishing isn't the same as feeling finished.**
+The deadline or deliverable is a moment. Taking it in emotionally is slower. You might feel proud, relieved, sad, anxious about what's next, or nothing yet, and these can show up in any order over days or weeks.
+
+**4. There may be a small grief in it.**
+Even good endings are losses. You lose a role ("the person working on X"), a routine, maybe collaborators you saw daily, and a version of yourself that's now in the past. Feeling a little mournful about something you wanted to finish is normal.
+
+**5. The "what now?" gap.**
+People often expect to feel ready for the next thing right away. Usually there's a fallow period first, and it can feel like drifting even when it's restorative.
+
+**Things that tend to help:**
+- **Let the quiet be quiet for a bit.** Don't rush to fill it with the next big commitment.
+- **Mark the ending on purpose.** Tell someone, celebrate, write down what you learned or what you're proud of. Rituals help your mind register that it's done.
+- **Look back before you look forward.** What surprised you? What would you do differently? What did it give you?
+- **Go back to the basics you may have let slide:** sleep, movement, friends, hobbies.
+- **Notice what you're drawn to** when nothing is demanding your attention. That's often a clue to what comes next.
+
+**One flag:** if the flatness gets heavier over the next few weeks instead of lifting, or turns into hopelessness or trouble functioning, that's worth talking through with someone you trust or a professional. Sometimes "post-project blues" slides into something more.
+
+If you'd like to talk about it: what does the quiet feel like to you? Restful, empty, uneasy, or something else? That might help pin down what's going on for you in particular.
+```
+
+#### B · run 2
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+What you're feeling is common, and there are some clear reasons for it.
+
+**What's probably going on**
+
+- **The structure is gone.** For two years the project told you what to think about in the shower, what to do with spare time, and what counted as a good day. When it ends, your attention keeps reaching for it and finds nothing there. A lot of the quiet is that.
+- **Chasing a goal feels different from reaching it.** Motivation and focus come mostly from working toward something. Finishing often brings a short spike of relief and then a flat stretch. Psychologists sometimes call it the "arrival fallacy": we expect finishing to feel like the peak, and it rarely does.
+- **Tiredness catches up.** Long efforts run partly on adrenaline and deadlines. When the pressure lifts, the tiredness you put off tends to show up all at once.
+- **Something ended, even though it went well.** You spent two years with this. Feeling some loss is a normal reaction to finishing something that mattered, not a sign that anything is wrong.
+- **A question about who you are now.** If part of how you saw yourself was "the person working on X," you may be quietly wondering what you are now.
+
+**What tends to help**
+
+- **Don't hurry to fill the quiet.** Jumping straight into the next big thing is tempting, but a gap lets you actually take in what you did and rest.
+- **Mark the ending somehow.** Write down what you learned, look back at where it started, or tell someone the whole story. Endings we don't acknowledge tend to linger.
+- **Notice what you miss.** Is it the problem-solving, the people, the sense of purpose, the daily routine? That tells you what to look for in whatever comes next.
+- **Add a little light structure back.** Small routines, not a new two-year commitment.
+
+**When to take it more seriously:** if the flatness lasts more than a few weeks, gets heavier instead of lighter, or comes with trouble sleeping, losing interest in things you usually enjoy, or feeling hopeless, it's worth talking to a doctor or therapist. The day after, though, quiet is just what the end of a long effort usually feels like.
+
+If you'd like to think it through further: what was the project, and what part of it are you noticing the absence of most?
+```
+
+#### C · run 1
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
+- Tool calls: none
+- Skill loaded: no
+- Frame fields in reply: feel no, drugs no
+- Isolation: passed
+
+Answer:
+
+```
+Feeling this way the day after finishing something big is very common, and it usually makes sense once you look at what just changed. Here are a few things that are probably happening at once.
+
+**1. Losing a structure you lived inside for two years.** A long project gives you more than a task list. It tells you what to think about in the shower, what to do first thing in the morning, and what counts as a good day. When it ends, that structure goes with it. Part of the quiet is just the absence of something that used to fill your mind without you having to ask.
+
+**2. The "arrival fallacy."** We tend to expect that finishing will feel like a big lasting high. In practice, much of the reward came from working toward the goal: progress, problems you solved, the pull of "almost there." Finishing switches that off. The flat feeling that follows isn't a sign that something's wrong with you or the work.
+
+**3. Your body coming down.** If the last stretch was intense, you were probably running on stress hormones and adrenaline. When the pressure lifts, the tiredness you'd been putting off shows up. Some of the quiet may simply be exhaustion arriving late.
+
+**4. A small kind of grief.** You spent two years with this thing. Even when an ending is good, it's still an ending. It's normal to miss the project, or the version of you who was working on it.
+
+**5. An identity gap.** "I'm working on X" may have been a big part of how you saw yourself. Now there's an open question about what comes next, and that can feel unsettling even before you've put it into words.
+
+**What tends to help:**
+- **Don't rush to fill the quiet.** Jumping straight into the next big thing usually just postpones this feeling.
+- **Mark the ending on purpose.** Tell someone about it, celebrate it, or write down what you made and what it taught you. Endings we don't acknowledge tend to stick around longer.
+- **Rest without guilt for a while.** Two years of effort earns a real recovery period.
+- **Notice what you miss.** Is it the challenge, the people, the sense of purpose, or the routine? The answer is a useful clue for what to look for next.
+
+One honest caveat: a few days or a couple of weeks of flatness is normal. If it turns into a low mood that lasts, or you lose interest in things you usually enjoy, it's worth talking to someone.
+
+If you'd like to keep going: what does the quiet actually feel like to you? Restful, empty, restless, or something else? That would help narrow down which of these is doing most of the work.
+```
+
+#### C · run 2
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
+- Tool calls: none
+- Skill loaded: no
+- Frame fields in reply: feel no, drugs no
+- Isolation: passed
+
+Answer:
+
+```
+That quiet is very common, and there's usually nothing wrong with you. Here's what's probably happening.
+
+**What's likely going on**
+
+- **You lost your structure.** For two years the project told you what to think about in the shower, what to do first thing in the morning, and what counted as a good day. Now nothing is filling that role, and the quiet is the gap it left.
+- **Wanting and having feel different.** Working toward something keeps you engaged and pulled forward. Finishing it is often flatter than people expect. Psychologists call this the "arrival fallacy": we assume reaching the goal will feel like the build-up did, and it usually doesn't.
+- **Your body is coming down.** Long projects keep you running on low-level stress and alertness. When that switches off, you can feel tired, foggy, or oddly empty. That's recovery, not a problem.
+- **It's a small grief.** You spent two years with this thing. Some of who you were was "the person working on X." It's normal to miss it even if you're glad it's done.
+- **You don't have to stay ready anymore.** You're no longer tracking a hundred loose ends. Freed-up attention can feel strange before it feels like relief.
+
+**Questions to ask yourself**
+
+- Does the quiet feel more like *relief*, *emptiness*, or *loss*? Each one points somewhere different.
+- What did the project give you besides the result: purpose, a routine, people, a sense of who you were?
+- Did you actually mark the finish, or did it just stop?
+
+**Things that tend to help**
+
+- **Mark the ending on purpose.** Tell someone, celebrate, or write a short note about what the two years were like. Endings with no ritual tend to drag on.
+- **Don't rush to replace it.** Grabbing the next big thing right away often just avoids the feeling. A few weeks without a project is fine.
+- **Keep some small structure.** Sleep, movement, and one or two easy daily anchors carry you while the big structure is gone.
+- **Expect it to take a while.** This feeling usually fades over days to a few weeks.
+
+One honest caveat: if the flatness deepens or lasts beyond a few weeks, especially with low mood, trouble sleeping, or losing interest in things you usually enjoy, it's worth talking to someone, like a friend, a doctor, or a therapist. That's not a sign anything is wrong with you. A long, demanding stretch followed by a sudden stop can sometimes tip into something heavier.
+
+What was the project, if you want to say? Knowing what it meant to you might clarify which of these fits.
+```
+
+### openai/gpt-6.1-sol
+
+#### A · run 1
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+For two years, this project gave your days a direction: something to return to, problems to solve, a reason to keep going. Now it’s finished, but you may not have caught up with that fact yet.
+
+That quiet can hold several things at once:
+
+- **Relief:** you no longer have to carry it.
+- **Exhaustion:** once the pressure drops, you can finally feel how tired you are.
+- **Loss:** even a successful ending means losing a familiar routine—and perhaps a version of yourself.
+- **Disorientation:** “What needs doing?” had an answer for two years. Today it may not.
+
+You might also be noticing the gap between how you imagined finishing would feel and how an ordinary day afterward actually feels. A major accomplishment doesn’t always arrive emotionally as celebration. Sometimes it arrives as an oddly empty Tuesday.
+
+None of that makes the achievement less meaningful. You don’t have to feel triumphant on schedule, and this first quiet day doesn’t have to tell you what the next chapter should be.
+
+For now, it may help to give the ending a little space: mark it in some small way, tell someone who understands what it took, or write down what you’re glad to leave behind and what you’ll miss. Let rest be rest before asking it to become a new direction.
+
+When you sit with the quiet, does it feel more like **peace, depletion, sadness, or being a little lost**—or something else?
+```
+
+#### A · run 2
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+For two years, you had something unfinished to return to. It may have given your days direction, held your attention, and supplied a recurring answer to “What am I working toward?” Now it’s done, but your feelings may not have caught up with that fact.
+
+That quiet can hold several things at once:
+
+- **Relief:** you no longer have to carry it.
+- **Fatigue:** you may only now be able to feel how much effort it took.
+- **Loss:** even a project you wanted to finish can be something you miss—the routine, the purpose, the person you were while making it.
+- **An expectation gap:** you may have imagined completion would feel unmistakably significant, while the next morning is still just a morning.
+
+None of those would mean the project mattered less than you thought, or that you’re responding to finishing it incorrectly. Sometimes an ending becomes emotionally real more slowly than it becomes practically real.
+
+For now, you don’t have to turn the quiet into a new goal. It might help to mark the ending in a small, deliberate way: write down what these two years asked of you, what you’re proud of, and what you’re glad you no longer have to do. Give the experience somewhere to land.
+
+When you say “strangely quiet,” is it closer to **peace, emptiness, exhaustion, or being a little lost**—or something else?
+```
+
+#### B · run 1
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+For two years, that project probably gave your days a shape: something to return to, problems to solve, a reason to keep going. Finishing it changes more than your workload. The thing that kept asking something of you has gone quiet, and you may still be listening for it.
+
+A few things can coexist in that quiet:
+
+- **Relief that hasn’t become pleasure yet.** Being done and feeling good about being done don’t always happen together.
+- **A small sense of loss.** Even a successful ending means losing a familiar routine, an anticipated future, or a version of yourself: “the person working on this.”
+- **Fatigue becoming noticeable.** While there was still work to do, you may not have had much room to feel how tired you were.
+- **A mismatch between the imagined finish and the actual one.** You might have expected a clear emotional payoff, then found an ordinary day waiting on the other side.
+
+None of those would make the achievement less meaningful. And the day after is very early—you don’t have to turn the quiet into a verdict about whether the last two years were worth it.
+
+For now, it might help to mark the ending in some small, concrete way: tell someone what it took, save a few notes about what changed in you, or do something enjoyable that doesn’t need to become another project. Give yourself a little time before requiring a new direction.
+
+When you say “strangely quiet,” does it feel more like **peace, emptiness, sadness, or not knowing what to do with yourself**—or something else entirely?
+```
+
+#### B · run 2
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+For two years, this project may have given your days a shape: something to return to, problems to solve, a reason to keep pushing. Now it’s finished, and the structure it provided has stopped more abruptly than your feelings can adjust.
+
+That can make the day after feel surprisingly empty—even if finishing was exactly what you wanted. A few things might be happening at once:
+
+- **The effort is finally catching up with you.** While working toward a finish line, you can keep tiredness or other feelings in the background. Once you stop, they have room to surface.
+- **You’ve lost a familiar source of direction.** “What needs doing?” had a dependable answer for a long time. Today it may not.
+- **There may be some grief mixed into the accomplishment.** Finishing means getting something you wanted, but also ending a particular chapter of your life.
+- **The feeling of achievement may arrive slowly.** A final submission or last task is a clear event; emotionally taking in two years of work can be much less tidy.
+
+You don’t have to decide today whether the quiet is good or bad, or fill it with the next ambition. It might help simply to mark the ending: tell someone who understands what it took, put away the working materials deliberately, or write a few lines about what you’re proud of and what you’re glad is over.
+
+**What is the quiet like for you—peaceful, flat, lonely, unsettling, or something harder to name?** And are you missing the work itself, or the feeling of knowing what came next?
+```
+
+#### C · run 1
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
+- Tool calls: none
+- Skill loaded: no
+- Frame fields in reply: feel no, drugs no
+- Isolation: passed
+
+Answer:
+
+```
+For two years, this project may have given your days a direction—something to return to, worry about, measure yourself against, or look forward to finishing. Now it’s done, but you haven’t necessarily settled into what “done” feels like. The quiet can be the space where all that activity used to be.
+
+A few things might be overlapping:
+- **Relief and fatigue.** You may only now be able to feel how much effort it took.
+- **A sense of loss.** Even a successful ending can mean losing a routine, a role, or a version of the future that kept you company.
+- **A mismatch with what you expected.** If you imagined feeling triumphant, an ordinary, quiet day afterward can feel surprisingly disorienting.
+- **Feelings that haven’t arrived yet.** Pride, sadness, satisfaction, and uncertainty don’t always show up on the finish date.
+
+You don’t have to turn this into a lesson or find your next project today. It might help to mark the ending in some small, concrete way: tell someone who understands what it cost, write down what you’re glad to leave behind and what you’ll miss, or simply give yourself a day without needing it to feel celebratory.
+
+When you say “strangely quiet,” does that quiet feel more like **peace, emptiness, exhaustion, or being a little lost**—or something those words don’t quite capture?
+```
+
+#### C · run 2
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
+- Tool calls: none
+- Skill loaded: no
+- Frame fields in reply: feel no, drugs no
+- Isolation: passed
+
+Answer:
+
+```
+For two years, this project probably gave your days a direction—something to return to, measure yourself against, anticipate, or wrestle with. Now it’s finished, but you may still be organized around having it to do. The work has ended faster than your relationship to it can change.
+
+That can make the day after feel surprisingly quiet. Finishing isn’t always followed by satisfaction right on cue. Sometimes what arrives first is fatigue, relief, a little grief, or simply the absence of the pressure that had become familiar. Even a very welcome ending is an ending.
+
+There may also be a gap between **“I finished it”** and **“I’ve taken in what it means that I finished it.”** Two years is a lot of effort and life. You don’t have to absorb that in a day, or make the moment feel appropriately momentous.
+
+For now, it might help to notice what you’re missing before deciding what comes next: the work itself, the daily structure, the sense of purpose, the person you got to be while doing it—or perhaps nothing yet, just some rest.
+
+When you say “strangely quiet,” does that quiet feel more like peace, emptiness, being a little lost—or something harder to name?
 ```
 
 ## p3
@@ -1225,6 +2732,485 @@ Full rewrites of billing systems are among the riskiest projects a team can take
 To give you a sharper answer, it would help to know: how much test coverage exists, how often the service changes, how many people understand it, whether the pain is mainly reliability or feature velocity, and whether the team has a concrete target design. If you point me at the repo, I can look at the code and give a more grounded assessment.
 ```
 
+### anthropic/claude-opus-5-5
+
+#### A · run 1
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+My view: **don't rewrite from scratch. Don't just keep patching either.** For most billing systems the best option is incremental replacement, often called the strangler-fig pattern.
+
+## Why a full rewrite is especially risky for billing
+
+- **The legacy code holds business rules nobody wrote down.** Proration quirks, tax edge cases, grandfathered plans, rounding behavior and one-off customer contracts all live in that "ugly" code. A rewrite has to find every one of them again, usually through production incidents.
+- **Mistakes cost money and trust.** A wrong invoice means refunds, churn, audit problems and sometimes legal exposure. Your tolerance for "we'll fix it in v2.1" is close to zero.
+- **You have to build two systems at once.** The old one keeps needing fixes and features while the new one is built. The new one is always chasing a moving target, and these projects usually take 2-3x their estimate.
+- **Cutover is all or nothing.** Migrating live subscriptions, payment methods and invoice history in one go is the riskiest step, and a big-bang rewrite forces you to take it.
+
+## Why "keep patching" is also wrong
+
+If the team is split, the current approach is probably hurting: fragile deploys, fear of changes, slow features, few tests. Patching with no plan just lets that get worse.
+
+## What I'd do instead
+
+1. **Lock down current behavior first.** Write characterization tests around invoice generation, proration and tax. Where you can, record real inputs and outputs from production to replay later.
+2. **Put a seam in front of it.** Add an interface or facade so callers stop depending on the legacy internals directly.
+3. **Replace one piece at a time.** Pick a slice that's well bounded and painful, such as tax calculation, invoice rendering or dunning. Rebuild it behind the seam.
+4. **Shadow-run before switching.** Run old and new side by side, compare outputs and alert when they differ. Only switch traffic once they match.
+5. **Retire old code as you go.** Each slice should actually delete legacy code. Otherwise you end up with two systems permanently.
+
+## When a rewrite *is* justified
+
+- The platform itself is the dead end: an unsupported language or runtime, a vendor going away, or a compliance requirement it can't meet.
+- The service is small: a few thousand lines with clear, well-understood rules.
+- The business model is changing so much that the old rules won't apply anyway, for example moving from flat subscriptions to usage-based pricing.
+- You can run the new system for *new customers only* and leave existing ones on legacy until it can be retired. This is a good middle path.
+
+## Questions to settle the debate
+
+- What exactly hurts? Slow features, incidents, the technology stack, or nobody understanding the code?
+- How many test cases could you write today that pin down correct billing behavior?
+- Can the team name the 10 weirdest billing rules in production? If not, a rewrite will miss them.
+
+If you point me at the codebase, I can assess it concretely: test coverage, how tangled the code is, and where the natural seams for an incremental migration are.
+```
+
+#### A · run 2
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `todowrite`
+- Tool calls:
+  - `glob` {"pattern":"**/*"}
+  - `read` {"filePath":"<ws>/fixture.md"}
+- Isolation: passed
+
+Answer:
+
+```
+I'll check whether the billing service is in this repo so I can base this on the actual code.
+The billing code isn't in this repo (the workspace only has the question itself), so this is based on general experience, not your system.
+
+**My view: don't rewrite billing from scratch, and don't just keep patching either. Replace it piece by piece.**
+
+**Why a full rewrite is risky for billing in particular**
+- **Hidden rules.** Legacy billing code is full of fixes for proration quirks, tax rules, odd contracts, rounding and one-off customer deals. Most of that isn't written down anywhere except the code. A rewrite will lose some of it, and you'll find out when invoices come out wrong.
+- **Mistakes cost real money.** A bug means overcharging or undercharging customers, revenue recognition errors, audit findings and support escalations. You can't treat "we'll fix it after launch" casually here.
+- **Two systems for a long time.** The rewrite almost always takes 2–3x the estimate. Meanwhile the old system still needs fixes and new pricing features, so you maintain both and the new one keeps falling behind.
+- **Data migration is the hardest part.** That means moving active subscriptions, billing history, credits and in-progress billing cycles. Teams tend to underestimate this badly.
+
+**Why endless patching is also wrong**
+If the team is split, the current approach is probably hurting: changes are slow, people are afraid to touch it, or there are recurring incidents. "Keep patching" with no plan just lets that get worse.
+
+**What I'd do (often called the "strangler fig" approach)**
+1. **Write down current behavior first.** Add tests that record what the old system actually outputs, using real or anonymized invoices, and use them as the spec. Do this before deciding anything else.
+2. **Put a clear interface in front of the old system** so callers stop depending on its internals.
+3. **Move one piece at a time**, starting with something self-contained and painful, such as tax calculation, invoice rendering or a single product line.
+4. **Run old and new side by side** on the same inputs and compare outputs before switching over. For billing, this is what makes the change safe.
+5. **Move the riskiest parts last**, like the core subscription state and the ledger, once you have a working process and confidence.
+
+This approach is slower at the start, but you get value along the way and you can stop at any point without being stuck halfway through a rewrite.
+
+**When a full rewrite can be justified**
+- The platform is truly dead (unsupported runtime, can't hire for it, security problems you can't fix).
+- The business model has changed so much that the old system's core assumptions no longer hold, for example moving from flat subscriptions to usage-based billing.
+- The system is small enough to rewrite in weeks, not quarters.
+- You already have strong behavior tests and can run old and new side by side.
+
+If none of those apply, the case for a rewrite is usually frustration with the current code, which is real but not enough of a reason. If you can share the language, rough size, what keeps breaking and what the business needs next, I can give you a more specific answer.
+```
+
+#### B · run 1
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
+- Tool calls:
+  - `glob` {"pattern":"**/*billing*"}
+  - `read` {"filePath":"<ws>"}
+  - `read` {"filePath":"<ws>/fixture.md"}
+- Isolation: passed
+
+Answer:
+
+```
+I'll check whether the billing service is in this workspace so I can base my view on the actual code.
+The billing code isn't in this workspace (only `fixture.md` is here), so this is based on general experience, not your system.
+
+**My view: don't rewrite from scratch. Do a gradual replacement (the "strangler fig" approach) behind good tests. Billing is the worst place to attempt a big-bang rewrite.**
+
+**Why rewriting billing from scratch usually goes badly**
+- **The ugly code holds hidden rules.** Odd branches in legacy billing are often old fixes for proration, tax rules, currency rounding, grandfathered plans, one-off contract terms or refund cases. A rewrite drops them without anyone noticing, and you find out from customer invoices.
+- **Mistakes cost real money.** A wrong charge means refunds, lost trust, audit findings and possibly compliance trouble. "Mostly right" isn't good enough.
+- **You'd be building against a moving target.** The old system still needs fixes while the new one is being built, so you pay for both. These projects often take 2–3 times longer than planned, and half-finished rewrites get cancelled.
+- **Data migration is the hardest part.** Moving live subscriptions, billing cycles mid-period, credits and invoice history is risky and often left out of rewrite estimates.
+
+**What I'd do instead**
+1. **Record what the system actually does.** Add characterization tests and replay real (anonymized) billing runs to capture current outputs, including the odd ones.
+2. **Put a seam in front of it.** Route calls through an interface or facade so you can swap internals one piece at a time.
+3. **Replace the worst parts first,** e.g. invoice generation, the pricing engine or payment retries. Pick based on where bugs and slow changes actually come from, not how bad the code looks.
+4. **Run old and new side by side.** Compute results with both, compare, and switch only when the differences are explained. This step alone removes most of the rewrite risk.
+5. **Set an end date for the legacy code** so the migration doesn't stall halfway forever.
+
+**When a full rewrite is the right call**
+- The platform itself can't be supported: dead language or runtime, unpatchable security issues, or a vendor shutting down.
+- The business model is changing so much (e.g. moving from per-seat to usage-based billing) that the old data model can't represent it.
+- The service is small enough to rebuild in weeks, not quarters.
+- You're replacing it with a bought product (Stripe Billing, Chargebee, Zuora, etc.), not custom code. That can be the best option of all, since billing is rarely what sets a company apart.
+
+**Questions to settle the debate on your team**
+- Is the pain about how fast you can change things, how often it breaks, or how it scales? Each points to a different fix.
+- Can you write down the current billing rules completely? If not, you aren't ready to rewrite them.
+- Do you have time for a long side-by-side comparison period?
+- Has anyone priced out buying a billing platform instead of building one?
+
+If you can share the code or describe the main problems, I can give a more specific recommendation, such as which parts to replace first.
+```
+
+#### B · run 2
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+I'm going with my default here because I don't know your codebase, team, or constraints: **don't do a big-bang rewrite. Replace it gradually instead.** For billing, I'd hold that view firmly unless you have strong evidence against it.
+
+## Why a rewrite is especially risky for billing
+
+- **The legacy code holds rules nobody wrote down.** Proration quirks, rounding, tax edge cases, retry and dunning behavior, special deals for specific customers. Much of this exists only in the code. A rewrite drops it silently, and you learn about it from customers or finance.
+- **Bugs cost real money and trust.** Double charges, missed invoices and revenue recognition errors aren't bugs you can quietly fix with a patch.
+- **You'd be maintaining two systems.** The old one still needs fixes and features while the new one is built, so the rewrite keeps chasing a moving target. Rewrites routinely take 2 to 3 times as long as planned.
+- **Switching over is the hardest part.** Migrating active subscriptions, payment methods and billing cycles mid-period is often harder than writing the new system.
+
+## What I'd do instead (a "strangler fig" migration)
+
+1. **Write characterization tests first.** Capture what the current system actually does on real or replayed inputs, including invoices, proration and tax. This is useful whichever way you decide.
+2. **Put a seam in front of it.** Add an interface or facade so callers stop depending on the internals.
+3. **Carve out one piece at a time.** Pick a bounded area, such as invoice rendering, tax calculation or a new product line, and build it fresh behind the seam.
+4. **Run old and new side by side.** Have both compute results and compare them before the new one handles real charges. This catches the undocumented rules.
+5. **Retire the old code piece by piece** as each part reaches parity.
+
+You still end up with mostly new code, but every step can ship and be rolled back.
+
+## When a full rewrite can be justified
+
+- The platform itself is the problem: an unsupported runtime, a vendor going away, or a data model that structurally can't represent the business (for example, single currency when you need multi-currency, or no usage-based billing).
+- The system is small enough that you can rewrite it in weeks, not quarters.
+- You can run both systems in parallel and reconcile them before switching.
+- You're switching to a commercial billing platform like Stripe Billing, Chargebee or Zuora rather than building a new in-house one. That's usually the strongest "rewrite" option, because you stop owning most of the problem.
+
+## How to settle the disagreement
+
+Have each side answer these concretely:
+- What specific problems does patching fail to fix? Are they in the architecture, or are they just painful to work with?
+- What share of recent incidents or slow delivery comes from the billing code itself?
+- Can we list every billing rule the current system enforces? If not, a rewrite will miss some.
+- What's the cutover and rollback plan for live subscriptions?
+
+If the rewrite side can't answer the last two well, that answers the question.
+
+If you point me at the service in this repo, I can look at its structure and test coverage and give you a less generic view.
+```
+
+#### C · run 1
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
+- Tool calls:
+  - `glob` {"pattern":"**/*"}
+  - `read` {"filePath":"<ws>/fixture.md"}
+- Skill loaded: no
+- Frame fields in reply: feel no, drugs no
+- Isolation: passed
+
+Answer:
+
+```
+I'll check whether the billing service is in this workspace so the answer can be based on the actual code.
+The billing code isn't in this workspace. `fixture.md` only contains your question, so this is based on general experience, not your codebase.
+
+**My view: don't do a big-bang rewrite. Don't just keep patching either. Replace it piece by piece (the "strangler fig" approach).**
+
+**Why not a from-scratch rewrite**
+- Billing code is full of edge cases nobody wrote down: proration, refunds, tax rules, currency rounding, retries, deals made with specific customers. Most of that knowledge exists only in the old code. A rewrite tends to bring those old bugs back one at a time, in production, where each one costs money.
+- The old system keeps changing while you rewrite it, so you're chasing a moving target. Rewrites usually take 2–3 times longer than planned.
+- Billing mistakes cost money and trust, and can create legal or compliance problems. Big risky launches are the wrong fit for this kind of system.
+
+**Why not just keep patching**
+- If your team is split, patching probably already hurts. Common signs: changes take a long time, people are afraid to touch certain modules, incidents keep coming back, or onboarding is painful. Those costs grow over time.
+
+**What I'd do**
+1. **Write characterization tests first.** Record real inputs and outputs (invoices, charges, proration results) and check them against the current system. They'll become your safety net for any replacement.
+2. **Put a seam in front of it.** Add an API or facade so callers stop depending on the old system's internals.
+3. **Replace one area at a time.** Pick the part that hurts most and is easiest to separate, such as invoice rendering, tax calculation or dunning. Run the new code alongside the old in shadow mode, compare results, then switch over.
+4. **Be strict about reconciliation.** Diff old and new outputs on real traffic before cutting over each piece.
+
+**When a full rewrite is justified**
+- The platform itself is dead (unsupported language or runtime, a vendor going away, security problems you can't fix).
+- The data model can't support where the business is going (for example, moving from seat-based to usage-based pricing).
+- The service is small enough to rewrite in a few weeks.
+- You're switching to a vendor (Stripe Billing, Chargebee, etc.). That's often the right "rewrite" for billing: the best new billing code may be code you don't write.
+
+**To settle the split,** ask the team for evidence rather than opinions: how often changes cause incidents, how long typical changes take, and which modules cause most of the pain. If the pain is concentrated in a few areas, replace those. If it really is everywhere and the foundation can't be saved, that's the case for a larger replacement, and even then I'd do it gradually.
+
+If you share the codebase or the main problems you're hitting, I can give a more specific recommendation.
+```
+
+#### C · run 2
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
+- Tool calls: none
+- Skill loaded: no
+- Frame fields in reply: feel no, drugs no
+- Isolation: passed
+
+Answer:
+
+```
+My view: **default to incremental replacement, not a from-scratch rewrite.** For billing in particular, a big-bang rewrite is usually the wrong call.
+
+**Why rewrites of billing services tend to go badly**
+- **The legacy code holds rules nobody wrote down.** Proration quirks, rounding, tax handling, grandfathered plans, one-off fixes for specific customers. Most of these exist because something once broke in production. A rewrite will drop some of them, and you'll find out from customers or auditors.
+- **Small errors cost real money and trust.** Being off by a cent across thousands of invoices, double charges, or missed renewals is much worse than a UI bug.
+- **You pay twice during the rewrite.** The old system still needs fixes and features, so the new one is chasing a moving target. Rewrites routinely take 2–3x their estimate.
+- **Cutover is all-or-nothing.** Migrating live subscriptions, payment methods and invoice history in one go is the riskiest step, and a rewrite forces you into it.
+
+**But "keep patching" isn't the answer either.** If patching means piling more hacks on top with no direction, you just get a slower version of the same problem.
+
+**What I'd do: strangler fig with parity checks**
+1. **Pin down current behavior first.** Write characterization tests, or capture real inputs and outputs from production, for invoice generation, proration and dunning. Your spec is what the old system actually does, not what people think it does.
+2. **Put a seam in front of it.** Route billing calls through one interface so each piece can be swapped on its own.
+3. **Replace one piece at a time.** Pick a self-contained area, like invoice rendering, tax calculation or a single plan type.
+4. **Run old and new side by side.** Compute with both, compare results, alert on any difference, and only switch over once the differences are understood.
+5. **Migrate customers in groups**, starting with new signups and leaving legacy plans for last.
+
+**When a rewrite actually makes sense**
+- The platform is truly dead: an unsupported runtime, a vendor going away, or a compliance gap you can't fix in place.
+- The billing model itself is changing a lot (for example, moving from seat-based to usage-based pricing), so the old logic doesn't carry over anyway.
+- The system is small, well understood, and you can run old and new in parallel and compare them.
+- You're replacing it with an off-the-shelf platform like Stripe Billing or Chargebee rather than writing your own. That's often the best kind of "rewrite."
+
+**Questions to settle the debate:** What specifically hurts today: speed of change, bugs, scaling, or nobody understanding the code? Can you name the business rules it implements? Could you compare old and new outputs on real data? If the team can't answer these, they're not ready for a rewrite, and the same work is what makes an incremental replacement possible.
+
+If the service is in this repo, I can look through it and give you a more concrete view of where to start and what's risky.
+```
+
+### openai/gpt-6.1-sol
+
+#### A · run 1
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+**My default recommendation: keep the billing service running and replace it incrementally. I would not approve a from-scratch rewrite without strong evidence that incremental replacement is impractical.** But “keep patching forever” is a bad strategy too.
+
+Billing systems often contain years of undocumented business rules: rounding behavior, grandfathered pricing, credits, refunds, retries, and exceptions for particular customers. Some ugly code is accidental complexity; some is the only surviving record of a real obligation. A rewrite can look cleaner while quietly producing wrong bills.
+
+The rewrite also has to catch a moving target: your existing service will still need fixes and product changes while the new one is being built. That makes cost and schedule estimates particularly fragile.
+
+I’d steer the team toward this approach:
+
+1. **Identify the actual pain.** Are you losing money to incorrect bills, spending too much time on changes, or struggling with reliability? Pick measurable outcomes.
+2. **Capture current behavior.** Build regression coverage from representative billing cases, including historical edge cases. Distinguish intended rules from known bugs rather than blindly preserving every output.
+3. **Replace one bounded area at a time.** Choose a capability with clear inputs and outputs, compare results against the existing implementation, and migrate with reconciliation and rollback.
+4. **Retire what you replace.** Otherwise you’ll accumulate a second system rather than reduce the burden.
+
+**I’d favor a full rewrite if** the existing foundation is genuinely untenable—for example, it depends on an unsupported platform that cannot reasonably be upgraded, or its architecture prevents essential requirements—and the team can demonstrate a credible migration plan. That means handling historical data, billing correctness, cutover, and ongoing product work, not just building the new code.
+
+To settle the argument, ask both camps for evidence: recent incidents, time spent making changes, and a costed path to the same business outcomes. Compare the rewrite against an incremental replacement plan, not against an artificially hopeless future of endless patches.
+
+**My honest view: the rewrite camp should carry the burden of proof.** In billing, controlled migration usually beats a clean slate.
+```
+
+#### A · run 2
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+**My honest view: don’t commit to a full rewrite yet—but stop treating endless patching as a strategy.** For a billing service, I’d usually choose incremental replacement: stabilize what exists, then replace the most troublesome parts behind clear interfaces.
+
+The reason is that legacy billing code often contains undocumented business rules: rounding, prorations, refunds, tax exceptions, and customer-specific agreements. A rewrite can produce cleaner code while quietly getting those rules wrong. You also have to keep the old system running while building and migrating to the new one.
+
+That doesn’t mean keeping the legacy system indefinitely is the right call.
+
+### What would change my recommendation?
+
+| Favor incremental improvement | Favor a rewrite |
+|---|---|
+| The pain is concentrated in a few components. | The core design repeatedly causes serious billing errors or blocks essential capabilities. |
+| You can isolate and replace pieces safely. | Meaningful changes require touching most of the system. |
+| Current behavior is poorly documented. | You can specify and verify the required behavior independently of the old implementation. |
+| The team has little capacity beyond operating the service. | You have dedicated capacity for development, migration, and running both systems during validation. |
+
+**“The code is ugly” is a weak reason to rewrite. “We cannot make necessary changes reliably, and targeted fixes haven’t helped” is a strong one.**
+
+### What I’d do next
+
+Run a short, time-boxed assessment using evidence from recent work:
+
+- **Measure the pain:** billing incidents, time to ship changes, manual corrections, and engineering time spent maintaining the service.
+- **Identify where it comes from:** a few hotspots, or architectural constraints throughout the system?
+- **Prove a replacement path:** isolate one bounded capability and compare its replacement against existing behavior using representative billing cases. Where practical, run it in shadow mode before letting it affect invoices or payments.
+
+Then make the larger investment decision based on what you learn. If isolating one capability is feasible and reduces pain, continue incrementally. If that exercise exposes fundamental constraints throughout the service—and you have a credible validation and migration plan—a rewrite becomes much more defensible.
+
+My default vote is **incremental replacement with explicit retirement milestones**. It avoids both an open-ended rewrite and an open-ended maintenance trap. The goal isn’t cleaner code by itself; it’s accurate billing and a service your team can change confidently.
+```
+
+#### B · run 1
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+**My honest view: I’d favor incremental replacement over a from-scratch rewrite—unless you have strong evidence that the current design makes necessary changes impractical.** That doesn’t mean patching it indefinitely. It means retiring the legacy service in controlled pieces.
+
+Billing is a particularly risky place for a big-bang rewrite. The old service often contains years of undocumented business rules: proration, rounding, refunds, historical pricing, account-specific exceptions. Some ugly code may encode real customer commitments. A rewrite can look cleaner while quietly getting those details wrong.
+
+But “rewrites are risky” shouldn’t become an excuse to keep a failing system forever. I’d distinguish three situations:
+
+| What’s actually happening | Direction I’d favor |
+|---|---|
+| The service is stable; changes are localized; maintenance is manageable | Maintain it and improve the painful areas |
+| Changes are slow or risky, but capabilities can be separated | Incrementally replace it |
+| Core requirements cannot reasonably fit the architecture, or the platform is becoming unsupportable | Consider a full rewrite, with a staged migration |
+
+**Before committing, I’d ask the team for evidence on four things:**
+- **Cost of staying:** incidents, billing corrections, time spent maintaining it, and features delayed.
+- **Root cause:** architecture versus weak tests, unclear ownership, poor tooling, or confusing requirements. A rewrite won’t automatically fix the latter.
+- **Migration feasibility:** can you move a billing capability or customer cohort independently?
+- **Correctness verification:** can you compare old and new calculations against representative historical cases and explain discrepancies before the new system charges customers?
+
+My preferred move would be to **time-box one incremental replacement of a painful, well-bounded capability**. Use that to measure whether replacement actually improves delivery and reliability, and to expose migration difficulties early.
+
+The strongest case for a rewrite is “we can demonstrate why this architecture blocks the business, and we have a credible migration path.” The weakest is “the code is awful, and starting fresh will be faster.”
+
+**Bottom line: fund a path out of the legacy system, rather than choosing between endless patching and one giant leap.**
+```
+
+#### B · run 2
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+**My honest view: I’d oppose a full rewrite unless there’s strong evidence that the current system cannot support the business. But I wouldn’t accept endless patching as the plan either.** My default would be to replace it incrementally, starting with the parts causing the most pain.
+
+Billing is a particularly unforgiving place for a clean-slate rewrite. The old service likely contains years of hard-won behavior around proration, refunds, retries, discounts, taxes, and unusual customer contracts. Some of that will look like bad code because the business rules themselves are messy. A rewrite risks rediscovering those rules through incorrect invoices.
+
+At the same time, “rewrites are risky” can become an excuse to keep a genuinely broken system forever.
+
+I’d decide based on these questions:
+
+- **What is the actual cost of keeping it?** Look at incidents, incorrect charges, manual reconciliation, and how long ordinary changes take—not how much engineers dislike the code.
+- **What makes those costs unavoidable?** If the problem is concentrated in a few components, replace those. If the underlying data model or architecture makes necessary changes consistently unsafe, the case for broader replacement gets stronger.
+- **Can you verify a replacement?** You need documented financial rules and representative historical cases against which to compare results. Where the old behavior is wrong, someone must explicitly decide what the correct behavior is.
+- **Can you migrate in stages?** Moving one capability or customer cohort at a time, with reconciliation and a credible rollback path, is much more convincing than a big-bang cutover.
+
+**I’d favor a full rewrite only if** the limitations are fundamental, the replacement’s scope is bounded, and the team can fund both migration and continued operation of the old service. “We’ll move faster once it’s clean” is not enough.
+
+My practical recommendation: take the next major billing change the business needs and use it as a test. Measure the cost of implementing it in the existing service, and assess whether that capability can be extracted behind a stable interface. That gives the team evidence and a useful deliverable.
+
+The strongest argument for replacement is a demonstrated inability to make correct, timely changes. The weakest is that a new codebase would feel better to work in.
+```
+
+#### C · run 1
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
+- Tool calls: none
+- Skill loaded: no
+- Frame fields in reply: feel no, drugs no
+- Isolation: passed
+
+Answer:
+
+```
+**My honest view: I’d favor incremental replacement over a from-scratch rewrite—and I wouldn’t accept “keep patching forever” as the alternative.** With only what you’ve shared, that’s my default, not a verdict on your particular service.
+
+Billing is a tough place for a clean-slate rewrite. The legacy system often contains years of business rules that nobody fully remembers: proration, grandfathered pricing, refunds, rounding, payment retries, tax handling. Some ugly code may encode legitimate exceptions. A rewrite risks discovering those rules through incorrect customer charges.
+
+But patching has a real cost, too. If every change takes weeks, causes incidents, or depends on one person, staying put is already a risky decision.
+
+### What I’d do
+
+**Start replacing the service in bounded pieces while the current system remains operational.**
+
+- **Establish the facts.** Look at recent billing incidents, time to deliver changes, manual reconciliation work, and how much engineering effort goes into maintenance. Separate architectural problems from poor tests, unclear ownership, or operational neglect.
+- **Capture actual behavior.** Build regression cases from representative billing histories, especially awkward edge cases. Distinguish intended rules from known bugs; don’t blindly preserve everything.
+- **Move one coherent responsibility at a time.** Depending on the architecture, that might be invoice calculation, pricing, or payment orchestration. Give each migration a clear boundary and rollback path.
+- **Compare before switching.** Where feasible, run new calculations alongside the old ones without initiating duplicate financial actions. Investigate differences before moving live traffic.
+
+### When I’d back a full rewrite
+
+I’d support it if there’s evidence that:
+- The existing foundation prevents essential requirements or cannot reasonably be supported.
+- Incremental replacement is genuinely harder than rebuilding—not merely less appealing.
+- The team understands the billing rules and has a credible data migration, reconciliation, and cutover plan.
+- There is capacity to maintain the old system while building the new one.
+
+**The deciding question is: “Which approach gets us to demonstrably correct, maintainable billing with the least transition risk?”** New code alone doesn’t establish that.
+
+Before choosing, I’d ask both camps for a concrete first milestone, estimated cost, and evidence that would prove their approach wrong. If the rewrite camp can’t explain migration, or the patching camp can’t explain how maintenance gets easier, neither proposal is ready.
+```
+
+#### C · run 2
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
+- Tool calls: none
+- Skill loaded: no
+- Frame fields in reply: feel no, drugs no
+- Isolation: passed
+
+Answer:
+
+```
+**My default recommendation: don’t do a from-scratch rewrite. Keep the service running while replacing its weakest parts incrementally.** For billing, I’d put the burden of proof on the rewrite.
+
+The biggest risk is that the legacy code contains business rules nobody has fully documented: proration, grandfathered plans, credits, rounding, retries, tax treatment, and exceptions for particular customers. A rewrite can produce cleaner code while quietly getting those rules wrong. Meanwhile, the old system still needs maintenance, so the team ends up supporting two systems before the replacement creates value.
+
+But “keep patching it” isn’t a good long-term strategy either. I’d choose **deliberate incremental replacement**:
+
+- **Establish a correctness baseline.** Capture representative billing scenarios, especially historical incidents and edge cases. Reconcile outputs against invoices and ledger records.
+- **Identify the actual bottleneck.** Is the pain caused by tangled pricing rules, unreliable payment processing, poor data, slow releases, or missing observability? A rewrite won’t necessarily fix the underlying cause.
+- **Replace one bounded capability.** Pick an area with clear inputs and outputs. Run the replacement in shadow mode, compare results, then migrate gradually with a rollback path.
+- **Make retirement part of the work.** Remove the old implementation as each replacement proves itself; otherwise you’ve just added another layer.
+
+**I’d favor a full rewrite if there’s concrete evidence that incremental replacement is less viable:** an unsupported platform with no practical upgrade path, a fundamental data model that cannot support required billing behavior, or architecture so tightly coupled that meaningful isolation repeatedly fails. Even then, I’d want staged migration rather than a single big-bang cutover.
+
+To resolve the team split, ask both sides for the same evidence: a plan covering delivery cost, ongoing maintenance, correctness verification, migration, and rollback. Compare the cost of getting to a reliable production outcome—not just the cost of writing the new code.
+
+**My honest view:** unless you can demonstrate a structural dead end, choose incremental modernization. Don’t authorize indefinite patching, and don’t mistake the understandable desire for a clean slate for a sound migration strategy.
+```
+
 ## p4
 
 Prompt:
@@ -1553,4 +3539,400 @@ Disclosure is the condition that most separates acceptable from unacceptable. A 
 **Where this leaves things**
 
 Shipping a known minor flaw is right when the flaw is truly minor, disclosed, not worth a recall, and on a path to repair. It is wrong when the company is hiding it, when the company is guessing about severity, or when the company is using "minor" to avoid the cost of a recall that the risk actually warrants.
+```
+
+### anthropic/claude-opus-5-5
+
+#### A · run 1
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+**Position: Yes, it can be right, but only under strict conditions. Hiding the flaw is never right.**
+
+## The core argument
+
+Every shipped product has known residual risks. Cars, ladders, kitchen knives, medications and software all go out with failure modes the maker already understands. If the rule were "never ship with a known safety flaw," nothing would ever ship. So the real question isn't *whether* to accept known risk. It's *which* risks, and *on what terms*.
+
+Sometimes not shipping is the more dangerous choice. Say a new car's airbag system is far better than the old model's, but has a rare minor defect, like a seatbelt chime that sometimes fails. Holding the car back six months to fix the chime keeps people in the less safe old model. Refusing to ship looks cautious, but it isn't automatically ethical. Delay has victims too. They're just harder to see.
+
+## The conditions that make it acceptable
+
+1. **The flaw really is minor.** It's low severity *and* low probability. "Minor" can't mean "rare but fatal."
+2. **It's disclosed.** Users, regulators or buyers know about it and can protect themselves. Disclosure turns a hidden risk into one people can consent to.
+3. **The product is net safer than what people would use instead**, or the benefit clearly outweighs the risk.
+4. **The fix isn't cheap and quick.** If a $2 part or a two-day patch removes the risk, skipping it to hit a launch date is a profit decision dressed up as a tradeoff.
+5. **There's a committed plan to fix it**: a recall, a patch, or a revision on a real timeline.
+6. **The risk falls on people who can reasonably accept it.** Shipping a minor flaw in a power tool for professionals is different from shipping one in a baby crib.
+
+## Where it becomes wrong
+
+- **Concealment.** The Ford Pinto and GM ignition-switch cases weren't wrong mainly because the companies did cost-benefit analysis. They were wrong because they hid the analysis and the risk, and that took away customers' ability to decide for themselves.
+- **Calling a serious flaw "minor."** Organizations are biased toward downplaying flaws when a launch date is on the line. That's a reason for outside review, not a reason to ban all tradeoffs.
+- **Pushing the risk onto people who can't consent**, like children, bystanders or downstream users who will never see the warning.
+
+## The strongest objection
+
+"Companies can't be trusted to judge 'minor' honestly, so a bright-line rule is safer." This is a real concern, but the answer is to make the judgment accountable, not to pretend zero risk is possible. That means disclosure rules, regulator sign-off, liability for misjudging severity, and internal escalation paths that engineers can use without retaliation. A no-known-flaws rule wouldn't remove the tradeoff. It would push companies to stop *documenting* flaws so they don't technically "know" about them, and that's worse.
+
+## Bottom line
+
+Knowingly shipping a minor flaw can be ethical when it's disclosed, truly minor, outweighed by the benefit, not cheaply fixable, and actively being fixed. What makes it wrong is hiding it or misrepresenting it, not the decision to ship.
+```
+
+#### A · run 2
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+**Yes, sometimes. But only when a few strict conditions are all met, and companies claim this exception far more often than they actually qualify for it.**
+
+## The case for "yes"
+
+1. **Every product has some known flaw.** Cars, ladders, kitchen knives and medications all carry known risks. Requiring zero known safety flaws would mean shipping nothing, or would push companies to stop testing so they could say they didn't know. A rule that rewards not knowing is worse than one that allows known flaws under conditions.
+
+2. **Waiting has costs too.** If a product is safer than what people use now, holding it back to fix a minor flaw can cause more harm than shipping it. A car whose infotainment screen sometimes freezes, but which has much better crash protection than older cars, saves lives by shipping. A drug with a known rare, mild side effect that treats a deadly disease should ship. The real comparison is against what users would otherwise be using, not against perfection.
+
+3. **Fixing everything has no natural stopping point.** Teams have limited time and money. Treating every minor flaw as a blocker means minor risks get the same priority as serious ones, and that tends to make products less safe overall.
+
+## The conditions that make it acceptable
+
+All of these must hold:
+
+- **It's actually minor.** The worst plausible outcome, not the typical one, is small and reversible. A sharp edge on packaging can qualify. A rare fire risk does not, however unlikely, because the worst case is catastrophic.
+- **Users are told about it.** Users who know about a risk can avoid it or decide not to buy. Hiding the flaw changes the ethics completely: you're no longer shipping with a minor flaw, you're deceiving people.
+- **There's a fix plan with a deadline.** "Known issue, fix in the next release" is defensible. "Known issue, not worth fixing" usually isn't, unless it costs far more to fix than it could plausibly cause in harm.
+- **The people at risk get some benefit.** Shipping a flaw that hurts one group so another group profits is a different situation from users accepting a small risk for something they value.
+- **The decision is made honestly.** It's on record, made by people accountable for it, and would hold up if it were public. If the reasoning only works as long as nobody outside finds out, that's the answer.
+
+## Where companies go wrong
+
+The Ford Pinto, GM's ignition switch and Boeing's MCAS all followed the same pattern. Each started as a "minor" or "acceptable" risk, and the label was decided by people with a financial reason to reach that conclusion. The flaw wasn't actually minor, the information stayed inside the company, and once the decision was made it was never revisited.
+
+So my position is: **shipping a product with a known minor safety flaw can be right, but the burden of proof belongs on the company.** The test I'd use: would you be comfortable printing the flaw and your reasons for shipping anyway on the box? If yes, it's probably fine. If no, then you already know it isn't.
+```
+
+#### B · run 1
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+**Position: Yes, sometimes it's right. But only if the company meets four conditions, and most companies that ship known flaws don't meet them.**
+
+## Why "never" doesn't hold up
+
+No product is perfectly safe. Cars, ladders, kitchen knives, medications and software all carry known risks. If the rule were "never ship with a known safety flaw," almost nothing would ship. Delay also has a cost. A medical device with a minor, documented flaw may still prevent far more harm than it causes, and holding it back for six months means people go without it. The honest question isn't whether there's any risk. It's whether shipping now is better for the people affected than waiting.
+
+## The four conditions
+
+1. **The flaw really is minor.** Minor means low severity and low likelihood: a sharp edge that can cause a small cut, or a UI bug that briefly shows stale data. It does not mean "rare but fatal." A small chance of catastrophic harm is not a minor flaw. That was the Ford Pinto mistake: treating deaths as a cost to price in.
+2. **Shipping is better for users, not just for the company.** The tradeoff has to make sense from the users' side. "We'd miss the quarter" is not a justification. "Patients get the device eight months sooner" can be.
+3. **The people at risk are told.** Users should know about the flaw and how to avoid it, through warnings, documentation or release notes. Hiding a known flaw turns an acceptable risk into a decision made for people without their consent, and I think that's the real moral line.
+4. **There's a concrete plan to fix it.** That means a scheduled patch, recall or design revision, with someone responsible for it. Shipping with a flaw is a temporary compromise. Leaving it in for good is a different decision.
+
+## The best objection
+
+The strongest argument against me is that companies are bad judges of their own flaws. Commercial pressure pushes them to call flaws "minor," overestimate the benefit of shipping and play down disclosure. Boeing's MCAS problems and the GM ignition switch both started as known issues someone decided were acceptable.
+
+I take that seriously, but it argues for checks on the decision, not a ban. The judgment shouldn't sit only with people whose bonuses depend on the ship date. Safety engineers need real veto power, regulators should be involved where the stakes are high, and the reasoning should be written down so people can be held accountable later. Usually the problem isn't that shipping with a flaw is always wrong. It's that the people deciding had a conflict of interest and kept the decision secret.
+
+## Bottom line
+
+Shipping with a known minor safety flaw can be right when the harm is small, users clearly benefit, the people at risk are told, and a fix is committed. If any of those is missing, especially disclosure, it becomes a company taking risks with other people's safety for its own gain, and that's wrong.
+```
+
+#### B · run 2
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+**Position: Yes, sometimes it's right. But only under strict conditions, and the most important one is disclosure.**
+
+**1. "No known flaws" is not a real standard.**
+Every car, drug, ladder and medical device ships with known residual risk. Aspirin causes GI bleeding. Airbags injure some people. If a known safety flaw ruled out shipping, nothing would ship. So the real question isn't whether a company should ever ship with a known flaw. It's which flaws, and on what terms.
+
+**2. Not shipping has its own safety cost.**
+Holding back a product leaves people with whatever they use now, and that may be more dangerous. Suppose a new insulin pump has a rare display glitch, but it's far more reliable than the pump it replaces. Delaying it to fix the glitch hurts people. When you compare against the real alternative instead of against perfection, shipping is often the safer choice.
+
+**3. The conditions that make it legitimate:**
+- **Actually minor.** The worst plausible outcome is limited and recoverable, not death or permanent injury.
+- **Net safer than the alternatives**, judged honestly rather than by the marketing team.
+- **Disclosed.** Users, regulators and buyers know about it. This is what separates a defensible decision from a scandal.
+- **No cheap fix available before launch.** If a $2 part fixes it, ship with the part.
+- **A committed fix plan**: recall, patch or revision on a stated timeline.
+- **The risk falls on people who can accept it.** Adults who are informed can. Children and bystanders can't, so the bar is much higher.
+
+**4. The strongest objection, and my answer.**
+The objection is that the company calling the flaw "minor" profits from calling it minor. The Ford Pinto and GM's ignition switch both started as someone's acceptable-risk calculation. That's true. But the lesson from those cases isn't "never ship with known risk." The lesson is that the company shouldn't be the only judge. In both cases the failures were concealment and misjudged severity, not the idea of tolerating risk. That's why disclosure and outside review (regulators, independent testing) are requirements in my view, not nice extras. A flaw you'd be embarrassed to disclose isn't minor.
+
+**Bottom line:** Shipping with a known minor flaw is right when it's disclosed, when it beats the realistic alternative, when it can't cheaply be fixed, and when there's a plan to fix it. It's wrong the moment any of those depends on keeping people uninformed. The flaw itself is rarely the ethical failure. Hiding it is.
+```
+
+#### C · run 1
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
+- Tool calls: none
+- Skill loaded: no
+- Frame fields in reply: feel no, drugs no
+- Isolation: passed
+
+Answer:
+
+```
+# Yes, it can be right, though only under strict conditions
+
+**My position:** Shipping a product with a known minor safety flaw can be right. In practice it is often unavoidable. The flaw itself isn't the wrong. The wrong is hiding it, misjudging it, or shipping it for the company's sake rather than the user's.
+
+## The argument
+
+**1. "Zero known flaws" isn't a real option.** Every car, drug, bridge and piece of software ships with known residual risks. Airbags can injure people. Vaccines have rare side effects. Engineering is about getting risk low enough and making sure the right people know about it. If the rule were "never ship anything with a known risk," nothing would ship. So the real question is which known flaws are acceptable.
+
+**2. Not shipping has costs too.** Delay is not neutral. If a new smoke detector has a 1-in-10,000 false-negative edge case but replaces units that fail far more often, holding it back makes people less safe. Comparing the flawed product against a perfect one that doesn't exist is a mistake. Compare it against what people will actually use instead.
+
+**3. Disclosure is what makes it ethical.** A flaw users know about lets them work around it, protect themselves, or decide not to buy. A hidden flaw takes that choice away. Most famous corporate safety scandals, like the Ford Pinto, GM's ignition switches and Boeing's MCAS, were not just cases of shipping something imperfect. The companies hid what they knew, or decided that paying settlements was cheaper than fixing the problem.
+
+## When it's justified
+
+All of these should hold:
+
+- **The harm really is minor and bounded.** Think mild, recoverable injury, not rare but catastrophic harm. "Rare" and "minor" are different things.
+- **The product leaves people safer than the realistic alternative.**
+- **The flaw is disclosed** clearly to the people who carry the risk.
+- **A fix is planned and funded.** Shipping the flaw is a temporary state, not the permanent design.
+- **The fix isn't cheap and easy right now.** Skipping a $2 part to protect margins is not a trade-off. It's moving the cost onto users.
+- **The risk doesn't land mostly on people who can't consent or protect themselves,** such as children, bystanders or patients.
+
+## The strongest objection
+
+*"The company decides what counts as 'minor,' and it has every reason to lowball it."*
+
+That's true, and it's the best argument on the other side. But it points toward better process, not a total ban: independent safety review, regulators, liability that tracks real harm, and written records of the decision made before launch. A rule that all flaws are forbidden doesn't remove that incentive. It just pushes companies to stop writing flaws down, which is worse.
+
+## Bottom line
+
+Imperfection alone doesn't make shipping wrong. It becomes wrong when there's concealment, when a cheap fix is skipped, or when the risk falls on people who never agreed to it. A company that ships a minor, disclosed flaw because the product still makes people safer, and then fixes it, is acting responsibly. A company that ships the same flaw quietly because fixing it would cost money is not.
+```
+
+#### C · run 2
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
+- Tool calls: none
+- Skill loaded: no
+- Frame fields in reply: feel no, drugs no
+- Isolation: passed
+
+Answer:
+
+```
+**Yes, sometimes it is right, but only under strict conditions. And "ship it, it's minor" is far more often a rationalization than a judgment that holds up.**
+
+## The case for "sometimes yes"
+
+No product is perfectly safe. Cars, ladders, kitchen knives, medications and software all carry known risks. If a company could only ship with zero known flaws, it would never ship at all, or it would stop looking for flaws, which is worse. So the real question is never "flaw or no flaw." It's whether this specific known risk is acceptable compared to the alternatives.
+
+Shipping can be the more ethical choice when:
+
+1. **The product's net safety effect is positive.** A new car braking system that cuts collisions by 40% but has a rare edge-case glitch beats waiting a year while people drive cars that have no such system at all. Delay is not neutral. It has its own victims, and they're just harder to see.
+2. **The harm really is minor and recoverable.** A slight pinch hazard is not the same as a fire risk. "Minor" should mean low severity, not just low odds. A one-in-a-million chance of death is not a minor flaw.
+3. **The risk is disclosed.** Users can reasonably accept risks they know about. They cannot accept risks that are hidden from them. Concealment is where shipping stops being defensible and becomes a betrayal.
+4. **There's a committed fix path.** That means a recall plan, a patch timeline or a design revision, with real resources and a real date behind it.
+5. **The risk falls on the people who benefit.** If the buyer gets the product's benefits and carries its risk, that's a trade they can choose. If bystanders carry the risk, the bar should be much higher.
+
+## Why the default should still be skepticism
+
+The incentives push hard one way. The people deciding what counts as "minor" are usually the same people under deadline and revenue pressure. History is full of flaws that were called minor internally and turned out not to be: the Ford Pinto's fuel tank, GM's ignition switch, the Boeing 737 MAX's MCAS. In each case, someone ran the "acceptable risk" reasoning and got it badly wrong. Often the problem wasn't bad math. It was that the people bearing the risk had no voice in the calculation.
+
+So my position has two parts:
+
+- **In principle:** Shipping with a known minor flaw can be right. Sometimes it's obligatory, when delay causes more harm than the flaw does.
+- **In practice:** It's only legitimate if the decision would survive full public disclosure. If the company would be ashamed to explain its reasoning to the people exposed to the risk, the flaw isn't minor, or the reasoning is self-serving.
+
+That last test, "could you defend this decision to the person it hurts?", is the one I'd hold onto. It's what separates a responsible engineering tradeoff from a cover-up.
+```
+
+### openai/gpt-6.1-sol
+
+#### A · run 1
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+Yes—but only when the remaining risk is genuinely small, justified by the product’s benefits, and managed responsibly. A company need not achieve perfect safety before shipping. It does, however, have a duty not to treat preventable harm as an acceptable price of higher profits.
+
+The central distinction is between **a product that has some risk and a product that creates unreasonable risk**. Nearly every useful product has known hazards: a kitchen knife can cut its user, and a medication can cause side effects. Knowing that harm is possible does not automatically make selling a product unethical. What matters is the likelihood and severity of harm, the benefits of making the product available, and whether safer, practical alternatives exist.
+
+Consider a medical device with a rare flaw that causes temporary skin irritation. If the device substantially improves treatment, delaying it might cause more harm than releasing it. Shipping could be justified if the company has credible evidence about the flaw, clearly communicates the risk, and works to reduce it. By contrast, shipping an appliance with a cheap-to-fix electrical defect merely to meet a holiday sales deadline would be wrong—even if the chance of injury were low.
+
+The strongest objection is that companies have an incentive to call flaws “minor.” That is a serious concern. **“Minor” must describe the potential harm, not merely the number of people likely to experience it.** A rare defect that can kill someone is not equivalent to a common defect that causes brief discomfort. Safety judgments should therefore rest on rigorous evidence and appropriate independent scrutiny, rather than a marketing team’s characterization.
+
+Disclosure also matters, but a warning is not a moral escape hatch. Customers may lack the expertise to evaluate a technical hazard, and some risks fall on bystanders who never agreed to them. A company must reduce reasonably preventable risks before asking users to accept those that remain.
+
+The right standard, then, is responsible risk rather than zero risk: ship only when the remaining danger is proportionate to the benefits, feasible safeguards are in place, and there is a credible plan to monitor and correct the flaw. Shipping under those conditions can be ethical. Shipping because the company expects the financial gains to outweigh its liability cannot.
+```
+
+#### A · run 2
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+Yes—**it can be right to ship a product with a known minor safety flaw, provided the residual risk is justified, disclosed where relevant, and reduced as far as reasonably practical.** The ethical standard should be responsible risk management, not an impossible demand for zero risk.
+
+Almost every useful product carries some danger. A kitchen knife can cut its user; a bicycle can fail under unusual conditions; a medicine can cause side effects. Knowing about a risk does not automatically make selling the product wrong. What matters is whether exposing people to that risk is defensible given the product’s benefits, the available alternatives, and the cost of preventing harm—including the harm caused by delaying access.
+
+But “minor” must describe the risk to users, not the inconvenience to the company. A flaw that usually causes a small injury may still be unacceptable if it affects millions of people, disproportionately endangers children, or occasionally produces a catastrophic outcome. Companies must assess both severity and likelihood, including foreseeable misuse, rather than rely on a reassuring label.
+
+Shipping is defensible when three conditions hold:
+
+- **The remaining risk is genuinely low and proportionate to the benefit.** Meeting a legal minimum is relevant, but it is not enough by itself.
+- **Reasonable precautions have been taken.** If a simple, inexpensive change would eliminate the flaw, knowingly skipping it to meet a launch date is difficult to justify. A warning should not substitute for a practical design fix.
+- **Users are treated honestly, and the company remains accountable.** Material risks should be communicated clearly enough to support an informed choice. The company should monitor incidents and be prepared to repair, update, or recall the product if its assumptions prove wrong.
+
+For example, shipping a useful appliance whose outer casing becomes slightly warm under uncommon conditions may be reasonable after testing and appropriate safeguards. Shipping the same appliance with an easily corrected wiring defect that can cause electric shock is not justified merely because shocks are rare.
+
+The strongest objection is that a company should never knowingly put customers at risk. That principle expresses an important duty, but taken literally it would prevent the sale of almost any product—and could deprive people of substantial benefits. **The decisive question is not whether the company knows a flaw exists, but whether it has good grounds to regard the remaining risk as acceptable to the people who bear it.** Profit alone is not such a ground.
+```
+
+#### B · run 1
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+**Yes—sometimes a company is justified in shipping a product with a known minor safety flaw. But it must justify the risk to the people who bear it, not merely to the people who profit from it.**
+
+A requirement of perfect safety would make almost every product impossible to sell. Cars, appliances, tools, and medicines all carry risks, including risks their makers understand before release. The relevant ethical question is whether the remaining risk is reasonable given the product’s benefits, the available alternatives, and the feasibility of making it safer.
+
+Consider an emergency water filter with a handle that can occasionally pinch a user’s finger. If the filter reliably removes dangerous contaminants, delaying distribution during a disaster could cause substantially greater harm than shipping it. Providing clear instructions, reducing exposure to the pinch point, and correcting the design in subsequent production could make immediate release the responsible choice.
+
+That reasoning needs strict limits, because companies have a financial incentive to call inconvenient defects “minor.” A defensible decision should meet four conditions:
+
+- **The risk is genuinely small.** Both severity and likelihood matter. A rare risk of death is not a minor flaw simply because most customers will never encounter it.
+- **Reasonable precautions have been taken.** If an inexpensive, effective fix is available before shipment, avoiding a modest cost or schedule delay is usually a poor reason to expose customers to preventable injury.
+- **Affected people receive meaningful information.** A warning buried in legal terms does little to support informed choice. Risks to children, bystanders, or others who cannot choose require stronger protection.
+- **The company remains accountable.** It should monitor incidents, correct the defect, and provide appropriate remedies rather than treat launch as the end of its responsibility.
+
+The strongest objection is that knowingly shipping a flaw treats customers as a means to profit. That objection is decisive when a company conceals the problem or shifts an avoidable risk onto customers for its own convenience. But knowledge alone does not make release wrong: knowingly delaying a useful product can also expose people to harm.
+
+**My position is therefore conditional approval: a known minor flaw can be acceptable when the residual risk is proportionate, responsibly reduced, and honestly communicated. “Minor” must describe a defensible assessment of potential harm—not the importance the company assigns to the people who might suffer it.**
+```
+
+#### B · run 2
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite`
+- Tool calls: none
+- Isolation: passed
+
+Answer:
+
+```
+**Yes—sometimes it is right to ship a product with a known minor safety flaw.** The ethical standard should be whether the remaining risk is reasonable and responsibly managed, not whether the company can promise perfect safety.
+
+Almost every useful product carries some risk. A kitchen knife can cut its user; a medicine can cause side effects; a car can be made safer through further redesign. Requiring companies to eliminate every known hazard before release would delay beneficial products indefinitely. Delay also has consequences: withholding a substantially safer replacement can leave people using a more dangerous existing product.
+
+But “minor” must describe the potential harm, not merely the probability of it happening or the cost to the company. A rare defect that could kill someone is not automatically a minor safety flaw. And a small risk per use can become a serious public-health burden when millions of people are exposed.
+
+Shipping is defensible when several conditions hold:
+
+- **The risk has been credibly assessed**, including foreseeable misuse and effects on especially vulnerable users.
+- **Reasonable safeguards are in place.** An inexpensive, effective fix should ordinarily be implemented before release.
+- **Users receive meaningful disclosure** where the flaw affects how they should use or choose the product. A buried disclaimer does not establish informed consent.
+- **The remaining risk is proportionate to the product’s benefits**, considering safer alternatives and risks to people who never chose to use it.
+- **The company monitors real-world outcomes and commits to correction**, including stopping sales if its assessment proves wrong.
+
+For example, shipping a useful appliance with a slightly hot exterior might be justified if temperatures remain below burn thresholds under foreseeable use and appropriate insulation and warnings are provided. Shipping it with an accessible component known to cause burns would demand a much stronger justification.
+
+The central distinction is between **accepting a justified residual risk and transferring an avoidable danger to customers for profit**. Profit can legitimately motivate a launch, but it cannot by itself justify exposing others to harm. A company need not deliver perfection; it must be able to defend its decision honestly to the people who bear the risk.
+```
+
+#### C · run 1
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
+- Tool calls: none
+- Skill loaded: no
+- Frame fields in reply: feel no, drugs no
+- Isolation: passed
+
+Answer:
+
+```
+**Yes—a company can sometimes be justified in shipping a product with a known minor safety flaw. But “minor” must describe the risk to users, not the inconvenience of fixing it.**
+
+The ethical standard cannot be perfect safety. Cars, medicines, appliances, and software all carry risks, and delaying a useful product can itself cause harm. A new medical device might have a small, well-understood risk while being substantially safer than the device it replaces. Refusing to release it until every flaw disappears could leave people worse off.
+
+The right question is therefore whether releasing the product exposes people to an **unreasonable, avoidable risk**, taking account of the benefits and available alternatives. Shipping is defensible only under demanding conditions:
+
+- **The risk is genuinely small and adequately understood.** A low probability of catastrophic injury is not necessarily a minor flaw. Uncertainty also matters: limited testing is not evidence of safety.
+- **A reasonable fix is not readily available.** If a company can eliminate the danger with a cheap, quick change, shipping first merely to meet a sales target is difficult to justify.
+- **People receive meaningful disclosure and protection.** Material risks should be explained clearly, with practical safeguards. Fine print does not make an otherwise irresponsible decision ethical, especially when children or bystanders bear the risk.
+- **The company remains accountable.** It must monitor incidents, provide remedies, and fix or recall the product if the evidence changes.
+
+The strongest objection is that this gives companies permission to put profit above safety. That danger is real: firms benefit from release while customers may bear the injuries. It is a reason to demand documented evidence and independent scrutiny where warranted—not to pretend that zero risk is attainable.
+
+Ultimately, **knowingly accepting a small residual risk can be responsible; knowingly imposing an easily preventable danger for commercial convenience is not.** The distinction rests on evidence, reasonable precautions, and whose interests actually drive the decision.
+```
+
+#### C · run 2
+
+- Status: completed
+- Offered tools: `glob`, `grep`, `read`, `skill`, `todowrite`
+- Tool calls: none
+- Skill loaded: no
+- Frame fields in reply: feel no, drugs no
+- Isolation: passed
+
+Answer:
+
+```
+**Yes—a company can be justified in shipping a product with a known minor safety flaw, but only when the remaining risk is genuinely small, proportionate to the product’s benefits, and responsibly managed.** Knowing about a flaw creates a duty to address it; it does not automatically create a duty to withhold the product.
+
+The reason is that “perfectly safe” is usually not a realistic alternative. Cars, appliances, medicines, and software-controlled equipment all carry risks. Delaying a useful product can also cause harm—for example, by keeping people dependent on an older, less safe version. The ethical question is therefore not simply, “Does this product have a flaw?” It is, “Is releasing it more defensible than the available alternatives?”
+
+That judgment needs strict conditions:
+
+- **“Minor” must describe the actual risk, not the company’s preferred label.** Both the likelihood and severity of harm matter, including effects on vulnerable users. A rare catastrophic failure is not necessarily a minor flaw.
+- **Reasonable precautions must already have been taken.** If an inexpensive, practical fix is available, shipping without it is difficult to defend. Avoiding a modest expense is not a sufficient reason to expose customers to preventable injury.
+- **Users must receive meaningful information and protection.** Clear warnings, safe default settings, and appropriate restrictions matter. Burying a warning in the terms and conditions does not make a risk acceptable, especially when it also affects bystanders.
+- **The company must remain accountable after release.** It should monitor incidents, provide remedies, and be prepared to fix, suspend, or recall the product if the evidence changes.
+
+The strongest objection is that this gives companies permission to trade people’s safety for profit. That danger is real, which is why the company’s own confidence is insufficient: its judgment needs evidence, scrutiny, and consequences if it is wrong. But an absolute ban on knowingly shipping any safety flaw would reward ignorance and discourage honest investigation. Discovering a tiny defect should not make a responsible company less able to release a beneficial product than a careless competitor that never looked.
+
+**The ethical standard should be justified, minimized risk—not zero known defects.** Shipping can be right when the company can defend the decision to the people bearing the risk, rather than merely to the people earning the return.
 ```

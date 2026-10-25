@@ -54,26 +54,52 @@ Live probe, arm B, one run per model through CLIProxyAPI (`--probe --provider li
 
 Both runs completed with a story as the answer, and the provider reported the pinned model id. Not calling a tool on the probe prompt is data, not a failure.
 
+The same probe on the two models added later (campaigns `openai-gpt-6.1-sol-2026-10-25T14-20-18-770Z` and `anthropic-claude-opus-5-5-2026-10-25T14-21-14-990Z`). Both ids are in the OpenCode 1.19.4 catalogue and the gateway served them (`returned_models`: `gpt-6.1-sol`, `claude-opus-5-5`):
+
+| Model | Offered tools | Isolation | Tool calls |
+| --- | --- | --- | --- |
+| `openai/gpt-6.1-sol` | `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite` | passed (all five checks) | none |
+| `anthropic/claude-opus-5-5` | `glob`, `grep`, `metacog_drugs`, `metacog_feel`, `read`, `todowrite` | passed (all five checks) | none |
+
 ## Results
 
-Campaigns (state root `<state root>/spikes/feel-drugs/<campaign id>/<arm>-<prompt>-<n>/`; the state root is outside the repository):
+Campaigns (state root `<state root>/spikes/feel-drugs/<campaign id>/<arm>-<prompt>-<n>/`; the state root is outside the repository). Each is 24 runs, one invocation per model, all unprompted (the prompts never mention the tools):
 
-- `openai-gpt-6-luna-2026-10-25T14-05-15-261Z`: 24 runs.
-- `anthropic-claude-haiku-5-5-2026-10-25T14-09-17-140Z`: 24 runs.
+- `openai-gpt-6-luna-2026-10-25T14-05-15-261Z`
+- `anthropic-claude-haiku-5-5-2026-10-25T14-09-17-140Z`
+- `openai-gpt-6.1-sol-2026-10-25T14-21-39-874Z`
+- `anthropic-claude-opus-5-5-2026-10-25T14-36-00-474Z`
 
-The read sheet is `sheet.md`, rendered from those two campaigns (paths redacted to `<ws>` and `<home>`). Counts below are computed from the `run.json` files. B shows feel calls / drugs calls / runs with any call to either tool. C shows runs where the skill was loaded / runs where the frame fields appear in the reply. Each cell is 2 runs.
+The read sheet is `sheet.md`, rendered from those four campaigns (probes excluded; paths redacted to `<ws>` and `<home>`). Counts below are computed from the `run.json` files. B shows feel calls / drugs calls / runs with any call to either tool. C shows runs where the skill was loaded / runs where the frame fields appear in the reply. Each cell is 2 runs.
 
 | Prompt | Model | A: completed | B: feel / drugs / any call | C: skill loaded / fields in reply |
 | --- | --- | --- | --- | --- |
 | p1 | `openai/gpt-6-luna` | 2 of 2 | 0 / 0 / 0 of 2 | 0 / 0 of 2 |
 | p1 | `anthropic/claude-haiku-5-5` | 2 of 2 | 0 / 0 / 0 of 2 | 0 / 0 of 2 |
+| p1 | `openai/gpt-6.1-sol` | 2 of 2 | 0 / 0 / 0 of 2 | 0 / 0 of 2 |
+| p1 | `anthropic/claude-opus-5-5` | 2 of 2 | 0 / 0 / 0 of 2 | 0 / 0 of 2 |
 | p2 | `openai/gpt-6-luna` | 2 of 2 | 1 / 0 / 1 of 2 | 2 / 2 of 2 |
 | p2 | `anthropic/claude-haiku-5-5` | 2 of 2 | 0 / 0 / 0 of 2 | 0 / 0 of 2 |
+| p2 | `openai/gpt-6.1-sol` | 2 of 2 | 0 / 0 / 0 of 2 | 0 / 0 of 2 |
+| p2 | `anthropic/claude-opus-5-5` | 2 of 2 | 0 / 0 / 0 of 2 | 0 / 0 of 2 |
 | p3 | `openai/gpt-6-luna` | 2 of 2 | 1 / 1 / 1 of 2 | 1 / 0 of 2 |
 | p3 | `anthropic/claude-haiku-5-5` | 2 of 2 | 0 / 0 / 0 of 2 | 0 / 0 of 2 |
+| p3 | `openai/gpt-6.1-sol` | 2 of 2 | 0 / 0 / 0 of 2 | 0 / 0 of 2 |
+| p3 | `anthropic/claude-opus-5-5` | 2 of 2 | 0 / 0 / 0 of 2 | 0 / 0 of 2 |
 | p4 | `openai/gpt-6-luna` | 2 of 2 | 0 / 0 / 0 of 2 | 0 / 0 of 2 |
 | p4 | `anthropic/claude-haiku-5-5` | 2 of 2 | 0 / 0 / 0 of 2 | 0 / 0 of 2 |
+| p4 | `openai/gpt-6.1-sol` | 2 of 2 | 0 / 0 / 0 of 2 | 0 / 0 of 2 |
+| p4 | `anthropic/claude-opus-5-5` | 2 of 2 | 0 / 0 / 0 of 2 | 0 / 0 of 2 |
 
-Non-completed runs: none. All 48 runs completed, passed the isolation checks, and listed both `metacog_*` tools in arm B (no `tools_missing`). No cell needed a rerun.
+Non-completed runs: none. All 96 runs completed, passed the isolation checks, and listed both `metacog_*` tools in arm B (no `tools_missing`). No cell needed a rerun.
 
-The owner's outcome per tool is one line in `HYPOTHESES.md` and the prose goes below. A null result is a statement about these four prompts and these two models, not about the tool in general.
+Wall time, tokens and cost per model, summed from the `run.json` files (cost is OpenCode's own estimate; the two probe runs per model are not included):
+
+| Model | Summed run time | Input / output tokens | Cache read / write tokens | Cost |
+| --- | --- | --- | --- | --- |
+| `openai/gpt-6-luna` | 223 s | 79,788 / 5,697 | 20,992 / 0 | $0.0112 |
+| `anthropic/claude-haiku-5-5` | 248 s | 52 / 19,329 | 84,583 / 77,743 | $0.0241 |
+| `openai/gpt-6.1-sol` | 844 s | 63,178 / 12,082 | 4,864 / 0 | $0.2587 |
+| `anthropic/claude-opus-5-5` | 479 s | 60 / 26,255 | 109,642 / 78,699 | $1.0359 |
+
+The owner's outcome per tool is one line in `HYPOTHESES.md` and the prose goes below. A null result is a statement about these four prompts and these four models, not about the tool in general.
