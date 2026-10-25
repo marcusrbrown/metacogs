@@ -39,6 +39,8 @@
     "spike:feel-drugs": "bun src/spike/feel-drugs/driver.ts",
     "spike:feel-drugs:sheet": "bun src/spike/feel-drugs/sheet.ts",
     "spike:guided": "bun src/spike/feel-drugs/guided.ts",
+    "spike:blind": "bun src/spike/feel-drugs/blind.ts blind",
+    "spike:reveal": "bun src/spike/feel-drugs/blind.ts reveal",
     "version": "changeset version && bun run generate",
     "release": "bun src/release/release.ts"
   },

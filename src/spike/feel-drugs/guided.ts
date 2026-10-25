@@ -20,7 +20,7 @@ import { COMMAND_PREFIX } from '../../plugin/commands'
 import { OFFLINE_NPM, type PackedPlugin, packedPlugin, seedConfigDir, disposeFixtures } from '../../plugin/fixture'
 import { CLIPROXY_UPSTREAM, type ResolvedCliproxy, resolveCliproxy as defaultResolveCliproxy } from '../../runner/cliproxy'
 import { destroyFixture } from '../../runner/env'
-import { analyzeEvents, isSkillContentLoad, parseEvents, allAssistantText, type Usage } from '../../runner/events'
+import { allAssistantText, analyzeEvents, finalAnswerText, isSkillContentLoad, parseEvents, type Usage } from '../../runner/events'
 import { checkDebugConfig, checkIsolation, type ExpectedConfig, offeredTools } from '../../runner/isolation'
 import { CredentialLeakError, type Needle, scanForLeaks } from '../../runner/manifest'
 import { debugConfig, runArgv, sleepUnlessAborted, spawnCapture } from '../../runner/opencode'
@@ -217,6 +217,8 @@ export interface GuidedOptions {
   /** Prompt ids; empty means every prompt of the read. */
   prompts: string[]
   runs: number
+  /** Run only these arms; empty means both arms of the read. Extra runs of one arm make up a blind control cell. */
+  arms: GuidedArm[]
   provider: 'scripted' | 'live'
   authCliproxy: string | undefined
   /** `one-per-model` (the first prompt of each model) or `<prompt>@<model>`; empty means every cell. */
@@ -230,6 +232,7 @@ export function parseGuidedArgs(argv: readonly string[]): GuidedOptions {
       read: { type: 'string', multiple: true },
       model: { type: 'string', multiple: true },
       prompt: { type: 'string', multiple: true },
+      arm: { type: 'string', multiple: true },
       runs: { type: 'string' },
       provider: { type: 'string' },
       'auth-cliproxy': { type: 'string' },
@@ -243,6 +246,10 @@ export function parseGuidedArgs(argv: readonly string[]): GuidedOptions {
   })
   const models = values.model ?? [...GUIDED_MODELS]
   for (const model of models) familyOf(model)
+  const arms = (values.arm ?? []).map((a) => {
+    if (!(GUIDED_ARMS as readonly string[]).includes(a)) throw new Error(`--arm takes ${GUIDED_ARMS.join(', ')}; got "${a}"`)
+    return a as GuidedArm
+  })
   const provider = values.provider ?? 'scripted'
   if (provider !== 'scripted' && provider !== 'live') throw new Error(`--provider takes scripted or live; got "${provider}"`)
   const runs = values.runs === undefined ? 2 : Number(values.runs)
@@ -254,7 +261,7 @@ export function parseGuidedArgs(argv: readonly string[]): GuidedOptions {
     if (!prompt || model.join('@') === '') throw new Error(`--cells takes one-per-model or <prompt>@<model>; got "${cell}"`)
     assertPromptId(prompt)
   }
-  return { reads, models, prompts: values.prompt ?? [], runs, provider, authCliproxy: values['auth-cliproxy'], cells }
+  return { reads, models, prompts: values.prompt ?? [], runs, arms, provider, authCliproxy: values['auth-cliproxy'], cells }
 }
 
 export function cellAllowed(model: string, promptId: string, cells: readonly string[], firstPromptId: string): boolean {
@@ -276,6 +283,8 @@ export interface GuidedCommand {
 export interface GuidedTurnRecord {
   tool_calls: ToolCallRecord[]
   answer: string
+  /** The text parts after the last tool call; every text part when there was no call. */
+  final_answer: string
   isolation: { passed: boolean; failed: string[] }
   wall_ms: number
   usage: Usage
@@ -311,6 +320,8 @@ export interface GuidedRecord {
   second_turn: GuidedTurnRecord | null
   /** All assistant text parts in stream order, joined with a newline. */
   answer: string
+  /** The text parts after the last tool call; every text part when there was no call. What the blind sheet shows. */
+  final_answer: string
   isolation: { passed: boolean; failed: string[] }
   /** For path redaction; the fixture is deleted after the run. */
   paths: { workspaces: string[]; homes: string[]; packages: string[] }
@@ -458,7 +469,8 @@ async function runOnce(c: RunContext): Promise<GuidedRecord> {
     }
 
     const toolCalls = events.toolUses.map((t) => ({ tool: t.tool, input: t.input, status: t.status }))
-    const answer = allAssistantText(parseEvents(spawn.stdout).events)
+    const parsedEvents = parseEvents(spawn.stdout).events
+    const answer = allAssistantText(parsedEvents)
     const plugin = arm === 'P1' || arm === 'P2'
     const record: GuidedRecord = {
       schema_version: 1,
@@ -483,6 +495,7 @@ async function runOnce(c: RunContext): Promise<GuidedRecord> {
       turns: 1,
       second_turn: null,
       answer,
+      final_answer: finalAnswerText(parsedEvents),
       isolation: { passed: evidence.passed, failed },
       paths: {
         workspaces: uniq([ws.fixture.workspace, real(ws.fixture.workspace)]),
@@ -573,7 +586,7 @@ export async function runGuided(options: GuidedOptions, deps: GuidedDeps = {}): 
       const first = readPrompts[0]?.id ?? ''
       const plan = selected
         .filter((prompt) => cellAllowed(model, prompt.id, options.cells, first))
-        .flatMap((prompt) => READ_ARMS[read].flatMap((arm) => Array.from({ length: options.runs }, (_, i) => ({ prompt, arm, index: i + 1 }))))
+        .flatMap((prompt) => READ_ARMS[read].filter((arm) => options.arms.length === 0 || options.arms.includes(arm)).flatMap((arm) => Array.from({ length: options.runs }, (_, i) => ({ prompt, arm, index: i + 1 }))))
       const context = (cell: (typeof plan)[number]): RunContext => ({ options, deps, repoRoot, read, model, campaignDir, runDir: join(campaignDir, `${cell.arm}-${cell.prompt.id}-${cell.index}`), cliproxy, packed, ...cell })
       const attempt = (cell: (typeof plan)[number]) => withBackoff(() => runOnce(context(cell)), sleep)
       const label = (record: GuidedRecord) => `${record.model} ${record.arm} ${record.prompt_id} #${record.run}: ${record.status}${record.reasons.length ? ` (${record.reasons.join(', ')})` : ''}; called: ${record.tool_calls.map((t) => t.tool).join(', ') || 'none'}`

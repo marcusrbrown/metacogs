@@ -23,22 +23,37 @@ const SPIKE_DIR = ['evals', 'spikes', 'feel-drugs'] as const
 export interface KnownPaths {
   workspaces: readonly string[]
   homes: readonly string[]
+  /** The extracted plugin package roots of a plugin run. */
+  packages?: readonly string[]
 }
+
+/** Matches a path made of characters that can sit in a path inside prose, quotes or a code span. */
+const PATH_CHARS = String.raw`[^\s"'\x60<>()]`
 
 /**
  * The run's own workspace and home (recorded in `run.json`), the operator's home, and any other `metacogs-run-*`
- * fixture path become `<ws>` and `<home>`. Longer paths go first so a nested path is not half-replaced.
+ * fixture path become `<ws>` and `<home>`. Plugin runs add package paths (`<pkg>`: the recorded package roots, an
+ * extracted `metacogs-packed-*` package, any `node_modules/<package>` directory) and the host's plugin cache
+ * (`<cache>`). Package and cache paths go first, since they can sit under a home. Longer paths go first so a nested
+ * path is not half-replaced.
  */
 export function redactPaths(text: string, known: KnownPaths): string {
+  const packages: [string, string][] = (known.packages ?? []).map((p): [string, string] => [p, '<pkg>'])
   const replacements: [string, string][] = [
     ...known.workspaces.map((p): [string, string] => [p, '<ws>']),
     ...[...known.homes, homedir()].map((p): [string, string] => [p, '<home>']),
   ]
-  let out = text
-  for (const [path, label] of replacements.filter(([p]) => p.length > 1).sort((a, b) => b[0].length - a[0].length)) {
-    out = out.split(path).join(label)
+  const replaceAll = (input: string, pairs: [string, string][]) => {
+    let out = input
+    for (const [path, label] of pairs.filter(([p]) => p.length > 1).sort((a, b) => b[0].length - a[0].length)) out = out.split(path).join(label)
+    return out
   }
-  return out
+  const packaged = replaceAll(text, packages)
+    .replace(new RegExp(`/${PATH_CHARS}*?metacogs-packed-[A-Za-z0-9]+/unpacked/package`, 'g'), '<pkg>')
+    .replace(new RegExp(`/${PATH_CHARS}*?/node_modules/(?:@${PATH_CHARS}+?/)?${PATH_CHARS}+?(?=/|$|[\\s"'\x60<>()])`, 'g'), '<pkg>')
+    .replace(new RegExp(`/${PATH_CHARS}*?/\\.?cache/opencode(?=/|$|[\\s"'\x60<>()])`, 'g'), '<cache>')
+    .replace(new RegExp(`/${PATH_CHARS}*?/opencode-config-dir(?=/|$|[\\s"'\x60<>()])`, 'g'), '<cache>')
+  return replaceAll(packaged, replacements)
     .replace(/\/[^\s"'`<>()]*?metacogs-run-[A-Za-z0-9]+\/workspace/g, '<ws>')
     .replace(/\/[^\s"'`<>()]*?metacogs-run-[A-Za-z0-9]+\/home/g, '<home>')
 }
@@ -67,7 +82,7 @@ export function loadRuns(campaignDir: string): RunRecord[] {
  * A `~~~` fenced block whose fence is longer than any run of `~` or backticks in the text, so nothing inside it (an
  * answer's own code fences, `#` lines, a stray `~~~`) can close it or reach the sheet's outline.
  */
-function fenced(text: string, info = ''): string {
+export function fenced(text: string, info = ''): string {
   const longest = Math.max(0, ...(text.match(/[`~]+/g) ?? []).map((m) => m.length))
   const fence = '~'.repeat(Math.max(3, longest + 1))
   return `${fence}${info}\n${text}\n${fence}`

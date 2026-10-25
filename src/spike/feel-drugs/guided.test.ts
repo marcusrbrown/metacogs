@@ -188,14 +188,15 @@ describe('unwantedCalls', () => {
 
 describe('arguments and cells', () => {
   test('defaults: read 1, the four models, two runs, scripted, no filter', () => {
-    expect(parseGuidedArgs([])).toMatchObject({ reads: [1], models: [...GUIDED_MODELS], prompts: [], runs: 2, provider: 'scripted', cells: [], authCliproxy: undefined })
+    expect(parseGuidedArgs([])).toMatchObject({ reads: [1], models: [...GUIDED_MODELS], prompts: [], runs: 2, arms: [], provider: 'scripted', cells: [], authCliproxy: undefined })
   })
 
   test('repeatable flags', () => {
-    expect(parseGuidedArgs(['--read', '2', '--read', '1', '--model', 'openai/gpt-6-luna', '--prompt', 'p1', '--runs', '3', '--provider', 'live', '--auth-cliproxy', 'k', '--cells', 'one-per-model', '--cells', 'p2@openai/gpt-6-luna'])).toMatchObject({
+    expect(parseGuidedArgs(['--read', '2', '--read', '1', '--model', 'openai/gpt-6-luna', '--prompt', 'p1', '--arm', 'N1', '--runs', '3', '--provider', 'live', '--auth-cliproxy', 'k', '--cells', 'one-per-model', '--cells', 'p2@openai/gpt-6-luna'])).toMatchObject({
       reads: [2, 1],
       models: ['openai/gpt-6-luna'],
       prompts: ['p1'],
+      arms: ['N1'],
       runs: 3,
       provider: 'live',
       authCliproxy: 'k',
@@ -203,7 +204,7 @@ describe('arguments and cells', () => {
     })
   })
 
-  test.each([[['--read', '3']], [['--provider', 'mock']], [['--runs', '0']], [['--cells', 'nonsense']], [['--cells', 'p1@']], [['--wat']], [['--model', 'google/gemini']]])('rejects %j', (argv) => {
+  test.each([[['--read', '3']], [['--arm', 'Z9']], [['--provider', 'mock']], [['--runs', '0']], [['--cells', 'nonsense']], [['--cells', 'p1@']], [['--wat']], [['--model', 'google/gemini']]])('rejects %j', (argv) => {
     expect(() => parseGuidedArgs(argv as string[])).toThrow()
   })
 
@@ -301,6 +302,7 @@ describe.skipIf(!opencodeAvailability().available)('against the pinned host, scr
       expect(p1.offered_tools).toEqual(['metacogs_drugs', 'metacogs_feel', 'skill'])
       expect(p1.tool_calls).toEqual([{ tool: 'metacogs_feel', input: FEEL_CALL[0]!.toolCalls[0]!.arguments, status: 'completed' }])
       expect(p1.isolation).toEqual({ passed: true, failed: [] })
+      expect(p1.final_answer).toBe('spike done') // the text after the tool call
       expect(p1.guidance_sha256).toBe(sha256(readFileSync(join(ROOT, 'plugin', 'guidance.md'))))
       expect(p1.tarball_sha256).toMatch(/^[0-9a-f]{64}$/)
 
