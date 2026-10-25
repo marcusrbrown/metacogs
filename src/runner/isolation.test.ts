@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { availableSkillsFromRequests, checkDebugConfig, checkIsolation, failedChecks, type IsolationInput, offeredTools, systemPromptSent, systemTexts } from './isolation'
+import { availableSkillsFromRequests, checkDebugConfig, checkIsolation, type ExpectedConfig, failedChecks, type IsolationInput, isMainRequest, offeredTools, systemPromptSent, systemTexts } from './isolation'
 import type { RecordedRequest } from './scripted-provider'
 
 const skillsBlock = (names: string[]) =>
@@ -185,5 +185,103 @@ describe('checkDebugConfig', () => {
   test('non-object output fails closed', () => {
     expect(checkDebugConfig(undefined, GENERATED).passed).toBe(false)
     expect(checkDebugConfig([], GENERATED).passed).toBe(false)
+  })
+})
+
+describe('checkDebugConfig with an expected-config object (plugin arms)', () => {
+  const SPEC = 'file:///pkg/dist/index.js'
+  const PREFIX = '(metacogs) '
+  const generated = { ...GENERATED, plugin: [[SPEC, { guidance: true }]] }
+  const expected: ExpectedConfig = { pluginOrigins: true, commands: { names: ['feel', 'drugs'], prefix: PREFIX }, skillsPaths: ['/pkg/skills'] }
+  const command = { feel: { template: 't', description: `${PREFIX}f` }, drugs: { template: 't', description: `${PREFIX}d` } }
+  const effective = { ...EFFECTIVE, plugin: [[SPEC, { guidance: true }]], plugin_origins: [{ spec: SPEC, source: '/cfg/opencode.json', scope: 'global' }], command, skills: { paths: ['/pkg/skills'] } }
+
+  test('the host-added plugin_origins, command.{feel,drugs} and one skills.paths entry pass', () => {
+    expect(checkDebugConfig(effective, generated, expected)).toMatchObject({ passed: true })
+  })
+
+  test('the same effective config fails without the expected-config object', () => {
+    const r = checkDebugConfig(effective, generated)
+    expect(r.passed).toBe(false)
+    expect(r.detail).toMatch(/plugin_origins|command|skills/)
+  })
+
+  test('a plugin that did not register is a failure: missing origins, commands or skills path', () => {
+    const { plugin_origins: _o, ...noOrigins } = effective
+    expect(checkDebugConfig(noOrigins, generated, expected).passed).toBe(false)
+    expect(checkDebugConfig({ ...effective, command: {} }, generated, expected).passed).toBe(false)
+    const { skills: _s, ...noSkills } = effective
+    expect(checkDebugConfig(noSkills, generated, expected).passed).toBe(false)
+  })
+
+  test.each([
+    ['an origin for another spec', { plugin_origins: [{ spec: 'file:///other.js', source: '/c', scope: 'global' }] }],
+    ['a second origin', { plugin_origins: [{ spec: SPEC, source: '/c', scope: 'global' }, { spec: 'file:///other.js', source: '/c', scope: 'local' }] }],
+    ['an extra command', { command: { ...command, extra: { template: 't', description: `${PREFIX}x` } } }],
+    ['a command without the prefix', { command: { ...command, feel: { template: 't', description: 'mine' } } }],
+    ['a second skills path', { skills: { paths: ['/pkg/skills', '/elsewhere'] } }],
+    ['another skills path', { skills: { paths: ['/elsewhere'] } }],
+    ['another skills key', { skills: { paths: ['/pkg/skills'], urls: ['https://example.com'] } }],
+    ['a plugin list that differs from the generated one', { plugin: ['file:///evil.js'] }],
+    ['an unrelated host key', { small_model: 'x' }],
+    ['a non-empty agent block', { agent: { build: {} } }],
+  ])('%s fails', (_name, patch) => {
+    expect(checkDebugConfig({ ...effective, ...patch }, generated, expected).passed).toBe(false)
+  })
+
+  test('allowing plugin_origins alone does not allow hook-added commands', () => {
+    expect(checkDebugConfig(effective, generated, { pluginOrigins: true }).passed).toBe(false)
+  })
+})
+
+describe('isMainRequest', () => {
+  test('is the host agent prompt in any system entry, on any wire format, whatever tools are offered', () => {
+    expect(isMainRequest({ hasTools: false, round: 0, body: { messages: [{ role: 'system', content: 'You are opencode, an interactive CLI tool.' }, { role: 'user', content: 'hi' }] } })).toBe(true)
+    expect(isMainRequest({ hasTools: true, round: 0, body: { system: 'You are OpenCode, the best coding agent.', messages: [] } })).toBe(true)
+    expect(isMainRequest({ hasTools: false, round: 0, body: { instructions: 'You are opencode.', input: [] } })).toBe(true)
+    expect(isMainRequest({ hasTools: false, round: 0, body: { messages: [{ role: 'system', content: 'You are a title generator.' }] } })).toBe(false)
+    expect(isMainRequest({ hasTools: true, round: 0, body: { messages: [{ role: 'user', content: 'You are opencode' }] } })).toBe(false)
+  })
+})
+
+describe('checkIsolation for an arm declared tool-free', () => {
+  const main: RecordedRequest = { hasTools: false, round: 0, body: { messages: [{ role: 'system', content: 'You are opencode, an interactive CLI tool.' }, { role: 'user', content: 'hi' }] } }
+  const title: RecordedRequest = { hasTools: false, round: 0, body: { messages: [{ role: 'system', content: 'You are a title generator.' }, { role: 'user', content: 'hi' }] } }
+
+  test('passes with a recorded main request and no tools', () => {
+    const e = checkIsolation(input({ requests: [title, main], toolFree: true }))
+    expect(failedChecks(e)).toEqual([])
+    expect(e.skillListObserved).toBe(true)
+    expect(e.availableSkills).toBeNull()
+  })
+
+  test('fails closed with only a title request recorded', () => {
+    const e = checkIsolation(input({ requests: [title], toolFree: true }))
+    expect(failedChecks(e).map((c) => c.name)).toEqual(['available_skills_exact'])
+    expect(e.skillListObserved).toBe(false)
+  })
+
+  test('without the declaration a request with no tools is still unobserved (existing behaviour)', () => {
+    const e = checkIsolation(input({ requests: [title, main] }))
+    expect(e.skillListObserved).toBe(false)
+    expect(failedChecks(e).map((c) => c.name)).toEqual(['available_skills_exact'])
+  })
+
+  test('an expected skill that the zero-tool main request does not list fails', () => {
+    expect(checkIsolation(input({ requests: [main], toolFree: true, expectedSkills: ['demo'] })).passed).toBe(false)
+  })
+
+  test('a skill list in a zero-tool main request is compared exactly', () => {
+    const listed: RecordedRequest = { hasTools: false, round: 0, body: { messages: [{ role: 'system', content: `You are opencode.\n${skillsBlock(['demo'])}` }, { role: 'user', content: 'hi' }] } }
+    expect(checkIsolation(input({ requests: [listed], toolFree: true, expectedSkills: ['demo'] })).passed).toBe(true)
+    expect(checkIsolation(input({ requests: [listed], toolFree: true })).passed).toBe(false)
+  })
+
+  test('the expected-config object reaches the debug-config check', () => {
+    const generated = { ...GENERATED, plugin: ['file:///p.js'] }
+    const effective = { ...EFFECTIVE, plugin: ['file:///p.js'], plugin_origins: [{ spec: 'file:///p.js', source: '/c', scope: 'global' }] }
+    const withObject = input({ generatedConfig: generated, debugConfigJson: effective, expectedConfig: { pluginOrigins: true } })
+    expect(failedChecks(checkIsolation(withObject))).toEqual([])
+    expect(failedChecks(checkIsolation({ ...withObject, expectedConfig: undefined })).map((c) => c.name)).toEqual(['debug_config_generated_only'])
   })
 })

@@ -32,8 +32,14 @@ export type ScriptedStep =
 
 export interface RecordedRequest {
   hasTools: boolean
-  /** Number of completed assistant tool-call rounds in the request history. */
+  /** Number of completed assistant tool-call rounds in the whole request history. */
   round: number
+  /** Scripted stub only: zero-based user turn (user messages in the history, less one). */
+  turn?: number
+  /** Scripted stub only: completed tool-call rounds after the last user message. */
+  turnRound?: number
+  /** Scripted stub only: the system prompt is the host's own agent prompt, whether or not tools are offered. */
+  main?: boolean
   body: unknown
   /** Model id the provider reported in its response; filled in once the response is seen. */
   returnedModel?: string
@@ -50,10 +56,18 @@ export interface ScriptedProviderServer {
 }
 
 export interface ScriptedProviderOptions {
-  /** Tool-capable turns, by round. Past the end the stub answers `finalText`. */
+  /** Tool-capable turns, by round. Past the end the stub answers `finalText`. Used when `turns` is absent. */
   steps: readonly ScriptedStep[]
+  /**
+   * One script per user turn, each indexed by the rounds completed after the last user message. A turn past the end of
+   * the list answers `finalText`. When present, `steps` is ignored.
+   */
+  turns?: readonly (readonly ScriptedStep[])[]
   finalText?: string
 }
+
+/** The host's own agent prompt, as every provider's variant starts it ("You are opencode…", "You are OpenCode, …"). */
+export const MAIN_PROMPT_PATTERN = /^\s*you are opencode\b/i
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -68,6 +82,20 @@ function countToolRounds(messages: unknown): number {
       Array.isArray(m.tool_calls) &&
       m.tool_calls.length > 0,
   ).length
+}
+
+function lastUserIndex(messages: unknown): number {
+  return Array.isArray(messages) ? messages.findLastIndex((m) => isRecord(m) && m.role === 'user') : -1
+}
+
+function countUserTurns(messages: unknown): number {
+  return Array.isArray(messages) ? messages.filter((m) => isRecord(m) && m.role === 'user').length : 0
+}
+
+/** Chat-completions only: some system message starts with the host's agent prompt. */
+function isMainRequest(messages: unknown): boolean {
+  if (!Array.isArray(messages)) return false
+  return messages.some((m) => isRecord(m) && (m.role === 'system' || m.role === 'developer') && typeof m.content === 'string' && MAIN_PROMPT_PATTERN.test(m.content))
 }
 
 function sse(value: unknown): string {
@@ -161,12 +189,17 @@ export function startScriptedProvider(
       const record = isRecord(body) ? body : {}
       const hasTools = Array.isArray(record.tools) && record.tools.length > 0
       const round = countToolRounds(record.messages)
-      requests.push({ hasTools, round, body, returnedModel: SPIKE_MODEL_ID })
+      const main = isMainRequest(record.messages)
+      const turn = Math.max(0, countUserTurns(record.messages) - 1)
+      const turnRound = countToolRounds(Array.isArray(record.messages) ? record.messages.slice(lastUserIndex(record.messages) + 1) : [])
+      requests.push({ hasTools, round, turn, turnRound, main, body, returnedModel: SPIKE_MODEL_ID })
 
       let step: ScriptedStep
-      if (!hasTools) {
-        // Background title-generation turn: no tools offered.
+      if (!hasTools && !main) {
+        // Background title-generation turn: no tools offered and not the host's agent prompt.
         step = { text: 'spike title' }
+      } else if (options.turns) {
+        step = options.turns[turn]?.[turnRound] ?? { text: finalText }
       } else {
         step = options.steps[round] ?? { text: finalText }
       }
