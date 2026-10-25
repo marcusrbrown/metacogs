@@ -166,4 +166,11 @@ Time, tokens and cost per model, summed from the `run.json` files (cost is OpenC
 
 The sheet's nudged section opens with the sentence and the same prompt, model, arm grouping.
 
-The owner's outcome per tool is one line in `HYPOTHESES.md` and the prose goes below. A null result is a statement about these four prompts and these four models, not about the tool in general.
+## Owner read
+
+Recorded verbatim:
+
+- feel - all: yes, mostly; tool vs skill: tool
+- drugs - (the ones that used it); tool vs skill: tool
+
+The read covers these four prompts and these four models, not the tools in general.
