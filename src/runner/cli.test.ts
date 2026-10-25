@@ -42,12 +42,12 @@ function io() {
 
 const LIVE = ['--provider', 'live', '--auth-passthrough', 'none']
 
-function chainRepo(rubric?: string) {
+function chainRepo(rubric?: string, expectations?: { dev?: Record<string, unknown> }) {
   const repo = new TestRepo('metacogs-clitest-')
   cleanup.push(() => repo.destroy())
   const heldout = tmp('metacogs-clitest-held-')
   // A judge this runner can reach: the live GREEN preflight refuses anything else before the prereg is enforced.
-  const scaffold = scaffoldMethod(repo, 'demo', { heldoutDir: heldout, overrides: { judge_model_id: 'opencode-go/judge-model-x' }, ...(rubric ? { rubric } : {}) })
+  const scaffold = scaffoldMethod(repo, 'demo', { heldoutDir: heldout, overrides: { judge_model_id: 'opencode-go/judge-model-x' }, ...(rubric ? { rubric } : {}), ...(expectations ? { expectations } : {}) })
   return { repo, heldout, scaffold }
 }
 
@@ -724,8 +724,8 @@ describe('pilot', () => {
     const fakeJudge = (hook: (input: unknown) => Promise<unknown>) =>
       (() => ({ hook, spec: { systemPrompt: 'S', declarations: { expectation: true }, criteria: [], overclaimPatterns: [] }, systemPromptSha256: REAL_PROMPT, rubricSha256: 'e'.repeat(64) })) as never
 
-    async function plantedPilot(opts: { prereg?: boolean; summary?: boolean } = {}) {
-      const { repo, scaffold } = chainRepo(JUDGED_RUBRIC_TEXT)
+    async function plantedPilot(opts: { prereg?: boolean; summary?: boolean; maxWords?: number; words?: number } = {}) {
+      const { repo, scaffold } = chainRepo(JUDGED_RUBRIC_TEXT, opts.maxWords === undefined ? undefined : { dev: { d1: { outcome: 'o', excludedTopics: [], maxWords: opts.maxWords } } })
       if (opts.prereg !== false) {
         repo.write(PILOT_PREREG, `${JSON.stringify(scaffold.prereg, null, 2)}\n`)
         repo.commit('test: pilot prereg', [PILOT_PREREG])
@@ -750,6 +750,7 @@ describe('pilot', () => {
         artifacts: {},
         prereg: { content_hash: 'f'.repeat(64), epoch: 1 },
         model: { pinned: 'opencode/agent-x', returned: [] },
+        ...(opts.words !== undefined ? { word_count: opts.words } : {}),
         judge: evidence('pass'),
       } as never)
       const say = (text: string) => JSON.stringify({ type: 'text', timestamp: 2, part: { type: 'text', text } })
@@ -822,6 +823,16 @@ describe('pilot', () => {
       }
       expect(readFileSync(join(campaignDir, 'review.md'), 'utf8')).toBe('marked')
       expect(existsSync(join(campaignDir, 'human-review.json'))).toBe(false)
+    })
+
+    test('over_limit follows the maxWords of the committed expectation sidecar, not the reasons the run recorded', async () => {
+      for (const [maxWords, over] of [[5, 1], [9, 0], [50, 0]] as const) {
+        const { repo } = await plantedPilot({ maxWords, words: 9 })
+        const t = io()
+        expect(await main(tallyOnlyArgs(repo), t.io)).toBe(EXIT.OK)
+        const written = JSON.parse(readFileSync(pilotJson(repo), 'utf8')) as { tally: { baseline: { d1: { over_limit: number } } } }
+        expect(written.tally.baseline.d1.over_limit).toBe(over)
+      }
     })
 
     test('--tally-only is refused when no rejudge under the current judge prompt backs the verdicts, naming the run dir', async () => {

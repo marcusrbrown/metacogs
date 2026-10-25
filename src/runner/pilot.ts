@@ -16,6 +16,7 @@ import { readJudgeRecord } from './judge-record'
 import { loadCampaignRuns, PILOT_ARMS, type PilotArm, type RunManifest, skipReason } from './manifest'
 import type { LoadedFixture } from './prereg'
 import type { PlannedRun } from './run'
+import { isOverLimit } from './word-limit'
 import { sha256 } from './workspace'
 
 export { PILOT_ARMS, type PilotArm }
@@ -128,6 +129,11 @@ export interface PilotContext {
 export interface TallyContext extends Omit<PilotContext, 'agent_model_id'> {
   /** The rubric's judge criterion ids (`parseRubric(...).criteria`), in rubric order. Each gets a pass count per cell. */
   criteria: readonly string[]
+  /**
+   * The verified dev fixtures of the current prereg, with their expectation sidecars. `over_limit` is recomputed against the current
+   * `maxWords`, so a tally follows the committed contract whatever limit the run was graded under.
+   */
+  fixtures: readonly Pick<LoadedFixture, 'id' | 'expectation'>[]
 }
 
 export interface TallyOptions {
@@ -201,13 +207,17 @@ export function tallyPilotCampaign(campaignDir: string, ctx: TallyContext, optio
     campaignIds.add(m.campaign_id)
     agentModels.add(m.model.pinned)
     if (!COUNTED_STATUSES.includes(m.status)) continue
+    const fixture = ctx.fixtures.find((f) => f.id === m.fixture.id)
+    if (fixture === undefined) throw new Error(`${runDir} ran fixture ${m.fixture.id}, which the current prereg does not have`)
     const cell = ((tally[m.arm] ??= {})[m.fixture.id] ??= emptyCell(ctx.criteria))
     const verdicts = verdictsOf(runDir, m)
     const passes = ctx.criteria.filter((id) => passed(verdicts, id))
     cell.runs += 1
     for (const id of passes) cell.criteria[id] = (cell.criteria[id] ?? 0) + 1
     if (passes.length === ctx.criteria.length) cell.all_pass += 1
-    if (m.reasons.includes('answer_over_limit')) cell.over_limit += 1
+    // The word limit is the current expectation's, applied to the words the run recorded; the recorded reason reflects the limit of its day.
+    const maxWords = fixture.expectation?.maxWords
+    if (maxWords !== undefined && m.word_count !== undefined && isOverLimit(m.word_count, maxWords)) cell.over_limit += 1
     if (m.reasons.includes('answer_empty')) cell.empty += 1
     if (skillLoadedIn(runDir)) cell.skill_loaded += 1
   }
@@ -218,7 +228,7 @@ export function tallyPilotCampaign(campaignDir: string, ctx: TallyContext, optio
   const campaigns: PilotTally['campaigns'] = {}
   const [campaignId] = campaignIds
   if (campaignId !== undefined) for (const arm of PILOT_ARMS) if (tally[arm] !== undefined) campaigns[arm] = campaignId
-  const { criteria: _criteria, ...context } = ctx
+  const { criteria: _criteria, fixtures: _fixtures, ...context } = ctx
   return projectPilot({ ...context, agent_model_id: agentModel, tally, campaigns })
 }
 

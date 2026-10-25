@@ -401,6 +401,7 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
         prereg_content_hash: verification.contentHash,
         judge_model_id: prereg.judge_model_id,
         criteria: pilotRubric(repoRoot, method).criteria,
+        fixtures: verification.content.fixtures.dev,
       })
       out(`wrote ${writePilotTally(repoRoot, pilotTally, out).slice(repoRoot.length + 1)} (arms: ${pilotTally.arms.join(', ')})`)
     } catch (e) {
@@ -565,7 +566,7 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
         const rubric = pilotRubric(repoRoot, method)
         tally = tallyPilotCampaign(
           campaignDir,
-          { method, prereg_content_hash: verification.contentHash, judge_model_id: verification.prereg.judge_model_id, criteria: rubric.criteria },
+          { method, prereg_content_hash: verification.contentHash, judge_model_id: verification.prereg.judge_model_id, criteria: rubric.criteria, fixtures: verification.content.fixtures.dev },
           { rejudgedUnder: { judgePromptSha256: usedPrompt ?? rubric.judgePromptSha256 } },
         )
       } catch (e) {

@@ -103,6 +103,8 @@ interface Plant {
   hash?: string
   /** The agent model the manifest records (default: agent/x). */
   agent?: string
+  /** `word_count` on the manifest: words in the final answer. */
+  words?: number
 }
 
 const CAMPAIGN_ID = 'demo-pilot-2026-10-24T00-00-00-000Z'
@@ -130,6 +132,7 @@ function plantCampaign(plants: Plant[]): string {
       artifacts: {},
       prereg: { content_hash: p.hash ?? 'a'.repeat(64), epoch: 1 },
       model: { pinned: p.agent ?? 'agent/x', returned: [] },
+      ...(p.words !== undefined ? { word_count: p.words } : {}),
       ...(p.judge ? { judge: p.judge } : {}),
     }
     writeManifest(dir, base as never)
@@ -138,7 +141,16 @@ function plantCampaign(plants: Plant[]): string {
   return campaign
 }
 
-const CTX = { method: 'demo', prereg_content_hash: 'a'.repeat(64), agent_model_id: 'agent/x', judge_model_id: 'judge/x', criteria: ['TE1', 'TE2'] }
+const LIMIT = 100
+const CTX = {
+  method: 'demo',
+  prereg_content_hash: 'a'.repeat(64),
+  agent_model_id: 'agent/x',
+  judge_model_id: 'judge/x',
+  criteria: ['TE1', 'TE2'],
+  // d1 has a word limit in its (current) expectation sidecar, d2 has no expectation.
+  fixtures: [{ id: 'd1', expectation: { outcome: 'o', excludedTopics: [], maxWords: LIMIT } }, { id: 'd2' }],
+}
 
 const PROMPT = 'f'.repeat(64)
 const JUDGE_JSON = JSON.stringify({ redacted_input_sha256: 'c'.repeat(64), model_pinned: 'm', model_returned: ['m'], criteria: [{ id: 'TE1', verdict: 'pass', quotes: ['q'] }, { id: 'TE2', verdict: 'pass', quotes: ['q'] }], attempts: 1 })
@@ -159,7 +171,7 @@ describe('tallyPilotCampaign', () => {
     const dir = plantCampaign([
       { arm: 'baseline', fixture: 'd1', judge: evidence('pass', 'pass') },
       { arm: 'baseline', fixture: 'd1', judge: evidence('pass', 'fail'), reasons: ['judge_fail'] },
-      { arm: 'baseline', fixture: 'd1', judge: evidence('pass', 'pass'), reasons: ['answer_over_limit'] },
+      { arm: 'baseline', fixture: 'd1', judge: evidence('pass', 'pass'), reasons: ['answer_over_limit'], words: LIMIT + 1 },
       { arm: 'baseline', fixture: 'd1', reasons: ['answer_empty'] },
       { arm: 'baseline', fixture: 'd2', judge: evidence('fail', 'fail'), reasons: ['judge_fail'], stdout: skillLoad },
     ])
@@ -168,6 +180,51 @@ describe('tallyPilotCampaign', () => {
     expect(t.tally.baseline).toEqual({
       d1: { runs: 4, criteria: { TE1: 3, TE2: 2 }, all_pass: 2, over_limit: 1, empty: 1, skill_loaded: 0 },
       d2: { runs: 1, criteria: { TE1: 0, TE2: 0 }, all_pass: 0, over_limit: 0, empty: 0, skill_loaded: 1 },
+    })
+  })
+
+  describe('over_limit is recomputed from the current expectation, not read from the recorded reason', () => {
+    const plant3 = () =>
+      plantCampaign([
+        { arm: 'baseline', fixture: 'd1', judge: evidence('pass', 'pass'), words: 50 },
+        { arm: 'baseline', fixture: 'd1', judge: evidence('pass', 'pass'), words: 100 },
+        { arm: 'baseline', fixture: 'd1', judge: evidence('pass', 'pass'), words: 150, reasons: ['answer_over_limit'] },
+      ])
+    const withLimit = (maxWords: number) => ({ ...CTX, fixtures: [{ id: 'd1', expectation: { outcome: 'o', excludedTopics: [], maxWords } }, { id: 'd2' }] })
+    const overLimit = (dir: string, maxWords: number) => tallyPilotCampaign(dir, withLimit(maxWords)).tally.baseline!.d1!.over_limit
+
+    test('lowering maxWords raises the count; raising it lowers the count; exactly maxWords is within the limit', () => {
+      const dir = plant3()
+      expect(overLimit(dir, LIMIT)).toBe(1)
+      expect(overLimit(dir, 49)).toBe(3)
+      expect(overLimit(dir, 99)).toBe(2)
+      expect(overLimit(dir, 150)).toBe(0) // the run recorded as answer_over_limit is within a 150-word limit
+      expect(overLimit(dir, 500)).toBe(0)
+    })
+
+    test('a stale answer_over_limit reason with a word count inside the limit is not counted', () => {
+      const dir = plantCampaign([{ arm: 'baseline', fixture: 'd1', judge: evidence('pass', 'pass'), words: 10, reasons: ['answer_over_limit'] }])
+      expect(overLimit(dir, LIMIT)).toBe(0)
+    })
+
+    test('a fixture with no expectation, or a run with no word count, is never over the limit', () => {
+      const dir = plantCampaign([
+        { arm: 'baseline', fixture: 'd2', judge: evidence('pass', 'pass'), words: 9999 },
+        { arm: 'baseline', fixture: 'd1', judge: evidence('pass', 'pass') },
+      ])
+      const t = tallyPilotCampaign(dir, CTX)
+      expect(t.tally.baseline!.d2!.over_limit).toBe(0)
+      expect(t.tally.baseline!.d1!.over_limit).toBe(0)
+    })
+
+    test('empty still comes from the recorded reason', () => {
+      const dir = plantCampaign([{ arm: 'baseline', fixture: 'd1', reasons: ['answer_empty'], words: 0 }])
+      expect(tallyPilotCampaign(dir, CTX).tally.baseline!.d1).toMatchObject({ empty: 1, over_limit: 0 })
+    })
+
+    test('a run of a fixture the current prereg does not have is refused, naming the run dir', () => {
+      const dir = plantCampaign([{ arm: 'baseline', fixture: 'gone', judge: evidence('pass', 'pass'), words: 5 }])
+      expect(() => tallyPilotCampaign(dir, CTX)).toThrow(/001-dev-gone-baseline-r1.*gone/)
     })
   })
 
@@ -497,6 +554,7 @@ describe('baseline pilot, end to end (fake host)', () => {
       prereg_content_hash: verification.contentHash,
       judge_model_id: verification.prereg.judge_model_id,
       criteria: ['TE1', 'TE2'],
+      fixtures: verification.content.fixtures.dev,
     })
     expect(tally.arms).toEqual(['baseline'])
     expect(tally.campaigns).toEqual({ baseline: 'demo-pilot-2026-10-24T00-00-00-000Z' })
