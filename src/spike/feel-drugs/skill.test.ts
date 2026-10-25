@@ -9,7 +9,7 @@ import {
   FEEL_DESCRIPTION,
   FEEL_FIELD_DESCRIPTIONS,
   FEEL_FRAME,
-} from './server'
+} from '../../frames/feel-drugs'
 
 const SKILL_NAME = 'metacog-frames'
 const SKILL_DIR = join(new URL('../../..', import.meta.url).pathname, 'evals', 'spikes', 'feel-drugs', 'skill', SKILL_NAME)
