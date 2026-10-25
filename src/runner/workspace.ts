@@ -299,6 +299,15 @@ export interface RunWorkspaceInput {
   auth?: PassthroughAuth
   /** CLIProxyAPI mode: the wizard's provider blocks (`openai` and `anthropic`, both on one base URL) instead of the single model provider. */
   cliproxy?: boolean
+  /** Extra top-level config keys (e.g. `mcp`), merged after the provider block. Absent: the generated config is unchanged. */
+  configExtra?: Record<string, unknown>
+  /** Replaces `permissionFor(condition, method, ...)`. Absent: the method's own permission set. */
+  permission?: Record<string, unknown>
+  /**
+   * A skill directory outside `skills/<method>/`, installed at `.agents/skills/<name>`. Needs `condition: 'skill'`;
+   * the `skills/<method>` lookup is skipped and `<name>` is the one expected skill.
+   */
+  skillSource?: { name: string; dir: string }
 }
 
 /** Strings that must never be quotable from inside the run. */
@@ -334,16 +343,20 @@ function populateRunWorkspace(input: RunWorkspaceInput, fixture: Fixture): RunWo
   // The fixture is the whole workspace; the prompt is passed on argv with the same text.
   writeFileSync(join(fixture.workspace, 'fixture.md'), input.fixtureText)
 
+  if (input.skillSource && condition !== 'skill') {
+    throw new Error('skillSource needs condition "skill"')
+  }
+  const skillName = input.skillSource?.name ?? method
   let skill: RunWorkspace['skill'] = null
   if (condition === 'skill') {
-    const source = join(repoRoot, 'skills', method)
+    const source = input.skillSource?.dir ?? join(repoRoot, 'skills', method)
     if (!existsSync(join(source, 'SKILL.md'))) {
-      throw new Error(`skill condition needs skills/${method}/SKILL.md`)
+      throw new Error(input.skillSource ? `skillSource ${skillName} needs SKILL.md in ${source}` : `skill condition needs skills/${method}/SKILL.md`)
     }
     skill = hashSkillDir(source)
-    copySkillDir(source, join(fixture.workspace, '.agents', 'skills', method))
+    copySkillDir(source, join(fixture.workspace, '.agents', 'skills', skillName))
   }
-  const expectedSkills = condition === 'skill' ? [method] : []
+  const expectedSkills = condition === 'skill' ? [skillName] : []
   assertInstalledSkills(fixture.workspace, expectedSkills)
 
   // Decoys: what the author's machine would contribute, planted beside (not in) the
@@ -362,8 +375,9 @@ function populateRunWorkspace(input: RunWorkspaceInput, fixture: Fixture): RunWo
         ? cliproxyProviderConfig(provider.recordingProxyUrl)
         : { [providerOf(input.model)]: { options: { baseURL: provider.recordingProxyUrl } } }
   const config = buildConfig({
-    permission: permissionFor(condition, method, [...new Set([fixture.workspace, realpathSync(fixture.workspace)])]),
+    permission: input.permission ?? permissionFor(condition, method, [...new Set([fixture.workspace, realpathSync(fixture.workspace)])]),
     provider: providerConfig,
+    ...(input.configExtra ? { extra: input.configExtra } : {}),
   })
   const env = buildChildEnv({ fixture, config, withRecordsDir: true })
   writeIsolatedAuth(fixture, input.auth ?? {})

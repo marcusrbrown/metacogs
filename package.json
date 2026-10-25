@@ -20,12 +20,16 @@
     "matrix:check": "bun src/matrix/check.ts",
     "matrix:render": "bun src/matrix/check.ts --render",
     "scan:secrets": "bun src/scan/secrets.ts",
+    "spike:feel-drugs": "bun src/spike/feel-drugs/driver.ts",
+    "spike:feel-drugs:sheet": "bun src/spike/feel-drugs/sheet.ts",
     "version": "changeset version && bun run generate",
     "release": "bun src/release/release.ts"
   },
   "devDependencies": {
     "@changesets/cli": "3.0.3",
+    "@modelcontextprotocol/sdk": "1.25.2",
     "@types/bun": "1.4.4",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "zod": "3.25.76"
   }
 }

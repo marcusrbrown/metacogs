@@ -8,8 +8,10 @@ import { heldoutFingerprints } from './prereg'
 import { toolUses } from './events'
 import { opencodeAvailability } from './opencode'
 import { plantSkill, runOpencode } from './spike/isolation'
+import { scriptedProviderConfig } from './scripted-provider'
 import {
   assertInstalledSkills,
+  buildConfig,
   claimHeldoutRead,
   copySkillDir,
   createRunWorkspace,
@@ -180,6 +182,77 @@ describe('run workspace', () => {
     const ws = workspace('skill')
     expect(() => assertInstalledSkills(ws.fixture.workspace, [])).toThrow(/mismatch/)
     expect(() => assertInstalledSkills(ws.fixture.workspace, ['demo'])).not.toThrow()
+  })
+})
+
+describe('run workspace seams (configExtra, permission, skillSource)', () => {
+  const scriptedUrl = 'http://127.0.0.1:1/v1'
+  const base = (repoRoot: string, extra: Partial<Parameters<typeof createRunWorkspace>[0]> = {}) => {
+    const ws = createRunWorkspace({
+      repoRoot,
+      method: 'demo',
+      condition: 'baseline',
+      fixtureId: 'f1',
+      fixtureText: 'x\n',
+      provider: { kind: 'scripted', url: scriptedUrl },
+      model: 'a/b',
+      ...extra,
+    })
+    cleanup.push(() => destroyFixture(ws.fixture))
+    return ws
+  }
+  const outsideSkill = (name = 'frames') => {
+    const dir = join(tmp('metacogs-outside-skill-'), name)
+    mkdirSync(join(dir, 'refs'), { recursive: true })
+    writeFileSync(join(dir, 'SKILL.md'), `---\nname: ${name}\ndescription: x\n---\nbody\n`)
+    writeFileSync(join(dir, 'refs', 'a.md'), 'ref\n')
+    return dir
+  }
+
+  test('without the new fields the generated config is byte-identical to the pre-seam construction', () => {
+    for (const condition of ['baseline', 'skill'] as const) {
+      const ws = base(repoWithSkill(), { condition })
+      const roots = [...new Set([ws.fixture.workspace, realpathSync(ws.fixture.workspace)])]
+      const legacy = buildConfig({ permission: permissionFor(condition, 'demo', roots), provider: scriptedProviderConfig(scriptedUrl) })
+      expect(JSON.stringify(ws.config)).toBe(JSON.stringify(legacy))
+      expect(readFileSync(ws.fixture.configPath, 'utf8')).toBe(JSON.stringify(legacy))
+      expect(Object.keys(ws.config)).toEqual(['$schema', 'autoupdate', 'share', 'permission', 'provider'])
+    }
+  })
+
+  test('configExtra lands in the config file the host reads, after the provider block', () => {
+    const mcp = { metacog: { type: 'local', command: ['bun', '/abs/server.ts'], enabled: true, timeout: 30000 } }
+    const ws = base(repoWithSkill(), { configExtra: { mcp } })
+    expect(Object.keys(ws.config).at(-1)).toBe('mcp')
+    expect(JSON.parse(readFileSync(ws.fixture.configPath, 'utf8')).mcp).toEqual(mcp)
+    expect(ws.env.OPENCODE_CONFIG).toBe(ws.fixture.configPath)
+  })
+
+  test('permission replaces permissionFor when given', () => {
+    const permission = { edit: 'deny', skill: { '*': 'deny' }, bash: { '*': 'deny' } }
+    const ws = base(repoWithSkill(), { permission })
+    expect(ws.config.permission).toEqual(permission)
+    expect(JSON.parse(readFileSync(ws.fixture.configPath, 'utf8')).permission).toEqual(permission)
+  })
+
+  test('skillSource installs a skill from outside skills/<method>/ under its own name', () => {
+    const dir = outsideSkill('frames')
+    const ws = base(tmp('metacogs-empty-repo-'), { condition: 'skill', skillSource: { name: 'frames', dir } })
+    const skills = join(ws.fixture.workspace, '.agents', 'skills')
+    expect(readdirSync(skills)).toEqual(['frames'])
+    expect(existsSync(join(skills, 'frames', 'refs', 'a.md'))).toBe(true)
+    expect(ws.expectedSkills).toEqual(['frames'])
+    expect(ws.skill?.sha256).toBe(hashSkillDir(dir).sha256)
+  })
+
+  test('skillSource with the baseline condition is refused and leaves no temp dir behind', () => {
+    const before = readdirSync(tmpdir()).filter((d) => d.startsWith('metacogs-run-'))
+    expect(() => base(repoWithSkill(), { condition: 'baseline', skillSource: { name: 'frames', dir: outsideSkill() } })).toThrow(/skillSource/)
+    expect(readdirSync(tmpdir()).filter((d) => d.startsWith('metacogs-run-'))).toEqual(before)
+  })
+
+  test('a skillSource without SKILL.md is an error', () => {
+    expect(() => base(repoWithSkill(), { condition: 'skill', skillSource: { name: 'frames', dir: tmp() } })).toThrow(/SKILL.md/)
   })
 })
 
