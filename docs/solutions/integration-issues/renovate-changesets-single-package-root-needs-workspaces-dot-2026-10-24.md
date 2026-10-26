@@ -32,7 +32,7 @@ The `bfra-me/.github` `renovate-changesets` action refuses to use the root packa
 ## What Didn't Work
 
 - **Re-running the job.** The action checks out the PR head, which still lacks the `package.json` change. A re-run reproduces the failure until the branch contains the fix.
-- **Relying on `target-package`.** `.github/workflows/renovate-changesets.yaml:21-23` passes `target-package: metacogs`. This is required for a private root, but it does not mark the root as a workspace member.
+- **Relying on `target-package`.** `.github/workflows/renovate-changesets.yaml:64-66` passes `target-package: metacogs`. This is required for a private root, but it does not mark the root as a workspace member.
 
 ## Solution
 
@@ -48,7 +48,7 @@ Then make Renovate rebase the open PR so its head includes the fix: tick the reb
 
 Related configuration that must be in place for the job to work end to end:
 
-- **Caller workflow.** `.github/workflows/renovate-changesets.yaml` calls the reusable `bfra-me/.github/.github/workflows/renovate-changeset.yaml` (singular) at `v4.43.0` (`e6a1ab17bb68213940f63de91bd0450acdf9fff4`) and sets `target-package` (`:21-23`).
+- **Caller workflow.** `.github/workflows/renovate-changesets.yaml` calls the reusable `bfra-me/.github/.github/workflows/renovate-changeset.yaml` (singular) at `v4.43.0` (`e6a1ab17bb68213940f63de91bd0450acdf9fff4`) and sets `target-package` (`:64-66`).
 - **Ignored authors.** `.github/renovate.json5:7` sets `gitIgnoredAuthors` to include both the GitHub App bot (`137683033+mrbro-bot[bot]@users.noreply.github.com`) and `bfra-me[bot]` (`118100583+bfra-me[bot]@users.noreply.github.com`). The second is the reusable workflow's commit identity. Without it, Renovate sees the changeset commit-back as a foreign commit and stops rebasing the branch.
 
 ## Why This Works
