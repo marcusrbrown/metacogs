@@ -19,6 +19,7 @@ export const README_END = '<!-- matrix:end -->'
 /** The two shapes an `evidence_ref` may take. Anything else is rejected before touching the filesystem. */
 const INSTALL_REF = /^docs\/install\.md#([a-z0-9][a-z0-9-]*)$/
 const REPORT_REF = /^evals\/reports\/([a-z][a-z0-9-]{0,63})\/green\.json$/
+const PLUGIN_REF = /^(README\.md|evals\/spikes\/feel-drugs\/README\.md)#([a-z0-9][a-z0-9-]*)$/
 const KEY = /^[a-z][a-z0-9-]{0,63}$/
 const DATE = /^\d{4}-\d{2}-\d{2}$/
 
@@ -43,10 +44,20 @@ export interface Cell extends HistoryEntry {
   history: HistoryEntry[]
 }
 
+/** The OpenCode plugin's tested host: the version it was tested on and the README section that records the tests. */
+export interface PluginEntry {
+  host: string
+  host_version: string
+  evidence_ref: string
+  date: string
+  note?: string
+}
+
 export interface Matrix {
   schema_version: typeof MATRIX_SCHEMA_VERSION
   hosts: Record<string, Host>
   methods: Record<string, Record<string, Cell>>
+  plugin?: PluginEntry
 }
 
 export interface Problem {
@@ -98,11 +109,33 @@ function parseEntry(where: string, raw: unknown, out: Problem[], extra: readonly
   return entry
 }
 
+function parsePlugin(raw: unknown, hosts: Record<string, Host>, out: Problem[]): PluginEntry | undefined {
+  if (raw === undefined) return undefined
+  const where = 'plugin'
+  if (!isRecord(raw)) {
+    out.push({ where, message: 'must be an object' })
+    return undefined
+  }
+  const before = out.length
+  closedKeys(where, raw, ['host', 'host_version', 'evidence_ref', 'date', 'note'], out)
+  if (!nonEmpty(raw.host) || !(raw.host in hosts)) out.push({ where, message: 'host must name a declared host' })
+  if (!nonEmpty(raw.host_version)) out.push({ where, message: 'host_version must be a non-empty string' })
+  if (!nonEmpty(raw.evidence_ref) || !PLUGIN_REF.test(raw.evidence_ref)) {
+    out.push({ where, message: 'evidence_ref must be README.md#<section> or evals/spikes/feel-drugs/README.md#<section>' })
+  }
+  if (!validDate(raw.date)) out.push({ where, message: 'date must be a real YYYY-MM-DD date' })
+  if (raw.note !== undefined && !nonEmpty(raw.note)) out.push({ where, message: 'note must be a non-empty string when present' })
+  if (out.length > before) return undefined
+  const entry: PluginEntry = { host: raw.host as string, host_version: raw.host_version as string, evidence_ref: raw.evidence_ref as string, date: raw.date as string }
+  if (raw.note !== undefined) entry.note = raw.note as string
+  return entry
+}
+
 /** Structural validation only: shapes, enums, key sets. Evidence is checked by `checkEvidence`. */
 export function parseMatrix(raw: unknown): { matrix: Matrix | null; problems: Problem[] } {
   const problems: Problem[] = []
   if (!isRecord(raw)) return { matrix: null, problems: [{ where: 'matrix.json', message: 'must be a JSON object' }] }
-  closedKeys('matrix.json', raw, ['schema_version', 'hosts', 'methods'], problems)
+  closedKeys('matrix.json', raw, ['schema_version', 'hosts', 'methods', 'plugin'], problems)
   if (raw.schema_version !== MATRIX_SCHEMA_VERSION) {
     problems.push({ where: 'schema_version', message: `must be ${MATRIX_SCHEMA_VERSION}` })
   }
@@ -124,6 +157,8 @@ export function parseMatrix(raw: unknown): { matrix: Matrix | null; problems: Pr
       if (nonEmpty(value.name) && nonEmpty(value.project_path)) hosts[key] = { name: value.name, project_path: value.project_path }
     }
   }
+
+  const plugin = parsePlugin(raw.plugin, hosts, problems)
 
   const methods: Record<string, Record<string, Cell>> = {}
   if (!isRecord(raw.methods) || Object.keys(raw.methods).length === 0) {
@@ -186,7 +221,7 @@ export function parseMatrix(raw: unknown): { matrix: Matrix | null; problems: Pr
   }
 
   if (problems.length > 0) return { matrix: null, problems }
-  return { matrix: { schema_version: MATRIX_SCHEMA_VERSION, hosts, methods }, problems }
+  return { matrix: { schema_version: MATRIX_SCHEMA_VERSION, hosts, methods, ...(plugin ? { plugin } : {}) }, problems }
 }
 
 // ── evidence ───────────────────────────────────────────────────────────────
@@ -315,8 +350,17 @@ function checkInstallRef(root: string, host: string, cell: Cell, where: string, 
   }
 }
 
+function checkPluginEvidence(plugin: PluginEntry, root: string, out: Problem[]): void {
+  const match = PLUGIN_REF.exec(plugin.evidence_ref)
+  if (match === null) return
+  const doc = readRepoFile(root, match[1] ?? '')
+  if (doc === null) out.push({ where: 'plugin', message: `evidence_ref points into ${match[1]}, which does not exist` })
+  else if (sectionByAnchor(doc, match[2] ?? '') === null) out.push({ where: 'plugin', message: `${match[1]} has no section for #${match[2]}` })
+}
+
 export function checkEvidence(matrix: Matrix, root: string): Problem[] {
   const out: Problem[] = []
+  if (matrix.plugin) checkPluginEvidence(matrix.plugin, root, out)
   for (const [method, cells] of Object.entries(matrix.methods)) {
     // A method may be listed only when it shipped: a skill exists and its GREEN read was green.
     if (readRepoFile(root, `skills/${method}/SKILL.md`) === null) {
