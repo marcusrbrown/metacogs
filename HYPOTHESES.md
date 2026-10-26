@@ -24,3 +24,5 @@ feel / drugs spike (upstream tools served as a local MCP against the same frames
 
 - feel - all: yes, mostly; tool vs skill: tool
 - drugs - (the ones that used it); tool vs skill: tool
+
+OpenCode plugin reads (`evals/spikes/feel-drugs/README.md#plugin-reads`; both statuses stay `hypothesis`): in read 1 no plugin run called a tool and skills were loaded in 6 of 30 runs, with the plan's rule met on three skill-loading cells; read 2 had no tool calls in 46 plugin runs and its owner read is pending; `/feel` and `/drugs` led to a tool call in 32 of 32 command runs. The guidance and the two skills were rewritten after these runs.
