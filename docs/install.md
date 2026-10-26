@@ -4,6 +4,8 @@ metacogs ships Agent Skills. A skill is a directory with a `SKILL.md` and, for m
 
 Two methods are installable guidance in this release: `synthesis` and `counterfactual`. See [Methods](../README.md#methods).
 
+For OpenCode there is a second route, the [OpenCode plugin](#opencode-plugin), which provides the same two methods plus the `feel` and `drugs` tools and skills without a copy step.
+
 ## Requirements
 
 - A host from the sections below.
@@ -49,6 +51,25 @@ echo '.metacogs/records/' >> .gitignore
 ## `unrecorded`
 
 If the helper cannot run, the skill does not retry blindly and does not pretend a record exists. It tells the user no record was written, and the run's `execution_mode` is `unrecorded`. This covers: no Node 22, a denied shell command, an unwritable records directory (exit 3), and a different record already at the same path (exit 4). A validation error (exit 2) names the field; the agent fixes it and reruns once.
+
+## OpenCode plugin
+
+The plugin is the `metacogs` npm package. It registers two tools (`metacogs_feel`, `metacogs_drugs`), four skills (`feel`, `drugs`, `synthesis`, `counterfactual`, with `/feel` and `/drugs` as slash commands) and a short guidance block. What each one does is in [OpenCode plugin](../README.md#opencode-plugin).
+
+Requirements: OpenCode 1.19.4 (the tested version). Node 22 or newer is still needed for the method skills' record helper, as above. The tools need nothing else.
+
+1. Remove any copy of `synthesis` or `counterfactual` from `.agents/skills/` or another scanned path. The plugin provides skills with the same names, and OpenCode does not guarantee which of two same-named skills wins.
+2. Add the package to `opencode.json` in the project, or to `~/.config/opencode/opencode.json` for all projects:
+
+   ```json
+   { "plugin": ["metacogs"] }
+   ```
+
+   To pin a version, use `"metacogs@0.2.0"`. To keep the tools and skills but drop the guidance block, use `["metacogs", { "guidance": false }]` as the entry.
+3. Start OpenCode. OpenCode installs the package on first load.
+4. Verify without a model request: `opencode debug skill` lists `feel`, `drugs`, `synthesis` and `counterfactual`, and `opencode debug config` shows the package's `skills/` and `plugin/skills/` directories under `skills.paths` and the package under `plugin_origins`. In a session, the tools are offered as `metacogs_feel` and `metacogs_drugs`.
+
+To uninstall, remove the entry. The tools, skills and guidance block go away on the next start. Start a new session afterwards: a resumed session can still hold calls to tools that are no longer offered. The records directory is user data and stays.
 
 ## Verify an install
 
@@ -127,3 +148,23 @@ Evidence:
 | `unsupported` | The host cannot load the skill. The cell says why. |
 
 `matrix.json` is the source of truth. `bun run matrix:check` fails when a cell claims more than its evidence shows or when the README table differs from `matrix.json`; `bun run matrix:render` rewrites the README table.
+
+## Publishing the package
+
+For maintainers. The release workflow publishes to npm through trusted publishing (OIDC) with provenance, from the `release` environment, after the GitHub Release for the version exists. No npm token is stored. A trusted publisher can only be configured for a package that already exists, so the first publish is manual and happens once:
+
+1. **Publish `0.0.1` by hand.** From a throwaway directory outside this repository, with a `package.json` that has only `name` (`metacogs`) and `version` (`0.0.1`) and a placeholder `README.md`, no `main` and no scripts, run `npm publish --tag bootstrap` and confirm with 2FA.
+2. **Check the dist-tags.** `npm view metacogs dist-tags` should list `bootstrap` at `0.0.1`. If `latest` also points at `0.0.1`, that is acceptable: the placeholder does nothing.
+3. **Configure the trusted publisher.** On npmjs.com: package Settings, Trusted Publisher, GitHub Actions, owner `marcusrbrown`, repository `metacogs`, workflow `release.yaml` (exact, case-sensitive), environment `release`. Also create the `release` environment in the GitHub repository settings and restrict its deployment branches to `main`. The workflow file name is part of the link, so renaming `release.yaml` breaks it.
+4. **After `0.2.0` is published and verified,** set the package's publishing access to "Require two-factor authentication and disallow tokens", remove the placeholder tag with `npm dist-tag rm metacogs bootstrap`, and revoke any automation tokens.
+
+Merging the version PR for `0.2.0` runs the workflow: it creates the `v0.2.0` Release, then `changeset publish --no-git-tag` builds, runs the tests and publishes. `v<version>` is the only tag the workflow creates.
+
+Checks after a publish: `npm view metacogs@0.2.0 version` returns `0.2.0`, `latest` points at it, `dist.attestations` is present, and `npm audit signatures` passes from a clean install outside the repository.
+
+Recovery:
+
+- **The release job fails before a Release exists.** Nothing is published; re-run it. If a `v<version>` tag exists without a Release, do not delete it without checking why.
+- **A Release exists and the publish fails before npm accepts it.** Nothing is published. Fix the cause and re-run the job.
+- **`npm publish` reports an error after uploading.** Run `npm view metacogs@<version>`. If the version is there, do not publish it again. Right after a manual publish, `changeset publish` can report "cannot publish over previously published versions" for 30 to 60 minutes while registry metadata propagates; check `npm view` before re-running.
+- **A published version is broken.** Deprecate it with a message that names the fix, ship a patch release through a changeset, and edit the Release notes. Do not point `latest` back at `0.0.1`. Unpublishing is a last resort and npm limits it to the first 72 hours and to versions without dependents.

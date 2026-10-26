@@ -17,6 +17,12 @@ describe('the tested OpenCode version', () => {
   })
 })
 
+describe('the docs that state the tested version', () => {
+  test.each(['README.md', 'docs/install.md'])('%s names OpenCode at the pinned version', (file) => {
+    expect(read(file)).toContain(`OpenCode ${OPENCODE_PIN}`)
+  })
+})
+
 describe('package.json publishing fields', () => {
   const pkg = JSON.parse(read('package.json')) as Record<string, unknown>
 

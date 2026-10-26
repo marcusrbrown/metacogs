@@ -3,9 +3,9 @@ _extends: .github:common-settings.yaml
 
 repository:
   name: metacogs
-  description: Explicit, testable reasoning methods packaged as portable Agent Skills
+  description: Explicit, testable reasoning methods as portable Agent Skills, and an OpenCode plugin
   homepage: https://github.com/marcusrbrown/metacogs
-  topics: [agent-skills, reasoning, evals, opencode, claude-code, codex]
+  topics: [agent-skills, reasoning, evals, opencode, opencode-plugin, claude-code, codex]
 
 # Applied by the settings workflow, which deletes any ruleset not listed here.
 rulesets:
