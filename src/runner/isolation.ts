@@ -177,11 +177,12 @@ const sameList = (a: readonly string[], b: readonly string[]): boolean => a.leng
 function takeExpected(effective: Record<string, unknown>, generated: Record<string, unknown>, expected: ExpectedConfig, problems: string[]): Record<string, unknown> {
   const rest = { ...effective }
   if (expected.pluginOrigins && !('plugin_origins' in generated)) {
-    const specs = (Array.isArray(generated.plugin) ? generated.plugin : []).map(specOf)
+    // The host lists a bare spec as a string and a spec with options as the whole `[spec, options]` entry.
+    const entries = Array.isArray(generated.plugin) ? generated.plugin : []
     const origins = Array.isArray(effective.plugin_origins) ? effective.plugin_origins.map((o) => (isRecord(o) ? o.spec : undefined)) : undefined
-    if (specs.length === 0 || specs.some((spec) => spec === undefined)) problems.push('plugin_origins: expected, but the generated config has no plugin entries')
+    if (entries.length === 0 || entries.some((entry) => specOf(entry) === undefined)) problems.push('plugin_origins: expected, but the generated config has no plugin entries')
     else if (origins === undefined) problems.push('plugin_origins: missing, so the plugin did not load')
-    else if (!sameList(origins.filter((o): o is string => typeof o === 'string'), specs as string[]) || origins.length !== specs.length) problems.push('plugin_origins: differs from the generated plugin entries')
+    else if (origins.length !== entries.length || !sameList(origins.map((o) => JSON.stringify(o)), entries.map((entry) => JSON.stringify(entry)))) problems.push('plugin_origins: differs from the generated plugin entries')
     delete rest.plugin_origins
   }
   if (expected.commands && !('command' in generated)) {

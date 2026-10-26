@@ -68,6 +68,8 @@ function record(o: { arm: GuidedArm; model: string; prompt: string; run: number;
     unwanted_calls: o.unwanted ?? [],
     skill_loads: plugin && (fired === 'skill' || fired === 'both') ? ['synthesis'] : [],
     guidance_sha256: plugin ? 'g'.repeat(64) : null,
+    guidance_enabled: true,
+    nudge: false,
     tarball_sha256: plugin ? 't'.repeat(64) : null,
     command: null,
     turns: 1,
@@ -372,6 +374,35 @@ describe('reveal', () => {
     expect(text).toContain('<pkg>/skills')
     expect(text).not.toContain('/tmp/')
     expect(text).toContain('control')
+  })
+})
+
+describe('diagnostic campaigns never reach a blind sheet', () => {
+  const diagRecords = (patch: Partial<GuidedRecord>) => [...cell(LUNA, 'p1'), ...control(SOL, 'p3')].map((r, i) => (i === 0 ? { ...r, ...patch } : r))
+
+  test.each([
+    ['a record with the nudge', { nudge: true }],
+    ['a record with guidance off', { guidance_enabled: false }],
+  ] as [string, Partial<GuidedRecord>][])('buildBlind refuses %s, naming the run', (_name, patch) => {
+    expect(() => build(diagRecords(patch))).toThrow(/diagnostic/)
+  })
+
+  test('records from before the fields existed, and records with guidance on and no nudge, build as before', () => {
+    expect(build(diagRecords({ guidance_enabled: true, nudge: false })).key.cells).toHaveLength(2)
+    const legacy = diagRecords({})
+    for (const r of legacy) {
+      delete (r as Partial<Record<'guidance_enabled' | 'nudge', unknown>>).guidance_enabled
+      delete (r as Partial<Record<'guidance_enabled' | 'nudge', unknown>>).nudge
+    }
+    expect(build(legacy).key.cells).toHaveLength(2)
+  })
+
+  test('loadGuidedRuns refuses a diag-* campaign directory, even one holding only guidance-on, no-nudge records', () => {
+    const dir = join(tmp('blind-diag-'), 'diag-A-openai-gpt-6-luna')
+    const runDir = join(dir, 'P1-p1-1')
+    mkdirSync(runDir, { recursive: true })
+    writeFileSync(join(runDir, 'run.json'), JSON.stringify(record({ arm: 'P1', model: LUNA, prompt: 'p1', run: 1 })))
+    expect(() => loadGuidedRuns(dir)).toThrow(/diagnostic/)
   })
 })
 

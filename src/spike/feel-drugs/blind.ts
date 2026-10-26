@@ -13,7 +13,7 @@
  * owner notes such cells.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs as parseNodeArgs } from 'node:util'
 
@@ -147,6 +147,8 @@ function keyCommandRun(record: GuidedRecord): KeyCommandRun {
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 
 export function buildBlind(input: BuildInput): { sheet: string; key: BlindKey } {
+  const diagnostic = input.records.find((r) => r.nudge === true || r.guidance_enabled === false)
+  if (diagnostic) throw new Error(`run ${diagnostic.arm}-${diagnostic.prompt_id}-${diagnostic.run} (${diagnostic.model}) is from a diagnostic arm (nudge or guidance off); a blind sheet covers the read arms only`)
   const rng = input.rng ?? cryptoRng
   const reads = [...new Set(input.records.map((r) => r.read))]
   if (reads.length !== 1) throw new Error(`a blind sheet covers one read; the records span ${reads.length === 0 ? 'none' : reads.join(' and ')}`)
@@ -516,6 +518,7 @@ export function renderRevealed(key: BlindKey, marks: Readonly<Record<string, Ver
 
 /** The run records of a retained campaign directory. Scripted runs are refused: a blind read is evidence from live models. */
 export function loadGuidedRuns(campaignDir: string): GuidedRecord[] {
+  if (basename(campaignDir).startsWith('diag-')) throw new Error(`${basename(campaignDir)} is a diagnostic campaign; a blind sheet covers the read campaigns only`)
   const entries = existsSync(campaignDir) ? readdirSync(campaignDir, { withFileTypes: true }).filter((e) => e.isDirectory()) : []
   const runs: GuidedRecord[] = []
   for (const entry of entries.sort((a, b) => (a.name < b.name ? -1 : 1))) {

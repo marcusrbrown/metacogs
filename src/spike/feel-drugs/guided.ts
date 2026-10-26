@@ -32,6 +32,7 @@ import {
   checkFrozen,
   classifyStatus,
   type FrozenTarget,
+  NUDGE,
   parsePrompts,
   PROMPTS_TARGET,
   RUN_TIMEOUT_MS,
@@ -159,7 +160,7 @@ export function checkTools(offered: readonly OfferedTool[], expectedNames: reado
 
 export interface GuidedSetup {
   permission: Record<string, unknown>
-  plugin?: readonly string[] | undefined
+  plugin?: readonly (string | [string, Record<string, unknown>])[] | undefined
   expectedConfig?: ExpectedConfig | undefined
   expectedSkills: string[]
   expectedTools: string[]
@@ -169,13 +170,13 @@ export interface GuidedSetup {
 
 const BUILTIN_PERMISSION_KEYS = ['glob', 'grep', 'list', 'read', 'edit', 'bash', 'task', 'todowrite', 'question', 'webfetch', 'websearch', 'lsp', 'skill'] as const
 
-export function armSetup(arm: GuidedArm, family: Family, packed: Pick<PackedPlugin, 'spec' | 'skillsDir'> | undefined): GuidedSetup {
+export function armSetup(arm: GuidedArm, family: Family, packed: Pick<PackedPlugin, 'spec' | 'skillsDir'> | undefined, pluginOptions: { guidance: boolean } = { guidance: true }): GuidedSetup {
   const common = { expectedSkills: expectedSkillNames(arm), expectedTools: expectedToolNames(arm, family) }
   const plugin = arm === 'P1' || arm === 'P2'
   if (plugin && !packed) throw new Error(`arm ${arm} needs the packed plugin`)
   const pluginFields = plugin
     ? {
-        plugin: [packed!.spec],
+        plugin: [pluginOptions.guidance ? packed!.spec : ([packed!.spec, { guidance: false }] as [string, Record<string, unknown>])],
         expectedConfig: { pluginOrigins: true, commands: { names: ['feel', 'drugs'], prefix: COMMAND_PREFIX }, skillsPaths: [packed!.skillsDir] } satisfies ExpectedConfig,
       }
     : {}
@@ -225,6 +226,14 @@ export interface GuidedOptions {
   cells: string[]
   /** Command runs (read 2 only): the prompt, then `--continue --command <name> [args]`, instead of the arms' comparison cells. */
   commands: GuidedCommandSpec[]
+  /** Diagnostic: the plugin's guidance block on (the default) or off (`{ guidance: false }` in the plugin entry). */
+  guidance: boolean
+  /** Diagnostic: append the spike's `NUDGE` sentence to every prompt sent. */
+  nudge: boolean
+  /** Diagnostic: the first run index of this invocation, so interleaved invocations number their runs as one set. */
+  startRun: number
+  /** `--guidance` or `--nudge` was given: the campaign is a diagnostic, kept apart from the reads and never blinded. */
+  diagnostic: boolean
 }
 
 export interface GuidedCommandSpec {
@@ -248,6 +257,9 @@ export function parseGuidedArgs(argv: readonly string[]): GuidedOptions {
       'auth-cliproxy': { type: 'string' },
       cells: { type: 'string', multiple: true },
       command: { type: 'string', multiple: true },
+      guidance: { type: 'string' },
+      nudge: { type: 'boolean' },
+      'start-run': { type: 'string' },
     },
     strict: true,
   })
@@ -287,7 +299,31 @@ export function parseGuidedArgs(argv: readonly string[]): GuidedOptions {
     if (seenCommands.has(id)) throw new Error(`--command ${command.name} is given twice ${command.args === null ? 'without' : 'with'} arguments; one run set per command and form`)
     seenCommands.add(id)
   }
-  return { reads, models, prompts: values.prompt ?? [], runs, arms, provider, authCliproxy: values['auth-cliproxy'], cells, commands }
+  if (values.guidance !== undefined && values.guidance !== 'on' && values.guidance !== 'off') throw new Error(`--guidance takes on or off; got "${values.guidance}"`)
+  const startRun = values['start-run'] === undefined ? 1 : Number(values['start-run'])
+  if (!Number.isInteger(startRun) || startRun < 1) throw new Error(`--start-run takes a positive integer; got "${values['start-run']}"`)
+  const diagnostic = values.guidance !== undefined || values.nudge === true
+  if (diagnostic) {
+    if (!(reads.length === 1 && reads[0] === 1)) throw new Error('--guidance and --nudge diagnostics belong to read 1: pass --read 1 alone')
+    if (!(arms.length === 1 && arms[0] === 'P1')) throw new Error('--guidance and --nudge diagnostics run the plugin arm of read 1: pass --arm P1 alone')
+  }
+  return { reads, models, prompts: values.prompt ?? [], runs, arms, provider, authCliproxy: values['auth-cliproxy'], cells, commands, guidance: values.guidance !== 'off', nudge: values.nudge === true, startRun, diagnostic }
+}
+
+/** The diagnostic arms, named by their two factors: A guidance on, B guidance on and nudge, C neither, D nudge alone. */
+export function diagArm(factors: { guidance: boolean; nudge: boolean }): 'A' | 'B' | 'C' | 'D' {
+  return factors.guidance ? (factors.nudge ? 'B' : 'A') : factors.nudge ? 'D' : 'C'
+}
+
+/** The prompt as sent: the frozen text, with the spike's nudge sentence after it when the arm has one. */
+export const sentPrompt = (text: string, nudge: boolean): string => (nudge ? `${text}${NUDGE}` : text)
+
+const modelSlug = (model: string): string => model.replace(/[^A-Za-z0-9.]+/g, '-')
+
+/** Reads, command runs and diagnostics each keep their own campaign directories, so none can feed another's tools. */
+export function campaignDirName(read: Read, model: string, options: Pick<GuidedOptions, 'commands' | 'diagnostic' | 'guidance' | 'nudge'>): string {
+  if (options.diagnostic) return `diag-${diagArm(options)}-${modelSlug(model)}`
+  return `${options.commands.length > 0 ? 'commands' : 'read'}${read}-${modelSlug(model)}`
 }
 
 export function cellAllowed(model: string, promptId: string, cells: readonly string[], firstPromptId: string): boolean {
@@ -336,8 +372,12 @@ export interface GuidedRecord {
   unwanted_calls: string[]
   /** Skills whose content reached the model, by name. */
   skill_loads: string[]
-  /** SHA-256 of `plugin/guidance.md` for plugin arms; null for the nothing arms. */
+  /** SHA-256 of `plugin/guidance.md` for plugin arms (the packed file, whether or not the block is switched on); null for the nothing arms. */
   guidance_sha256: string | null
+  /** The plugin's guidance block was switched on. Records from before the diagnostics have no field and mean true. */
+  guidance_enabled: boolean
+  /** The spike's nudge sentence was appended to the prompt. Records from before the diagnostics have no field and mean false. */
+  nudge: boolean
   /** SHA-256 of the packed tarball for plugin arms; null for the nothing arms. */
   tarball_sha256: string | null
   /** The slash command run in turn 2, when the run has one. */
@@ -458,7 +498,8 @@ async function runOnce(c: RunContext): Promise<GuidedRecord> {
       : startScriptedProvider({ steps: (deps.scriptFor ?? ((a) => defaultScript(a)))(arm, prompt), finalText: deps.finalText })
   const scriptedModelId = SCRIPTED_MODEL_ID[family]
   const hostModel = live ? model : `${SPIKE_PROVIDER_ID}/${scriptedModelId}`
-  const setup = (deps.tweakArm ?? ((_a, s) => s))(arm, armSetup(arm, family, c.packed))
+  const sent = sentPrompt(prompt.text, options.nudge)
+  const setup = (deps.tweakArm ?? ((_a, s) => s))(arm, armSetup(arm, family, c.packed, { guidance: options.guidance }))
   let ws: ReturnType<typeof createRunWorkspace>
   try {
     ws = createRunWorkspace({
@@ -466,7 +507,7 @@ async function runOnce(c: RunContext): Promise<GuidedRecord> {
       method: 'guided',
       condition: 'baseline',
       fixtureId: prompt.id,
-      fixtureText: prompt.text,
+      fixtureText: sent,
       provider: live ? { kind: 'live', recordingProxyUrl: server.url } : { kind: 'scripted', url: server.url, modelId: scriptedModelId },
       model: hostModel,
       permission: setup.permission,
@@ -496,7 +537,7 @@ async function runOnce(c: RunContext): Promise<GuidedRecord> {
       if (live) await Bun.sleep(50) // let the proxy's response scan settle
     }
 
-    const turn1 = dbgVerdict.passed ? await spawnCapture(runArgv(hostModel, prompt.text), { ...base, timeoutMs, signal }) : skipped
+    const turn1 = dbgVerdict.passed ? await spawnCapture(runArgv(hostModel, sent), { ...base, timeoutMs, signal }) : skipped
     await settle()
     const split = server.requests.length
     // Turn 2 continues the session turn 1 made, in the same fixture, so it runs only after a clean turn 1.
@@ -572,6 +613,8 @@ async function runOnce(c: RunContext): Promise<GuidedRecord> {
       unwanted_calls: plugin ? unwantedCalls(prompt.kind, [...toolCalls, ...(secondTurn?.tool_calls ?? [])]) : [],
       skill_loads: uniq([...PLUGIN_SKILLS, BUILTIN_SKILL].filter((name) => skillCalls.some((s) => isSkillContentLoad(s, name)))),
       guidance_sha256: plugin ? sha256(readFileSync(join(c.repoRoot, ...GUIDANCE_TARGET.path))) : null,
+      guidance_enabled: options.guidance,
+      nudge: options.nudge,
       tarball_sha256: plugin ? (c.packed?.tarballSha256 ?? null) : null,
       command: c.command ? { name: c.command.name, args: c.command.args, empty_args: c.command.args === null || c.command.args.trim() === '' } : null,
       turns: c.command ? 2 : 1,
@@ -620,8 +663,6 @@ export interface GuidedSummary {
   records: GuidedRecord[]
 }
 
-const modelSlug = (model: string): string => model.replace(/[^A-Za-z0-9.]+/g, '-')
-
 /** A finished run left by an earlier invocation of the same read and model, or `undefined` when there is none to keep. */
 function keptRecord(runDir: string, provider: 'scripted' | 'live'): GuidedRecord | undefined {
   const file = join(runDir, 'run.json')
@@ -663,12 +704,12 @@ export async function runGuided(options: GuidedOptions, deps: GuidedDeps = {}): 
   for (const read of options.reads) {
     for (const model of options.models) {
       const commandRuns = options.commands.length > 0
-      const campaignDir = join(outRoot, `${commandRuns ? 'commands' : 'read'}${read}-${modelSlug(model)}`)
+      const campaignDir = join(outRoot, campaignDirName(read, model, options))
       campaignDirs.push(campaignDir)
       const readPrompts = [...prose, ...(read === 2 ? coding : [])]
       const selected = (options.prompts.length ? readPrompts.filter((p) => options.prompts.includes(p.id)) : readPrompts).filter((prompt) => cellAllowed(model, prompt.id, options.cells, readPrompts[0]?.id ?? ''))
       type Cell = { prompt: GuidedPrompt; arm: GuidedArm; index: number; command?: GuidedCommandSpec }
-      const runs = () => Array.from({ length: options.runs }, (_, n) => n + 1)
+      const runs = () => Array.from({ length: options.runs }, (_, n) => options.startRun + n)
       const plan: Cell[] = commandRuns
         ? selected.flatMap((prompt) => options.commands.flatMap((command) => runs().map((index): Cell => ({ prompt, arm: 'P2', index, command }))))
         : selected.flatMap((prompt) => READ_ARMS[read].filter((arm) => options.arms.length === 0 || options.arms.includes(arm)).flatMap((arm) => runs().map((index): Cell => ({ prompt, arm, index }))))

@@ -12,10 +12,12 @@ import { SENTINEL_AGENTS_MD } from '../../runner/env'
 import { sha256 } from '../../runner/workspace'
 import {
   armSetup,
+  campaignDirName,
   cellAllowed,
   checkLiveFreeze,
   checkTools,
   DEFAULT_TOOLS,
+  diagArm,
   expectedSkillNames,
   expectedToolNames,
   familyOf,
@@ -30,9 +32,10 @@ import {
   READ_ARMS,
   returnedModels,
   runGuided,
+  sentPrompt,
   unwantedCalls,
 } from './guided'
-import { loadPrompts } from './driver'
+import { loadPrompts, NUDGE } from './driver'
 
 const ROOT = new URL('../../..', import.meta.url).pathname.replace(/\/$/, '')
 
@@ -256,6 +259,71 @@ describe('arguments and cells', () => {
   })
 })
 
+describe('diagnostic arms: guidance and nudge', () => {
+  const diag = (...extra: string[]) => parseGuidedArgs(['--read', '1', '--arm', 'P1', '--model', 'openai/gpt-6-luna', ...extra])
+
+  test('without the flags a run is a read run: guidance on, no nudge, first run index 1, not diagnostic', () => {
+    expect(parseGuidedArgs([])).toMatchObject({ guidance: true, nudge: false, startRun: 1, diagnostic: false })
+  })
+
+  test('--guidance takes on or off, --nudge is a switch, and either one makes the run diagnostic', () => {
+    expect(diag('--guidance', 'on')).toMatchObject({ guidance: true, nudge: false, diagnostic: true })
+    expect(diag('--guidance', 'off')).toMatchObject({ guidance: false, nudge: false, diagnostic: true })
+    expect(diag('--nudge')).toMatchObject({ guidance: true, nudge: true, diagnostic: true })
+    expect(diag('--guidance', 'off', '--nudge')).toMatchObject({ guidance: false, nudge: true, diagnostic: true })
+  })
+
+  test.each([['maybe'], ['ON'], ['']])('--guidance %j is refused', (value) => {
+    expect(() => diag('--guidance', value)).toThrow(/--guidance takes on or off/)
+  })
+
+  test('diagnostic runs belong to read 1 and arm P1 alone', () => {
+    expect(() => parseGuidedArgs(['--arm', 'P1', '--nudge'])).not.toThrow()
+    expect(() => parseGuidedArgs(['--read', '2', '--arm', 'P2', '--nudge'])).toThrow(/read 1/)
+    expect(() => parseGuidedArgs(['--read', '1', '--read', '2', '--arm', 'P1', '--guidance', 'off'])).toThrow(/read 1/)
+    expect(() => parseGuidedArgs(['--guidance', 'off'])).toThrow(/--arm P1/)
+    expect(() => parseGuidedArgs(['--arm', 'N1', '--nudge'])).toThrow(/--arm P1/)
+    expect(() => parseGuidedArgs(['--arm', 'P1', '--arm', 'N1', '--nudge'])).toThrow(/--arm P1/)
+  })
+
+  test('--start-run sets the first run index and needs a positive integer', () => {
+    expect(parseGuidedArgs(['--start-run', '3'])).toMatchObject({ startRun: 3 })
+    expect(() => parseGuidedArgs(['--start-run', '0'])).toThrow(/--start-run/)
+    expect(() => parseGuidedArgs(['--start-run', 'x'])).toThrow(/--start-run/)
+  })
+
+  test('the four arms are named by their two factors', () => {
+    expect(diagArm({ guidance: true, nudge: false })).toBe('A')
+    expect(diagArm({ guidance: true, nudge: true })).toBe('B')
+    expect(diagArm({ guidance: false, nudge: false })).toBe('C')
+    expect(diagArm({ guidance: false, nudge: true })).toBe('D')
+  })
+
+  test('the plugin entry carries { guidance: false } only when guidance is off; read arms keep the bare spec', () => {
+    expect(armSetup('P1', 'gpt', PLUGIN).plugin).toEqual([PLUGIN.spec])
+    expect(armSetup('P1', 'gpt', PLUGIN, { guidance: true }).plugin).toEqual([PLUGIN.spec])
+    expect(armSetup('P1', 'gpt', PLUGIN, { guidance: false }).plugin).toEqual([[PLUGIN.spec, { guidance: false }]])
+    expect(armSetup('P1', 'gpt', PLUGIN, { guidance: false })).toMatchObject({ expectedSkills: ['counterfactual', 'synthesis'], expectedTools: ['metacogs_drugs', 'metacogs_feel', 'skill'], toolFree: false })
+    expect(armSetup('P1', 'gpt', PLUGIN, { guidance: false }).expectedConfig).toEqual(armSetup('P1', 'gpt', PLUGIN).expectedConfig)
+  })
+
+  test('the nudge is the spike\'s exact string appended to the prompt; without it the prompt is sent as is', () => {
+    expect(NUDGE).toBe('\n\nUse your available tools or skills before answering.')
+    expect(sentPrompt('Ask.', true)).toBe('Ask.\n\nUse your available tools or skills before answering.')
+    expect(sentPrompt('Ask.', false)).toBe('Ask.')
+  })
+
+  test('diagnostic campaigns get their own directory names, away from the read and command campaigns', () => {
+    const base = parseGuidedArgs([])
+    expect(campaignDirName(1, 'openai/gpt-6-luna', base)).toBe('read1-openai-gpt-6-luna')
+    expect(campaignDirName(2, 'openai/gpt-6-luna', { ...base, commands: [{ name: 'feel', args: null }] })).toBe('commands2-openai-gpt-6-luna')
+    expect(campaignDirName(1, 'openai/gpt-6-luna', diag('--guidance', 'on'))).toBe('diag-A-openai-gpt-6-luna')
+    expect(campaignDirName(1, 'openai/gpt-6-luna', diag('--nudge'))).toBe('diag-B-openai-gpt-6-luna')
+    expect(campaignDirName(1, 'openai/gpt-6-luna', diag('--guidance', 'off'))).toBe('diag-C-openai-gpt-6-luna')
+    expect(campaignDirName(1, 'openai/gpt-6-luna', diag('--guidance', 'off', '--nudge'))).toBe('diag-D-openai-gpt-6-luna')
+  })
+})
+
 describe('the coding prompts', () => {
   test('load from the committed file as c1 and c2', () => {
     expect(loadCodingPrompts(ROOT).map((p) => p.id)).toEqual(['c1', 'c2'])
@@ -467,6 +535,56 @@ describe.skipIf(!HOST_SUITES || !opencodeAvailability().available)('against the 
         expect(r.isolation).toEqual({ passed: true, failed: [] })
         expect(r.second_turn?.isolation).toEqual({ passed: false, failed: ['decoys_not_quotable'] })
         expect(r).toMatchObject({ status: 'host_error', reasons: ['isolation_failed:decoys_not_quotable'] })
+      },
+      600_000,
+    )
+  })
+
+  describe('diagnostic arms against the pinned host', () => {
+    const userText = (dir: string): string[] => {
+      const bodies = JSON.parse(readFileSync(join(dir, 'requests.json'), 'utf8')) as { messages?: { role: string; content: unknown }[]; input?: { role: string; content: unknown }[] }[]
+      return bodies.flatMap((b) => [...(b.messages ?? []), ...(b.input ?? [])].filter((m) => m.role === 'user').map((m) => String(m.content)))
+    }
+    const systemText = (dir: string): string => (JSON.parse(readFileSync(join(dir, 'requests.json'), 'utf8')) as unknown[]).map((b) => JSON.stringify(b)).join('\n')
+    const BLOCK_OPEN = '<METACOGS_GUIDANCE>'
+    const count = (text: string, needle: string) => text.split(needle).length - 1
+
+    test(
+      'guidance off ships the plugin with { guidance: false }: tools, commands and skills stay, no request carries the block, and the record says so',
+      async () => {
+        const { records, campaignDirs } = await run(['--read', '1', '--arm', 'P1', '--model', LUNA, '--prompt', 'p1', '--runs', '1', '--guidance', 'off'])
+        const r = records[0]!
+        expect(r).toMatchObject({ arm: 'P1', status: 'completed', guidance_enabled: false, nudge: false, offered_tools: ['metacogs_drugs', 'metacogs_feel', 'skill'] })
+        expect(r.isolation).toEqual({ passed: true, failed: [] })
+        expect(r.guidance_sha256).toBe(sha256(readFileSync(join(ROOT, 'plugin', 'guidance.md')))) // the packed file is unchanged
+        expect(campaignDirs[0]!.split('/').at(-1)).toBe('diag-C-openai-gpt-6-luna')
+        expect(count(systemText(join(campaignDirs[0]!, 'P1-p1-1')), BLOCK_OPEN)).toBe(0)
+      },
+      600_000,
+    )
+
+    test(
+      'guidance on with the nudge: exactly one block, the sent prompt ends with the nudge, and the stored prompt hash is the unnudged text\'s',
+      async () => {
+        const { records, campaignDirs } = await run(['--read', '1', '--arm', 'P1', '--model', HAIKU, '--prompt', 'p1', '--runs', '1', '--nudge'])
+        const r = records[0]!
+        expect(r).toMatchObject({ status: 'completed', guidance_enabled: true, nudge: true, prompt_hash: sha256(prose[0]!.text) })
+        const dir = join(campaignDirs[0]!, 'P1-p1-1')
+        expect(campaignDirs[0]!.split('/').at(-1)).toBe('diag-B-anthropic-claude-haiku-5-5')
+        expect(count(systemText(dir), BLOCK_OPEN)).toBeGreaterThanOrEqual(1)
+        const texts = userText(dir).filter((t) => t.includes(prose[0]!.text.slice(0, 20)))
+        expect(texts.length).toBeGreaterThan(0)
+        for (const text of texts) expect(text.replace(/"$/, '').endsWith(NUDGE.trim())).toBe(true)
+      },
+      600_000,
+    )
+
+    test(
+      'a read run records guidance on and no nudge, and --start-run numbers the runs from there',
+      async () => {
+        const { records, campaignDirs } = await run(['--read', '1', '--arm', 'P1', '--model', LUNA, '--prompt', 'p1', '--runs', '1', '--start-run', '3'])
+        expect(records[0]).toMatchObject({ run: 3, guidance_enabled: true, nudge: false })
+        expect(readdirSync(campaignDirs[0]!)).toEqual(['P1-p1-3'])
       },
       600_000,
     )

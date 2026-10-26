@@ -225,6 +225,10 @@ Live runs refuse unless `prompts_sha256`, `guidance_sha256` and (read 2) `coding
 guidance_sha256: 991907a6a7eddb385cf0c453be75b0fa536a00fe56777dba770b18f0b9186758
 coding_prompts_sha256: 39351741feea49278bdfdbb261f5e691c0ff3ad4aff06d7e867b39d3ccc8b0ea
 
+### Diagnostic arms
+
+`--guidance on|off` and `--nudge` run read 1's P1 arm with the guidance block switched off (`{ "guidance": false }` in the plugin entry; the packed `plugin/guidance.md` and its frozen hash are unchanged) and/or the spike's nudge sentence appended to the prompt, exactly as the spike driver's `--nudge` does. They need `--read 1 --arm P1`. The four arms are A (guidance on, no nudge), B (guidance and nudge), C (neither) and D (nudge alone); `--start-run <n>` numbers an invocation's runs from `n` so interleaved invocations form one set. Records carry `guidance_enabled` and `nudge`, and the campaign directory is `diag-<arm>-<model>` under the guided state root. A diagnostic campaign is not part of a read: `spike:blind` refuses `diag-*` directories and any record with the nudge or guidance off.
+
 ### Environment variables
 
 | Variable | Effect |

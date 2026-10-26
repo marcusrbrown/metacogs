@@ -194,10 +194,19 @@ describe('checkDebugConfig with an expected-config object (plugin arms)', () => 
   const generated = { ...GENERATED, plugin: [[SPEC, { guidance: true }]] }
   const expected: ExpectedConfig = { pluginOrigins: true, commands: { names: ['feel', 'drugs'], prefix: PREFIX }, skillsPaths: ['/pkg/skills'] }
   const command = { feel: { template: 't', description: `${PREFIX}f` }, drugs: { template: 't', description: `${PREFIX}d` } }
-  const effective = { ...EFFECTIVE, plugin: [[SPEC, { guidance: true }]], plugin_origins: [{ spec: SPEC, source: '/cfg/opencode.json', scope: 'global' }], command, skills: { paths: ['/pkg/skills'] } }
+  const effective = { ...EFFECTIVE, plugin: [[SPEC, { guidance: true }]], plugin_origins: [{ spec: [SPEC, { guidance: true }], source: '/cfg/opencode.json', scope: 'global' }], command, skills: { paths: ['/pkg/skills'] } }
 
   test('the host-added plugin_origins, command.{feel,drugs} and one skills.paths entry pass', () => {
     expect(checkDebugConfig(effective, generated, expected)).toMatchObject({ passed: true })
+  })
+
+  test('a plugin entry with options lists the whole entry as its origin spec, and that passes; changed options fail', () => {
+    const withOptions = [[SPEC, { guidance: false }]]
+    const gen = { ...GENERATED, plugin: withOptions }
+    const eff = { ...effective, plugin: withOptions, plugin_origins: [{ spec: [SPEC, { guidance: false }], source: '/cfg/opencode.json', scope: 'global' }] }
+    expect(checkDebugConfig(eff, gen, expected)).toMatchObject({ passed: true })
+    expect(checkDebugConfig({ ...eff, plugin_origins: [{ spec: [SPEC, { guidance: true }], source: '/c', scope: 'global' }] }, gen, expected).passed).toBe(false)
+    expect(checkDebugConfig({ ...eff, plugin_origins: [{ spec: SPEC, source: '/c', scope: 'global' }] }, gen, expected).passed).toBe(false)
   })
 
   test('the same effective config fails without the expected-config object', () => {
@@ -216,7 +225,7 @@ describe('checkDebugConfig with an expected-config object (plugin arms)', () => 
 
   test.each([
     ['an origin for another spec', { plugin_origins: [{ spec: 'file:///other.js', source: '/c', scope: 'global' }] }],
-    ['a second origin', { plugin_origins: [{ spec: SPEC, source: '/c', scope: 'global' }, { spec: 'file:///other.js', source: '/c', scope: 'local' }] }],
+    ['a second origin', { plugin_origins: [{ spec: [SPEC, { guidance: true }], source: '/c', scope: 'global' }, { spec: 'file:///other.js', source: '/c', scope: 'local' }] }],
     ['an extra command', { command: { ...command, extra: { template: 't', description: `${PREFIX}x` } } }],
     ['a command without the prefix', { command: { ...command, feel: { template: 't', description: 'mine' } } }],
     ['a second skills path', { skills: { paths: ['/pkg/skills', '/elsewhere'] } }],
