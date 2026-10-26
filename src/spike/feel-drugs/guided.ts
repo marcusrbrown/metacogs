@@ -21,7 +21,7 @@ import { OFFLINE_NPM, type PackedPlugin, packedPlugin, seedConfigDir, disposeFix
 import { CLIPROXY_UPSTREAM, type ResolvedCliproxy, resolveCliproxy as defaultResolveCliproxy } from '../../runner/cliproxy'
 import { destroyFixture } from '../../runner/env'
 import { allAssistantText, analyzeEvents, finalAnswerText, isSkillContentLoad, parseEvents, type Usage } from '../../runner/events'
-import { checkDebugConfig, checkIsolation, type ExpectedConfig, offeredTools } from '../../runner/isolation'
+import { checkDebugConfig, checkIsolation, type ExpectedConfig, isMainRequest, offeredTools } from '../../runner/isolation'
 import { CredentialLeakError, type Needle, scanForLeaks } from '../../runner/manifest'
 import { debugConfig, opencodeArgv, runArgv, sleepUnlessAborted, spawnCapture } from '../../runner/opencode'
 import { SPIKE_PROVIDER_ID, type RecordedRequest, type ScriptedStep, startRecordingProxy, startScriptedProvider } from '../../runner/scripted-provider'
@@ -430,6 +430,11 @@ interface RunContext {
 }
 
 const uniq = <T>(values: T[]): T[] => [...new Set(values)]
+
+/** The model ids the provider reported on the requests that carried the user's prompt: main requests, with or without tools. */
+export function returnedModels(requests: readonly RecordedRequest[]): string[] {
+  return uniq(requests.filter((r) => r.hasTools || isMainRequest(r)).map((r) => r.returnedModel).filter((m): m is string => Boolean(m)))
+}
 const real = (path: string): string => {
   try {
     return realpathSync(path)
@@ -581,7 +586,7 @@ async function runOnce(c: RunContext): Promise<GuidedRecord> {
       },
       wall_ms: turn1.wallMs,
       usage: events1.usage,
-      returned_models: uniq(server.requests.filter((r) => r.hasTools || r.main).map((r) => r.returnedModel).filter((m): m is string => Boolean(m))),
+      returned_models: returnedModels(server.requests),
     }
 
     const artifacts = {

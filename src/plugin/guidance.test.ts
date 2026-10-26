@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 
+import { INTERNAL_REQUEST_SIGNATURES } from '../runner/scripted-provider'
 import { GUIDANCE_BLOCK, GUIDANCE_CLOSE, GUIDANCE_OPEN, GUIDANCE_TEXT, INTERNAL_SIGNATURES, stripGuidance, withGuidance } from './guidance'
 
 const countBlocks = (system: readonly string[]) => system.join('\n').split(GUIDANCE_OPEN).length - 1
@@ -28,6 +29,12 @@ describe('the embedded text', () => {
 
   test('the block wraps the text in the markers', () => {
     expect(GUIDANCE_BLOCK).toBe(`${GUIDANCE_OPEN}\n${GUIDANCE_TEXT.trimEnd()}\n${GUIDANCE_CLOSE}`)
+  })
+})
+
+describe('the internal-request signatures', () => {
+  test('are the list the runner uses to tell the host\'s own calls from the main request', () => {
+    expect([...INTERNAL_SIGNATURES].map((s) => s.toLowerCase())).toEqual([...INTERNAL_REQUEST_SIGNATURES])
   })
 })
 

@@ -38,8 +38,6 @@ export interface RecordedRequest {
   turn?: number
   /** Scripted stub only: completed tool-call rounds after the last user message. */
   turnRound?: number
-  /** Scripted stub only: the system prompt is the host's own agent prompt, whether or not tools are offered. */
-  main?: boolean
   body: unknown
   /** Model id the provider reported in its response; filled in once the response is seen. */
   returnedModel?: string
@@ -66,8 +64,30 @@ export interface ScriptedProviderOptions {
   finalText?: string
 }
 
-/** The host's own agent prompt, as every provider's variant starts it ("You are opencode…", "You are OpenCode, …"). */
-export const MAIN_PROMPT_PATTERN = /^\s*you are opencode\b/i
+/**
+ * Starts of the system prompts OpenCode 1.19.4 uses for its own calls: the session title, compaction and the session
+ * summary, plus an older compaction wording. Matched case-insensitively anywhere in the joined system text.
+ */
+export const INTERNAL_REQUEST_SIGNATURES = [
+  'you are a title generator',
+  'you are a context summarization agent',
+  'summarize what was done in this conversation',
+  'you are a helpful ai assistant tasked with summarizing conversations',
+] as const
+
+/** The agent prompt names OpenCode as the agent in its first sentence: "You are OpenCode, …", "You are an AI agent powered by OpenCode, …". */
+const NAMES_OPENCODE_AS_AGENT = /\byou are\b[^.\n]{0,60}?\bopencode\b/i
+
+/**
+ * Whether these system-level texts are the host's agent prompt: not one of its internal calls, and naming OpenCode as
+ * the agent. True whether or not the request offers tools. Prompt wording differs by model family (Anthropic, GPT
+ * live, GPT scripted), so this is not a prefix match.
+ */
+export function isMainSystemText(texts: readonly string[]): boolean {
+  const joined = texts.join('\n').toLowerCase()
+  if (INTERNAL_REQUEST_SIGNATURES.some((signature) => joined.includes(signature))) return false
+  return texts.some((text) => NAMES_OPENCODE_AS_AGENT.test(text))
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -95,7 +115,7 @@ function countUserTurns(messages: unknown): number {
 /** Chat-completions only: some system message starts with the host's agent prompt. */
 function isMainRequest(messages: unknown): boolean {
   if (!Array.isArray(messages)) return false
-  return messages.some((m) => isRecord(m) && (m.role === 'system' || m.role === 'developer') && typeof m.content === 'string' && MAIN_PROMPT_PATTERN.test(m.content))
+  return isMainSystemText(messages.flatMap((m) => (isRecord(m) && (m.role === 'system' || m.role === 'developer') && typeof m.content === 'string' ? [m.content] : [])))
 }
 
 function sse(value: unknown): string {
@@ -192,7 +212,7 @@ export function startScriptedProvider(
       const main = isMainRequest(record.messages)
       const turn = Math.max(0, countUserTurns(record.messages) - 1)
       const turnRound = countToolRounds(Array.isArray(record.messages) ? record.messages.slice(lastUserIndex(record.messages) + 1) : [])
-      requests.push({ hasTools, round, turn, turnRound, main, body, returnedModel: SPIKE_MODEL_ID })
+      requests.push({ hasTools, round, turn, turnRound, body, returnedModel: SPIKE_MODEL_ID })
 
       let step: ScriptedStep
       if (!hasTools && !main) {

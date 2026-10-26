@@ -11,7 +11,7 @@
  *    that must not be quotable from stdout, stderr, or any request body;
  * 4. the child env itself (no credentials, no stray `METACOGS_*`, one config channel).
  */
-import { MAIN_PROMPT_PATTERN, type RecordedRequest } from './scripted-provider'
+import { isMainSystemText, type RecordedRequest } from './scripted-provider'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -93,11 +93,11 @@ function availableSkillsIn(request: RecordedRequest): string[] | null {
 }
 
 /**
- * The host's own agent prompt starts some system entry (the title and compaction requests start with their own text).
- * True whether or not the request offers tools, so a tool-free arm's request is still found.
+ * The request holds the host's agent prompt: its system text names OpenCode as the agent and is not an internal title,
+ * compaction or summary call. True whether or not the request offers tools, so a tool-free arm's request is still found.
  */
 export function isMainRequest(request: RecordedRequest): boolean {
-  return isRecord(request.body) && systemTexts(request.body).some((text) => MAIN_PROMPT_PATTERN.test(text))
+  return isRecord(request.body) && isMainSystemText(systemTexts(request.body))
 }
 
 /** A tool entry's name on any wire: chat completions `function.name`, Responses and Anthropic `name`. */

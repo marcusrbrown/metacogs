@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 
+import { isMainRequest } from './isolation'
 import { SPIKE_MODEL_ID, SPIKE_PROVIDER_ID, scriptedProviderConfig, startScriptedProvider, type ScriptedProviderServer, type ScriptedStep } from './scripted-provider'
 
 const servers: ScriptedProviderServer[] = []
@@ -66,11 +67,31 @@ describe('title and main requests', () => {
     expect((await ask(server, [{ role: 'system', content: 'preamble' }, { role: 'system', content: MAIN_PROMPT }, user('hi')])).text).toBe('main')
   })
 
-  test('requests record whether they were main', async () => {
+  test.each([
+    ['Anthropic live', 'You are OpenCode, the best coding agent on the planet.\n\nYou are an interactive CLI tool.'],
+    ['GPT live', 'You are an AI agent powered by OpenCode, a coding agent harness. Help the user achieve their goals.'],
+    ['GPT scripted', "You are OpenCode, You and the user share the same workspace and collaborate to achieve the user's goals."],
+  ])('the %s agent prompt is a main request with no tools, answered from the main script', async (_name, prompt) => {
+    const server = start({ steps: [{ text: 'main script' }] })
+    expect(await ask(server, [{ role: 'system', content: prompt }, user('hi')])).toEqual({ calls: [], text: 'main script' })
+  })
+
+  test.each([
+    ['title', TITLE_PROMPT],
+    ['compaction', 'You are a context summarization agent. You are given a conversation.'],
+    ['title that names OpenCode', 'You are a title generator for OpenCode. You output ONLY a thread title.'],
+    ['an unknown prompt', 'You are an agent.'],
+  ])('a %s request with no tools is answered as the title, not from the script', async (_name, prompt) => {
+    const server = start({ steps: [{ text: 'main script' }] })
+    expect(await ask(server, [{ role: 'system', content: prompt }, user('hi')])).toEqual({ calls: [], text: 'spike title' })
+  })
+
+  test('whether a recorded request is main is read from its body, not stored on the record', async () => {
     const server = start({ steps: [] })
     await ask(server, [{ role: 'system', content: TITLE_PROMPT }, user('t')])
     await ask(server, [{ role: 'system', content: MAIN_PROMPT }, user('hi')])
-    expect(server.requests.map((r) => r.main)).toEqual([false, true])
+    expect(server.requests.map(isMainRequest)).toEqual([false, true])
+    expect(server.requests.every((r) => !('main' in r))).toBe(true)
   })
 })
 

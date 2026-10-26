@@ -235,12 +235,68 @@ describe('checkDebugConfig with an expected-config object (plugin arms)', () => 
 })
 
 describe('isMainRequest', () => {
-  test('is the host agent prompt in any system entry, on any wire format, whatever tools are offered', () => {
-    expect(isMainRequest({ hasTools: false, round: 0, body: { messages: [{ role: 'system', content: 'You are opencode, an interactive CLI tool.' }, { role: 'user', content: 'hi' }] } })).toBe(true)
-    expect(isMainRequest({ hasTools: true, round: 0, body: { system: 'You are OpenCode, the best coding agent.', messages: [] } })).toBe(true)
-    expect(isMainRequest({ hasTools: false, round: 0, body: { instructions: 'You are opencode.', input: [] } })).toBe(true)
-    expect(isMainRequest({ hasTools: false, round: 0, body: { messages: [{ role: 'system', content: 'You are a title generator.' }] } })).toBe(false)
-    expect(isMainRequest({ hasTools: true, round: 0, body: { messages: [{ role: 'user', content: 'You are opencode' }] } })).toBe(false)
+  const ANTHROPIC_LIVE = 'You are OpenCode, the best coding agent on the planet.\n\nYou are an interactive CLI tool that helps users with software engineering tasks.'
+  const GPT_LIVE = 'You are an AI agent powered by OpenCode, a coding agent harness. Help the user achieve their goals.'
+  const GPT_SCRIPTED = 'You are OpenCode, You and the user share the same workspace and collaborate to achieve the user\'s goals.'
+  const INTERNAL = [
+    'You are a title generator. You output ONLY a thread title. Nothing else.',
+    'You are a context summarization agent. You are given a conversation between a user and an agent.',
+    'Summarize what was done in this conversation. Write like a pull request description.',
+    'You are a helpful AI assistant tasked with summarizing conversations',
+  ]
+  const wires: [string, (text: string) => Record<string, unknown>][] = [
+    ['chat completions system message', (text) => ({ messages: [{ role: 'system', content: text }, { role: 'user', content: 'hi' }] })],
+    ['Anthropic system blocks', (text) => ({ system: [{ type: 'text', text }], messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] })],
+    ['Anthropic system string', (text) => ({ system: text, messages: [] })],
+    ['Responses developer item', (text) => ({ input: [{ role: 'developer', content: text }, { role: 'user', content: 'hi' }] })],
+    ['Responses instructions', (text) => ({ instructions: text, input: [] })],
+  ]
+  const request = (body: Record<string, unknown>, hasTools = false): RecordedRequest => ({ hasTools, round: 0, body })
+
+  describe.each([
+    ['Anthropic live', ANTHROPIC_LIVE],
+    ['GPT live (Responses)', GPT_LIVE],
+    ['GPT scripted', GPT_SCRIPTED],
+  ])('the %s agent prompt', (_name, prompt) => {
+    test.each(wires)('is the main request on the %s wire, with and without tools', (_wire, body) => {
+      expect(isMainRequest(request(body(prompt), false))).toBe(true)
+      expect(isMainRequest(request(body(prompt), true))).toBe(true)
+    })
+
+    test('is main in any system entry, case-insensitively, and with the skills block and a guidance block after it', () => {
+      expect(isMainRequest(request({ messages: [{ role: 'system', content: 'preamble' }, { role: 'system', content: prompt.toUpperCase() }] }))).toBe(true)
+      expect(isMainRequest(request({ system: `${prompt}\n<available_skills></available_skills>\n\n<METACOGS_GUIDANCE>\n# metacogs\n</METACOGS_GUIDANCE>` }))).toBe(true)
+    })
+  })
+
+  test.each(INTERNAL.map((text) => [text.slice(0, 40), text]))('an internal request is not main: %s', (_name, text) => {
+    for (const [, body] of wires) expect(isMainRequest(request(body(text)))).toBe(false)
+  })
+
+  test('an internal request is not main even when its text names OpenCode as the agent', () => {
+    for (const text of ['You are a title generator for OpenCode. You output ONLY a thread title.', 'You are a context summarization agent for OpenCode sessions.']) {
+      expect(isMainRequest(request({ messages: [{ role: 'system', content: text }] }))).toBe(false)
+    }
+  })
+
+  test.each([
+    ['another agent prompt', 'You are an agent.'],
+    ['a mention of OpenCode that does not name it as the agent', 'Docs for OpenCode live at the project site.'],
+    ['"you are" far from the name', 'You are expected to read the notes first, every morning, before the standup. OpenCode is a tool.'],
+    ['an empty system entry', ''],
+  ])('%s is not main', (_name, text) => {
+    expect(isMainRequest(request({ messages: [{ role: 'system', content: text }] }))).toBe(false)
+  })
+
+  test('only system-level text counts: a user message or a tool result that quotes the prompt is not main', () => {
+    expect(isMainRequest(request({ messages: [{ role: 'user', content: 'You are OpenCode, the best coding agent' }] }, true))).toBe(false)
+    expect(isMainRequest(request({ input: [{ role: 'user', content: GPT_LIVE }] }))).toBe(false)
+    expect(isMainRequest(request({ messages: [{ role: 'tool', content: GPT_LIVE }] }))).toBe(false)
+  })
+
+  test('a request with no body is not main', () => {
+    expect(isMainRequest({ hasTools: false, round: 0, body: undefined })).toBe(false)
+    expect(isMainRequest({ hasTools: false, round: 0, body: {} })).toBe(false)
   })
 })
 
@@ -275,6 +331,15 @@ describe('checkIsolation for an arm declared tool-free', () => {
     const listed: RecordedRequest = { hasTools: false, round: 0, body: { messages: [{ role: 'system', content: `You are opencode.\n${skillsBlock(['demo'])}` }, { role: 'user', content: 'hi' }] } }
     expect(checkIsolation(input({ requests: [listed], toolFree: true, expectedSkills: ['demo'] })).passed).toBe(true)
     expect(checkIsolation(input({ requests: [listed], toolFree: true })).passed).toBe(false)
+  })
+
+  test('the live GPT request on the Responses wire is found as the main request, next to its title request', () => {
+    const live: RecordedRequest = { hasTools: false, round: 0, body: { include: [], input: [{ role: 'developer', content: 'You are an AI agent powered by OpenCode, a coding agent harness. Help the user.' }, { role: 'user', content: 'hi' }], store: false, stream: true } }
+    const liveTitle: RecordedRequest = { hasTools: false, round: 0, body: { input: [{ role: 'developer', content: 'You are a title generator. You output ONLY a thread title. Nothing else.\n\n<task>' }, { role: 'user', content: 'hi' }] } }
+    const e = checkIsolation(input({ requests: [liveTitle, live], toolFree: true }))
+    expect(failedChecks(e)).toEqual([])
+    expect(e.skillListObserved).toBe(true)
+    expect(failedChecks(checkIsolation(input({ requests: [liveTitle], toolFree: true }))).map((c) => c.name)).toEqual(['available_skills_exact'])
   })
 
   test('the expected-config object reaches the debug-config check', () => {

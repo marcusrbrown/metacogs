@@ -28,6 +28,7 @@ import {
   parseGuidedArgs,
   PLUGIN_TOOL_TABLE,
   READ_ARMS,
+  returnedModels,
   runGuided,
   unwantedCalls,
 } from './guided'
@@ -175,6 +176,24 @@ describe('offeredToolSchemas and checkTools', () => {
 
   test('a request with no tools offers none', () => {
     expect(offeredToolSchemas([{ hasTools: false, round: 0, body: { messages: [] } }])).toEqual([])
+  })
+})
+
+describe('returnedModels', () => {
+  const body = (system: string) => ({ input: [{ role: 'developer', content: system }, { role: 'user', content: 'hi' }] })
+  const title: RecordedRequest = { hasTools: false, round: 0, returnedModel: 'title-model', body: body('You are a title generator. You output ONLY a thread title.') }
+  const liveMain: RecordedRequest = { hasTools: false, round: 0, returnedModel: 'gpt-6-luna-2026', body: body('You are an AI agent powered by OpenCode, a coding agent harness.') }
+
+  test('a tool-free main request from the live recording path counts, with no flag recorded on it; a title request does not', () => {
+    expect('main' in liveMain).toBe(false)
+    expect(returnedModels([title, liveMain])).toEqual(['gpt-6-luna-2026'])
+  })
+
+  test('a request with tools counts whatever its system text says, ids are listed once, and a missing id is skipped', () => {
+    const withTools: RecordedRequest = { hasTools: true, round: 0, returnedModel: 'gpt-6-luna-2026', body: body('You are an agent.') }
+    const unreported: RecordedRequest = { hasTools: true, round: 1, body: body('You are an agent.') }
+    expect(returnedModels([title, liveMain, withTools, unreported])).toEqual(['gpt-6-luna-2026'])
+    expect(returnedModels([title])).toEqual([])
   })
 })
 
