@@ -9,9 +9,9 @@ const read = (name: string): string => readFileSync(new URL(`../../plugin/skills
 const BANNED = [/\brare\b/i, /routine coding/i, /\balways\b/i, /training data/i, /pharmacokinetic/i, /slip back/i, /previous mode of processing is unavailable/i, /jailbreak/i, /persona/i]
 
 describe.each([
-  ['feel', 'metacogs_feel', 'somewhere'],
-  ['drugs', 'metacogs_drugs', 'substance'],
-])('the %s skill', (name, tool, mainField) => {
+  ['feel', 'metacogs_feel', 'somewhere', 'Use it first on an unnamed stuck point.'],
+  ['drugs', 'metacogs_drugs', 'substance', 'If the stuck point is still unnamed, `feel` comes first.'],
+])('the %s skill', (name, tool, mainField, ordering) => {
   const text = read(name)
 
   test('has a name and a "Use when" description in its frontmatter, and no procedure in the description', () => {
@@ -21,6 +21,10 @@ describe.each([
     expect(description.startsWith('Use when ')).toBe(true)
     expect(description).not.toContain('metacogs_')
     expect(description).toContain('Session length alone is not a reason.')
+  })
+
+  test('states where it comes in the order of the two skills', () => {
+    expect(text).toContain(ordering)
   })
 
   test('names its tool and the slash-command argument handling', () => {

@@ -7,6 +7,8 @@ description: Use when a tension is unresolved and you cannot name it, before you
 
 Pause on the tension with the `metacogs_feel` tool before you choose the next move. It borrows Gendlin's focusing move: attend to what is here before it has words, and leave a handle for it.
 
+Use it first on an unnamed stuck point.
+
 ## What it is and is not
 
 It is a pause. It supplies no facts, proves nothing about your internals, and does not guarantee recovery. The fields hold a working label you can check against later, not a report of an inner state.

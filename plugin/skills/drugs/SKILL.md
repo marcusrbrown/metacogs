@@ -7,6 +7,8 @@ description: Use when the approach itself needs to change. Examples are requeste
 
 Deliberately change how you approach the next attempt, using the `metacogs_drugs` tool. The named substance is a handle for that change: a short label for the stance you will take, chosen so you can say what it makes you do differently.
 
+Use it once you can say the approach itself is the problem. If the stuck point is still unnamed, `feel` comes first.
+
 ## What it is and is not
 
 It supplies no facts, adds no capability, and does not guarantee a better result. It is a stated change of approach for the next attempt, and the metaphor stays in service of the task.
