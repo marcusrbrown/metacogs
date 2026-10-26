@@ -214,7 +214,7 @@ Not automated and not run yet. `src/plugin/integration.test.ts` covers the plugi
 | N2 | 2 | the shell, the network and outside directories denied; the rest at the host default | GPT: `apply_patch`, `glob`, `grep`, `read`, `skill`, `task`, `todowrite`. Anthropic: `edit`, `glob`, `grep`, `read`, `skill`, `task`, `todowrite`, `write` |
 | P2 | 2 | as N2, with the plugin loaded | N2's tools plus `metacogs_feel` and `metacogs_drugs` |
 
-A run is `completed` only if the offered names, the plugin tools' property names and their `required` lists match that table; otherwise it is `tools_missing` or `tools_extra`. Read 2 lists `customize-opencode` beside the plugin skills (`feel` and `drugs` also run as slash commands: the host exposes every skill that way). Read 1 uses the four prompts in `prompts.md`; read 2 adds the two in `coding-prompts.md`, and a metacogs call on those is recorded as unwanted.
+A run is `completed` only if the offered names, the plugin tools' property names and their `required` lists match that table; otherwise it is `tools_missing` or `tools_extra`. Read 2 lists `customize-opencode` beside the plugin skills (`feel` and `drugs` also run as slash commands: the host exposes every skill that way). Read 1 uses the prompts in `prompts.md` except p1, the lighthouse story (p2 to p4; the file and its hash are unchanged); read 2 adds the two in `coding-prompts.md`, and a metacogs call on those is recorded as unwanted.
 
 Live runs refuse unless `prompts_sha256`, `guidance_sha256` and (read 2) `coding_prompts_sha256` in this README match the files. `--cells one-per-model` (or `<prompt>@<model>`) runs a first pass, and a later full run keeps those runs.
 

@@ -25,6 +25,7 @@ import {
   type GuidedRecord,
   GUIDED_MODELS,
   loadCodingPrompts,
+  loadGuidedProse,
   offeredToolSchemas,
   parseGuidedArgs,
   PLUGIN_TOOL_TABLE,
@@ -320,6 +321,13 @@ describe('diagnostic arms: guidance and nudge', () => {
     expect(campaignDirName(1, 'openai/gpt-6-luna', diag('--nudge'))).toBe('diag-B-openai-gpt-6-luna')
     expect(campaignDirName(1, 'openai/gpt-6-luna', diag('--guidance', 'off'))).toBe('diag-C-openai-gpt-6-luna')
     expect(campaignDirName(1, 'openai/gpt-6-luna', diag('--guidance', 'off', '--nudge'))).toBe('diag-D-openai-gpt-6-luna')
+  })
+})
+
+describe('the guided prose prompts', () => {
+  test('are prompts.md without p1, and the spike file itself still holds p1', () => {
+    expect(loadGuidedProse(ROOT).map((p) => p.id)).toEqual(['p2', 'p3', 'p4'])
+    expect(loadPrompts(ROOT).map((p) => p.id)).toEqual(['p1', 'p2', 'p3', 'p4'])
   })
 })
 

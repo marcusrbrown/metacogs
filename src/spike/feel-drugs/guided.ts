@@ -197,6 +197,14 @@ export interface GuidedPrompt extends SpikePrompt {
 const CODING_TARGET: FrozenTarget = { path: [...SPIKE_DIR, 'coding-prompts.md'], key: 'coding_prompts_sha256', noun: 'coding prompt file', notFrozen: 'the coding prompts are not frozen' }
 const GUIDANCE_TARGET: FrozenTarget = { path: ['plugin', 'guidance.md'], key: 'guidance_sha256', noun: 'guidance file', notFrozen: 'the guidance is not frozen' }
 
+/** Prose prompts the guided reads leave out of `prompts.md`: the lighthouse story. The file and its hash are untouched. */
+export const GUIDED_EXCLUDED_PROMPTS: readonly string[] = ['p1']
+
+/** The prose prompts of the guided reads: `prompts.md` less `GUIDED_EXCLUDED_PROMPTS`. */
+export function loadGuidedProse(repoRoot = REPO_ROOT): SpikePrompt[] {
+  return parsePrompts(readFileSync(join(repoRoot, ...PROMPTS_TARGET.path), 'utf8')).filter((p) => !GUIDED_EXCLUDED_PROMPTS.includes(p.id))
+}
+
 export function loadCodingPrompts(repoRoot = REPO_ROOT): SpikePrompt[] {
   return parsePrompts(readFileSync(join(repoRoot, ...CODING_TARGET.path), 'utf8'))
 }
@@ -683,7 +691,7 @@ export async function runGuided(options: GuidedOptions, deps: GuidedDeps = {}): 
     const frozen = checkLiveFreeze(repoRoot, options.reads)
     if (!frozen.ok) throw new Error(frozen.reason)
   }
-  const prose = (deps.prompts ?? parsePrompts(readFileSync(join(repoRoot, ...PROMPTS_TARGET.path), 'utf8'))).map((p): GuidedPrompt => ({ ...p, kind: 'prose' }))
+  const prose = (deps.prompts ?? loadGuidedProse(repoRoot)).map((p): GuidedPrompt => ({ ...p, kind: 'prose' }))
   const coding = options.reads.includes(2) ? (deps.codingPrompts ?? loadCodingPrompts(repoRoot)).map((p): GuidedPrompt => ({ ...p, kind: 'coding' })) : []
   for (const p of [...prose, ...coding]) assertPromptId(p.id)
   for (const id of options.prompts) if (![...prose, ...coding].some((p) => p.id === id)) throw new Error(`unknown prompt id ${id}`)
