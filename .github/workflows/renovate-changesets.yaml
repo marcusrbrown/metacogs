@@ -38,7 +38,10 @@ jobs:
           compare=$(gh api "repos/${REPO}/compare/${BASE_SHA}...${HEAD_SHA}")
           merge_base=$(jq -r '.merge_base_commit.sha' <<<"$compare")
 
-          if [ "$(runtime_deps "$merge_base")" != "$(runtime_deps "$HEAD_SHA")" ]; then
+          base_deps=$(runtime_deps "$merge_base")
+          head_deps=$(runtime_deps "$HEAD_SHA")
+
+          if [ "$base_deps" != "$head_deps" ]; then
             reason='runtime dependencies changed'
           elif jq -e 'any(.files[]; .filename | startswith("skills/"))' <<<"$compare" >/dev/null; then
             reason='shipped files changed'
