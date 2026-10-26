@@ -190,13 +190,11 @@ describe('checkDebugConfig', () => {
 
 describe('checkDebugConfig with an expected-config object (plugin arms)', () => {
   const SPEC = 'file:///pkg/dist/index.js'
-  const PREFIX = '(metacogs) '
   const generated = { ...GENERATED, plugin: [[SPEC, { guidance: true }]] }
-  const expected: ExpectedConfig = { pluginOrigins: true, commands: { names: ['feel', 'drugs'], prefix: PREFIX }, skillsPaths: ['/pkg/skills'] }
-  const command = { feel: { template: 't', description: `${PREFIX}f` }, drugs: { template: 't', description: `${PREFIX}d` } }
-  const effective = { ...EFFECTIVE, plugin: [[SPEC, { guidance: true }]], plugin_origins: [{ spec: [SPEC, { guidance: true }], source: '/cfg/opencode.json', scope: 'global' }], command, skills: { paths: ['/pkg/skills'] } }
+  const expected: ExpectedConfig = { pluginOrigins: true, skillsPaths: ['/pkg/skills', '/pkg/plugin/skills'] }
+  const effective = { ...EFFECTIVE, plugin: [[SPEC, { guidance: true }]], plugin_origins: [{ spec: [SPEC, { guidance: true }], source: '/cfg/opencode.json', scope: 'global' }], skills: { paths: ['/pkg/skills', '/pkg/plugin/skills'] } }
 
-  test('the host-added plugin_origins, command.{feel,drugs} and one skills.paths entry pass', () => {
+  test('the host-added plugin_origins and the two skills.paths entries pass', () => {
     expect(checkDebugConfig(effective, generated, expected)).toMatchObject({ passed: true })
   })
 
@@ -215,10 +213,9 @@ describe('checkDebugConfig with an expected-config object (plugin arms)', () => 
     expect(r.detail).toMatch(/plugin_origins|command|skills/)
   })
 
-  test('a plugin that did not register is a failure: missing origins, commands or skills path', () => {
+  test('a plugin that did not register is a failure: missing origins or skills paths', () => {
     const { plugin_origins: _o, ...noOrigins } = effective
     expect(checkDebugConfig(noOrigins, generated, expected).passed).toBe(false)
-    expect(checkDebugConfig({ ...effective, command: {} }, generated, expected).passed).toBe(false)
     const { skills: _s, ...noSkills } = effective
     expect(checkDebugConfig(noSkills, generated, expected).passed).toBe(false)
   })
@@ -226,11 +223,11 @@ describe('checkDebugConfig with an expected-config object (plugin arms)', () => 
   test.each([
     ['an origin for another spec', { plugin_origins: [{ spec: 'file:///other.js', source: '/c', scope: 'global' }] }],
     ['a second origin', { plugin_origins: [{ spec: [SPEC, { guidance: true }], source: '/c', scope: 'global' }, { spec: 'file:///other.js', source: '/c', scope: 'local' }] }],
-    ['an extra command', { command: { ...command, extra: { template: 't', description: `${PREFIX}x` } } }],
-    ['a command without the prefix', { command: { ...command, feel: { template: 't', description: 'mine' } } }],
-    ['a second skills path', { skills: { paths: ['/pkg/skills', '/elsewhere'] } }],
+    ['a command the plugin should not add', { command: { feel: { template: 't', description: 'x' } } }],
+    ['a third skills path', { skills: { paths: ['/pkg/skills', '/pkg/plugin/skills', '/elsewhere'] } }],
+    ['one skills path missing', { skills: { paths: ['/pkg/skills'] } }],
     ['another skills path', { skills: { paths: ['/elsewhere'] } }],
-    ['another skills key', { skills: { paths: ['/pkg/skills'], urls: ['https://example.com'] } }],
+    ['another skills key', { skills: { paths: ['/pkg/skills', '/pkg/plugin/skills'], urls: ['https://example.com'] } }],
     ['a plugin list that differs from the generated one', { plugin: ['file:///evil.js'] }],
     ['an unrelated host key', { small_model: 'x' }],
     ['a non-empty agent block', { agent: { build: {} } }],
@@ -238,7 +235,7 @@ describe('checkDebugConfig with an expected-config object (plugin arms)', () => 
     expect(checkDebugConfig({ ...effective, ...patch }, generated, expected).passed).toBe(false)
   })
 
-  test('allowing plugin_origins alone does not allow hook-added commands', () => {
+  test('allowing plugin_origins alone does not allow hook-added skills paths', () => {
     expect(checkDebugConfig(effective, generated, { pluginOrigins: true }).passed).toBe(false)
   })
 })

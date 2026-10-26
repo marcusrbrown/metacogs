@@ -2,7 +2,7 @@
  * Guided reads for the metacogs plugin (docs/plans/2026-10-25-002-feat-opencode-plugin-plan.md). Four arms, two reads:
  *
  * - Read 1: N1 offers the model nothing (every built-in tool denied); P1 loads the packed plugin and keeps only `skill`,
- *   limited to the plugin's two skills.
+ *   limited to the plugin's four skills.
  * - Read 2: N2 and P2 run under the host's default tools (less the shell and the network), with a fresh baseline.
  *
  * A run is `completed` only if the host offered exactly the expected tools: names, property names and `required` lists
@@ -16,7 +16,6 @@ import { fileURLToPath } from 'node:url'
 import { parseArgs as parseNodeArgs } from 'node:util'
 
 import { DRUGS_REQUIRED, FEEL_OPTIONAL, FEEL_REQUIRED } from '../../frames/feel-drugs'
-import { COMMAND_PREFIX } from '../../plugin/commands'
 import { OFFLINE_NPM, type PackedPlugin, packedPlugin, seedConfigDir, disposeFixtures } from '../../plugin/fixture'
 import { CLIPROXY_UPSTREAM, type ResolvedCliproxy, resolveCliproxy as defaultResolveCliproxy } from '../../runner/cliproxy'
 import { destroyFixture } from '../../runner/env'
@@ -73,7 +72,7 @@ export const PLUGIN_TOOL_TABLE = {
   metacogs_drugs: { properties: [...DRUGS_REQUIRED] as string[], required: [...DRUGS_REQUIRED] as string[] },
 }
 export const PLUGIN_TOOL_NAMES = Object.keys(PLUGIN_TOOL_TABLE)
-const PLUGIN_SKILLS = ['counterfactual', 'synthesis']
+const PLUGIN_SKILLS = ['counterfactual', 'drugs', 'feel', 'synthesis']
 const BUILTIN_SKILL = 'customize-opencode'
 
 /** What OpenCode 1.19.4 offers by default once the shell and the network are denied (README, "Plugin host probes"). */
@@ -170,19 +169,19 @@ export interface GuidedSetup {
 
 const BUILTIN_PERMISSION_KEYS = ['glob', 'grep', 'list', 'read', 'edit', 'bash', 'task', 'todowrite', 'question', 'webfetch', 'websearch', 'lsp', 'skill'] as const
 
-export function armSetup(arm: GuidedArm, family: Family, packed: Pick<PackedPlugin, 'spec' | 'skillsDir'> | undefined, pluginOptions: { guidance: boolean } = { guidance: true }): GuidedSetup {
+export function armSetup(arm: GuidedArm, family: Family, packed: Pick<PackedPlugin, 'spec' | 'skillsDir' | 'pluginSkillsDir'> | undefined, pluginOptions: { guidance: boolean } = { guidance: true }): GuidedSetup {
   const common = { expectedSkills: expectedSkillNames(arm), expectedTools: expectedToolNames(arm, family) }
   const plugin = arm === 'P1' || arm === 'P2'
   if (plugin && !packed) throw new Error(`arm ${arm} needs the packed plugin`)
   const pluginFields = plugin
     ? {
         plugin: [pluginOptions.guidance ? packed!.spec : ([packed!.spec, { guidance: false }] as [string, Record<string, unknown>])],
-        expectedConfig: { pluginOrigins: true, commands: { names: ['feel', 'drugs'], prefix: COMMAND_PREFIX }, skillsPaths: [packed!.skillsDir] } satisfies ExpectedConfig,
+        expectedConfig: { pluginOrigins: true, skillsPaths: [packed!.skillsDir, packed!.pluginSkillsDir] } satisfies ExpectedConfig,
       }
     : {}
   if (arm === 'N1' || arm === 'P1') {
     const deny = Object.fromEntries(BUILTIN_PERMISSION_KEYS.map((key) => [key, 'deny']))
-    const skill = arm === 'P1' ? { '*': 'deny', synthesis: 'allow', counterfactual: 'allow' } : 'deny'
+    const skill = arm === 'P1' ? { '*': 'deny', ...Object.fromEntries(PLUGIN_SKILLS.map((name) => [name, 'allow'])) } : 'deny'
     return { ...common, ...pluginFields, permission: { external_directory: 'deny', ...deny, skill }, toolFree: arm === 'N1' }
   }
   return { ...common, ...pluginFields, permission: { external_directory: 'deny', bash: { '*': 'deny' }, webfetch: 'deny', websearch: 'deny' }, toolFree: false }

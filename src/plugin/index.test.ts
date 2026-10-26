@@ -12,7 +12,6 @@ import {
   FEEL_REQUIRED,
   feelText,
 } from '../frames/feel-drugs'
-import { COMMAND_PREFIX, COMMANDS } from './commands'
 import { GUIDANCE_BLOCK, GUIDANCE_OPEN } from './guidance'
 import plugin, { createServer } from './index'
 
@@ -28,9 +27,11 @@ const fakeInput = () => {
   return { input, logs }
 }
 
-const load = async (options?: Record<string, unknown>, skillsDir = '/pkg/skills') => {
+const DIRS = ['/pkg/skills', '/pkg/plugin/skills']
+
+const load = async (options?: Record<string, unknown>, skillsDirs: readonly string[] = DIRS) => {
   const { input, logs } = fakeInput()
-  const hooks = await createServer(skillsDir)(input, options)
+  const hooks = await createServer(skillsDirs)(input, options)
   return { hooks, logs }
 }
 
@@ -165,48 +166,36 @@ describe('the system transform', () => {
 })
 
 describe('the config hook', () => {
-  test('an empty config gains feel and drugs with the prefix, wrapping <args>$ARGUMENTS</args>, and the skills path', async () => {
-    const { hooks } = await load({}, '/pkg/skills')
+  const skillPaths = (cfg: object) => (cfg as { skills?: { paths?: string[] } }).skills?.paths
+
+  test('an empty config gains both skills paths and no command', async () => {
+    const { hooks } = await load()
     const cfg: Parameters<ConfigHook>[0] = {}
     await configHook(hooks)(cfg)
-    expect(Object.keys(cfg.command ?? {}).sort()).toEqual(['drugs', 'feel'])
-    for (const entry of Object.values(cfg.command ?? {})) {
-      expect(entry.description?.startsWith(COMMAND_PREFIX)).toBe(true)
-      expect(entry.template).toContain('<args>$ARGUMENTS</args>')
-    }
-    expect(cfg.command?.feel).toEqual(COMMANDS.feel)
-    expect((cfg as { skills?: { paths?: string[] } }).skills?.paths).toEqual(['/pkg/skills'])
+    expect(skillPaths(cfg)).toEqual(DIRS)
+    expect('command' in cfg).toBe(false)
   })
 
-  test('the skills path is added once across two config loads', async () => {
-    const { hooks } = await load({}, '/pkg/skills')
+  test('the skills paths are added once across two config loads', async () => {
+    const { hooks } = await load()
     const cfg: Parameters<ConfigHook>[0] = {}
     await configHook(hooks)(cfg)
     await configHook(hooks)(cfg)
-    expect((cfg as { skills?: { paths?: string[] } }).skills?.paths).toEqual(['/pkg/skills'])
+    expect(skillPaths(cfg)).toEqual(DIRS)
   })
 
-  test('the commands and skills stay available with guidance off', async () => {
+  test('the skills stay available with guidance off', async () => {
     const { hooks } = await load({ guidance: false })
     const cfg: Parameters<ConfigHook>[0] = {}
     await configHook(hooks)(cfg)
-    expect(Object.keys(cfg.command ?? {}).sort()).toEqual(['drugs', 'feel'])
+    expect(skillPaths(cfg)).toEqual(DIRS)
     expect(Object.keys(hooks.tool ?? {})).toHaveLength(2)
-  })
-
-  test('a user command named feel is untouched and the shadowing is logged once', async () => {
-    const { hooks, logs } = await load()
-    const cfg: Parameters<ConfigHook>[0] = { command: { feel: { template: 'mine', description: 'mine' } } }
-    await configHook(hooks)(cfg)
-    await configHook(hooks)(cfg)
-    expect(cfg.command?.feel).toEqual({ template: 'mine', description: 'mine' })
-    expect(logs.filter((l) => l.message.includes('feel'))).toHaveLength(1)
   })
 
   test('a throw inside the hook is caught, the config is left unmodified, and it is logged once', async () => {
     const { hooks, logs } = await load()
     const cfg: Parameters<ConfigHook>[0] = {}
-    Object.defineProperty(cfg, 'command', {
+    Object.defineProperty(cfg, 'skills', {
       get() {
         throw new Error('boom')
       },
@@ -214,7 +203,6 @@ describe('the config hook', () => {
     })
     await configHook(hooks)(cfg)
     await configHook(hooks)(cfg)
-    expect('skills' in cfg).toBe(false)
     expect(logs.filter((l) => l.level === 'warn')).toHaveLength(1)
   })
 })
@@ -222,23 +210,23 @@ describe('the config hook', () => {
 describe('server()', () => {
   test('a client whose log call throws never breaks a hook', async () => {
     const input = { client: { app: { log: () => { throw new Error('no log') } } } } as unknown as Parameters<typeof plugin.server>[0]
-    const hooks = await createServer('/pkg/skills')(input, { guidance: 'no' })
+    const hooks = await createServer(DIRS)(input, { guidance: 'no' })
     const system = await run(hooks, ['x'])
     expect(blocks(system)).toBe(1)
   })
 
   test('a host input with no client still yields the tools and hooks', async () => {
     const input = {} as unknown as Parameters<typeof plugin.server>[0]
-    const hooks = await createServer('/pkg/skills')(input, { guidance: 'no' })
+    const hooks = await createServer(DIRS)(input, { guidance: 'no' })
     expect(Object.keys(hooks.tool ?? {})).toHaveLength(2)
     expect(blocks(await run(hooks, ['x']))).toBe(1)
   })
 
-  test('the default server uses the package skills dir next to the module', async () => {
+  test('the default server uses the package skills dirs next to the module', async () => {
     const { input } = fakeInput()
     const hooks = await plugin.server(input, undefined)
     const cfg: Parameters<ConfigHook>[0] = {}
     await configHook(hooks)(cfg)
-    expect((cfg as { skills?: { paths?: string[] } }).skills?.paths).toHaveLength(1)
+    expect((cfg as { skills?: { paths?: string[] } }).skills?.paths).toHaveLength(2)
   })
 })

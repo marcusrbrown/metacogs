@@ -1,4 +1,4 @@
-// Bundles src/plugin/index.ts into the gitignored dist/index.js, with guidance.md and the command files embedded as raw
+// Bundles src/plugin/index.ts into the gitignored dist/index.js, with guidance.md embedded as raw
 // text. The host SDK stays external; everything else is inlined. Also wraps `npm pack` for the package tests.
 import { spawnSync } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'

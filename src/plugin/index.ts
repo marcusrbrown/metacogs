@@ -8,7 +8,7 @@ import {
   FEEL_FIELD_DESCRIPTIONS,
   feelText,
 } from '../frames/feel-drugs'
-import { applyConfig, type HostConfig, skillsDirFrom } from './config'
+import { applyConfig, type HostConfig, skillsDirsFrom } from './config'
 import { withGuidance } from './guidance'
 import { parseOptions, type Warn } from './options'
 
@@ -49,8 +49,8 @@ function createWarn(input: PluginInput, level: 'info' | 'warn'): Warn {
   }
 }
 
-/** The plugin for a given skills directory. The default export passes the one beside the built module. */
-export function createServer(skillsDir: string): Plugin {
+/** The plugin for given skill directories. The default export passes the two beside the built module. */
+export function createServer(skillsDirs: readonly string[]): Plugin {
   return async (input, rawOptions) => {
     const warn = createWarn(input, 'warn')
     const note = createWarn(input, 'info')
@@ -59,9 +59,9 @@ export function createServer(skillsDir: string): Plugin {
       tool: { metacogs_feel: metacogsFeel, metacogs_drugs: metacogsDrugs },
       config: async (cfg) => {
         try {
-          applyConfig(cfg as HostConfig, skillsDir, warn)
+          applyConfig(cfg as HostConfig, skillsDirs)
         } catch {
-          warn('config', 'the config hook failed; the commands and skills path were not registered')
+          warn('config', 'the config hook failed; the skills paths were not registered')
         }
       },
       'experimental.chat.system.transform': async (_input, output) => {
@@ -82,6 +82,6 @@ export function createServer(skillsDir: string): Plugin {
   }
 }
 
-const server: Plugin = createServer(skillsDirFrom(import.meta.url))
+const server: Plugin = createServer(skillsDirsFrom(import.meta.url))
 
 export default { id: 'metacogs', server } satisfies PluginModule

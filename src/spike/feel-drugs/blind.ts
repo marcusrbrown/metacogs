@@ -29,7 +29,7 @@ export const BLIND_SCHEMA_VERSION = 1 as const
 /** The rule, fixed before any run: the total margin to reach and the per-model floor to stay above. */
 export const WIN_MARGIN = 3
 export const MODEL_FLOOR = -3
-const PLUGIN_SKILL_NAMES = ['counterfactual', 'synthesis']
+const PLUGIN_SKILL_NAMES = ['counterfactual', 'drugs', 'feel', 'synthesis']
 
 export type Side = 'X' | 'Y'
 export type Verdict = 'X' | 'Y' | 'same'

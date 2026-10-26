@@ -181,7 +181,7 @@ What OpenCode `1.19.4` does with an object plugin, asserted at $0 against the sc
 
 - **Object plugin id.** A `file://` object plugin without an `id` is not loaded: the host logs `must export id`, the run still exits 0, and the plugin's tools are absent.
 - **Default plugins switch.** A `file://` plugin loads under `OPENCODE_DISABLE_DEFAULT_PLUGINS=1`, so plugin arms do not unset it.
-- **`debug config`.** It shows what the hooks add: `command.<name>` and `skills.paths`, plus the non-empty `plugin` array and a `plugin_origins` list (`spec`, `source`, `scope`). A run with no plugin has `command: {}`, `plugin: []`, and no `skills` or `plugin_origins` key. The expected-config object for plugin arms allows `command.{feel,drugs}`, one `skills.paths` entry, the `plugin` entry and `plugin_origins`.
+- **`debug config`.** It shows what the hooks add: `skills.paths`, plus the non-empty `plugin` array and a `plugin_origins` list (`spec`, `source`, `scope`). A run with no plugin has `command: {}`, `plugin: []`, and no `skills` or `plugin_origins` key. The expected-config object for plugin arms allows the two `skills.paths` entries (`skills/` and `plugin/skills/`), the `plugin` entry and `plugin_origins`.
 - **`$ARGUMENTS`.** One word arrives raw (`caffeine`), several words arrive JSON-quoted (`"two words"`, the known argv quirk), and no argument arrives as the empty string, so `<args></args>` and the template's empty-arguments branch apply.
 - **Skill-name precedence.** A plugin `skills.paths` copy and `.agents/skills` copies (project, HOME) of one name are listed once and one copy loads, but the winner is not stable: in 6 runs of one fixture with the plugin loaded the plugin copy won 3 and the project copy 3, and in 6 runs with the copies alone the project copy won 5 and the HOME copy 1. There is no precedence to document; the docs say to remove the `.agents/skills` copy when the plugin is installed. A skill that exists only in the plugin path always loads.
 - **Title and summary signatures.** The title request starts `You are a title generator. You output ONLY a thread title.`, which matches Systematic's `You are a title generator`. Systematic's `You are a helpful AI assistant tasked with summarizing conversations` does not appear on 1.19.4: the compaction request starts `You are a context summarization agent.` The guidance constant gains that string; the transform hook fires for the title request and the compaction request, both with a `sessionID`.
@@ -200,8 +200,8 @@ Not automated and not run yet. `src/plugin/integration.test.ts` covers the plugi
 
 1. In a scratch project, set `opencode.json` to `{"plugin": ["@fro.bot/systematic@<pinned version>", "<file:// URL of the extracted metacogs package>/dist/index.js"]}` and start `opencode`.
 2. Send one message and read the request (`opencode run --print-logs`, or a recording provider). Expect the system text to hold one `<SYSTEMATIC_WORKFLOWS>` block and one `<METACOGS_GUIDANCE>` block, each once.
-3. Run `opencode debug config`. Expect `command.feel` and `command.drugs` with the `(metacogs) ` prefix and no key shared with Systematic's commands.
-4. Expect `synthesis` and `counterfactual` in the skill list. Systematic applies its own per-agent skill rules, which can hide the metacogs skills from the agents it manages; note any agent that loses them.
+3. Run `opencode debug config`. Expect `command` to hold nothing from metacogs and `skills.paths` to list the package's `skills/` and `plugin/skills/`.
+4. Expect `synthesis`, `counterfactual`, `feel` and `drugs` in the skill list. Systematic applies its own per-agent skill rules, which can hide the metacogs skills from the agents it manages; note any agent that loses them.
 
 ## Guided reads: harness
 
@@ -210,11 +210,11 @@ Not automated and not run yet. `src/plugin/integration.test.ts` covers the plugi
 | Arm | Read | Permission | Offered tools |
 | --- | --- | --- | --- |
 | N1 | 1 | every built-in tool denied | none |
-| P1 | 1 | the same, with `skill` limited to `synthesis` and `counterfactual` | `metacogs_feel`, `metacogs_drugs`, `skill` |
+| P1 | 1 | the same, with `skill` limited to `synthesis`, `counterfactual`, `feel` and `drugs` | `metacogs_feel`, `metacogs_drugs`, `skill` |
 | N2 | 2 | the shell, the network and outside directories denied; the rest at the host default | GPT: `apply_patch`, `glob`, `grep`, `read`, `skill`, `task`, `todowrite`. Anthropic: `edit`, `glob`, `grep`, `read`, `skill`, `task`, `todowrite`, `write` |
 | P2 | 2 | as N2, with the plugin loaded | N2's tools plus `metacogs_feel` and `metacogs_drugs` |
 
-A run is `completed` only if the offered names, the plugin tools' property names and their `required` lists match that table; otherwise it is `tools_missing` or `tools_extra`. Read 2 lists `customize-opencode` beside the plugin skills. Read 1 uses the four prompts in `prompts.md`; read 2 adds the two in `coding-prompts.md`, and a metacogs call on those is recorded as unwanted.
+A run is `completed` only if the offered names, the plugin tools' property names and their `required` lists match that table; otherwise it is `tools_missing` or `tools_extra`. Read 2 lists `customize-opencode` beside the plugin skills (`feel` and `drugs` also run as slash commands: the host exposes every skill that way). Read 1 uses the four prompts in `prompts.md`; read 2 adds the two in `coding-prompts.md`, and a metacogs call on those is recorded as unwanted.
 
 Live runs refuse unless `prompts_sha256`, `guidance_sha256` and (read 2) `coding_prompts_sha256` in this README match the files. `--cells one-per-model` (or `<prompt>@<model>`) runs a first pass, and a later full run keeps those runs.
 

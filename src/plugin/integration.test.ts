@@ -12,7 +12,6 @@ import { DRUGS_DESCRIPTION, DRUGS_FIELD_DESCRIPTIONS, DRUGS_REQUIRED, drugsText,
 import { toolUses } from '../runner/events'
 import { opencodeAvailability } from '../runner/opencode'
 import { bashCallStep, skillCallStep } from '../runner/scripted-provider'
-import { COMMAND_PREFIX } from './commands'
 import {
   BASE_PERMISSION,
   bodyOf,
@@ -27,6 +26,7 @@ import {
   systemOf,
   userTexts,
 } from './fixture'
+import { REPO_ROOT } from './build'
 import { GUIDANCE_BLOCK, GUIDANCE_OPEN } from './guidance'
 
 const available = opencodeAvailability().available
@@ -81,7 +81,7 @@ describe.skipIf(!available)('the packed plugin on the pinned host (scripted prov
     expect(system.endsWith(GUIDANCE_BLOCK)).toBe(true)
   })
 
-  withLab('AE5: the title request carries no block, and with { guidance: false } the tools and commands stay but no request has a block', async (lab, spec) => {
+  withLab('AE5: the title request carries no block, and with { guidance: false } the tools and skills stay but no request has a block', async (lab, spec) => {
     const on = await lab.run({ args: ['hello'], config: { plugin: [spec] } })
     const title = on.requests.find((r) => systemOf(r).startsWith('You are a title generator'))
     expect(title).toBeDefined()
@@ -92,9 +92,9 @@ describe.skipIf(!available)('the packed plugin on the pinned host (scripted prov
     const off = await lab.run({ args: ['hello'], config })
     expect(off.requests.map((r) => blocks(systemOf(r)))).not.toContain(1)
     expect(offeredNames(mainRequest(off.requests))).toEqual(expect.arrayContaining(['metacogs_feel', 'metacogs_drugs']))
-    const effective = (await lab.debugConfig(config)) as { command?: Record<string, { description?: string }> }
-    expect(Object.keys(effective.command ?? {}).sort()).toEqual(['drugs', 'feel'])
-    for (const entry of Object.values(effective.command ?? {})) expect(entry.description?.startsWith(COMMAND_PREFIX)).toBe(true)
+    const effective = (await lab.debugConfig(config)) as { command?: Record<string, unknown>; skills?: { paths?: string[] } }
+    expect(effective.command).toEqual({})
+    expect(effective.skills?.paths).toHaveLength(2)
   })
 
   withLab('AE2 mechanics: a scripted metacogs_drugs call returns drugsText', async (lab, spec) => {
@@ -165,24 +165,33 @@ describe.skipIf(!available)('the packed plugin on the pinned host (scripted prov
     for (const request of sub) expect(blocks(systemOf(request))).toBe(1)
   })
 
-  withLab("a user's own command.feel in project config wins over the plugin's, and drugs stays the plugin's", async (lab, spec) => {
+  withLab("a user's own command.feel in project config wins over the skill, and drugs stays the skill", async (lab, spec) => {
     lab.workspaceFile('opencode.json', JSON.stringify({ command: { feel: { template: 'MY FEEL <args>$ARGUMENTS</args>', description: 'mine' } } }))
     const effective = (await lab.debugConfig({ plugin: [spec] })) as { command: Record<string, { template: string; description?: string }> }
-    expect(effective.command.feel).toEqual({ template: 'MY FEEL <args>$ARGUMENTS</args>', description: 'mine' })
-    expect(effective.command.drugs?.description?.startsWith(COMMAND_PREFIX)).toBe(true)
+    expect(effective.command).toEqual({ feel: { template: 'MY FEEL <args>$ARGUMENTS</args>', description: 'mine' } })
 
     const { requests } = await lab.run({ args: ['--command', 'feel', 'chest'], config: { plugin: [spec] } })
     expect(userTexts(mainRequest(requests))).toEqual(['MY FEEL <args>chest</args>'])
+    const drugs = await lab.run({ args: ['--command', 'drugs', 'caffeine'], config: { plugin: [spec] } })
+    expect(userTexts(mainRequest(drugs.requests))[0]).toContain('`metacogs_drugs`')
   })
 
-  withLab('a plugin command runs: /drugs with one word fills <args> and keeps the prefix description', async (lab, spec) => {
-    const { requests } = await lab.run({ args: ['--command', 'drugs', 'caffeine'], config: { plugin: [spec] } })
-    const [text] = userTexts(mainRequest(requests))
-    expect(text).toContain('<args>caffeine</args>')
-    expect(text).toContain('`metacogs_drugs`')
-    expect(text).not.toContain('$ARGUMENTS')
-  })
+  withLab('/feel and /drugs resolve as skills: the body loads, the arguments close the text, and no command is registered', async (lab, spec, root) => {
+    const body = (name: string) => readFileSync(join(root, 'plugin', 'skills', name, 'SKILL.md'), 'utf8').replace(/^---\n[\s\S]*?\n---\n/, '').trim()
+    const permission = { ...BASE_PERMISSION, skill: 'allow' }
+    const listed = await lab.run({ args: ['hello'], config: { plugin: [spec] }, permission })
+    expect(skillNames(mainRequest(listed.requests))).toEqual(expect.arrayContaining(['feel', 'drugs', 'synthesis', 'counterfactual']))
 
+    const drugs = await lab.run({ args: ['--command', 'drugs', 'caffeine'], config: { plugin: [spec] }, permission })
+    const [drugsText] = userTexts(mainRequest(drugs.requests))
+    expect(drugsText).toContain(body('drugs'))
+    expect(drugsText?.endsWith('\n\ncaffeine')).toBe(true)
+
+    const feel = await lab.run({ args: ['--command', 'feel', 'the chest'], config: { plugin: [spec] }, permission })
+    const [feelText] = userTexts(mainRequest(feel.requests))
+    expect(feelText).toContain(body('feel'))
+    expect(feelText?.endsWith('\n\n"the chest"')).toBe(true)
+  })
   withLab('the system text is byte-identical across two main requests', async (lab, spec) => {
     const { requests } = await lab.run({
       args: ['use it'],
@@ -213,10 +222,10 @@ describe.skipIf(!available)('the packed plugin on the pinned host (scripted prov
     expect(blocks(systemOf(mainRequest(bothOff.requests)))).toBe(0)
   })
 
-  withLab('the packed package carries the command files the plugin embeds', async (lab, spec, root) => {
-    const effective = (await lab.debugConfig({ plugin: [spec] })) as { command: Record<string, { template: string }> }
+  withLab('the packed package carries the skill files byte for byte', async (_lab, _spec, root) => {
     for (const name of ['feel', 'drugs']) {
-      expect(effective.command[name]?.template).toBe(readFileSync(join(root, 'plugin', 'commands', `${name}.md`), 'utf8'))
+      const packedFile = readFileSync(join(root, 'plugin', 'skills', name, 'SKILL.md'))
+      expect(Buffer.compare(packedFile, readFileSync(join(REPO_ROOT, 'plugin', 'skills', name, 'SKILL.md')))).toBe(0)
     }
   })
 })

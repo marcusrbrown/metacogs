@@ -162,6 +162,8 @@ export interface PackedPlugin {
   /** `file://` URL of the built entry. */
   spec: string
   skillsDir: string
+  /** The package's `plugin/skills` directory, which holds `feel` and `drugs`. */
+  pluginSkillsDir: string
   /** SHA-256 of the packed tarball. */
   tarballSha256: string
 }
@@ -189,7 +191,7 @@ export function packedPlugin(): Promise<PackedPlugin> {
     if (tar.exitCode !== 0) throw new Error(`tar failed: ${tar.stderr.toString().slice(0, 300)}`)
     const root = realpathSync(join(unpacked, 'package'))
     linkRuntimeDependency(root)
-    return { root, spec: specFor(root), skillsDir: join(root, 'skills'), tarballSha256: sha256(readFileSync(tarball)) }
+    return { root, spec: specFor(root), skillsDir: join(root, 'skills'), pluginSkillsDir: join(root, 'plugin', 'skills'), tarballSha256: sha256(readFileSync(tarball)) }
   })()
   return packed
 }

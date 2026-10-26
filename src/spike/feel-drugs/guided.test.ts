@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { DRUGS_REQUIRED, FEEL_OPTIONAL, FEEL_REQUIRED } from '../../frames/feel-drugs'
-import { COMMAND_PREFIX } from '../../plugin/commands'
 import { disposeFixtures, packedPlugin } from '../../plugin/fixture'
 import { opencodeAvailability } from '../../runner/opencode'
 import type { RecordedRequest } from '../../runner/scripted-provider'
@@ -50,7 +49,7 @@ const tmp = (prefix = 'guided-test-') => {
   return dir
 }
 
-const PLUGIN = { spec: 'file:///pkg/dist/index.js', skillsDir: '/pkg/skills', root: '/pkg', tarballSha256: 'a'.repeat(64) }
+const PLUGIN = { spec: 'file:///pkg/dist/index.js', skillsDir: '/pkg/skills', pluginSkillsDir: '/pkg/plugin/skills', root: '/pkg', tarballSha256: 'a'.repeat(64) }
 
 describe('the expected-tool tables', () => {
   test('the plugin tools are literal tables built from the frames module', () => {
@@ -74,11 +73,11 @@ describe('the expected-tool tables', () => {
     expect(expectedToolNames('P2', 'anthropic')).toEqual([...DEFAULT_TOOLS.anthropic, 'metacogs_drugs', 'metacogs_feel'].sort())
   })
 
-  test('expected skills: none in N1, the two plugin skills in P1, and customize-opencode joins them in read 2', () => {
+  test('expected skills: none in N1, the four plugin skills in P1, and customize-opencode joins them in read 2', () => {
     expect(expectedSkillNames('N1')).toEqual([])
-    expect(expectedSkillNames('P1')).toEqual(['counterfactual', 'synthesis'])
+    expect(expectedSkillNames('P1')).toEqual(['counterfactual', 'drugs', 'feel', 'synthesis'])
     expect(expectedSkillNames('N2')).toEqual(['customize-opencode'])
-    expect(expectedSkillNames('P2')).toEqual(['counterfactual', 'customize-opencode', 'synthesis'])
+    expect(expectedSkillNames('P2')).toEqual(['counterfactual', 'customize-opencode', 'drugs', 'feel', 'synthesis'])
   })
 
   test('the family comes from the model id', () => {
@@ -94,7 +93,7 @@ describe('armSetup', () => {
     expect(n1.toolFree).toBe(true)
     expect(n1.plugin).toBeUndefined()
     const p1 = armSetup('P1', 'gpt', PLUGIN)
-    expect(p1.permission).toMatchObject({ glob: 'deny', read: 'deny', edit: 'deny', skill: { '*': 'deny', synthesis: 'allow', counterfactual: 'allow' } })
+    expect(p1.permission).toMatchObject({ glob: 'deny', read: 'deny', edit: 'deny', skill: { '*': 'deny', synthesis: 'allow', counterfactual: 'allow', feel: 'allow', drugs: 'allow' } })
     expect(p1.toolFree).toBe(false)
   })
 
@@ -110,7 +109,7 @@ describe('armSetup', () => {
     for (const arm of ['P1', 'P2'] as const) {
       const setup = armSetup(arm, 'gpt', PLUGIN)
       expect(setup.plugin).toEqual([PLUGIN.spec])
-      expect(setup.expectedConfig).toEqual({ pluginOrigins: true, commands: { names: ['feel', 'drugs'], prefix: COMMAND_PREFIX }, skillsPaths: [PLUGIN.skillsDir] })
+      expect(setup.expectedConfig).toEqual({ pluginOrigins: true, skillsPaths: [PLUGIN.skillsDir, PLUGIN.pluginSkillsDir] })
     }
     expect(() => armSetup('P1', 'gpt', undefined)).toThrow(/packed plugin/)
   })
@@ -303,7 +302,7 @@ describe('diagnostic arms: guidance and nudge', () => {
     expect(armSetup('P1', 'gpt', PLUGIN).plugin).toEqual([PLUGIN.spec])
     expect(armSetup('P1', 'gpt', PLUGIN, { guidance: true }).plugin).toEqual([PLUGIN.spec])
     expect(armSetup('P1', 'gpt', PLUGIN, { guidance: false }).plugin).toEqual([[PLUGIN.spec, { guidance: false }]])
-    expect(armSetup('P1', 'gpt', PLUGIN, { guidance: false })).toMatchObject({ expectedSkills: ['counterfactual', 'synthesis'], expectedTools: ['metacogs_drugs', 'metacogs_feel', 'skill'], toolFree: false })
+    expect(armSetup('P1', 'gpt', PLUGIN, { guidance: false })).toMatchObject({ expectedSkills: ['counterfactual', 'drugs', 'feel', 'synthesis'], expectedTools: ['metacogs_drugs', 'metacogs_feel', 'skill'], toolFree: false })
     expect(armSetup('P1', 'gpt', PLUGIN, { guidance: false }).expectedConfig).toEqual(armSetup('P1', 'gpt', PLUGIN).expectedConfig)
   })
 
@@ -506,13 +505,14 @@ describe.skipIf(!HOST_SUITES || !opencodeAvailability().available)('against the 
         expect(r.second_turn?.final_answer).toBe('spike done')
         expect(campaignDirs[0]!.split('/').at(-1)).toBe('commands2-openai-gpt-6-luna')
         const texts = userTexts(join(campaignDirs[0]!, 'P2-p1-drugs-args-1'))
-        expect(texts.at(-1)).toContain('<args>caffeine</args>')
+        expect(texts.at(-1)).toContain('Call the `metacogs_drugs` tool now.')
+        expect(texts.at(-1)?.endsWith('\n\ncaffeine')).toBe(true)
       },
       600_000,
     )
 
     test(
-      '/feel with no arguments is recorded with an empty-argument flag and an empty <args> in the request',
+      '/feel with no arguments is recorded with an empty-argument flag and the skill text alone in the request',
       async () => {
         const { records, campaignDirs } = await run(['--read', '2', '--model', HAIKU, '--prompt', 'p1', '--runs', '1', '--command', 'feel'], {
           ...turnsFor('feel', { somewhere: 'in the session so far', quality: 'even, quiet', sigil: '🌫' }),
@@ -520,7 +520,9 @@ describe.skipIf(!HOST_SUITES || !opencodeAvailability().available)('against the 
         const r = records[0]!
         expect(r).toMatchObject({ status: 'completed', turns: 2, command: { name: 'feel', args: null, empty_args: true } })
         expect(r.second_turn?.tool_calls.map((t) => t.tool)).toEqual(['metacogs_feel'])
-        expect(userTexts(join(campaignDirs[0]!, 'P2-p1-feel-1')).at(-1)).toContain('<args></args>')
+        const text = userTexts(join(campaignDirs[0]!, 'P2-p1-feel-1')).at(-1)
+        expect(text).toContain('Call the `metacogs_feel` tool now.')
+        expect(text?.endsWith('relative to this base directory.')).toBe(true)
       },
       600_000,
     )

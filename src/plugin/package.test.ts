@@ -69,9 +69,8 @@ describe('the built bundle', () => {
     for (const pattern of [/\bBun\./, /\bprocess\./, /\bfetch\s*\(/, /\bXMLHttpRequest\b/, /\bWebSocket\b/, /\beval\s*\(/, /\bnew Function\b/]) expect(bundle).not.toMatch(pattern)
   })
 
-  test('embeds the guidance and command files as raw markdown', () => {
+  test('embeds the guidance file as raw markdown', () => {
     expect(bundle).toContain(readFileSync(join(REPO_ROOT, 'plugin', 'guidance.md'), 'utf8').trimEnd().split('\n')[0] ?? '')
-    expect(bundle).toContain('<args>$ARGUMENTS</args>')
     expect(bundle).not.toContain('<p>')
   })
 })
@@ -94,7 +93,7 @@ describe('the packed package', () => {
   test('npm pack --dry-run lists only allowlisted paths, with the notices and plugin files present and evals and src absent', () => {
     const { files } = packPlugin({ dest: scratch, dryRun: true })
     expect(files.filter((f) => !ALLOWED_PATHS.some((re) => re.test(f)))).toEqual([])
-    for (const required of ['LICENSE', 'ATTRIBUTIONS.md', 'README.md', 'package.json', 'dist/index.js', 'plugin/guidance.md', 'plugin/commands/feel.md', 'plugin/commands/drugs.md', 'skills/synthesis/SKILL.md', 'skills/synthesis/scripts/record.mjs', 'skills/counterfactual/SKILL.md', 'skills/counterfactual/scripts/record.mjs']) {
+    for (const required of ['LICENSE', 'ATTRIBUTIONS.md', 'README.md', 'package.json', 'dist/index.js', 'plugin/guidance.md', 'plugin/skills/feel/SKILL.md', 'plugin/skills/drugs/SKILL.md', 'skills/synthesis/SKILL.md', 'skills/synthesis/scripts/record.mjs', 'skills/counterfactual/SKILL.md', 'skills/counterfactual/scripts/record.mjs']) {
       expect(files).toContain(required)
     }
     expect(files.some((f) => f.startsWith('evals/') || f.startsWith('src/') || f.startsWith('docs/') || /\.test\.[cm]?[jt]s$/.test(f))).toBe(false)

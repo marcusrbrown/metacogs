@@ -164,8 +164,6 @@ export interface DebugConfigVerdict {
 export interface ExpectedConfig {
   /** `plugin_origins` lists exactly the specs of the generated `plugin` entries, one origin each. */
   pluginOrigins?: boolean
-  /** `command` holds exactly these hook-added names, each with a description starting with `prefix`. */
-  commands?: { names: readonly string[]; prefix: string }
   /** `skills` is exactly `{ paths }` with these paths. */
   skillsPaths?: readonly string[]
 }
@@ -184,15 +182,6 @@ function takeExpected(effective: Record<string, unknown>, generated: Record<stri
     else if (origins === undefined) problems.push('plugin_origins: missing, so the plugin did not load')
     else if (origins.length !== entries.length || !sameList(origins.map((o) => JSON.stringify(o)), entries.map((entry) => JSON.stringify(entry)))) problems.push('plugin_origins: differs from the generated plugin entries')
     delete rest.plugin_origins
-  }
-  if (expected.commands && !('command' in generated)) {
-    const command = effective.command
-    const names = isRecord(command) ? Object.keys(command) : []
-    if (!isRecord(command) || !sameList(names, expected.commands.names)) problems.push(`command: expected exactly [${expected.commands.names.join(', ')}], got [${names.join(', ')}]`)
-    else if (names.some((n) => !(isRecord(command[n]) && typeof command[n].description === 'string' && command[n].description.startsWith(expected.commands!.prefix)))) {
-      problems.push(`command: an entry does not start its description with ${JSON.stringify(expected.commands.prefix)}`)
-    }
-    delete rest.command
   }
   if (expected.skillsPaths && !('skills' in generated)) {
     const skills = effective.skills
