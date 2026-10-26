@@ -420,7 +420,10 @@ describe('loadGuidedRuns and the command line', () => {
   })
 })
 
-describe.skipIf(!opencodeAvailability().available)('a scripted campaign through sheet, marks and reveal', () => {
+/** The host-backed suites take minutes: they run with `METACOGS_HOST_SUITES=1`, before a read and on a host pin bump. */
+const HOST_SUITES = process.env.METACOGS_HOST_SUITES === '1'
+
+describe.skipIf(!HOST_SUITES || !opencodeAvailability().available)('a scripted campaign through sheet, marks and reveal', () => {
   test(
     'gives the rule result a hand computation gives',
     async () => {

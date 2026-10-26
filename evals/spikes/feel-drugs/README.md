@@ -216,7 +216,22 @@ Not automated and not run yet. `src/plugin/integration.test.ts` covers the plugi
 
 A run is `completed` only if the offered names, the plugin tools' property names and their `required` lists match that table; otherwise it is `tools_missing` or `tools_extra`. Read 2 lists `customize-opencode` beside the plugin skills. Read 1 uses the four prompts in `prompts.md`; read 2 adds the two in `coding-prompts.md`, and a metacogs call on those is recorded as unwanted.
 
-Live runs refuse unless `prompts_sha256`, `guidance_sha256` and (read 2) `coding_prompts_sha256` in this README match the files. None of the last two is recorded yet. `--cells one-per-model` (or `<prompt>@<model>`) runs a first pass, and a later full run keeps those runs.
+Live runs refuse unless `prompts_sha256`, `guidance_sha256` and (read 2) `coding_prompts_sha256` in this README match the files. `--cells one-per-model` (or `<prompt>@<model>`) runs a first pass, and a later full run keeps those runs.
+
+### Frozen files
+
+`plugin/guidance.md` is the guidance text the owner approved as committed. `coding-prompts.md` is the owner-approved read 2 coding prompts. Any edit to either needs its hash recomputed (`shasum -a 256 <file>`) in the same commit, and a change to the guidance wording starts a fresh read.
+
+guidance_sha256: 991907a6a7eddb385cf0c453be75b0fa536a00fe56777dba770b18f0b9186758
+coding_prompts_sha256: 39351741feea49278bdfdbb261f5e691c0ff3ad4aff06d7e867b39d3ccc8b0ea
+
+### Environment variables
+
+| Variable | Effect |
+| --- | --- |
+| `METACOGS_HOST_SUITES=1` | Runs the host-backed scripted suites in `guided.test.ts` and `blind.test.ts` (several minutes, $0). Run it before a read and on a host pin bump. The pure unit tests in those files run every time. |
+| `METACOGS_HOST_PROBES=1` | Runs the plugin host probes in `src/plugin/probe.test.ts` (about three minutes, $0). Run it on a host pin bump. |
+| `METACOGS_REQUIRE_HOST=1` | Makes `src/plugin/integration.test.ts` fail instead of skip when the pinned host is unavailable. CI sets it. |
 
 Command runs (`--read 2 --command feel --command drugs=caffeine`) send the prompt, then `opencode run --continue --command <name> [args]` in the same fixture, with isolation checked on each turn. They are P2 runs in their own campaign directory (`commands2-<model>`), one record per run with the turn-2 calls under `second_turn`. `spike:blind` puts them in the key and `spike:reveal` reports them in a checks-only table: per model and command form, how often the tool call followed, how often the main field held the argument text, and which fields were filled. They are not part of any cell or of the rule.
 

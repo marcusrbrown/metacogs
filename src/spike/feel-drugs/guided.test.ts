@@ -290,12 +290,16 @@ describe('the live freeze', () => {
     expect(fetched).toBe(false)
   })
 
-  test('the committed README does not yet record the coding prompts or the guidance, so live runs refuse', () => {
-    expect(checkLiveFreeze(ROOT, [2]).ok).toBe(false)
+  test('the committed README records the hashes of the prompts, the coding prompts and the guidance, so live runs are accepted', () => {
+    expect(checkLiveFreeze(ROOT, [1])).toEqual({ ok: true })
+    expect(checkLiveFreeze(ROOT, [1, 2])).toEqual({ ok: true })
   })
 })
 
-describe.skipIf(!opencodeAvailability().available)('against the pinned host, scripted provider ($0)', () => {
+/** The host-backed suites take minutes: they run with `METACOGS_HOST_SUITES=1`, before a read and on a host pin bump. */
+const HOST_SUITES = process.env.METACOGS_HOST_SUITES === '1'
+
+describe.skipIf(!HOST_SUITES || !opencodeAvailability().available)('against the pinned host, scripted provider ($0)', () => {
   const prose = loadPrompts(ROOT).slice(0, 1)
   const coding = loadCodingPrompts(ROOT)
   const LUNA = 'openai/gpt-6-luna'
