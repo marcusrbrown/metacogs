@@ -222,7 +222,7 @@ Live runs refuse unless `prompts_sha256`, `guidance_sha256` and (read 2) `coding
 
 `plugin/guidance.md` is the guidance text the owner approved as committed. `coding-prompts.md` is the owner-approved read 2 coding prompts. Any edit to either needs its hash recomputed (`shasum -a 256 <file>`) in the same commit, and a change to the guidance wording starts a fresh read.
 
-guidance_sha256: 991907a6a7eddb385cf0c453be75b0fa536a00fe56777dba770b18f0b9186758
+guidance_sha256: 8f831a65a337ed815ba6e84d0e43a40ef4fd23fbb20f14f73b936c42d4299adb
 coding_prompts_sha256: 39351741feea49278bdfdbb261f5e691c0ff3ad4aff06d7e867b39d3ccc8b0ea
 
 ### Diagnostic arms

@@ -13,12 +13,10 @@ describe('the embedded text', () => {
     expect(GUIDANCE_TEXT).not.toContain('<p>')
   })
 
-  test('names both tools with the "if available" wording, the two skills, and rules out routine coding', () => {
+  test('names both tools with the "if available" wording and points at the four skills', () => {
     expect(GUIDANCE_TEXT).toContain('If `metacogs_feel` is available')
     expect(GUIDANCE_TEXT).toContain('If `metacogs_drugs` is available')
-    expect(GUIDANCE_TEXT).toContain('`synthesis`')
-    expect(GUIDANCE_TEXT).toContain('`counterfactual`')
-    expect(GUIDANCE_TEXT).toMatch(/Do not use any of them for routine coding/)
+    for (const skill of ['feel', 'drugs', 'synthesis', 'counterfactual']) expect(GUIDANCE_TEXT).toContain(`\`${skill}\``)
   })
 
   test('contains no marker and no internal-request signature of its own', () => {
