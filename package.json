@@ -57,6 +57,7 @@
     "spike:blind": "bun src/spike/feel-drugs/blind.ts blind",
     "spike:reveal": "bun src/spike/feel-drugs/blind.ts reveal",
     "version": "changeset version && bun run generate",
+    "changeset:gate": "bun src/release/changeset-gate.ts",
     "release": "bun src/release/release.ts",
     "publish-release": "bun src/release/publish.ts"
   },
