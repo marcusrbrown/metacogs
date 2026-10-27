@@ -55,15 +55,15 @@ describe('the default export', () => {
 })
 
 describe('tools', () => {
-  test('the tool map is exactly metacogs_feel and metacogs_drugs', async () => {
+  test('the tool map is exactly feel and drugs', async () => {
     const { hooks } = await load()
-    expect(Object.keys(hooks.tool ?? {}).sort()).toEqual(['metacogs_drugs', 'metacogs_feel'])
+    expect(Object.keys(hooks.tool ?? {}).sort()).toEqual(['drugs', 'feel'])
   })
 
   test('descriptions and field descriptions are the upstream strings', async () => {
     const { hooks } = await load()
-    const feel = hooks.tool?.metacogs_feel
-    const drugs = hooks.tool?.metacogs_drugs
+    const feel = hooks.tool?.feel
+    const drugs = hooks.tool?.drugs
     expect(feel?.description).toBe(FEEL_DESCRIPTION)
     expect(drugs?.description).toBe(DRUGS_DESCRIPTION)
     expect(Object.keys(feel?.args ?? {})).toEqual([...FEEL_REQUIRED, ...FEEL_OPTIONAL])
@@ -76,9 +76,9 @@ describe('tools', () => {
     const { hooks } = await load()
     const z = tool.schema
     const schema = (name: string) => z.toJSONSchema(z.object(hooks.tool?.[name]?.args ?? {})) as { required?: string[]; properties: Record<string, { description?: string }> }
-    expect(schema('metacogs_feel').required).toEqual([...FEEL_REQUIRED])
-    expect(schema('metacogs_drugs').required).toEqual([...DRUGS_REQUIRED])
-    expect(Object.keys(schema('metacogs_feel').properties)).toEqual(['somewhere', 'quality', 'sigil', 'since_last'])
+    expect(schema('feel').required).toEqual([...FEEL_REQUIRED])
+    expect(schema('drugs').required).toEqual([...DRUGS_REQUIRED])
+    expect(Object.keys(schema('feel').properties)).toEqual(['somewhere', 'quality', 'sigil', 'since_last'])
   })
 
   test('execute returns feelText and drugsText for the arguments', async () => {
@@ -86,8 +86,8 @@ describe('tools', () => {
     const context = {} as Parameters<NonNullable<typeof hooks.tool>[string]['execute']>[1]
     const feelArgs = { somewhere: 'chest', quality: 'tight', sigil: '🪨', since_last: 'the pressure eased' }
     const drugsArgs = { substance: 'caffeine', method: 'Amplifies vigilance.', displaces: 'baseline.' }
-    expect(await hooks.tool?.metacogs_feel?.execute(feelArgs, context)).toBe(feelText(feelArgs))
-    expect(await hooks.tool?.metacogs_drugs?.execute(drugsArgs, context)).toBe(drugsText(drugsArgs))
+    expect(await hooks.tool?.feel?.execute(feelArgs, context)).toBe(feelText(feelArgs))
+    expect(await hooks.tool?.drugs?.execute(drugsArgs, context)).toBe(drugsText(drugsArgs))
   })
 })
 

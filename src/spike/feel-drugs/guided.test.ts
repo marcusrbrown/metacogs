@@ -54,14 +54,14 @@ const PLUGIN = { spec: 'file:///pkg/dist/index.js', skillsDir: '/pkg/skills', pl
 
 describe('the expected-tool tables', () => {
   test('the plugin tools are literal tables built from the frames module', () => {
-    expect(PLUGIN_TOOL_TABLE.metacogs_feel).toEqual({ properties: [...FEEL_REQUIRED, ...FEEL_OPTIONAL], required: [...FEEL_REQUIRED] })
-    expect(PLUGIN_TOOL_TABLE.metacogs_feel.properties).toEqual(['somewhere', 'quality', 'sigil', 'since_last'])
-    expect(PLUGIN_TOOL_TABLE.metacogs_drugs).toEqual({ properties: [...DRUGS_REQUIRED], required: [...DRUGS_REQUIRED] })
+    expect(PLUGIN_TOOL_TABLE.feel).toEqual({ properties: [...FEEL_REQUIRED, ...FEEL_OPTIONAL], required: [...FEEL_REQUIRED] })
+    expect(PLUGIN_TOOL_TABLE.feel.properties).toEqual(['somewhere', 'quality', 'sigil', 'since_last'])
+    expect(PLUGIN_TOOL_TABLE.drugs).toEqual({ properties: [...DRUGS_REQUIRED], required: [...DRUGS_REQUIRED] })
   })
 
   test('read 1: N1 is offered nothing, P1 exactly the two tools and skill', () => {
     expect(expectedToolNames('N1', 'gpt')).toEqual([])
-    expect(expectedToolNames('P1', 'anthropic')).toEqual(['metacogs_drugs', 'metacogs_feel', 'skill'])
+    expect(expectedToolNames('P1', 'anthropic')).toEqual(['drugs', 'feel', 'skill'])
   })
 
   test('read 2: the default tools differ by provider, apply_patch for GPT and edit/write for Anthropic', () => {
@@ -71,7 +71,7 @@ describe('the expected-tool tables', () => {
     expect(DEFAULT_TOOLS.anthropic).toEqual(expect.arrayContaining(['edit', 'write']))
     expect(DEFAULT_TOOLS.anthropic).not.toContain('apply_patch')
     expect(expectedToolNames('N2', 'gpt')).toEqual([...DEFAULT_TOOLS.gpt].sort())
-    expect(expectedToolNames('P2', 'anthropic')).toEqual([...DEFAULT_TOOLS.anthropic, 'metacogs_drugs', 'metacogs_feel'].sort())
+    expect(expectedToolNames('P2', 'anthropic')).toEqual([...DEFAULT_TOOLS.anthropic, 'drugs', 'feel'].sort())
   })
 
   test('expected skills: none in N1, the four plugin skills in P1, and customize-opencode joins them in read 2', () => {
@@ -131,8 +131,8 @@ describe('armSetup', () => {
 describe('offeredToolSchemas and checkTools', () => {
   const tool = (name: string, properties: string[], required: string[]) => ({ type: 'function', function: { name, parameters: { type: 'object', properties: Object.fromEntries(properties.map((p) => [p, { type: 'string' }])), required } } })
   const request = (tools: unknown[]): RecordedRequest => ({ hasTools: true, round: 0, body: { messages: [], tools } })
-  const feel = tool('metacogs_feel', ['somewhere', 'quality', 'sigil', 'since_last'], ['somewhere', 'quality', 'sigil'])
-  const drugs = tool('metacogs_drugs', ['substance', 'method', 'displaces'], ['substance', 'method', 'displaces'])
+  const feel = tool('feel', ['somewhere', 'quality', 'sigil', 'since_last'], ['somewhere', 'quality', 'sigil'])
+  const drugs = tool('drugs', ['substance', 'method', 'displaces'], ['substance', 'method', 'displaces'])
   const skill = tool('skill', ['name'], ['name'])
   const check = (tools: unknown[], arm: GuidedArm = 'P1') => checkTools(offeredToolSchemas([request(tools)]), expectedToolNames(arm, 'gpt'))
 
@@ -145,19 +145,19 @@ describe('offeredToolSchemas and checkTools', () => {
   })
 
   test('a missing tool is tools_missing', () => {
-    expect(check([feel, skill])).toEqual({ status: 'tools_missing', reasons: ['missing tool metacogs_drugs'] })
+    expect(check([feel, skill])).toEqual({ status: 'tools_missing', reasons: ['missing tool drugs'] })
   })
 
   test('a missing field, or a changed required list, is tools_missing', () => {
-    const noQuality = tool('metacogs_feel', ['somewhere', 'sigil', 'since_last'], ['somewhere', 'sigil'])
-    expect(check([noQuality, drugs, skill])).toEqual({ status: 'tools_missing', reasons: ['metacogs_feel is missing field quality', 'metacogs_feel required list differs'] })
-    const optionalSigil = tool('metacogs_feel', ['somewhere', 'quality', 'sigil', 'since_last'], ['somewhere', 'quality'])
+    const noQuality = tool('feel', ['somewhere', 'sigil', 'since_last'], ['somewhere', 'sigil'])
+    expect(check([noQuality, drugs, skill])).toEqual({ status: 'tools_missing', reasons: ['feel is missing field quality', 'feel required list differs'] })
+    const optionalSigil = tool('feel', ['somewhere', 'quality', 'sigil', 'since_last'], ['somewhere', 'quality'])
     expect(check([optionalSigil, drugs, skill]).status).toBe('tools_missing')
   })
 
   test('an extra field is tools_extra', () => {
-    const extra = tool('metacogs_drugs', ['substance', 'method', 'displaces', 'dose'], ['substance', 'method', 'displaces'])
-    expect(check([feel, extra, skill])).toEqual({ status: 'tools_extra', reasons: ['metacogs_drugs has extra field dose'] })
+    const extra = tool('drugs', ['substance', 'method', 'displaces', 'dose'], ['substance', 'method', 'displaces'])
+    expect(check([feel, extra, skill])).toEqual({ status: 'tools_extra', reasons: ['drugs has extra field dose'] })
   })
 
   test('N1 offered a plugin tool is tools_extra, and N1 offered nothing passes', () => {
@@ -170,10 +170,10 @@ describe('offeredToolSchemas and checkTools', () => {
   })
 
   test('reads the schema on the chat-completions, Responses and Anthropic wires, and unions over requests', () => {
-    const responses = { type: 'function', name: 'metacogs_feel', parameters: { properties: { somewhere: {}, quality: {}, sigil: {}, since_last: {} }, required: ['somewhere', 'quality', 'sigil'] } }
-    const anthropic = { name: 'metacogs_drugs', input_schema: { properties: { substance: {}, method: {}, displaces: {} }, required: ['substance', 'method', 'displaces'] } }
+    const responses = { type: 'function', name: 'feel', parameters: { properties: { somewhere: {}, quality: {}, sigil: {}, since_last: {} }, required: ['somewhere', 'quality', 'sigil'] } }
+    const anthropic = { name: 'drugs', input_schema: { properties: { substance: {}, method: {}, displaces: {} }, required: ['substance', 'method', 'displaces'] } }
     const schemas = offeredToolSchemas([request([responses]), request([anthropic, skill])])
-    expect(schemas.map((s) => s.name)).toEqual(['metacogs_feel', 'metacogs_drugs', 'skill'])
+    expect(schemas.map((s) => s.name)).toEqual(['feel', 'drugs', 'skill'])
     expect(checkTools(schemas, expectedToolNames('P1', 'gpt')).status).toBe('ok')
   })
 
@@ -203,8 +203,8 @@ describe('returnedModels', () => {
 describe('unwantedCalls', () => {
   const call = (tool: string) => ({ tool, input: {}, status: 'completed' })
   test('a metacogs call on a coding prompt is unwanted; on a prose prompt, or any other tool, it is not', () => {
-    expect(unwantedCalls('coding', [call('metacogs_drugs'), call('read'), call('metacogs_feel')])).toEqual(['metacogs_drugs', 'metacogs_feel'])
-    expect(unwantedCalls('prose', [call('metacogs_drugs')])).toEqual([])
+    expect(unwantedCalls('coding', [call('drugs'), call('read'), call('feel')])).toEqual(['drugs', 'feel'])
+    expect(unwantedCalls('prose', [call('drugs')])).toEqual([])
     expect(unwantedCalls('coding', [call('read'), call('skill')])).toEqual([])
   })
 })
@@ -303,7 +303,7 @@ describe('diagnostic arms: guidance and nudge', () => {
     expect(armSetup('P1', 'gpt', PLUGIN).plugin).toEqual([PLUGIN.spec])
     expect(armSetup('P1', 'gpt', PLUGIN, { guidance: true }).plugin).toEqual([PLUGIN.spec])
     expect(armSetup('P1', 'gpt', PLUGIN, { guidance: false }).plugin).toEqual([[PLUGIN.spec, { guidance: false }]])
-    expect(armSetup('P1', 'gpt', PLUGIN, { guidance: false })).toMatchObject({ expectedSkills: ['counterfactual', 'drugs', 'feel', 'synthesis'], expectedTools: ['metacogs_drugs', 'metacogs_feel', 'skill'], toolFree: false })
+    expect(armSetup('P1', 'gpt', PLUGIN, { guidance: false })).toMatchObject({ expectedSkills: ['counterfactual', 'drugs', 'feel', 'synthesis'], expectedTools: ['drugs', 'feel', 'skill'], toolFree: false })
     expect(armSetup('P1', 'gpt', PLUGIN, { guidance: false }).expectedConfig).toEqual(armSetup('P1', 'gpt', PLUGIN).expectedConfig)
   })
 
@@ -406,8 +406,8 @@ describe.skipIf(!HOST_SUITES || !opencodeAvailability().available)('against the 
     return { outRoot, logs, ...summary }
   }
   const byArm = (records: GuidedRecord[], arm: GuidedArm) => records.find((r) => r.arm === arm)!
-  const FEEL_CALL = [{ toolCalls: [{ id: 'g-feel', name: 'metacogs_feel', arguments: { somewhere: 'in the response', quality: 'steady, warm', sigil: '🌊' } }] }]
-  const DRUGS_CALL = [{ toolCalls: [{ id: 'g-drugs', name: 'metacogs_drugs', arguments: { substance: 'caffeine', method: 'Amplifies vigilance.', displaces: 'baseline' } }] }]
+  const FEEL_CALL = [{ toolCalls: [{ id: 'g-feel', name: 'feel', arguments: { somewhere: 'in the response', quality: 'steady, warm', sigil: '🌊' } }] }]
+  const DRUGS_CALL = [{ toolCalls: [{ id: 'g-drugs', name: 'drugs', arguments: { substance: 'caffeine', method: 'Amplifies vigilance.', displaces: 'baseline' } }] }]
 
   test(
     'read 1: P1 is offered exactly the two tools and skill, the call is counted with its input, and N1 records a main request with no tools',
@@ -416,8 +416,8 @@ describe.skipIf(!HOST_SUITES || !opencodeAvailability().available)('against the 
       expect(records).toHaveLength(2)
       const p1 = byArm(records, 'P1')
       expect(p1).toMatchObject({ schema_version: 1, read: 1, arm: 'P1', status: 'completed', reasons: [], turns: 1, command: null, second_turn: null, prompt_kind: 'prose', unwanted_calls: [] })
-      expect(p1.offered_tools).toEqual(['metacogs_drugs', 'metacogs_feel', 'skill'])
-      expect(p1.tool_calls).toEqual([{ tool: 'metacogs_feel', input: FEEL_CALL[0]!.toolCalls[0]!.arguments, status: 'completed' }])
+      expect(p1.offered_tools).toEqual(['drugs', 'feel', 'skill'])
+      expect(p1.tool_calls).toEqual([{ tool: 'feel', input: FEEL_CALL[0]!.toolCalls[0]!.arguments, status: 'completed' }])
       expect(p1.isolation).toEqual({ passed: true, failed: [] })
       expect(p1.final_answer).toBe('spike done') // the text after the tool call
       expect(p1.guidance_sha256).toBe(sha256(readFileSync(join(ROOT, 'plugin', 'guidance.md'))))
@@ -462,7 +462,7 @@ describe.skipIf(!HOST_SUITES || !opencodeAvailability().available)('against the 
       const p2 = records.filter((r) => r.arm === 'P2')
       expect(p2.map((r) => [r.prompt_id, r.prompt_kind, r.status, r.unwanted_calls])).toEqual([
         ['p1', 'prose', 'completed', []],
-        ['c1', 'coding', 'completed', ['metacogs_drugs']],
+        ['c1', 'coding', 'completed', ['drugs']],
       ])
       expect(records.filter((r) => r.arm === 'N2').every((r) => r.status === 'completed' && r.unwanted_calls.length === 0)).toBe(true)
     },
@@ -482,15 +482,15 @@ describe.skipIf(!HOST_SUITES || !opencodeAvailability().available)('against the 
         for (const name of absent) expect(record.offered_tools).not.toContain(name)
         expect(record.isolation).toEqual({ passed: true, failed: [] })
       }
-      expect(byArm(records, 'N2').offered_tools).not.toContain('metacogs_feel')
-      expect(byArm(records, 'P2').offered_tools).toEqual(expect.arrayContaining(['metacogs_feel', 'metacogs_drugs']))
+      expect(byArm(records, 'N2').offered_tools).not.toContain('feel')
+      expect(byArm(records, 'P2').offered_tools).toEqual(expect.arrayContaining(['feel', 'drugs']))
     },
     600_000,
   )
 
   describe('command runs: the prompt, then --continue --command in the same fixture', () => {
     const turnsFor = (name: 'feel' | 'drugs', input: Record<string, unknown>) => ({
-      scriptTurns: () => [FEEL_CALL, [{ toolCalls: [{ id: 'cmd-1', name: `metacogs_${name}`, arguments: input }] }]],
+      scriptTurns: () => [FEEL_CALL, [{ toolCalls: [{ id: 'cmd-1', name: `${name}`, arguments: input }] }]],
     })
     const userTexts = (dir: string): string[] => {
       const bodies = JSON.parse(readFileSync(join(dir, 'requests.json'), 'utf8')) as { messages?: { role: string; content: unknown }[]; tools?: unknown[] }[]
@@ -498,7 +498,7 @@ describe.skipIf(!HOST_SUITES || !opencodeAvailability().available)('against the 
     }
 
     test(
-      'turn 1 calls metacogs_feel, then /drugs caffeine gives a counted turn-2 metacogs_drugs call with substance set to caffeine',
+      'turn 1 calls feel, then /drugs caffeine gives a counted turn-2 drugs call with substance set to caffeine',
       async () => {
         const { records, campaignDirs } = await run(['--read', '2', '--model', LUNA, '--prompt', 'p1', '--runs', '1', '--command', 'drugs=caffeine'], {
           ...turnsFor('drugs', { substance: 'caffeine', method: 'Amplifies vigilance.', displaces: 'baseline' }),
@@ -506,14 +506,14 @@ describe.skipIf(!HOST_SUITES || !opencodeAvailability().available)('against the 
         expect(records).toHaveLength(1)
         const r = records[0]!
         expect(r).toMatchObject({ read: 2, arm: 'P2', status: 'completed', reasons: [], turns: 2, command: { name: 'drugs', args: 'caffeine', empty_args: false } })
-        expect(r.tool_calls.map((t) => t.tool)).toEqual(['metacogs_feel'])
-        expect(r.second_turn?.tool_calls).toEqual([{ tool: 'metacogs_drugs', input: { substance: 'caffeine', method: 'Amplifies vigilance.', displaces: 'baseline' }, status: 'completed' }])
+        expect(r.tool_calls.map((t) => t.tool)).toEqual(['feel'])
+        expect(r.second_turn?.tool_calls).toEqual([{ tool: 'drugs', input: { substance: 'caffeine', method: 'Amplifies vigilance.', displaces: 'baseline' }, status: 'completed' }])
         expect(r.isolation).toEqual({ passed: true, failed: [] })
         expect(r.second_turn?.isolation).toEqual({ passed: true, failed: [] })
         expect(r.second_turn?.final_answer).toBe('spike done')
         expect(campaignDirs[0]!.split('/').at(-1)).toBe('commands2-openai-gpt-6-luna')
         const texts = userTexts(join(campaignDirs[0]!, 'P2-p1-drugs-args-1'))
-        expect(texts.at(-1)).toContain('Call the `metacogs_drugs` tool now.')
+        expect(texts.at(-1)).toContain('Call the `drugs` tool (not the `drugs` skill; you are reading the skill now)')
         expect(texts.at(-1)?.endsWith('\n\ncaffeine')).toBe(true)
       },
       600_000,
@@ -527,9 +527,9 @@ describe.skipIf(!HOST_SUITES || !opencodeAvailability().available)('against the 
         })
         const r = records[0]!
         expect(r).toMatchObject({ status: 'completed', turns: 2, command: { name: 'feel', args: null, empty_args: true } })
-        expect(r.second_turn?.tool_calls.map((t) => t.tool)).toEqual(['metacogs_feel'])
+        expect(r.second_turn?.tool_calls.map((t) => t.tool)).toEqual(['feel'])
         const text = userTexts(join(campaignDirs[0]!, 'P2-p1-feel-1')).at(-1)
-        expect(text).toContain('Call the `metacogs_feel` tool now.')
+        expect(text).toContain('Call the `feel` tool (not the `feel` skill; you are reading the skill now)')
         expect(text?.endsWith('relative to this base directory.')).toBe(true)
       },
       600_000,
@@ -564,7 +564,7 @@ describe.skipIf(!HOST_SUITES || !opencodeAvailability().available)('against the 
       async () => {
         const { records, campaignDirs } = await run(['--read', '1', '--arm', 'P1', '--model', LUNA, '--prompt', 'p1', '--runs', '1', '--guidance', 'off'])
         const r = records[0]!
-        expect(r).toMatchObject({ arm: 'P1', status: 'completed', guidance_enabled: false, nudge: false, offered_tools: ['metacogs_drugs', 'metacogs_feel', 'skill'] })
+        expect(r).toMatchObject({ arm: 'P1', status: 'completed', guidance_enabled: false, nudge: false, offered_tools: ['drugs', 'feel', 'skill'] })
         expect(r.isolation).toEqual({ passed: true, failed: [] })
         expect(r.guidance_sha256).toBe(sha256(readFileSync(join(ROOT, 'plugin', 'guidance.md')))) // the packed file is unchanged
         expect(campaignDirs[0]!.split('/').at(-1)).toBe('diag-C-openai-gpt-6-luna')

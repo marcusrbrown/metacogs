@@ -54,7 +54,7 @@ If the helper cannot run, the skill does not retry blindly and does not pretend 
 
 ## OpenCode plugin
 
-The plugin is the `metacogs` npm package. It registers two tools (`metacogs_feel`, `metacogs_drugs`), four skills (`feel`, `drugs`, `synthesis`, `counterfactual`, with `/feel` and `/drugs` as slash commands) and a short guidance block. What each one does is in [OpenCode plugin](../README.md#opencode-plugin).
+The plugin is the `metacogs` npm package. It registers two tools (`feel`, `drugs`) and four skills (`feel`, `drugs`, `synthesis`, `counterfactual`; `/feel` and `/drugs` run the two skills of those names, which are separate from the tools) and a short guidance block. What each one does is in [OpenCode plugin](../README.md#opencode-plugin).
 
 Requirements: OpenCode 1.19.4 (the tested version). Node 22 or newer is still needed for the method skills' record helper, as above. The tools need nothing else.
 
@@ -67,7 +67,7 @@ Requirements: OpenCode 1.19.4 (the tested version). Node 22 or newer is still ne
 
    To pin a version, use `"metacogs@0.2.0"`. To keep the tools and skills but drop the guidance block, use `["metacogs", { "guidance": false }]` as the entry.
 3. Start OpenCode. OpenCode installs the package on first load.
-4. Verify without a model request: `opencode debug skill` lists `feel`, `drugs`, `synthesis` and `counterfactual`, and `opencode debug config` shows the package's `skills/` and `plugin/skills/` directories under `skills.paths` and the package under `plugin_origins`. In a session, the tools are offered as `metacogs_feel` and `metacogs_drugs`.
+4. Verify without a model request: `opencode debug skill` lists `feel`, `drugs`, `synthesis` and `counterfactual`, and `opencode debug config` shows the package's `skills/` and `plugin/skills/` directories under `skills.paths` and the package under `plugin_origins`. In a session, the tools are offered as `feel` and `drugs`.
 
 To uninstall, remove the entry. The tools, skills and guidance block go away on the next start. Start a new session afterwards: a resumed session can still hold calls to tools that are no longer offered. The records directory is user data and stays.
 

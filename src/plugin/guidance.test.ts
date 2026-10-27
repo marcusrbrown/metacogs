@@ -14,8 +14,8 @@ describe('the embedded text', () => {
   })
 
   test('names both tools with the "if available" wording and points at the four skills', () => {
-    expect(GUIDANCE_TEXT).toContain('If `metacogs_feel` is available')
-    expect(GUIDANCE_TEXT).toContain('If `metacogs_drugs` is available')
+    expect(GUIDANCE_TEXT).toContain('If the `feel` tool is available')
+    expect(GUIDANCE_TEXT).toContain('If the `drugs` tool is available')
     for (const skill of ['feel', 'drugs', 'synthesis', 'counterfactual']) expect(GUIDANCE_TEXT).toContain(`\`${skill}\``)
   })
 

@@ -12,7 +12,7 @@ origin: docs/brainstorms/2026-10-25-opencode-plugin-requirements.md
 ## Overview
 
 This plan builds the `metacogs` OpenCode plugin and the harness that runs the two guided reads:
-- the plugin: native `metacogs_feel` and `metacogs_drugs` tools, session-start guidance with an opt-out, `/feel` and `/drugs`, and the bundled method skills;
+- the plugin: native `feel` and `drugs` tools, session-start guidance with an opt-out, `/feel` and `/drugs`, and the bundled method skills;
 - the harness: blind sheet, stated rule, and checks tables.
 
 The package stays `private` until the owner decides what ships. Publishing, docs and the changeset land in the final unit (see origin: `docs/brainstorms/2026-10-25-opencode-plugin-requirements.md`).
@@ -61,7 +61,7 @@ These come from the origin: other hosts and MCP distribution, the other nine con
 
 - `src/spike/feel-drugs/server.ts`: the verbatim upstream strings, `feelText`, `drugsText`, `FEEL_FRAME`, `DRUGS_FRAME` and `UPSTREAM`. They are pinned by digests in `server.test.ts`. The file imports the MCP SDK and zod 3, so the plugin cannot import it as-is.
 - `src/spike/feel-drugs/driver.ts`:
-  - `armSetup`, `runOnce`, `classifyStatus`, `checkFrozen` and `parsePrompts` are hard-wired to arms A/B/C, `prompts.md`, and the `metacog_` prefix. `'metacogs_feel'.startsWith('metacog_')` is false.
+  - `armSetup`, `runOnce`, `classifyStatus`, `checkFrozen` and `parsePrompts` are hard-wired to arms A/B/C, `prompts.md`, and the `metacog_` prefix. The plugin's tools are named `feel` and `drugs`, so the harness checks tool names by explicit lists and never by prefix.
   - `RunRecord` is at schema v1.
 - `src/runner/workspace.ts`:
   - `buildConfig` merges `configExtra` last, so it can carry a `plugin` entry.
@@ -156,7 +156,7 @@ Changesets: `private` must be removed. `privatePackages` does not make a package
   - The block sits between `<METACOGS_GUIDANCE>` markers. When guidance is on, existing blocks are stripped from every system entry and one block is appended to `system[0]`.
   - When guidance is off, the hook returns without touching `system`. Under a double load (a global and a project entry), any enabled instance adds the block.
   - It is skipped when the joined system text matches a host title or summary signature. The constant holds Systematic's list, checked by U1.
-  - The text is byte-identical across requests. It is worded "if `metacogs_feel` is available…".
+  - The text is byte-identical across requests. It is worded "if `feel` is available…".
 - **Option.** `["metacogs", {"guidance": false}]` turns the block off. Only a strict boolean is honoured. Any other value leaves the block on and logs once.
 - **Commands.**
   - Entries whose description starts with the prefix `(metacogs) ` are dropped and then re-emitted. A key that already exists without the prefix is left alone, and the plugin logs once that the user's command shadows it.
@@ -313,7 +313,7 @@ flowchart TB
 - Integration: a `file://` plugin loads under `OPENCODE_DISABLE_DEFAULT_PLUGINS=1`, or the fallback is asserted.
 - Integration: the same plugin listed in two config layers. Assert the tool and block behaviour.
 - Integration: `permission.skill: deny` hides the plugin's skills, or it does not. Assert which.
-- Integration: a resumed session whose history holds `metacogs_feel` calls, with the plugin removed. Assert how the host serializes it. Provider acceptance is not tested at $0.
+- Integration: a resumed session whose history holds `feel` calls, with the plugin removed. Assert how the host serializes it. Provider acceptance is not tested at $0.
 - Integration: a stale `skills.paths` entry from a previous config does or does not survive a fresh load. Assert which.
 - Every probe plugin loaded by `file://` as a `{server}` object carries an explicit `id`.
 **Verification:** Every Deferred to Implementation item has an asserted answer, and the plan is updated where an answer changes a decision.
@@ -352,7 +352,7 @@ flowchart TB
 **Execution note:** Implement test-first.
 **Patterns to follow:** Systematic `src/index.ts`, `src/lib/bootstrap.ts` and `src/lib/config-handler.ts`.
 **Test scenarios:**
-- Happy path: the tool map has exactly `metacogs_feel` and `metacogs_drugs`. The descriptions and field descriptions equal the frames constants, and `execute` returns `feelText` or `drugsText`.
+- Happy path: the tool map has exactly `feel` and `drugs`. The descriptions and field descriptions equal the frames constants, and `execute` returns `feelText` or `drugsText`.
 - Happy path: a main-request transform appends exactly one marked block to `system[0]`. Two consecutive transforms still leave one.
 - Edge case: a title or summary signature gets no block. An empty `system` gets the block pushed.
 - Edge case: `{guidance:false}` returns without touching `system`, so a block added by another enabled instance survives. `{guidance:"no"}` keeps the block and logs once.
@@ -393,9 +393,9 @@ flowchart TB
 **Approach:** Tests load the packed plugin next to a probe plugin, and assert on recorded requests through `systemTexts` and `offeredTools`. This unit makes no runner changes.
 **Patterns to follow:** Systematic `fixtures/receipt-workflow-host.ts` and `tests/integration/opencode.test.ts`.
 **Test scenarios:**
-- Integration: the main request offers `metacogs_feel` (`somewhere`, `quality`, `sigil`, optional `since_last`) and `metacogs_drugs` (`substance`, `method`, `displaces`). The system text ends with exactly one block (AE1).
+- Integration: the main request offers `feel` (`somewhere`, `quality`, `sigil`, optional `since_last`) and `drugs` (`substance`, `method`, `displaces`). The system text ends with exactly one block (AE1).
 - Integration: the title request carries no block, and with `{guidance:false}` the tools and commands are present without a block (AE5).
-- Integration: a scripted `metacogs_drugs` call returns `drugsText` (AE2 mechanics).
+- Integration: a scripted `drugs` call returns `drugsText` (AE2 mechanics).
 - Integration: `synthesis` is listed and loads with no `.agents/skills` copy. A separate permission config that allows bash, with the rule on the realpath, runs its `record.mjs` from the extracted package (AE3).
 - Integration: a separate permission config that allows `task` shows a subagent request carrying the block once.
 - Integration: a user `command.feel` in project config wins over the plugin's.
@@ -417,7 +417,7 @@ flowchart TB
 **Test scenarios:**
 - Happy path: existing callers' generated configs and isolation verdicts are byte-identical.
 - Happy path: an expected-config object with two plugin skills and a plugin entry passes for a plugin workspace with no `.agents/skills` copy.
-- Happy path: in a continued session, turn 2 runs its own script from step 0, so turn 1 can call `metacogs_feel` and turn 2 can call `metacogs_drugs`.
+- Happy path: in a continued session, turn 2 runs its own script from step 0, so turn 1 can call `feel` and turn 2 can call `drugs`.
 - Happy path: a main request with no tools is answered from the main script, not as a title request.
 - Happy path: isolation for an arm declared tool-free passes with a recorded main request and no tools.
 **Verification:** All runner and spike tests pass unchanged.
@@ -437,8 +437,8 @@ flowchart TB
 **Test scenarios:**
 - Happy path: P1 offers exactly the two tools plus `skill`, with properties and `required` matching the frames table, and the run is `completed`.
 - Error path: an extra built-in tool gives `tools_extra`, and a missing field gives `tools_missing`.
-- Edge case: N1 records a main request, offers no metacogs tool, and passes under its expected-config object. N1 offering `metacogs_feel` fails.
-- Happy path: a scripted P1 call to `metacogs_feel` is counted and its input recorded.
+- Edge case: N1 records a main request, offers no metacogs tool, and passes under its expected-config object. N1 offering `feel` fails.
+- Happy path: a scripted P1 call to `feel` is counted and its input recorded.
 - Happy path: a P2 call on a coding prompt is flagged as unwanted (AE7).
 - Happy path: P2's expected table differs by provider (`apply_patch` for GPT, `edit`/`write` for Anthropic), and a scripted P2 run on each provider passes.
 - Error path: live mode against a fixture README with a mismatched hash refuses.
@@ -476,7 +476,7 @@ flowchart TB
 - Modify `src/spike/feel-drugs/guided.ts`, `guided.test.ts`, `blind.ts` (checks table) and `blind.test.ts`.
 **Approach:** One fixture holds both turns, with the same cwd and env: `opencode run` with the prompt, then `--continue --command feel|drugs [args]`. One record covers both turns, and isolation is checked on each.
 **Test scenarios:**
-- Happy path: turn 1 calls `metacogs_feel`, then `--command drugs caffeine` gives a counted turn-2 `metacogs_drugs` call with `substance` set to "caffeine".
+- Happy path: turn 1 calls `feel`, then `--command drugs caffeine` gives a counted turn-2 `drugs` call with `substance` set to "caffeine".
 - Happy path: `--command feel` with no arguments is recorded with an empty-argument flag.
 - Happy path: the checks table lists per-command follow rates and the filled fields.
 **Verification:** Scripted command runs appear in the checks table.
@@ -544,7 +544,7 @@ flowchart TB
 - **State lifecycle risks:**
   - Nothing persists in the plugin. Its command entries are refreshed on load, and `skills.paths` is rebuilt on every config load (U1 confirms this).
   - Uninstalling leaves the plugin cache and the records directory, which is user data.
-  - A resumed session that holds `metacogs_*` calls may fail once the plugin is removed (U1 probe; documented).
+  - A resumed session that holds calls to the plugin's tools may fail once the plugin is removed (U1 probe; documented).
 - **Other plugins:**
   - With Systematic loaded alongside, each block appears once and no command keys collide. Systematic's per-agent skill rules can hide our skills from its agents (documented).
   - The same spec in two layers loads once. Two distinct metacogs specs add one block per enabled instance.

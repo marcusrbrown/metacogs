@@ -41,7 +41,7 @@ Systematic gets tools used on OpenCode with a plugin that registers them and app
 - R4. The package publishes an explicit allowlist: the built plugin, the bundled skills (each including its `scripts/record.mjs`), the `feel` and `drugs` skills, `LICENSE` and `README.md`. Evals, runner code, docs and run artifacts never ship. CI checks the packed file list against the allowlist.
 
 **Tools**
-- R5. The plugin registers `metacogs_feel` and `metacogs_drugs` as native OpenCode tools. Their descriptions, input fields and returned text are copied verbatim, with MIT attribution, from the upstream `feel` and `drugs` registrations at `inanna-malick/metacog@3d89bb30cd26369fdcd242fd704f66641dca327c`. The model is offered exactly those fields.
+- R5. The plugin registers `feel` and `drugs` as native OpenCode tools. Their descriptions, input fields and returned text are copied verbatim, with MIT attribution, from the upstream `feel` and `drugs` registrations at `inanna-malick/metacog@3d89bb30cd26369fdcd242fd704f66641dca327c`. The model is offered exactly those fields.
 - R6. The tools are stateless and return the frame filled with the model's arguments. The tool and guidance code does no file, process or network I/O and logs no argument values, and the package has no install scripts. The only I/O in the package is each bundled skill's `record.mjs`, which writes decision records as in v0.1. Package metadata describes the tools neutrally and does not reuse upstream's "jailbreak" label.
 
 **Session-start guidance**
@@ -88,13 +88,13 @@ Systematic gets tools used on OpenCode with a plugin that registers them and app
 
 ## Acceptance Examples
 
-- AE1. **Covers R1, R5, R7.** A user adds `metacogs` to `opencode.json` and starts a session. The model is offered `metacogs_feel` (with `somewhere`, `quality`, `sigil`, and optional `since_last`) and `metacogs_drugs` (with `substance`, `method`, `displaces`). The system prompt ends with exactly one metacogs block.
-- AE2. **Covers R10.** `/drugs caffeine` loads the `drugs` skill with the argument, and the model calls `metacogs_drugs` with `substance` set to "caffeine". `/drugs` with no arguments leads the model to choose the substance from the session.
+- AE1. **Covers R1, R5, R7.** A user adds `metacogs` to `opencode.json` and starts a session. The model is offered `feel` (with `somewhere`, `quality`, `sigil`, and optional `since_last`) and `drugs` (with `substance`, `method`, `displaces`). The system prompt ends with exactly one metacogs block.
+- AE2. **Covers R10.** `/drugs caffeine` loads the `drugs` skill with the argument, and the model calls `drugs` with `substance` set to "caffeine". `/drugs` with no arguments leads the model to choose the substance from the session.
 - AE3. **Covers R11.** With only the plugin installed, `synthesis` is listed and loads, and its record step runs. On another host, a copied `skills/synthesis` gives the same skill.
 - AE4. **Covers R4, R6.** The packed file list contains only allowlisted paths. A test over the built tool and guidance code finds no file, process or network imports, and the package has no lifecycle scripts.
 - AE5. **Covers R7, R9.** A host title request carries no metacogs block. A hook that throws leaves the session running without the block and logs it. With the option off, the session has the tools and skills but no block.
 - AE6. **Covers R13–R15.** The sheet the owner reads shows answers only, labelled X and Y per cell. After the owner records a choice for every cell, the key and the call counts are revealed, and the rule's result is computed per read.
-- AE7. **Covers R14.** On a coding prompt, a plugin-arm call to `metacogs_drugs` appears in the unwanted-calls column.
+- AE7. **Covers R14.** On a coding prompt, a plugin-arm call to `drugs` appears in the unwanted-calls column.
 
 ---
 
@@ -132,7 +132,7 @@ R2, R3, R16 and R17 are verified in planning and review, not by an acceptance ex
 - OpenCode first: it is the eval host, and Systematic proves the plugin pattern there.
 - npm plugin with trusted publishing, for versioned installs and no stored token.
 - On OpenCode the plugin brings the skills. The `.agents/skills/` copy stays for other hosts and as the skills-only route.
-- Tools are prefixed (`metacogs_`). The skills keep the short names (`feel`, `drugs`).
+- Tools use plain names, `feel` and `drugs`, the same as the skills; MCP hosts prefix tool names by server name anyway. A tool and a skill live in separate namespaces on the pinned host, and the skill text says which of the two to use.
 - The `feel` and `drugs` skills are hand-written. The guidance needs the owner's approval.
 - metacogs is built in the open for anyone. The README documents what it does, where it comes from, its evals, and which models it works with.
 

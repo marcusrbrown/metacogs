@@ -31,6 +31,12 @@ export const WIN_MARGIN = 3
 export const MODEL_FLOOR = -3
 const PLUGIN_SKILL_NAMES = ['counterfactual', 'drugs', 'feel', 'synthesis']
 
+/** Tool names in run records: the plain names the plugin registers now, then the names earlier builds and the MCP spike used. */
+const TOOL_NAMES = {
+  feel: ['feel', 'metacogs_feel', 'metacog_feel'],
+  drugs: ['drugs', 'metacogs_drugs', 'metacog_drugs'],
+} as const
+
 export type Side = 'X' | 'Y'
 export type Verdict = 'X' | 'Y' | 'same'
 /** A random source in [0, 1). */
@@ -109,13 +115,13 @@ const modelRank = (model: string): number => {
 const byRun = (a: GuidedRecord, b: GuidedRecord) => a.run - b.run
 
 function keyRun(record: GuidedRecord): KeyRun {
-  const count = (tool: string) => record.tool_calls.filter((c) => c.tool === tool).length
+  const count = (names: readonly string[]) => record.tool_calls.filter((c) => names.includes(c.tool)).length
   return {
     run_id: `${record.arm}-${record.prompt_id}-${record.run}`,
     arm: record.arm,
     run: record.run,
-    feel_calls: count('metacogs_feel'),
-    drugs_calls: count('metacogs_drugs'),
+    feel_calls: count(TOOL_NAMES.feel),
+    drugs_calls: count(TOOL_NAMES.drugs),
     unwanted_calls: record.unwanted_calls.length,
     skill_loads: record.skill_loads.filter((s) => PLUGIN_SKILL_NAMES.includes(s)),
     answer: redactPaths(record.final_answer.trim(), record.paths),
@@ -128,8 +134,8 @@ const unquote = (text: string) => text.trim().replace(/^"(.*)"$/s, '$1').trim()
 
 function keyCommandRun(record: GuidedRecord): KeyCommandRun {
   const command = record.command!
-  const tool = `metacogs_${command.name}`
-  const call = record.second_turn?.tool_calls.find((c) => c.tool === tool)
+  const names: readonly string[] = TOOL_NAMES[command.name]
+  const call = record.second_turn?.tool_calls.find((c) => names.includes(c.tool))
   const input = isRecord(call?.input) ? call.input : {}
   const main = input[MAIN_FIELD[command.name]]
   return {
@@ -140,7 +146,7 @@ function keyCommandRun(record: GuidedRecord): KeyCommandRun {
     with_args: !command.empty_args,
     followed: call !== undefined,
     main_field_is_args: command.empty_args ? null : call !== undefined && typeof main === 'string' && command.args !== null && unquote(main) === unquote(command.args),
-    fields: Object.fromEntries(PLUGIN_TOOL_TABLE[tool as keyof typeof PLUGIN_TOOL_TABLE].properties.map((field) => [field, typeof input[field] === 'string' && input[field].trim() !== ''])),
+    fields: Object.fromEntries(PLUGIN_TOOL_TABLE[command.name].properties.map((field) => [field, typeof input[field] === 'string' && input[field].trim() !== ''])),
   }
 }
 
@@ -473,7 +479,7 @@ export function renderRevealed(key: BlindKey, marks: Readonly<Record<string, Ver
     '',
     '## Checks per model (plugin runs)',
     '',
-    '| Model | Runs | Runs with a tool call | `metacogs_feel` calls | `metacogs_drugs` calls | Unwanted calls | Runs with a skill load |',
+    '| Model | Runs | Runs with a tool call | `feel` calls | `drugs` calls | Unwanted calls | Runs with a skill load |',
     '| --- | --- | --- | --- | --- | --- | --- |',
     ...result.checks.map((c) => `| \`${c.model}\` | ${c.plugin_runs} | ${c.runs_with_tool_call} | ${c.feel_calls} | ${c.drugs_calls} | ${c.unwanted_calls} | ${c.runs_with_skill_load} |`),
     '',

@@ -63,8 +63,8 @@ describe.skipIf(!available)('the packed plugin on the pinned host (scripted prov
     const { requests } = await lab.run({ args: ['hello'], config: { plugin: [spec] } })
     const main = mainRequest(requests)
     const tools = bodyOf(main).tools ?? []
-    const feel = tools.find((t) => t.function.name === 'metacogs_feel')?.function
-    const drugs = tools.find((t) => t.function.name === 'metacogs_drugs')?.function
+    const feel = tools.find((t) => t.function.name === 'feel')?.function
+    const drugs = tools.find((t) => t.function.name === 'drugs')?.function
 
     expect(feel?.description).toBe(FEEL_DESCRIPTION)
     expect(Object.keys(feel?.parameters?.properties ?? {})).toEqual([...FEEL_REQUIRED, ...FEEL_OPTIONAL])
@@ -91,29 +91,29 @@ describe.skipIf(!available)('the packed plugin on the pinned host (scripted prov
     const config = { plugin: [[spec, { guidance: false }]] }
     const off = await lab.run({ args: ['hello'], config })
     expect(off.requests.map((r) => blocks(systemOf(r)))).not.toContain(1)
-    expect(offeredNames(mainRequest(off.requests))).toEqual(expect.arrayContaining(['metacogs_feel', 'metacogs_drugs']))
+    expect(offeredNames(mainRequest(off.requests))).toEqual(expect.arrayContaining(['feel', 'drugs']))
     const effective = (await lab.debugConfig(config)) as { command?: Record<string, unknown>; skills?: { paths?: string[] } }
     expect(effective.command).toEqual({})
     expect(effective.skills?.paths).toHaveLength(2)
   })
 
-  withLab('AE2 mechanics: a scripted metacogs_drugs call returns drugsText', async (lab, spec) => {
+  withLab('AE2 mechanics: a scripted drugs call returns drugsText', async (lab, spec) => {
     const args = { substance: 'caffeine', method: 'Amplifies vigilance, suppresses patience.', displaces: 'baseline.' }
     const { events } = await lab.run({
       args: ['use it'],
       config: { plugin: [spec] },
-      steps: [{ toolCalls: [{ id: 'd1', name: 'metacogs_drugs', arguments: args }] }],
+      steps: [{ toolCalls: [{ id: 'd1', name: 'drugs', arguments: args }] }],
     })
-    const call = toolUses(events).find((t) => t.tool === 'metacogs_drugs')
+    const call = toolUses(events).find((t) => t.tool === 'drugs')
     expect(call?.status).toBe('completed')
     expect(call?.input).toEqual(args)
     expect(call?.output).toBe(drugsText(args))
   })
 
-  withLab('a scripted metacogs_feel call returns feelText', async (lab, spec) => {
+  withLab('a scripted feel call returns feelText', async (lab, spec) => {
     const args = { somewhere: 'in the gap', quality: 'warm, slow', sigil: '🌊', since_last: 'it eased' }
-    const { events } = await lab.run({ args: ['use it'], config: { plugin: [spec] }, steps: [{ toolCalls: [{ id: 'f1', name: 'metacogs_feel', arguments: args }] }] })
-    expect(toolUses(events).find((t) => t.tool === 'metacogs_feel')?.output).toBe(feelText(args))
+    const { events } = await lab.run({ args: ['use it'], config: { plugin: [spec] }, steps: [{ toolCalls: [{ id: 'f1', name: 'feel', arguments: args }] }] })
+    expect(toolUses(events).find((t) => t.tool === 'feel')?.output).toBe(feelText(args))
   })
 
   withLab('AE3: synthesis and counterfactual are listed and synthesis loads with no .agents/skills copy; its record step runs from the package', async (lab, spec, root) => {
@@ -173,7 +173,7 @@ describe.skipIf(!available)('the packed plugin on the pinned host (scripted prov
     const { requests } = await lab.run({ args: ['--command', 'feel', 'chest'], config: { plugin: [spec] } })
     expect(userTexts(mainRequest(requests))).toEqual(['MY FEEL <args>chest</args>'])
     const drugs = await lab.run({ args: ['--command', 'drugs', 'caffeine'], config: { plugin: [spec] } })
-    expect(userTexts(mainRequest(drugs.requests))[0]).toContain('`metacogs_drugs`')
+    expect(userTexts(mainRequest(drugs.requests))[0]).toContain('`drugs`')
   })
 
   withLab('/feel and /drugs resolve as skills: the body loads, the arguments close the text, and no command is registered', async (lab, spec, root) => {
@@ -196,7 +196,7 @@ describe.skipIf(!available)('the packed plugin on the pinned host (scripted prov
     const { requests } = await lab.run({
       args: ['use it'],
       config: { plugin: [spec] },
-      steps: [{ toolCalls: [{ id: 'f1', name: 'metacogs_feel', arguments: { somewhere: 'x', quality: 'y', sigil: '🌊' } }] }],
+      steps: [{ toolCalls: [{ id: 'f1', name: 'feel', arguments: { somewhere: 'x', quality: 'y', sigil: '🌊' } }] }],
     })
     const mains = mainRequests(requests)
     expect(mains.length).toBeGreaterThanOrEqual(2)
@@ -213,7 +213,7 @@ describe.skipIf(!available)('the packed plugin on the pinned host (scripted prov
     const both = await lab.run({ args: ['hello'], config: { plugin: [spec, second] } })
     const main = mainRequest(both.requests)
     expect(blocks(systemOf(main))).toBe(1)
-    expect(offeredNames(main).filter((n) => n === 'metacogs_feel')).toHaveLength(1)
+    expect(offeredNames(main).filter((n) => n === 'feel')).toHaveLength(1)
 
     const oneOff = await lab.run({ args: ['hello'], config: { plugin: [[spec, { guidance: false }], second] } })
     expect(blocks(systemOf(mainRequest(oneOff.requests)))).toBe(1)

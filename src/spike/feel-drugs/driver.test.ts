@@ -184,27 +184,33 @@ describe('classifyStatus', () => {
   })
 })
 
-describe('classifyStatus with an expected tool set and prefix (guided arms)', () => {
+describe('classifyStatus with explicit tool name lists (guided arms)', () => {
   const ev = (...events: object[]) => `${events.map((e) => JSON.stringify(e)).join('\n')}\n`
   const GOOD = ev({ type: 'step_start' }, { type: 'text', part: { text: 'an answer' } })
-  const PLUGIN_TOOLS = ['metacogs_feel', 'metacogs_drugs'] as const
-  const input = { timedOut: false, exitCode: 0, stdout: GOOD, arm: 'P1', offered: [...PLUGIN_TOOLS, 'skill'], expectTools: true, expectedTools: PLUGIN_TOOLS, toolPrefix: 'metacogs_' }
+  const PLUGIN_TOOLS = ['feel', 'drugs'] as const
+  const input = { timedOut: false, exitCode: 0, stdout: GOOD, arm: 'P1', offered: [...PLUGIN_TOOLS, 'skill'], expectTools: true, expectedTools: PLUGIN_TOOLS, forbiddenTools: PLUGIN_TOOLS }
 
   test('completed when the arm expects the tools and both are offered', () => {
     expect(classifyStatus(input)).toEqual({ status: 'completed', reasons: [] })
   })
 
   test('a missing expected tool is tools_missing', () => {
-    expect(classifyStatus({ ...input, offered: ['metacogs_feel', 'skill'] })).toEqual({ status: 'tools_missing', reasons: ['expected_tools_not_offered'] })
+    expect(classifyStatus({ ...input, offered: ['feel', 'skill'] })).toEqual({ status: 'tools_missing', reasons: ['expected_tools_not_offered'] })
   })
 
-  test('an arm that expects no tools and is offered one with the prefix is host_error unexpected_tools_offered', () => {
-    expect(classifyStatus({ ...input, arm: 'N1', expectTools: false, offered: ['metacogs_feel'] })).toEqual({ status: 'host_error', reasons: ['unexpected_tools_offered'] })
+  test('an arm that expects no tools and is offered a listed one is host_error unexpected_tools_offered', () => {
+    expect(classifyStatus({ ...input, arm: 'N1', expectTools: false, offered: ['feel'] })).toEqual({ status: 'host_error', reasons: ['unexpected_tools_offered'] })
     expect(classifyStatus({ ...input, arm: 'N1', expectTools: false, offered: ['read'] })).toEqual({ status: 'completed', reasons: [] })
   })
 
-  test('the default prefix does not see tools with another prefix', () => {
-    expect(classifyStatus({ timedOut: false, exitCode: 0, stdout: GOOD, arm: 'A', offered: ['metacogs_feel'] })).toEqual({ status: 'completed', reasons: [] })
+  test('membership is by exact name: a tool that merely contains a listed name, or no list at all, is not forbidden', () => {
+    expect(classifyStatus({ ...input, arm: 'N1', expectTools: false, offered: ['feel_notes', 'my-feel', 'drugstore'] })).toEqual({ status: 'completed', reasons: [] })
+    expect(classifyStatus({ ...input, arm: 'N1', expectTools: false, forbiddenTools: [], offered: ['feel', 'drugs'] })).toEqual({ status: 'completed', reasons: [] })
+  })
+
+  test('the default list is the spike tools only', () => {
+    expect(classifyStatus({ timedOut: false, exitCode: 0, stdout: GOOD, arm: 'A', offered: ['feel', 'metacogs_feel'] })).toEqual({ status: 'completed', reasons: [] })
+    expect(classifyStatus({ timedOut: false, exitCode: 0, stdout: GOOD, arm: 'A', offered: ['metacog_feel'] })).toEqual({ status: 'host_error', reasons: ['unexpected_tools_offered'] })
   })
 
   test('the parameters change nothing for the spike arms: B still expects metacog_feel and metacog_drugs', () => {

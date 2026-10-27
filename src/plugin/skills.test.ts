@@ -9,8 +9,8 @@ const read = (name: string): string => readFileSync(new URL(`../../plugin/skills
 const BANNED = [/\brare\b/i, /routine coding/i, /\balways\b/i, /training data/i, /pharmacokinetic/i, /slip back/i, /previous mode of processing is unavailable/i, /jailbreak/i, /persona/i]
 
 describe.each([
-  ['feel', 'metacogs_feel', 'somewhere', 'Use it first on an unnamed stuck point.'],
-  ['drugs', 'metacogs_drugs', 'substance', 'If the stuck point is still unnamed, `feel` comes first.'],
+  ['feel', 'feel', 'somewhere', 'Use the tool first on an unnamed stuck point.'],
+  ['drugs', 'drugs', 'substance', 'If the stuck point is still unnamed, the `feel` tool comes first.'],
 ])('the %s skill', (name, tool, mainField, ordering) => {
   const text = read(name)
 
@@ -25,6 +25,10 @@ describe.each([
 
   test('states where it comes in the order of the two skills', () => {
     expect(text).toContain(ordering)
+  })
+
+  test('tells the model to call the tool and not the skill it is reading', () => {
+    expect(text).toContain(`Call the \`${tool}\` tool (not the \`${name}\` skill; you are reading the skill now)`)
   })
 
   test('names its tool and the slash-command argument handling', () => {
@@ -49,6 +53,13 @@ describe('the guidance', () => {
   test('carries no banned wording and no bootstrap language', () => {
     for (const pattern of BANNED) expect(GUIDANCE_TEXT).not.toMatch(pattern)
     expect(GUIDANCE_TEXT).not.toMatch(/\b(must|before any|every)\b/i)
+  })
+
+  test('separates each tool from the skill of the same name', () => {
+    expect(GUIDANCE_TEXT).toContain('If the `feel` tool is available')
+    expect(GUIDANCE_TEXT).toContain('If the `drugs` tool is available')
+    expect(GUIDANCE_TEXT).toContain('The `feel` skill (a separate item')
+    expect(GUIDANCE_TEXT).toContain('The `drugs` skill (loaded with')
   })
 
   test('names observable triggers for each tool', () => {

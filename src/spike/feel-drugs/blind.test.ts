@@ -48,7 +48,7 @@ function record(o: { arm: GuidedArm; model: string; prompt: string; run: number;
   const plugin = o.arm === 'P1' || o.arm === 'P2'
   const fired = o.fired ?? 'none'
   const call = (tool: string) => ({ tool, input: { secret: 'argument-value' }, status: 'completed' })
-  const toolCalls = plugin && (fired === 'tool' || fired === 'both') ? [...Array.from({ length: o.feel ?? 1 }, () => call('metacogs_feel')), ...Array.from({ length: o.drugs ?? 0 }, () => call('metacogs_drugs'))] : []
+  const toolCalls = plugin && (fired === 'tool' || fired === 'both') ? [...Array.from({ length: o.feel ?? 1 }, () => call('feel')), ...Array.from({ length: o.drugs ?? 0 }, () => call('drugs'))] : []
   const answer = o.answer ?? `${plugin ? 'beta' : 'alpha'} answer for ${o.model} ${o.prompt} run ${o.run}`
   return {
     schema_version: 1,
@@ -63,7 +63,7 @@ function record(o: { arm: GuidedArm; model: string; prompt: string; run: number;
     run: o.run,
     status: o.status ?? 'completed',
     reasons: [],
-    offered_tools: plugin ? ['metacogs_drugs', 'metacogs_feel', 'skill'] : [],
+    offered_tools: plugin ? ['drugs', 'feel', 'skill'] : [],
     tool_calls: toolCalls,
     unwanted_calls: o.unwanted ?? [],
     skill_loads: plugin && (fired === 'skill' || fired === 'both') ? ['synthesis'] : [],
@@ -121,7 +121,8 @@ describe('buildBlind', () => {
       r.arm === 'P1' && r.run === 1 ? { ...r, final_answer: 'read /tmp/metacogs-packed-AAA/unpacked/package/skills/synthesis and /x/node_modules/metacogs/dist/index.js' } : r,
     )
     const { sheet } = build(noisy)
-    for (const leak of ['N1', 'P1', 'N2', 'P2', 'metacogs_feel', 'metacogs_drugs', 'Offered tools', 'Tool calls', 'Status', 'Isolation', 'argument-value', 'guidance', 'tarball', '/tmp/', '/x/node_modules', 'metacogs-packed']) {
+    // Plain tool names are ordinary words and may appear in an answer, so only the metadata they travel in is checked.
+    for (const leak of ['N1', 'P1', 'N2', 'P2', 'metacogs_feel', 'metacogs_drugs', 'feel_calls', 'drugs_calls', 'offered_tools', 'skill_loads', 'unwanted_calls', 'Offered tools', 'Tool calls', 'Status', 'Isolation', 'argument-value', 'guidance', 'tarball', '/tmp/', '/x/node_modules', 'metacogs-packed']) {
       expect(sheet).not.toContain(leak)
     }
     expect(sheet).toContain('<pkg>/skills/synthesis')
@@ -186,9 +187,9 @@ describe('buildBlind', () => {
   })
 })
 
-function commandRun(o: { model: string; prompt?: string; run: number; name: 'feel' | 'drugs'; args: string | null; input?: Record<string, unknown> | null; extraTool?: boolean }): GuidedRecord {
+function commandRun(o: { model: string; prompt?: string; run: number; name: 'feel' | 'drugs'; args: string | null; input?: Record<string, unknown> | null; extraTool?: boolean; tool?: string }): GuidedRecord {
   const base = record({ arm: 'P2', model: o.model, prompt: o.prompt ?? 'p1', run: o.run, read: 2, fired: 'tool' })
-  const calls = o.input === null || o.input === undefined ? [] : [{ tool: `metacogs_${o.name}`, input: o.input, status: 'completed' }]
+  const calls = o.input === null || o.input === undefined ? [] : [{ tool: o.tool ?? o.name, input: o.input, status: 'completed' }]
   return {
     ...base,
     command: { name: o.name, args: o.args, empty_args: o.args === null || o.args.trim() === '' },
@@ -242,6 +243,23 @@ describe('command runs in the checks table', () => {
     const text = renderRevealed(key, marks, result)
     expect(text).toContain('## Command runs (checks only)')
     expect(text).toMatch(/\| `openai\/gpt-6-luna` \| `\/feel` with arguments \| 1 \| 1 \| 1 \|/)
+  })
+
+  test('records made when the tools were named metacogs_* or metacog_* still count', () => {
+    const runs = [
+      commandRun({ model: LUNA, run: 1, name: 'feel', args: null, input: FEEL, tool: 'metacogs_feel' }),
+      commandRun({ model: LUNA, run: 2, name: 'drugs', args: 'caffeine', input: { substance: 'caffeine', method: 'm', displaces: 'baseline' }, tool: 'metacog_drugs' }),
+    ]
+    const { key } = build([...regular(), ...runs])
+    expect(key.command_runs.map((r) => [r.command, r.followed, r.main_field_is_args])).toEqual([['feel', true, null], ['drugs', true, true]])
+    const old = cell(LUNA, 'p1', 'tool', 2).map((r) => ({ ...r, tool_calls: r.tool_calls.map((c) => ({ ...c, tool: `metacogs_${c.tool}` })) }))
+    const { key: oldKey } = build([...old, ...control(SOL, 'p3', 2)])
+    expect(reveal(oldKey, marksFor(oldKey, {})).checks.find((c) => c.model === LUNA)).toMatchObject({ plugin_runs: 2, runs_with_tool_call: 2, feel_calls: 2 })
+  })
+
+  test('a plain tool name inside an answer is left alone, not scrubbed from the sheet', () => {
+    const records = [...cell(LUNA, 'p1'), ...control(SOL, 'p3')].map((r) => (r.arm === 'N1' && r.run === 1 ? { ...r, final_answer: 'I feel the drugs of the sea air.' } : r))
+    expect(build(records).sheet).toContain('I feel the drugs of the sea air.')
   })
 
   test('a read with no command runs has no table', () => {
@@ -353,7 +371,7 @@ describe('reveal', () => {
     })
 
     test('eligible cells are listed per model, and call counts and unwanted calls are checks per model', () => {
-      const records = all().map((r) => (r.arm === 'P1' && r.model === HAIKU && r.prompt_id === 'p1' && r.run === 1 ? { ...r, tool_calls: [...r.tool_calls, { tool: 'metacogs_drugs', input: {}, status: 'completed' }], unwanted_calls: ['metacogs_drugs'] } : r))
+      const records = all().map((r) => (r.arm === 'P1' && r.model === HAIKU && r.prompt_id === 'p1' && r.run === 1 ? { ...r, tool_calls: [...r.tool_calls, { tool: 'drugs', input: {}, status: 'completed' }], unwanted_calls: ['drugs'] } : r))
       const { key } = build(records)
       const result = reveal(key, marksFor(key, {}))
       expect(result.models.map((m) => m.model)).toEqual([LUNA, HAIKU, SOL, OPUS])
@@ -461,7 +479,7 @@ describe.skipIf(!HOST_SUITES || !opencodeAvailability().available)('a scripted c
       const prose = loadPrompts(ROOT).slice(0, 2)
       const outRoot = tmp('blind-run-')
       const common = { outRoot, prompts: prose, codingPrompts: loadCodingPrompts(ROOT), log: () => {} }
-      // p1: full cell where the plugin arm calls metacogs_feel; p2: four nothing runs (the control).
+      // p1: full cell where the plugin arm calls feel; p2: four nothing runs (the control).
       const cellRun = await runGuided(parseGuidedArgs(['--model', LUNA, '--runs', '2', '--prompt', 'p1']), common)
       const controlRun = await runGuided(parseGuidedArgs(['--model', LUNA, '--runs', '4', '--prompt', 'p2', '--arm', 'N1']), common)
       const records = [...cellRun.records, ...controlRun.records.filter((r) => r.prompt_id === 'p2')]
@@ -469,7 +487,8 @@ describe.skipIf(!HOST_SUITES || !opencodeAvailability().available)('a scripted c
 
       const { key, sheet } = buildBlind({ records, prompts: prose, sources: ['scripted'], rng: constant(0) })
       expect(key.cells).toHaveLength(2)
-      expect(sheet).not.toContain('metacogs_feel')
+      expect(sheet).not.toContain('feel_calls')
+      expect(sheet).not.toContain('offered_tools')
 
       // Hand computation: one eligible cell (the plugin arm fired); the owner prefers the plugin side, so +1; the control is a draw.
       const marks = marksFor(key, { [`${LUNA}@p1`]: 'plugin' }, 'Y')

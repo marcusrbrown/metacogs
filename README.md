@@ -28,8 +28,8 @@ cp -R <metacogs-clone>/skills/counterfactual .agents/skills/counterfactual
 
 metacogs is also an [OpenCode](https://opencode.ai) plugin. It adds:
 
-- **Two tools**, `metacogs_feel` and `metacogs_drugs`. Their descriptions and return text are upstream's. `metacogs_feel` pauses on a tension that has no name yet. `metacogs_drugs` states a deliberate change of approach for the next attempt. Neither supplies facts, checks anything, or guarantees a result.
-- **Four skills**: `feel`, `drugs`, `synthesis` and `counterfactual`. OpenCode lists every skill as a slash command, so `/feel` and `/drugs` run the first two, with or without arguments (`/drugs caffeine`). `feel` and `drugs` say when to use each tool and how to fill its fields. `synthesis` and `counterfactual` are the methods described below; the plugin loads them from the package, so no copy under `.agents/skills/` is needed.
+- **Two tools**, `feel` and `drugs`. Their descriptions and return text are upstream's. `feel` pauses on a tension that has no name yet. `drugs` states a deliberate change of approach for the next attempt. Neither supplies facts, checks anything, or guarantees a result.
+- **Four skills**: `feel`, `drugs`, `synthesis` and `counterfactual`. OpenCode lists every skill as a slash command, so `/feel` and `/drugs` run the first two, with or without arguments (`/drugs caffeine`). The `feel` and `drugs` skills have the same names as the tools but are separate: a skill is instructions the model loads, and a tool is what it calls. The skills say when to call each tool and how to fill its fields, and `/feel` loads the skill, which then has the model call the tool. `synthesis` and `counterfactual` are the methods described below; the plugin loads them from the package, so no copy under `.agents/skills/` is needed.
 - **A guidance block** of a few lines in the system prompt of normal requests (not the host's title and summary calls). It names the tools and skills and the situations each one fits, and does not require their use. To keep the tools and skills and drop the block:
 
 ```json
@@ -56,8 +56,8 @@ If you copied `synthesis` or `counterfactual` into `.agents/skills/` or another 
 
 Observed on OpenCode 1.19.4 with GPT-6 Luna, GPT-6.1 Sol, Claude Haiku 5.5 and Claude Opus 5.5. The samples are small and these are observations, not measurements.
 
-- Models rarely call `metacogs_feel` or `metacogs_drugs` on their own.
-- `/feel` and `/drugs` reliably invoke them. In 32 of 32 runs across the four models, the command was followed by a tool call. Those runs used an earlier form of the commands; the skill form was checked on GPT-6 Luna and Claude Opus 5.5.
+- Models rarely call the `feel` or `drugs` tools on their own.
+- `/feel` and `/drugs` reliably lead to the tools being called. In 32 of 32 runs across the four models, the command was followed by a tool call. Those runs used an earlier form of the commands; the skill form was checked on GPT-6 Luna and Claude Opus 5.5.
 - At a stuck point, such as a requirement that conflicts with a test or a platform limit, models tend to reach for `counterfactual` first. In four such sessions on GPT-6 Luna and Claude Opus 5.5, each loaded `counterfactual` and none called a tool unprompted.
 
 How the plugin was tested is recorded in [`evals/spikes/feel-drugs/README.md`](evals/spikes/feel-drugs/README.md).

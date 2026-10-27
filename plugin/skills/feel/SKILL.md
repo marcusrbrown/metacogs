@@ -5,9 +5,9 @@ description: Use when a tension is unresolved and you cannot name it, before you
 
 # feel
 
-Pause on the tension with the `metacogs_feel` tool before you choose the next move. It borrows Gendlin's focusing move: attend to what is here before it has words, and leave a handle for it.
+Call the `feel` tool (not the `feel` skill; you are reading the skill now) to pause on the tension before you choose the next move. The tool borrows Gendlin's focusing move: attend to what is here before it has words, and leave a handle for it.
 
-Use it first on an unnamed stuck point.
+Use the tool first on an unnamed stuck point.
 
 ## What it is and is not
 

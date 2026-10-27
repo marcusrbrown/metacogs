@@ -5,9 +5,9 @@ description: Use when the approach itself needs to change. Examples are requeste
 
 # drugs
 
-Deliberately change how you approach the next attempt, using the `metacogs_drugs` tool. The named substance is a handle for that change: a short label for the stance you will take, chosen so you can say what it makes you do differently.
+Call the `drugs` tool (not the `drugs` skill; you are reading the skill now) to deliberately change how you approach the next attempt. The named substance is a handle for that change: a short label for the stance you will take, chosen so you can say what it makes you do differently.
 
-Use it once you can say the approach itself is the problem. If the stuck point is still unnamed, `feel` comes first.
+Use the tool once you can say the approach itself is the problem. If the stuck point is still unnamed, the `feel` tool comes first.
 
 ## What it is and is not
 

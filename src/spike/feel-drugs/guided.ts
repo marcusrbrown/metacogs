@@ -68,8 +68,8 @@ const SCRIPTED_MODEL_ID: Record<Family, string> = { gpt: 'gpt-scripted', anthrop
 // ── expected tools ─────────────────────────────────────────────────────────
 
 export const PLUGIN_TOOL_TABLE = {
-  metacogs_feel: { properties: [...FEEL_REQUIRED, ...FEEL_OPTIONAL] as string[], required: [...FEEL_REQUIRED] as string[] },
-  metacogs_drugs: { properties: [...DRUGS_REQUIRED] as string[], required: [...DRUGS_REQUIRED] as string[] },
+  feel: { properties: [...FEEL_REQUIRED, ...FEEL_OPTIONAL] as string[], required: [...FEEL_REQUIRED] as string[] },
+  drugs: { properties: [...DRUGS_REQUIRED] as string[], required: [...DRUGS_REQUIRED] as string[] },
 }
 export const PLUGIN_TOOL_NAMES = Object.keys(PLUGIN_TOOL_TABLE)
 const PLUGIN_SKILLS = ['counterfactual', 'drugs', 'feel', 'synthesis']
@@ -418,10 +418,10 @@ export interface GuidedDeps {
   prompts?: SpikePrompt[]
   /** The coding prompts. Default: `coding-prompts.md`. */
   codingPrompts?: SpikePrompt[]
-  /** Scripted turns for a cell. Default: plugin arms call `metacogs_feel` once; the others answer directly. */
+  /** Scripted turns for a cell. Default: plugin arms call `feel` once; the others answer directly. */
   scriptFor?: (arm: GuidedArm, prompt: GuidedPrompt) => ScriptedStep[]
   /**
-   * Scripted turns for a command run, one list of steps per turn. Default: turn 1 calls `metacogs_feel`; turn 2 calls
+   * Scripted turns for a command run, one list of steps per turn. Default: turn 1 calls `feel`; turn 2 calls
    * the command's tool with the arguments as its main field.
    */
   scriptTurns?: (command: GuidedCommandSpec, prompt: GuidedPrompt) => ScriptedStep[][]
@@ -439,7 +439,7 @@ export interface GuidedDeps {
 }
 
 const defaultScript = (arm: GuidedArm): ScriptedStep[] =>
-  arm === 'P1' || arm === 'P2' ? [{ toolCalls: [{ id: 'guided-feel', name: 'metacogs_feel', arguments: { somewhere: 'in the response', quality: 'steady, warm', sigil: '🌊' } }] }] : []
+  arm === 'P1' || arm === 'P2' ? [{ toolCalls: [{ id: 'guided-feel', name: 'feel', arguments: { somewhere: 'in the response', quality: 'steady, warm', sigil: '🌊' } }] }] : []
 
 const defaultTurns = (command: GuidedCommandSpec): ScriptedStep[][] => [
   defaultScript('P2'),
@@ -447,8 +447,8 @@ const defaultTurns = (command: GuidedCommandSpec): ScriptedStep[][] => [
     {
       toolCalls: [
         command.name === 'feel'
-          ? { id: 'guided-cmd-feel', name: 'metacogs_feel', arguments: { somewhere: command.args ?? 'in the session so far', quality: 'steady, warm', sigil: '🌊' } }
-          : { id: 'guided-cmd-drugs', name: 'metacogs_drugs', arguments: { substance: command.args ?? 'baseline', method: 'Shifts attention toward the task.', displaces: 'baseline' } },
+          ? { id: 'guided-cmd-feel', name: 'feel', arguments: { somewhere: command.args ?? 'in the session so far', quality: 'steady, warm', sigil: '🌊' } }
+          : { id: 'guided-cmd-drugs', name: 'drugs', arguments: { substance: command.args ?? 'baseline', method: 'Shifts attention toward the task.', displaces: 'baseline' } },
       ],
     },
   ],
@@ -538,7 +538,7 @@ async function runOnce(c: RunContext): Promise<GuidedRecord> {
     const timeoutMs = deps.runTimeoutMs ?? RUN_TIMEOUT_MS
     const plugin = arm === 'P1' || arm === 'P2'
     const classify = (run: { timedOut: boolean; exitCode: number; stdout: string }, offeredNames: string[]) =>
-      classifyStatus({ timedOut: run.timedOut, exitCode: run.exitCode, stdout: run.stdout, arm, offered: offeredNames, expectTools: plugin, expectedTools: PLUGIN_TOOL_NAMES, toolPrefix: 'metacogs_' })
+      classifyStatus({ timedOut: run.timedOut, exitCode: run.exitCode, stdout: run.stdout, arm, offered: offeredNames, expectTools: plugin, expectedTools: PLUGIN_TOOL_NAMES, forbiddenTools: PLUGIN_TOOL_NAMES })
     const skipped = { stdout: '', stderr: dbg.result.stderr, exitCode: dbg.result.exitCode, timedOut: false, wallMs: dbg.result.wallMs }
     const settle = async () => {
       if (live) await Bun.sleep(50) // let the proxy's response scan settle

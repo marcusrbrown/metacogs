@@ -210,9 +210,9 @@ Not automated and not run yet. `src/plugin/integration.test.ts` covers the plugi
 | Arm | Read | Permission | Offered tools |
 | --- | --- | --- | --- |
 | N1 | 1 | every built-in tool denied | none |
-| P1 | 1 | the same, with `skill` limited to `synthesis`, `counterfactual`, `feel` and `drugs` | `metacogs_feel`, `metacogs_drugs`, `skill` |
+| P1 | 1 | the same, with `skill` limited to `synthesis`, `counterfactual`, `feel` and `drugs` | `drugs`, `feel`, `skill` |
 | N2 | 2 | the shell, the network and outside directories denied; the rest at the host default | GPT: `apply_patch`, `glob`, `grep`, `read`, `skill`, `task`, `todowrite`. Anthropic: `edit`, `glob`, `grep`, `read`, `skill`, `task`, `todowrite`, `write` |
-| P2 | 2 | as N2, with the plugin loaded | N2's tools plus `metacogs_feel` and `metacogs_drugs` |
+| P2 | 2 | as N2, with the plugin loaded | N2's tools plus `feel` and `drugs` |
 
 A run is `completed` only if the offered names, the plugin tools' property names and their `required` lists match that table; otherwise it is `tools_missing` or `tools_extra`. Read 2 lists `customize-opencode` beside the plugin skills (`feel` and `drugs` also run as slash commands: the host exposes every skill that way). Read 1 uses the prompts in `prompts.md` except p1, the lighthouse story (p2 to p4; the file and its hash are unchanged); read 2 adds the two in `coding-prompts.md`, and a metacogs call on those is recorded as unwanted.
 
@@ -222,7 +222,7 @@ Live runs refuse unless `prompts_sha256`, `guidance_sha256` and (read 2) `coding
 
 `plugin/guidance.md` is the guidance text the owner approved as committed. `coding-prompts.md` is the owner-approved read 2 coding prompts. Any edit to either needs its hash recomputed (`shasum -a 256 <file>`) in the same commit, and a change to the guidance wording starts a fresh read.
 
-guidance_sha256: ca765f0733680a85412ae44ee7fb744def76b5231d5a82b9aebe17175b963149
+guidance_sha256: 188a643060cee63356f007da187f6bc79c128ebc6de0544872741ea617d3d369
 coding_prompts_sha256: 39351741feea49278bdfdbb261f5e691c0ff3ad4aff06d7e867b39d3ccc8b0ea
 
 ### Diagnostic arms
@@ -243,7 +243,7 @@ Blind read: `bun run spike:blind --campaign <dir>...` writes `sheet.md` (answers
 
 ## Plugin reads
 
-Facts from the runs against the packed plugin on OpenCode 1.19.4, through CLIProxyAPI, models `openai/gpt-6-luna`, `openai/gpt-6.1-sol`, `anthropic/claude-haiku-5-5` and `anthropic/claude-opus-5-5`. Counts come from the `run.json` files in the guided state root.
+Facts from the runs against the packed plugin on OpenCode 1.19.4, through CLIProxyAPI, models `openai/gpt-6-luna`, `openai/gpt-6.1-sol`, `anthropic/claude-haiku-5-5` and `anthropic/claude-opus-5-5`. Counts come from the `run.json` files in the guided state root. The plugin's tools were named `metacogs_feel` and `metacogs_drugs` when these runs were made; they are `feel` and `drugs` now.
 
 - **Read 1** (nothing arm against plugin arm, prompts p1 to p4, blind marks by the owner). The plan's rule was met: three cells had a plugin arm that loaded a skill, all three were marked for the plugin, net +3, no model at -3 or worse. The other 12 cells were excluded because the plugin arm never fired. None of the 30 plugin runs called a metacogs tool; 6 loaded a skill (Luna 2, Haiku 2, Sol 2, Opus 0). The control cell (two nothing runs against two) was marked `same`.
 - **Guidance on and off.** Diagnostic runs of the plugin arm on p2 and p3, 6 runs per model and condition: guidance on (A), on with a nudge sentence (B), off (C), off with the nudge (D); B and D on Luna only. Runs with a metacogs call: A Luna 1, others 0; C Luna 3, others 0; B Luna 4; D Luna 3. Skill loads were 2 or 3 of 6 in every condition. Guidance on or off made no consistent difference, and Haiku, Sol and Opus made no call under either.

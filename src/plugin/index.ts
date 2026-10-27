@@ -56,7 +56,7 @@ export function createServer(skillsDirs: readonly string[]): Plugin {
     const note = createWarn(input, 'info')
     const options = parseOptions(rawOptions, warn)
     const hooks: Hooks = {
-      tool: { metacogs_feel: metacogsFeel, metacogs_drugs: metacogsDrugs },
+      tool: { feel: metacogsFeel, drugs: metacogsDrugs },
       config: async (cfg) => {
         try {
           applyConfig(cfg as HostConfig, skillsDirs)

@@ -232,13 +232,13 @@ export function classifyStatus(input: {
   expectTools?: boolean
   /** The tools an arm that expects tools must be offered. Default: the spike's `metacog_feel` and `metacog_drugs`. */
   expectedTools?: readonly string[]
-  /** An arm that expects no tools must not be offered any tool with this prefix. Default: `metacog_`. */
-  toolPrefix?: string
+  /** An arm that expects no tools must not be offered any tool with one of these exact names. Default: the spike's `metacog_feel` and `metacog_drugs`. */
+  forbiddenTools?: readonly string[]
 }): { status: RunStatus; reasons: string[] } {
   const { timedOut, exitCode, stdout, arm, offered } = input
   const expectTools = input.expectTools ?? arm === 'B'
   const expectedTools = input.expectedTools ?? EXPECTED_TOOLS
-  const toolPrefix = input.toolPrefix ?? `${MCP_SERVER_NAME}_`
+  const forbiddenTools = input.forbiddenTools ?? EXPECTED_TOOLS
   if (timedOut) return { status: 'timeout', reasons: ['timeout'] }
   const events = analyzeEvents(stdout)
   if (isRateLimited(events.hostErrors)) return { status: 'rate_limited', reasons: ['provider_429'] }
@@ -250,7 +250,7 @@ export function classifyStatus(input: {
   if (events.unrecognized.length > 0) return { status: 'host_error', reasons: ['unrecognized_events'] }
   if (events.stepFinishCount === 0 && events.assistantText.trim() === '') return { status: 'host_error', reasons: ['no_completion'] }
   const hasTools = expectedTools.every((t) => offered.includes(t))
-  if (!expectTools && offered.some((t) => t.startsWith(toolPrefix))) return { status: 'host_error', reasons: ['unexpected_tools_offered'] }
+  if (!expectTools && offered.some((t) => forbiddenTools.includes(t))) return { status: 'host_error', reasons: ['unexpected_tools_offered'] }
   if (expectTools && !hasTools) return { status: 'tools_missing', reasons: ['expected_tools_not_offered'] }
   return { status: 'completed', reasons: [] }
 }
