@@ -1,6 +1,15 @@
 # feel/drugs mechanism spike
 
-An experiment with a human read, not a method: no prereg, rubric, judge, tally or matrix cell. Epoch 1 of this spike; the frozen prompt hash below is its only contract. Plan: `docs/plans/2026-10-25-001-feat-feel-drugs-spike-plan.md`. Requirements: `docs/brainstorms/2026-10-25-feel-drugs-spike-requirements.md`.
+An experiment with a human read, not a method: no prereg, rubric, judge, tally or matrix cell. Epoch 1 of this spike; the frozen prompt hash below is its only contract.
+
+**Epoch 2 (declared 2026-10-27).** Epoch 1 is the MCP spike below: arms A, B and C, the four prompts in `prompts.md`, the upstream tool names `metacog_feel` and `metacog_drugs`. Epoch 2 adds, without changing epoch 1's frozen prompts, hash or recorded results:
+
+- **Plugin reads.** The packed OpenCode plugin against nothing, in blind reads 1 and 2 (see [Guided reads: harness](#guided-reads-harness) and [Plugin reads](#plugin-reads)).
+- **Coding prompts.** `c1` and `c2`, the draft coding prompts for read 2, frozen with their own hash.
+- **The guided harness.** `src/spike/feel-drugs/guided.ts` and `blind.ts`, with their own run records, expected-tool tables and diagnostic arms. `p1` is left out of the guided reads; `prompts.md` and its hash are unchanged.
+- **The tool rename.** The plugin's tools are named `feel` and `drugs`; earlier runs recorded them as `metacogs_feel` and `metacogs_drugs`, and the MCP spike keeps `metacog_feel` and `metacog_drugs`. The blind sheet counts all three names in past records.
+
+Results recorded under epoch 1 stay epoch 1 results. Plan: `docs/plans/2026-10-25-001-feat-feel-drugs-spike-plan.md`. Requirements: `docs/brainstorms/2026-10-25-feel-drugs-spike-requirements.md`.
 
 The question: do upstream's `feel` and `drugs` change what a model produces when it composes the fields in a tool call and reads the frame back, compared with reading the same frame as skill text and writing the fields in its reply, and does the model family matter? Upstream is pinned to `inanna-malick/metacog@3d89bb30cd26369fdcd242fd704f66641dca327c` (MIT). Both tools are stateless text templates there.
 
