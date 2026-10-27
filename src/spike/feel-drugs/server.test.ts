@@ -3,7 +3,12 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
-import { UPSTREAM_DRUGS_DESCRIPTION, UPSTREAM_DRUGS_FIELD_DESCRIPTIONS, UPSTREAM_FEEL_DESCRIPTION, UPSTREAM_FEEL_FIELD_DESCRIPTIONS } from '../../frames/feel-drugs'
+import {
+  UPSTREAM_DRUGS_DESCRIPTION,
+  UPSTREAM_DRUGS_FIELD_DESCRIPTIONS,
+  UPSTREAM_FEEL_DESCRIPTION,
+  UPSTREAM_FEEL_FIELD_DESCRIPTIONS,
+} from './upstream-frames'
 
 const SERVER = new URL('./server.ts', import.meta.url).pathname
 

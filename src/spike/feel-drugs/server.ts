@@ -2,23 +2,22 @@
  * Stdio MCP server for the feel/drugs spike: exactly the upstream `feel` and `drugs` registrations, nothing else.
  *
  * The descriptions, field descriptions and return templates are the verbatim upstream strings
- * (`UPSTREAM_*`) in `src/frames/feel-drugs.ts` (provenance and licence there and in `ATTRIBUTIONS.md`); this file builds the zod 4
- * shapes over them and serves them.
+ * (`UPSTREAM_*`) in `src/spike/feel-drugs/upstream-frames.ts` (provenance and licence there and in `ATTRIBUTIONS.md`); this file
+ * builds the zod 4 shapes over them and serves them.
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 
+import { type DrugsArgs, type FeelArgs } from '../../frames/feel-drugs'
 import {
-  type DrugsArgs,
-  type FeelArgs,
   UPSTREAM_DRUGS_DESCRIPTION,
   UPSTREAM_DRUGS_FIELD_DESCRIPTIONS,
   UPSTREAM_FEEL_DESCRIPTION,
   UPSTREAM_FEEL_FIELD_DESCRIPTIONS,
   upstreamDrugsText,
   upstreamFeelText,
-} from '../../frames/feel-drugs'
+} from './upstream-frames'
 
 export const feelShape = {
   somewhere: z.string().describe(UPSTREAM_FEEL_FIELD_DESCRIPTIONS.somewhere),
