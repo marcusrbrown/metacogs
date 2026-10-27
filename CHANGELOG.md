@@ -1,5 +1,11 @@
 # metacogs
 
+## 0.2.1
+
+### Patch Changes
+
+- 01551a7: The `feel` and `drugs` tool text now describes a pause on an unnamed tension and a deliberate change of approach, without claims about changing how the model processes. The tools' fields are unchanged.
+
 ## 0.2.0
 
 ### Minor Changes
