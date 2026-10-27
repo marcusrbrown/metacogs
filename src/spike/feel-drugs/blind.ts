@@ -152,6 +152,26 @@ function keyCommandRun(record: GuidedRecord): KeyCommandRun {
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 
+const runLabel = (r: GuidedRecord) => `${r.arm}-${r.prompt_id}${r.command ? `-${r.command.name}${r.command.args === null ? '' : `(${r.command.args})`}` : ''}-${r.run} (${r.model})`
+
+/** A logical run is one read, model, arm, prompt, run number and command spec. Loading it twice would double its weight in a cell. */
+function assertDistinctRuns(records: readonly GuidedRecord[]): void {
+  const seen = new Set<string>()
+  for (const r of records) {
+    const id = JSON.stringify([r.read, r.model, r.arm, r.prompt_id, r.run, r.command ? [r.command.name, r.command.args] : null])
+    if (seen.has(id)) throw new Error(`run ${runLabel(r)} appears more than once; load each campaign once and keep one record per run`)
+    seen.add(id)
+  }
+}
+
+/** Every record, not only the first of its cell, must have been made from the prompt text the sheet displays. */
+function assertPromptHashes(records: readonly GuidedRecord[], prompts: readonly SpikePrompt[]): void {
+  for (const r of records) {
+    const prompt = prompts.find((p) => p.id === r.prompt_id)
+    if (prompt && sha256(prompt.text) !== r.prompt_hash) throw new Error(`run ${runLabel(r)}: prompt hash differs from the prompt ${r.prompt_id} the sheet displays`)
+  }
+}
+
 export function buildBlind(input: BuildInput): { sheet: string; key: BlindKey } {
   const diagnostic = input.records.find((r) => r.nudge === true || r.guidance_enabled === false)
   if (diagnostic) throw new Error(`run ${diagnostic.arm}-${diagnostic.prompt_id}-${diagnostic.run} (${diagnostic.model}) is from a diagnostic arm (nudge or guidance off); a blind sheet covers the read arms only`)
@@ -159,6 +179,8 @@ export function buildBlind(input: BuildInput): { sheet: string; key: BlindKey } 
   const reads = [...new Set(input.records.map((r) => r.read))]
   if (reads.length !== 1) throw new Error(`a blind sheet covers one read; the records span ${reads.length === 0 ? 'none' : reads.join(' and ')}`)
   const read = reads[0]!
+  assertDistinctRuns(input.records)
+  assertPromptHashes(input.records, input.prompts)
 
   const commandRuns = input.records.filter((r) => r.command !== null && r.status === 'completed').map(keyCommandRun)
   const groups = new Map<string, GuidedRecord[]>()
@@ -172,7 +194,6 @@ export function buildBlind(input: BuildInput): { sheet: string; key: BlindKey } 
     const label = `${first.prompt_id}@${first.model}`
     const prompt = input.prompts.find((p) => p.id === first.prompt_id)
     if (!prompt) throw new Error(`prompt ${first.prompt_id} (${label}) is not among the prompts given`)
-    if (sha256(prompt.text) !== first.prompt_hash) throw new Error(`prompt ${first.prompt_id}: the prompt file differs from the one these runs used`)
     const done = group.filter((r) => r.status === 'completed').sort(byRun)
     const nothing = done.filter((r) => !isPluginArm(r.arm))
     const plugin = done.filter((r) => isPluginArm(r.arm))

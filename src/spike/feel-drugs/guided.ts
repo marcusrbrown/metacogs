@@ -670,13 +670,60 @@ export interface GuidedSummary {
   records: GuidedRecord[]
 }
 
-/** A finished run left by an earlier invocation of the same read and model, or `undefined` when there is none to keep. */
-function keptRecord(runDir: string, provider: 'scripted' | 'live'): GuidedRecord | undefined {
+/** What a run must match for an earlier record of the same run directory to be reused. */
+export interface KeptExpectation {
+  read: Read
+  arm: GuidedArm
+  model: string
+  promptId: string
+  /** SHA-256 of the prompt text, before any nudge. */
+  promptHash: string
+  run: number
+  provider: 'scripted' | 'live'
+  command: GuidedCommandSpec | null
+  guidance: boolean
+  nudge: boolean
+  /** SHA-256 of `plugin/guidance.md` for plugin arms; null for the nothing arms. */
+  guidanceSha256: string | null
+}
+
+const describeCommand = (command: { name: string; args: string | null } | null) =>
+  command === null ? 'none' : `/${command.name} ${command.args === null ? '(no arguments)' : JSON.stringify(command.args)}`
+
+/** Why `record` cannot stand in for the run `want` describes. Empty when it can. The command is compared with its arguments. */
+export function keptRecordIssues(record: GuidedRecord, want: KeptExpectation): string[] {
+  const issues: string[] = []
+  if (record.read !== want.read) issues.push(`read differs: ${record.read} against ${want.read}`)
+  if (record.provider !== want.provider) issues.push(`provider differs: ${record.provider} against ${want.provider}`)
+  if (record.model !== want.model) issues.push(`model differs: ${record.model} against ${want.model}`)
+  if (record.arm !== want.arm) issues.push(`arm differs: ${record.arm} against ${want.arm}`)
+  if (record.prompt_id !== want.promptId) issues.push(`prompt differs: ${record.prompt_id} against ${want.promptId}`)
+  else if (record.prompt_hash !== want.promptHash) issues.push(`prompt hash differs from the prompt ${want.promptId} of this run`)
+  if (record.run !== want.run) issues.push(`run differs: ${record.run} against ${want.run}`)
+  const recorded = record.command === null || record.command === undefined ? null : { name: record.command.name, args: record.command.args }
+  if (describeCommand(recorded) !== describeCommand(want.command) || recorded?.args !== want.command?.args) {
+    issues.push(`command differs: ${describeCommand(recorded)} against ${describeCommand(want.command)}`)
+  }
+  // Records from before the diagnostic switches have no such fields and mean guidance on, no nudge.
+  if ((record.guidance_enabled ?? true) !== want.guidance) issues.push('guidance switch differs')
+  if ((record.nudge ?? false) !== want.nudge) issues.push('nudge differs')
+  if ((record.guidance_sha256 ?? null) !== want.guidanceSha256) issues.push('guidance file differs from the one this run uses')
+  return issues
+}
+
+/**
+ * A finished run left by an earlier invocation of the same run directory, or `undefined` when there is none to keep. A
+ * completed record that does not match the requested run is an error rather than a reuse or an overwrite.
+ */
+function keptRecord(runDir: string, want: KeptExpectation): GuidedRecord | undefined {
   const file = join(runDir, 'run.json')
   if (!existsSync(file)) return undefined
   const record = JSON.parse(readFileSync(file, 'utf8')) as GuidedRecord
-  if (record.provider !== provider) throw new Error(`${file} is a ${record.provider} run; a campaign directory holds one provider`)
-  return record.status === 'completed' ? record : undefined
+  if (record.provider !== want.provider) throw new Error(`${file} is a ${record.provider} run; a campaign directory holds one provider`)
+  if (record.status !== 'completed') return undefined
+  const issues = keptRecordIssues(record, want)
+  if (issues.length > 0) throw new Error(`${file} does not match this run (${issues.join('; ')}); use another output directory or remove the run`)
+  return record
 }
 
 export async function runGuided(options: GuidedOptions, deps: GuidedDeps = {}): Promise<GuidedSummary> {
@@ -728,7 +775,20 @@ export async function runGuided(options: GuidedOptions, deps: GuidedDeps = {}): 
       const done: GuidedRecord[] = []
       for (const [n, cell] of plan.entries()) {
         if (signal?.aborted) return { campaignDirs, records: [...records, ...done] }
-        const kept = keptRecord(context(cell).runDir, options.provider)
+        const c = context(cell)
+        const kept = keptRecord(c.runDir, {
+          read,
+          arm: cell.arm,
+          model,
+          promptId: cell.prompt.id,
+          promptHash: sha256(cell.prompt.text),
+          run: cell.index,
+          provider: options.provider,
+          command: cell.command ?? null,
+          guidance: options.guidance,
+          nudge: options.nudge,
+          guidanceSha256: cell.arm === 'P1' || cell.arm === 'P2' ? sha256(readFileSync(join(repoRoot, ...GUIDANCE_TARGET.path))) : null,
+        })
         if (kept) {
           done.push(kept)
           log(`kept ${cellName(cell)} (${model}): ${kept.status}`)

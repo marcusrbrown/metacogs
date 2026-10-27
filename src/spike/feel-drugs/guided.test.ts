@@ -24,6 +24,7 @@ import {
   type GuidedPrompt,
   type GuidedRecord,
   GUIDED_MODELS,
+  keptRecordIssues,
   loadCodingPrompts,
   loadGuidedProse,
   offeredToolSchemas,
@@ -324,6 +325,74 @@ describe('diagnostic arms: guidance and nudge', () => {
   })
 })
 
+describe('keptRecordIssues: what a resumed campaign may reuse', () => {
+  const want = {
+    read: 2 as const,
+    arm: 'P2' as const,
+    model: 'openai/gpt-6-luna',
+    promptId: 'p2',
+    promptHash: sha256('prompt text'),
+    run: 1,
+    provider: 'live' as const,
+    command: { name: 'drugs' as const, args: 'caffeine' as string | null },
+    guidance: true,
+    nudge: false,
+    guidanceSha256: 'g'.repeat(64) as string | null,
+  }
+  const kept = (over: Record<string, unknown> = {}) =>
+    ({
+      read: 2,
+      arm: 'P2',
+      model: 'openai/gpt-6-luna',
+      prompt_id: 'p2',
+      prompt_hash: sha256('prompt text'),
+      run: 1,
+      provider: 'live',
+      command: { name: 'drugs', args: 'caffeine', empty_args: false },
+      guidance_enabled: true,
+      nudge: false,
+      guidance_sha256: 'g'.repeat(64),
+      ...over,
+    }) as unknown as GuidedRecord
+
+  test('a record made for the same request has no issues', () => {
+    expect(keptRecordIssues(kept(), want)).toEqual([])
+  })
+
+  test('a record from before the diagnostic fields counts as guidance on and no nudge', () => {
+    const { guidance_enabled: _g, nudge: _n, ...old } = kept() as unknown as Record<string, unknown>
+    expect(keptRecordIssues(old as unknown as GuidedRecord, want)).toEqual([])
+  })
+
+  test('different command arguments, a different command, or a command where there was none are issues', () => {
+    expect(keptRecordIssues(kept({ command: { name: 'drugs', args: 'tea', empty_args: false } }), want)).toEqual(['command differs: /drugs "tea" against /drugs "caffeine"'])
+    expect(keptRecordIssues(kept({ command: { name: 'drugs', args: null, empty_args: true } }), want)).toEqual(['command differs: /drugs (no arguments) against /drugs "caffeine"'])
+    expect(keptRecordIssues(kept({ command: { name: 'feel', args: 'caffeine', empty_args: false } }), want)).toEqual(['command differs: /feel "caffeine" against /drugs "caffeine"'])
+    expect(keptRecordIssues(kept({ command: null }), want)).toEqual(['command differs: none against /drugs "caffeine"'])
+    expect(keptRecordIssues(kept(), { ...want, command: null })).toEqual(['command differs: /drugs "caffeine" against none'])
+  })
+
+  test('empty-string arguments are not the same request as no arguments', () => {
+    expect(keptRecordIssues(kept({ command: { name: 'feel', args: '', empty_args: true } }), { ...want, command: { name: 'feel', args: null } })).toHaveLength(1)
+  })
+
+  test('another prompt text, model, arm, run, read, provider, guidance switch, nudge or guidance file is an issue', () => {
+    expect(keptRecordIssues(kept({ prompt_hash: sha256('changed') }), want)).toEqual(['prompt hash differs from the prompt p2 of this run'])
+    expect(keptRecordIssues(kept({ model: 'anthropic/claude-haiku-5-5' }), want)).toEqual(['model differs: anthropic/claude-haiku-5-5 against openai/gpt-6-luna'])
+    expect(keptRecordIssues(kept({ arm: 'N2' }), want)).toEqual(['arm differs: N2 against P2'])
+    expect(keptRecordIssues(kept({ run: 2 }), want)).toEqual(['run differs: 2 against 1'])
+    expect(keptRecordIssues(kept({ read: 1 }), want)).toEqual(['read differs: 1 against 2'])
+    expect(keptRecordIssues(kept({ provider: 'scripted' }), want)).toEqual(['provider differs: scripted against live'])
+    expect(keptRecordIssues(kept({ guidance_enabled: false }), want)).toEqual(['guidance switch differs'])
+    expect(keptRecordIssues(kept({ nudge: true }), want)).toEqual(['nudge differs'])
+    expect(keptRecordIssues(kept({ guidance_sha256: 'h'.repeat(64) }), want)).toEqual(['guidance file differs from the one this run uses'])
+  })
+
+  test('every issue is listed', () => {
+    expect(keptRecordIssues(kept({ model: 'x/y', run: 9 }), want)).toHaveLength(2)
+  })
+})
+
 describe('the guided prose prompts', () => {
   test('are prompts.md without p1, and the spike file itself still holds p1', () => {
     expect(loadGuidedProse(ROOT).map((p) => p.id)).toEqual(['p2', 'p3', 'p4'])
@@ -599,6 +668,26 @@ describe.skipIf(!HOST_SUITES || !opencodeAvailability().available)('against the 
       600_000,
     )
   })
+
+  test(
+    'a resumed command run with other arguments is refused and the kept record is left as it was',
+    async () => {
+      const outRoot = tmp('guided-out-')
+      const common = { outRoot, prompts: prose, codingPrompts: coding }
+      const argv = (args: string) => ['--read', '2', '--model', LUNA, '--prompt', 'p1', '--runs', '1', '--command', `drugs=${args}`]
+      const first = await run(argv('caffeine'), common)
+      const file = join(first.campaignDirs[0]!, 'P2-p1-drugs-args-1', 'run.json')
+      const before = readFileSync(file, 'utf8')
+      expect(JSON.parse(before).command).toMatchObject({ name: 'drugs', args: 'caffeine' })
+
+      await expect(run(argv('tea'), common)).rejects.toThrow(/command differs: \/drugs "caffeine" against \/drugs "tea"/)
+      expect(readFileSync(file, 'utf8')).toBe(before)
+
+      const again = await run(argv('caffeine'), common)
+      expect(again.logs.filter((l) => l.startsWith('kept'))).toHaveLength(1)
+    },
+    600_000,
+  )
 
   test(
     'a campaign directory is reused: completed runs are kept, and --cells limits a first pass to one cell per model',

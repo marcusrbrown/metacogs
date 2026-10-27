@@ -198,6 +198,40 @@ function commandRun(o: { model: string; prompt?: string; run: number; name: 'fee
   }
 }
 
+describe('buildBlind: records that do not belong together', () => {
+  const base = () => [...cell(LUNA, 'p1'), ...control(SOL, 'p3')]
+  /** Command runs belong to read 2. */
+  const base2 = () => [...cell(LUNA, 'p1', 'tool', 2), ...control(SOL, 'p3', 2)]
+
+  test('any record whose prompt hash differs from the displayed prompt is rejected, not only the first of its cell', () => {
+    const records = base().map((r) => (r.arm === 'P1' && r.run === 2 ? { ...r, prompt_hash: sha256('Another prompt text.') } : r))
+    expect(() => build(records)).toThrow(/P1-p1-2.*prompt hash|prompt p1.*differs/)
+  })
+
+  test('a mismatching control record and a mismatching command run are rejected too', () => {
+    expect(() => build(base().map((r) => (r.arm === 'N1' && r.prompt_id === 'p3' && r.run === 4 ? { ...r, prompt_hash: 'x'.repeat(64) } : r)))).toThrow(/prompt hash|differs/)
+    const command = { ...commandRun({ model: LUNA, run: 1, name: 'feel', args: null, input: null }), prompt_hash: 'y'.repeat(64) }
+    expect(() => build([...base2(), command])).toThrow(/prompt hash differs/)
+  })
+
+  test('the same logical run loaded twice (a repeated campaign) is rejected before anything is counted', () => {
+    const once = base()
+    expect(() => build([...once, ...once])).toThrow(/more than once/)
+    expect(() => build([...once, ...once.filter((r) => r.arm === 'P1' && r.run === 1)])).toThrow(/P1-p1-1.*more than once/)
+  })
+
+  test('runs that differ in run number, arm, prompt, model or command are not duplicates', () => {
+    const extra = record({ arm: 'P1', model: LUNA, prompt: 'p1', run: 3, fired: 'tool' })
+    expect(() => build([...base(), extra])).not.toThrow()
+    expect(() => build([...base2(), extra].map((r) => ({ ...r, read: 2 as const })))).not.toThrow()
+    const feel = commandRun({ model: LUNA, run: 1, name: 'feel', args: null, input: null })
+    const feelArgs = commandRun({ model: LUNA, run: 1, name: 'feel', args: 'chest', input: null })
+    const drugs = commandRun({ model: LUNA, run: 1, name: 'drugs', args: 'chest', input: null })
+    expect(() => build([...base2(), feel, feelArgs, drugs])).not.toThrow()
+    expect(() => build([...base2(), feelArgs, { ...feelArgs }])).toThrow(/more than once/)
+  })
+})
+
 describe('command runs in the checks table', () => {
   const FEEL = { somewhere: 'in the gap', quality: 'warm', sigil: '🌊' }
   const regular = (): GuidedRecord[] => [...cell(LUNA, 'p1', 'tool', 2), ...cell(HAIKU, 'p1', 'tool', 2), ...control(SOL, 'p3', 2)]
