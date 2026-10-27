@@ -10,6 +10,7 @@ import { chmod, lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/p
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildClaudeEntries } from '../hosts/claude'
+import { buildCodexEntries } from '../hosts/codex'
 import { buildMcpServer } from '../plugin/build'
 import { SHIPPED_METHODS } from '../record/contract'
 import { helperBanner } from './marker'
@@ -49,7 +50,7 @@ export interface TreeOptions extends BuildOptions {
   /** Project root containing `skills/`. Defaults to this repository. */
   root?: string
   /**
-   * Whether to build the host packages (MCP bundle, Claude package), which come from this repository's own sources.
+   * Whether to build the host packages (MCP bundle, Claude and Codex packages), which come from this repository's own sources.
    * Defaults to true for this repository and false for any other root; tests set it to build into a temp root.
    */
   hosts?: boolean
@@ -144,6 +145,7 @@ export async function buildTree(options: TreeOptions = {}): Promise<TreeMap> {
     const server = new TextEncoder().encode(await buildMcpServer({ version }))
     for (const path of MCP_SERVER_PATHS) add(path, { bytes: server, mode: 0o644 })
     for (const [path, entry] of await buildClaudeEntries({ version, helper: await helperBytes(), repoRoot: REPO_ROOT })) add(path, entry)
+    for (const [path, entry] of await buildCodexEntries({ version, helper: await helperBytes(), repoRoot: REPO_ROOT })) add(path, entry)
   }
   for (const [path, entry] of options.extraEntries ?? []) add(path, entry)
   return tree
