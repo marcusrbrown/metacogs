@@ -69,6 +69,10 @@ describe('the built bundle', () => {
     for (const pattern of [/\bBun\./, /\bprocess\./, /\bfetch\s*\(/, /\bXMLHttpRequest\b/, /\bWebSocket\b/, /\beval\s*\(/, /\bnew Function\b/]) expect(bundle).not.toMatch(pattern)
   })
 
+  test('carries none of the unused upstream frame text', () => {
+    for (const text of ['previous mode of processing is unavailable', 'Alter your cognitive substrate', 'UPSTREAM_']) expect(bundle).not.toContain(text)
+  })
+
   test('embeds the guidance file as raw markdown', () => {
     expect(bundle).toContain(readFileSync(join(REPO_ROOT, 'plugin', 'guidance.md'), 'utf8').trimEnd().split('\n')[0] ?? '')
     expect(bundle).not.toContain('<p>')
