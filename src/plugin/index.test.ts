@@ -60,7 +60,7 @@ describe('tools', () => {
     expect(Object.keys(hooks.tool ?? {}).sort()).toEqual(['drugs', 'feel'])
   })
 
-  test('descriptions and field descriptions are the upstream strings', async () => {
+  test('descriptions and field descriptions are the shared adapted constants (literal pins: frames-text.test.ts)', async () => {
     const { hooks } = await load()
     const feel = hooks.tool?.feel
     const drugs = hooks.tool?.drugs

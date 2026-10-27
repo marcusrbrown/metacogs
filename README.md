@@ -28,7 +28,7 @@ cp -R <metacogs-clone>/skills/counterfactual .agents/skills/counterfactual
 
 metacogs is also an [OpenCode](https://opencode.ai) plugin. It adds:
 
-- **Two tools**, `feel` and `drugs`. Their descriptions and return text are upstream's. `feel` pauses on a tension that has no name yet. `drugs` states a deliberate change of approach for the next attempt. Neither supplies facts, checks anything, or guarantees a result.
+- **Two tools**, `feel` and `drugs`. Their descriptions and return text are adapted from upstream. `feel` pauses on a tension that has no name yet. `drugs` states a deliberate change of approach for the next attempt. Neither supplies facts, checks anything, or guarantees a result.
 - **Four skills**: `feel`, `drugs`, `synthesis` and `counterfactual`. OpenCode lists every skill as a slash command, so `/feel` and `/drugs` run the first two, with or without arguments (`/drugs caffeine`). The `feel` and `drugs` skills have the same names as the tools but are separate: a skill is instructions the model loads, and a tool is what it calls. The skills say when to call each tool and how to fill its fields, and `/feel` loads the skill, which then has the model call the tool. `synthesis` and `counterfactual` are the methods described below; the plugin loads them from the package, so no copy under `.agents/skills/` is needed.
 - **A guidance block** of a few lines in the system prompt of normal requests (not the host's title and summary calls). It names the tools and skills and the situations each one fits, and does not require their use. To keep the tools and skills and drop the block:
 
@@ -50,7 +50,7 @@ If you copied `synthesis` or `counterfactual` into `.agents/skills/` or another 
 
 ### Where it comes from
 
-`feel` and `drugs` are the tools from [inanna-malick/metacog](https://github.com/inanna-malick/metacog). Their descriptions and return text are copied from upstream at the pinned commit (see [Attribution](#attribution-and-license)); the skill text around them is this project's. `synthesis` and `counterfactual` carry the evals under [Evidence](#evidence). The tools and the `feel` and `drugs` skills have no eval of that kind.
+`feel` and `drugs` are the tools from [inanna-malick/metacog](https://github.com/inanna-malick/metacog). Their descriptions and return text are adapted from upstream at the pinned commit, with the claims about changing how the model processes removed (see [Attribution](#attribution-and-license)); the skill text around them is this project's. `synthesis` and `counterfactual` carry the evals under [Evidence](#evidence). The tools and the `feel` and `drugs` skills have no eval of that kind.
 
 ### Model notes
 
@@ -130,4 +130,4 @@ Fro Bot reviews pull requests and acts on `@fro-bot` mentions. The daily autohea
 
 ## Attribution and license
 
-MIT. This project reinterprets concepts from [inanna-malick/metacog](https://github.com/inanna-malick/metacog) (MIT, pinned at commit `3d89bb30cd26369fdcd242fd704f66641dca327c`). Both copyright notices are in [LICENSE](LICENSE). The upstream text that the plugin's tools reuse is listed in [ATTRIBUTIONS.md](ATTRIBUTIONS.md).
+MIT. This project reinterprets concepts from [inanna-malick/metacog](https://github.com/inanna-malick/metacog) (MIT, pinned at commit `3d89bb30cd26369fdcd242fd704f66641dca327c`). Both copyright notices are in [LICENSE](LICENSE). The upstream text that the plugin's tools adapt is described in [ATTRIBUTIONS.md](ATTRIBUTIONS.md).

@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
-import { DRUGS_DESCRIPTION, DRUGS_FIELD_DESCRIPTIONS, FEEL_DESCRIPTION, FEEL_FIELD_DESCRIPTIONS } from '../../frames/feel-drugs'
+import { UPSTREAM_DRUGS_DESCRIPTION, UPSTREAM_DRUGS_FIELD_DESCRIPTIONS, UPSTREAM_FEEL_DESCRIPTION, UPSTREAM_FEEL_FIELD_DESCRIPTIONS } from '../../frames/feel-drugs'
 
 const SERVER = new URL('./server.ts', import.meta.url).pathname
 
@@ -26,18 +26,18 @@ describe('over stdio', () => {
     const { tools } = await client.listTools()
     const feel = tools.find((t) => t.name === 'feel')
     const drugs = tools.find((t) => t.name === 'drugs')
-    expect(feel?.description).toBe(FEEL_DESCRIPTION)
-    expect(drugs?.description).toBe(DRUGS_DESCRIPTION)
+    expect(feel?.description).toBe(UPSTREAM_FEEL_DESCRIPTION)
+    expect(drugs?.description).toBe(UPSTREAM_DRUGS_DESCRIPTION)
 
     const props = (tool: typeof feel) => Object.fromEntries(Object.entries((tool?.inputSchema.properties ?? {}) as Record<string, { type?: string; description?: string }>).map(([k, v]) => [k, v]))
     expect(Object.keys(props(feel))).toEqual(['somewhere', 'quality', 'sigil', 'since_last'])
-    for (const [key, text] of Object.entries(FEEL_FIELD_DESCRIPTIONS)) {
+    for (const [key, text] of Object.entries(UPSTREAM_FEEL_FIELD_DESCRIPTIONS)) {
       expect(props(feel)[key]).toMatchObject({ type: 'string', description: text })
     }
     expect(feel?.inputSchema.required).toEqual(['somewhere', 'quality', 'sigil'])
 
     expect(Object.keys(props(drugs))).toEqual(['substance', 'method', 'displaces'])
-    for (const [key, text] of Object.entries(DRUGS_FIELD_DESCRIPTIONS)) {
+    for (const [key, text] of Object.entries(UPSTREAM_DRUGS_FIELD_DESCRIPTIONS)) {
       expect(props(drugs)[key]).toMatchObject({ type: 'string', description: text })
     }
     expect(drugs?.inputSchema.required).toEqual(['substance', 'method', 'displaces'])
