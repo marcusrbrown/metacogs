@@ -32,8 +32,12 @@ export type ScriptedStep =
 
 export interface RecordedRequest {
   hasTools: boolean
-  /** Number of completed assistant tool-call rounds in the request history. */
+  /** Number of completed assistant tool-call rounds in the whole request history. */
   round: number
+  /** Scripted stub only: zero-based user turn (user messages in the history, less one). */
+  turn?: number
+  /** Scripted stub only: completed tool-call rounds after the last user message. */
+  turnRound?: number
   body: unknown
   /** Model id the provider reported in its response; filled in once the response is seen. */
   returnedModel?: string
@@ -50,9 +54,39 @@ export interface ScriptedProviderServer {
 }
 
 export interface ScriptedProviderOptions {
-  /** Tool-capable turns, by round. Past the end the stub answers `finalText`. */
+  /** Tool-capable turns, by round. Past the end the stub answers `finalText`. Used when `turns` is absent. */
   steps: readonly ScriptedStep[]
+  /**
+   * One script per user turn, each indexed by the rounds completed after the last user message. A turn past the end of
+   * the list answers `finalText`. When present, `steps` is ignored.
+   */
+  turns?: readonly (readonly ScriptedStep[])[]
   finalText?: string
+}
+
+/**
+ * Starts of the system prompts OpenCode 1.19.4 uses for its own calls: the session title, compaction and the session
+ * summary, plus an older compaction wording. Matched case-insensitively anywhere in the joined system text.
+ */
+export const INTERNAL_REQUEST_SIGNATURES = [
+  'you are a title generator',
+  'you are a context summarization agent',
+  'summarize what was done in this conversation',
+  'you are a helpful ai assistant tasked with summarizing conversations',
+] as const
+
+/** The agent prompt names OpenCode as the agent in its first sentence: "You are OpenCode, …", "You are an AI agent powered by OpenCode, …". */
+const NAMES_OPENCODE_AS_AGENT = /\byou are\b[^.\n]{0,60}?\bopencode\b/i
+
+/**
+ * Whether these system-level texts are the host's agent prompt: not one of its internal calls, and naming OpenCode as
+ * the agent. True whether or not the request offers tools. Prompt wording differs by model family (Anthropic, GPT
+ * live, GPT scripted), so this is not a prefix match.
+ */
+export function isMainSystemText(texts: readonly string[]): boolean {
+  const joined = texts.join('\n').toLowerCase()
+  if (INTERNAL_REQUEST_SIGNATURES.some((signature) => joined.includes(signature))) return false
+  return texts.some((text) => NAMES_OPENCODE_AS_AGENT.test(text))
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -68,6 +102,20 @@ function countToolRounds(messages: unknown): number {
       Array.isArray(m.tool_calls) &&
       m.tool_calls.length > 0,
   ).length
+}
+
+function lastUserIndex(messages: unknown): number {
+  return Array.isArray(messages) ? messages.findLastIndex((m) => isRecord(m) && m.role === 'user') : -1
+}
+
+function countUserTurns(messages: unknown): number {
+  return Array.isArray(messages) ? messages.filter((m) => isRecord(m) && m.role === 'user').length : 0
+}
+
+/** Chat-completions only: some system message starts with the host's agent prompt. */
+function isMainRequest(messages: unknown): boolean {
+  if (!Array.isArray(messages)) return false
+  return isMainSystemText(messages.flatMap((m) => (isRecord(m) && (m.role === 'system' || m.role === 'developer') && typeof m.content === 'string' ? [m.content] : [])))
 }
 
 function sse(value: unknown): string {
@@ -161,12 +209,17 @@ export function startScriptedProvider(
       const record = isRecord(body) ? body : {}
       const hasTools = Array.isArray(record.tools) && record.tools.length > 0
       const round = countToolRounds(record.messages)
-      requests.push({ hasTools, round, body, returnedModel: SPIKE_MODEL_ID })
+      const main = isMainRequest(record.messages)
+      const turn = Math.max(0, countUserTurns(record.messages) - 1)
+      const turnRound = countToolRounds(Array.isArray(record.messages) ? record.messages.slice(lastUserIndex(record.messages) + 1) : [])
+      requests.push({ hasTools, round, turn, turnRound, body, returnedModel: SPIKE_MODEL_ID })
 
       let step: ScriptedStep
-      if (!hasTools) {
-        // Background title-generation turn: no tools offered.
+      if (!hasTools && !main) {
+        // Background title-generation turn: no tools offered and not the host's agent prompt.
         step = { text: 'spike title' }
+      } else if (options.turns) {
+        step = options.turns[turn]?.[turnRound] ?? { text: finalText }
       } else {
         step = options.steps[round] ?? { text: finalText }
       }
@@ -194,8 +247,11 @@ export function startScriptedProvider(
   }
 }
 
-/** Provider block for `OPENCODE_CONFIG`/`OPENCODE_CONFIG_CONTENT`. Placeholder key, zero cost. */
-export function scriptedProviderConfig(baseUrl: string): Record<string, unknown> {
+/**
+ * Provider block for `OPENCODE_CONFIG`/`OPENCODE_CONFIG_CONTENT`. Placeholder key, zero cost. `modelId` lets a test
+ * stand in for a model family: the host chooses its tool set and agent prompt from the model id.
+ */
+export function scriptedProviderConfig(baseUrl: string, modelId: string = SPIKE_MODEL_ID): Record<string, unknown> {
   return {
     [SPIKE_PROVIDER_ID]: {
       name: 'Metacogs Spike Provider',
@@ -203,8 +259,8 @@ export function scriptedProviderConfig(baseUrl: string): Record<string, unknown>
       env: [],
       npm: '@ai-sdk/openai-compatible',
       models: {
-        [SPIKE_MODEL_ID]: {
-          id: SPIKE_MODEL_ID,
+        [modelId]: {
+          id: modelId,
           name: 'Metacogs Spike Model',
           attachment: false,
           reasoning: false,

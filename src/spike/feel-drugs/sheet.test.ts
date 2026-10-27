@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 import { sha256 } from '../../runner/workspace'
 import { NUDGE, type RunRecord, type SpikePrompt } from './driver'
-import { loadRuns, redactPaths, renderSheet, writeSheet } from './sheet'
+import { fenced, loadRuns, redactPaths, renderSheet, writeSheet } from './sheet'
 
 const cleanup: (() => void)[] = []
 afterEach(() => {
@@ -80,6 +80,37 @@ describe('redactPaths', () => {
 
   test('text with no path is returned as is', () => {
     expect(redactPaths('plain', { workspaces: [], homes: [] })).toBe('plain')
+  })
+})
+
+describe('redactPaths for package and plugin-cache paths', () => {
+  const none = { workspaces: [], homes: [] }
+
+  test('a node_modules package directory, scoped or not, becomes <pkg> and keeps what follows it', () => {
+    expect(redactPaths('read /srv/x/node_modules/metacogs/skills/synthesis/SKILL.md', none)).toBe('read <pkg>/skills/synthesis/SKILL.md')
+    expect(redactPaths('at /Users/me/.cache/opencode/node_modules/@scope/metacogs/dist/index.js:3', { workspaces: [], homes: ['/Users/me'] })).toBe('at <pkg>/dist/index.js:3')
+  })
+
+  test('the extracted package root of a packed run, and the recorded package paths, become <pkg>', () => {
+    expect(redactPaths('/var/folders/ab/metacogs-packed-Qw12Er/unpacked/package/skills/synthesis', none)).toBe('<pkg>/skills/synthesis')
+    expect(redactPaths('base /opt/pack/package/skills/x and /private/opt/pack/package/y', { workspaces: [], homes: [], packages: ['/opt/pack/package', '/private/opt/pack/package'] })).toBe('base <pkg>/skills/x and <pkg>/y')
+  })
+
+  test('the host plugin cache becomes <cache>, and the installed SDK in a config dir becomes <pkg>', () => {
+    expect(redactPaths('/Users/me/.cache/opencode/packages/x.js', { workspaces: [], homes: ['/Users/me'] })).toBe('<cache>/packages/x.js')
+    expect(redactPaths('/tmp/metacogs-lab-aB3/opencode-config-dir/node_modules/@opencode-ai/plugin/dist/x.js', none)).toBe('<pkg>/dist/x.js')
+    expect(redactPaths('/tmp/metacogs-lab-aB3/opencode-config-dir/package.json', none)).toBe('<cache>/package.json')
+  })
+
+  test('nothing about the package patterns changes the existing workspace and home replacement', () => {
+    expect(redactPaths(`${WS}/notes.md`, { workspaces: [WS], homes: [FAKE_HOME] })).toBe('<ws>/notes.md')
+  })
+})
+
+describe('fenced', () => {
+  test('is exported and picks a fence longer than any run inside the text', () => {
+    expect(fenced('a\n~~~\nb', 'markdown')).toBe('~~~~markdown\na\n~~~\nb\n~~~~')
+    expect(fenced('plain')).toBe('~~~\nplain\n~~~')
   })
 })
 

@@ -55,7 +55,7 @@ function gh(args: string[]): { status: number | null; stderr: string } {
   return { status: r.status, stderr: r.stderr.trim() }
 }
 
-function ghReleaseExists(tag: string): boolean {
+export function ghReleaseExists(tag: string): boolean {
   const r = gh(['release', 'view', tag])
   if (r.status === 0) return true
   if (/release not found/i.test(r.stderr)) return false

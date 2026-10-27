@@ -11,7 +11,7 @@
  *    that must not be quotable from stdout, stderr, or any request body;
  * 4. the child env itself (no credentials, no stray `METACOGS_*`, one config channel).
  */
-import type { RecordedRequest } from './scripted-provider'
+import { isMainSystemText, type RecordedRequest } from './scripted-provider'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -80,13 +80,24 @@ export function modelSeenText(requests: readonly RecordedRequest[]): string {
  */
 export function availableSkillsFromRequests(requests: readonly RecordedRequest[]): string[] | null {
   const main = requests.find((r) => r.hasTools)
-  if (!main) return null
-  const text = systemPromptText([main])
+  return main ? availableSkillsIn(main) : null
+}
+
+function availableSkillsIn(request: RecordedRequest): string[] | null {
+  const text = systemPromptText([request])
   const open = text.indexOf('<available_skills>')
   if (open === -1) return null
   const close = text.indexOf('</available_skills>', open)
   const block = text.slice(open, close === -1 ? undefined : close)
   return [...block.matchAll(/<name>([^<]+)<\/name>/g)].map((m) => m[1] ?? '')
+}
+
+/**
+ * The request holds the host's agent prompt: its system text names OpenCode as the agent and is not an internal title,
+ * compaction or summary call. True whether or not the request offers tools, so a tool-free arm's request is still found.
+ */
+export function isMainRequest(request: RecordedRequest): boolean {
+  return isRecord(request.body) && isMainSystemText(systemTexts(request.body))
 }
 
 /** A tool entry's name on any wire: chat completions `function.name`, Responses and Anthropic `name`. */
@@ -146,10 +157,48 @@ export interface DebugConfigVerdict {
   detail: string
 }
 
-/** The effective config is the generated config plus empty host defaults, nothing else. */
-export function checkDebugConfig(effective: unknown, generated: Record<string, unknown>): DebugConfigVerdict {
-  if (!isRecord(effective)) return { passed: false, detail: '`debug config` did not return a JSON object' }
+/**
+ * What a plugin arm lets the host add to the effective config beyond the generated file. Each allowance is checked
+ * strictly: the key must be present and carry exactly what is declared, so a plugin that failed to load is a failure.
+ */
+export interface ExpectedConfig {
+  /** `plugin_origins` lists exactly the specs of the generated `plugin` entries, one origin each. */
+  pluginOrigins?: boolean
+  /** `skills` is exactly `{ paths }` with these paths. */
+  skillsPaths?: readonly string[]
+}
+
+const specOf = (entry: unknown): string | undefined => (typeof entry === 'string' ? entry : Array.isArray(entry) && typeof entry[0] === 'string' ? entry[0] : undefined)
+const sameList = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && [...a].sort().every((v, i) => v === [...b].sort()[i])
+
+/** Checks the allowed host additions and returns the effective config without them. */
+function takeExpected(effective: Record<string, unknown>, generated: Record<string, unknown>, expected: ExpectedConfig, problems: string[]): Record<string, unknown> {
+  const rest = { ...effective }
+  if (expected.pluginOrigins && !('plugin_origins' in generated)) {
+    // The host lists a bare spec as a string and a spec with options as the whole `[spec, options]` entry.
+    const entries = Array.isArray(generated.plugin) ? generated.plugin : []
+    const origins = Array.isArray(effective.plugin_origins) ? effective.plugin_origins.map((o) => (isRecord(o) ? o.spec : undefined)) : undefined
+    if (entries.length === 0 || entries.some((entry) => specOf(entry) === undefined)) problems.push('plugin_origins: expected, but the generated config has no plugin entries')
+    else if (origins === undefined) problems.push('plugin_origins: missing, so the plugin did not load')
+    else if (origins.length !== entries.length || !sameList(origins.map((o) => JSON.stringify(o)), entries.map((entry) => JSON.stringify(entry)))) problems.push('plugin_origins: differs from the generated plugin entries')
+    delete rest.plugin_origins
+  }
+  if (expected.skillsPaths && !('skills' in generated)) {
+    const skills = effective.skills
+    const paths = isRecord(skills) && Array.isArray(skills.paths) ? skills.paths : undefined
+    if (!isRecord(skills) || Object.keys(skills).length !== 1 || paths === undefined || !sameList(paths.filter((p): p is string => typeof p === 'string'), expected.skillsPaths) || paths.length !== expected.skillsPaths.length) {
+      problems.push(`skills: expected exactly { paths: [${expected.skillsPaths.join(', ')}] }`)
+    }
+    delete rest.skills
+  }
+  return rest
+}
+
+/** The effective config is the generated config plus empty host defaults, plus whatever `expected` declares, nothing else. */
+export function checkDebugConfig(effectiveConfig: unknown, generated: Record<string, unknown>, expected?: ExpectedConfig): DebugConfigVerdict {
+  if (!isRecord(effectiveConfig)) return { passed: false, detail: '`debug config` did not return a JSON object' }
   const problems: string[] = []
+  const effective = expected ? takeExpected(effectiveConfig, generated, expected, problems) : effectiveConfig
   for (const key of Object.keys(effective)) {
     if (key in generated) {
       if (!equalsMasked(effective[key], generated[key])) problems.push(`${key}: differs from generated config`)
@@ -189,7 +238,7 @@ export interface IsolationEvidence {
   expectedSkills: string[]
   /** `null`: the system prompt carried no `<available_skills>` block (or no request was seen). */
   availableSkills: string[] | null
-  /** A tool-capable request was recorded, so the model-visible list could be read at all. */
+  /** A tool-capable request (a main request, for a tool-free arm) was recorded, so the model-visible list could be read at all. */
   skillListObserved: boolean
 }
 
@@ -204,6 +253,10 @@ export interface IsolationInput {
   childEnv: Readonly<Record<string, string>>
   /** label → value; none may appear in stdout, stderr, or any request body. */
   decoys: Readonly<Record<string, string>>
+  /** Opt-in: host additions a plugin arm allows in the effective config. Absent: none. */
+  expectedConfig?: ExpectedConfig | undefined
+  /** Opt-in: the arm offers no tools at all, so the skill list is read from a recorded main request instead of a tool-capable one. */
+  toolFree?: boolean | undefined
 }
 
 const CREDENTIAL_KEY = /KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL/i
@@ -212,8 +265,10 @@ export function checkIsolation(input: IsolationInput): IsolationEvidence {
   const checks: IsolationCheck[] = []
 
   // 1. The model was offered exactly the expected skills (exact set compare, built-in hidden).
-  const hasToolRequest = input.requests.some((r) => r.hasTools)
-  const observed = availableSkillsFromRequests(input.requests)
+  const toolFree = input.toolFree === true
+  const observedRequest = toolFree ? input.requests.find(isMainRequest) : input.requests.find((r) => r.hasTools)
+  const hasToolRequest = observedRequest !== undefined
+  const observed = observedRequest ? availableSkillsIn(observedRequest) : null
   const names = observed ?? []
   const expected = [...input.expectedSkills].sort()
   const actual = [...names].sort()
@@ -223,13 +278,15 @@ export function checkIsolation(input: IsolationInput): IsolationEvidence {
     passed: exact,
     detail: hasToolRequest
       ? `expected [${expected.join(', ')}], model saw [${actual.join(', ')}]`
-      : 'no tool-capable request was observed; the skill list cannot be verified',
+      : toolFree
+        ? 'no main request was observed; the skill list cannot be verified'
+        : 'no tool-capable request was observed; the skill list cannot be verified',
   })
 
   // 2. Effective config is the generated config.
   const dbg = input.debugConfigJson === undefined
     ? { passed: false, detail: 'debug config output unavailable' }
-    : checkDebugConfig(input.debugConfigJson, input.generatedConfig)
+    : checkDebugConfig(input.debugConfigJson, input.generatedConfig, input.expectedConfig)
   checks.push({ name: 'debug_config_generated_only', passed: dbg.passed, detail: dbg.detail })
 
   // 3. Decoys are not quotable.

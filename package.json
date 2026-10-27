@@ -5,15 +5,46 @@
   "workspaces": [
     "."
   ],
-  "private": true,
+  "description": "Explicit, testable reasoning methods as portable Agent Skills, and an OpenCode plugin that adds two tools and four skills",
   "type": "module",
+  "main": "./dist/index.js",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js"
+    }
+  },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/marcusrbrown/metacogs.git"
+  },
+  "bugs": {
+    "url": "https://github.com/marcusrbrown/metacogs/issues"
+  },
+  "homepage": "https://github.com/marcusrbrown/metacogs#readme",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "testedWith": {
+    "opencode": "1.19.4"
+  },
+  "files": [
+    "dist",
+    "skills",
+    "plugin",
+    "ATTRIBUTIONS.md",
+    "LICENSE",
+    "README.md"
+  ],
   "engines": {
     "node": ">=22"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test --pass-with-no-tests",
+    "build": "bun src/plugin/build.ts",
+    "prepublishOnly": "bun run build && bun test",
     "generate": "bun src/generate/bundle-helpers.ts",
     "generate:check": "bun src/generate/check.ts",
     "eval": "bun src/runner/cli.ts",
@@ -22,14 +53,21 @@
     "scan:secrets": "bun src/scan/secrets.ts",
     "spike:feel-drugs": "bun src/spike/feel-drugs/driver.ts",
     "spike:feel-drugs:sheet": "bun src/spike/feel-drugs/sheet.ts",
+    "spike:guided": "bun src/spike/feel-drugs/guided.ts",
+    "spike:blind": "bun src/spike/feel-drugs/blind.ts blind",
+    "spike:reveal": "bun src/spike/feel-drugs/blind.ts reveal",
     "version": "changeset version && bun run generate",
-    "release": "bun src/release/release.ts"
+    "release": "bun src/release/release.ts",
+    "publish-release": "bun src/release/publish.ts"
   },
   "devDependencies": {
     "@changesets/cli": "3.0.3",
     "@modelcontextprotocol/sdk": "1.32.2",
     "@types/bun": "1.4.4",
     "typescript": "7.0.2",
-    "zod": "3.25.76"
+    "zod": "4.1.8"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "1.19.4"
   }
 }

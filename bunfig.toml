@@ -1,2 +1,6 @@
 [test]
 root = "."
+
+# Bun renders .md imports to HTML by default; the plugin embeds the guidance file as raw text.
+[loader]
+".md" = "text"

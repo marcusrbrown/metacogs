@@ -1,10 +1,12 @@
 # metacogs
 
-Explicit, testable reasoning methods packaged as portable [Agent Skills](https://agentskills.io/specification). Each method is a short written procedure plus a helper that validates and stores a decision record. A method is included only after an eval shows it changes what a model does on tasks where it should apply, and stays silent on tasks where it should not.
+Explicit, testable reasoning methods packaged as portable [Agent Skills](https://agentskills.io/specification). Each method is a short written procedure plus a helper that validates and stores a decision record. A method is included only after an eval shows it changes what a model does on tasks where it should apply, and stays silent on tasks where it should not. The package is also an [OpenCode plugin](#opencode-plugin).
 
 ## Stance
 
 Altered cognition and jailbreak framing are not objectives of this project. It reinterprets the concepts from [inanna-malick/metacog](https://github.com/inanna-malick/metacog) as ordinary, inspectable procedures: a structured choice, then a response that redirects work. A method structures the model's own reasoning; nothing in it enforces anything. Upstream attribution is in [Attribution](#attribution-and-license).
+
+The OpenCode plugin keeps upstream's tool names, including `drugs`. Here `drugs` is a handle for a deliberate change of approach: the model names a substance as a short label and says what it will do differently on the next attempt. It does not change the model, adds no capability, and nothing in this project claims it improves results. `feel` is a pause on an unnamed tension. Neither supplies facts or checks anything.
 
 ## Install
 
@@ -21,6 +23,44 @@ cp -R <metacogs-clone>/skills/counterfactual .agents/skills/counterfactual
 - **Helper runtime.** The record helper is one dependency-free file that needs Node 22 or newer. The agent runs it with `node`; no install step.
 - **Records.** Records go to `$XDG_STATE_HOME/metacogs/records/` (default `~/.local/state/metacogs/records/`), outside your repository. `METACOGS_RECORDS_DIR` or `--out-dir` overrides it. To keep records in a project, opt in with `METACOGS_RECORDS_DIR=.metacogs/records` and add `.metacogs/records/` to `.gitignore`.
 - **`unrecorded`.** If the helper cannot run (no Node 22, a denied shell command, an unwritable directory), the skill says no record was written and the run is marked `unrecorded`. It never claims a record that does not exist.
+
+## OpenCode plugin
+
+metacogs is also an [OpenCode](https://opencode.ai) plugin. It adds:
+
+- **Two tools**, `feel` and `drugs`. Their descriptions and return text are upstream's. `feel` pauses on a tension that has no name yet. `drugs` states a deliberate change of approach for the next attempt. Neither supplies facts, checks anything, or guarantees a result.
+- **Four skills**: `feel`, `drugs`, `synthesis` and `counterfactual`. OpenCode lists every skill as a slash command, so `/feel` and `/drugs` run the first two, with or without arguments (`/drugs caffeine`). The `feel` and `drugs` skills have the same names as the tools but are separate: a skill is instructions the model loads, and a tool is what it calls. The skills say when to call each tool and how to fill its fields, and `/feel` loads the skill, which then has the model call the tool. `synthesis` and `counterfactual` are the methods described below; the plugin loads them from the package, so no copy under `.agents/skills/` is needed.
+- **A guidance block** of a few lines in the system prompt of normal requests (not the host's title and summary calls). It names the tools and skills and the situations each one fits, and does not require their use. To keep the tools and skills and drop the block:
+
+```json
+{ "plugin": [["metacogs", { "guidance": false }]] }
+```
+
+### Plugin install
+
+Add the package to `plugin` in `opencode.json` (project) or `~/.config/opencode/opencode.json` (user):
+
+```json
+{ "plugin": ["metacogs"] }
+```
+
+OpenCode installs the package on the next start. It is tested on OpenCode 1.19.4.
+
+If you copied `synthesis` or `counterfactual` into `.agents/skills/` or another scanned path, remove those copies. The plugin provides the same skill names, and OpenCode does not guarantee which of two same-named skills wins. The method skills still write their records as described under Install above.
+
+### Where it comes from
+
+`feel` and `drugs` are the tools from [inanna-malick/metacog](https://github.com/inanna-malick/metacog). Their descriptions and return text are copied from upstream at the pinned commit (see [Attribution](#attribution-and-license)); the skill text around them is this project's. `synthesis` and `counterfactual` carry the evals under [Evidence](#evidence). The tools and the `feel` and `drugs` skills have no eval of that kind.
+
+### Model notes
+
+Observed on OpenCode 1.19.4 with GPT-6 Luna, GPT-6.1 Sol, Claude Haiku 5.5 and Claude Opus 5.5. The samples are small and these are observations, not measurements.
+
+- Models rarely call the `feel` or `drugs` tools on their own.
+- `/feel` and `/drugs` reliably lead to the tools being called. In 32 of 32 runs across the four models, the command was followed by a tool call. Those runs used an earlier form of the commands; the skill form was checked on GPT-6 Luna and Claude Opus 5.5.
+- At a stuck point, such as a requirement that conflicts with a test or a platform limit, models tend to reach for `counterfactual` first. In four such sessions on GPT-6 Luna and Claude Opus 5.5, each loaded `counterfactual` and none called a tool unprompted.
+
+How the plugin was tested is recorded in [`evals/spikes/feel-drugs/README.md`](evals/spikes/feel-drugs/README.md).
 
 ## Methods
 
@@ -84,10 +124,10 @@ Runs happen in a throwaway workspace with a scrubbed environment so nothing from
 
 ## Releases and automation
 
-Releases use [Changesets](https://github.com/changesets/changesets). Pending changesets produce a version PR; merging it creates the `v*` tag and a GitHub Release. Nothing is published to a registry.
+Releases use [Changesets](https://github.com/changesets/changesets). Pending changesets produce a version PR; merging it creates the `v*` tag and a GitHub Release, and the release workflow then publishes the package to npm with provenance. The runbook for the first publish is in [docs/install.md](docs/install.md#publishing-the-package).
 
 Fro Bot reviews pull requests and acts on `@fro-bot` mentions. The daily autoheal may open one fix PR and must not touch eval evidence (`evals/**`) or skill text (`skills/**`).
 
 ## Attribution and license
 
-MIT. This project reinterprets concepts from [inanna-malick/metacog](https://github.com/inanna-malick/metacog) (MIT, pinned at commit `3d89bb30cd26369fdcd242fd704f66641dca327c`). Both copyright notices are in [LICENSE](LICENSE).
+MIT. This project reinterprets concepts from [inanna-malick/metacog](https://github.com/inanna-malick/metacog) (MIT, pinned at commit `3d89bb30cd26369fdcd242fd704f66641dca327c`). Both copyright notices are in [LICENSE](LICENSE). The upstream text that the plugin's tools reuse is listed in [ATTRIBUTIONS.md](ATTRIBUTIONS.md).

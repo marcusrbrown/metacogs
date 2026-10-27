@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { availableSkillsFromRequests, checkDebugConfig, checkIsolation, failedChecks, type IsolationInput, offeredTools, systemPromptSent, systemTexts } from './isolation'
+import { availableSkillsFromRequests, checkDebugConfig, checkIsolation, type ExpectedConfig, failedChecks, type IsolationInput, isMainRequest, offeredTools, systemPromptSent, systemTexts } from './isolation'
 import type { RecordedRequest } from './scripted-provider'
 
 const skillsBlock = (names: string[]) =>
@@ -185,5 +185,174 @@ describe('checkDebugConfig', () => {
   test('non-object output fails closed', () => {
     expect(checkDebugConfig(undefined, GENERATED).passed).toBe(false)
     expect(checkDebugConfig([], GENERATED).passed).toBe(false)
+  })
+})
+
+describe('checkDebugConfig with an expected-config object (plugin arms)', () => {
+  const SPEC = 'file:///pkg/dist/index.js'
+  const generated = { ...GENERATED, plugin: [[SPEC, { guidance: true }]] }
+  const expected: ExpectedConfig = { pluginOrigins: true, skillsPaths: ['/pkg/skills', '/pkg/plugin/skills'] }
+  const effective = { ...EFFECTIVE, plugin: [[SPEC, { guidance: true }]], plugin_origins: [{ spec: [SPEC, { guidance: true }], source: '/cfg/opencode.json', scope: 'global' }], skills: { paths: ['/pkg/skills', '/pkg/plugin/skills'] } }
+
+  test('the host-added plugin_origins and the two skills.paths entries pass', () => {
+    expect(checkDebugConfig(effective, generated, expected)).toMatchObject({ passed: true })
+  })
+
+  test('a plugin entry with options lists the whole entry as its origin spec, and that passes; changed options fail', () => {
+    const withOptions = [[SPEC, { guidance: false }]]
+    const gen = { ...GENERATED, plugin: withOptions }
+    const eff = { ...effective, plugin: withOptions, plugin_origins: [{ spec: [SPEC, { guidance: false }], source: '/cfg/opencode.json', scope: 'global' }] }
+    expect(checkDebugConfig(eff, gen, expected)).toMatchObject({ passed: true })
+    expect(checkDebugConfig({ ...eff, plugin_origins: [{ spec: [SPEC, { guidance: true }], source: '/c', scope: 'global' }] }, gen, expected).passed).toBe(false)
+    expect(checkDebugConfig({ ...eff, plugin_origins: [{ spec: SPEC, source: '/c', scope: 'global' }] }, gen, expected).passed).toBe(false)
+  })
+
+  test('the same effective config fails without the expected-config object', () => {
+    const r = checkDebugConfig(effective, generated)
+    expect(r.passed).toBe(false)
+    expect(r.detail).toMatch(/plugin_origins|command|skills/)
+  })
+
+  test('a plugin that did not register is a failure: missing origins or skills paths', () => {
+    const { plugin_origins: _o, ...noOrigins } = effective
+    expect(checkDebugConfig(noOrigins, generated, expected).passed).toBe(false)
+    const { skills: _s, ...noSkills } = effective
+    expect(checkDebugConfig(noSkills, generated, expected).passed).toBe(false)
+  })
+
+  test.each([
+    ['an origin for another spec', { plugin_origins: [{ spec: 'file:///other.js', source: '/c', scope: 'global' }] }],
+    ['a second origin', { plugin_origins: [{ spec: [SPEC, { guidance: true }], source: '/c', scope: 'global' }, { spec: 'file:///other.js', source: '/c', scope: 'local' }] }],
+    ['a command the plugin should not add', { command: { feel: { template: 't', description: 'x' } } }],
+    ['a third skills path', { skills: { paths: ['/pkg/skills', '/pkg/plugin/skills', '/elsewhere'] } }],
+    ['one skills path missing', { skills: { paths: ['/pkg/skills'] } }],
+    ['another skills path', { skills: { paths: ['/elsewhere'] } }],
+    ['another skills key', { skills: { paths: ['/pkg/skills', '/pkg/plugin/skills'], urls: ['https://example.com'] } }],
+    ['a plugin list that differs from the generated one', { plugin: ['file:///evil.js'] }],
+    ['an unrelated host key', { small_model: 'x' }],
+    ['a non-empty agent block', { agent: { build: {} } }],
+  ])('%s fails', (_name, patch) => {
+    expect(checkDebugConfig({ ...effective, ...patch }, generated, expected).passed).toBe(false)
+  })
+
+  test('allowing plugin_origins alone does not allow hook-added skills paths', () => {
+    expect(checkDebugConfig(effective, generated, { pluginOrigins: true }).passed).toBe(false)
+  })
+})
+
+describe('isMainRequest', () => {
+  const ANTHROPIC_LIVE = 'You are OpenCode, the best coding agent on the planet.\n\nYou are an interactive CLI tool that helps users with software engineering tasks.'
+  const GPT_LIVE = 'You are an AI agent powered by OpenCode, a coding agent harness. Help the user achieve their goals.'
+  const GPT_SCRIPTED = 'You are OpenCode, You and the user share the same workspace and collaborate to achieve the user\'s goals.'
+  const INTERNAL = [
+    'You are a title generator. You output ONLY a thread title. Nothing else.',
+    'You are a context summarization agent. You are given a conversation between a user and an agent.',
+    'Summarize what was done in this conversation. Write like a pull request description.',
+    'You are a helpful AI assistant tasked with summarizing conversations',
+  ]
+  const wires: [string, (text: string) => Record<string, unknown>][] = [
+    ['chat completions system message', (text) => ({ messages: [{ role: 'system', content: text }, { role: 'user', content: 'hi' }] })],
+    ['Anthropic system blocks', (text) => ({ system: [{ type: 'text', text }], messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] })],
+    ['Anthropic system string', (text) => ({ system: text, messages: [] })],
+    ['Responses developer item', (text) => ({ input: [{ role: 'developer', content: text }, { role: 'user', content: 'hi' }] })],
+    ['Responses instructions', (text) => ({ instructions: text, input: [] })],
+  ]
+  const request = (body: Record<string, unknown>, hasTools = false): RecordedRequest => ({ hasTools, round: 0, body })
+
+  describe.each([
+    ['Anthropic live', ANTHROPIC_LIVE],
+    ['GPT live (Responses)', GPT_LIVE],
+    ['GPT scripted', GPT_SCRIPTED],
+  ])('the %s agent prompt', (_name, prompt) => {
+    test.each(wires)('is the main request on the %s wire, with and without tools', (_wire, body) => {
+      expect(isMainRequest(request(body(prompt), false))).toBe(true)
+      expect(isMainRequest(request(body(prompt), true))).toBe(true)
+    })
+
+    test('is main in any system entry, case-insensitively, and with the skills block and a guidance block after it', () => {
+      expect(isMainRequest(request({ messages: [{ role: 'system', content: 'preamble' }, { role: 'system', content: prompt.toUpperCase() }] }))).toBe(true)
+      expect(isMainRequest(request({ system: `${prompt}\n<available_skills></available_skills>\n\n<METACOGS_GUIDANCE>\n# metacogs\n</METACOGS_GUIDANCE>` }))).toBe(true)
+    })
+  })
+
+  test.each(INTERNAL.map((text) => [text.slice(0, 40), text]))('an internal request is not main: %s', (_name, text) => {
+    for (const [, body] of wires) expect(isMainRequest(request(body(text)))).toBe(false)
+  })
+
+  test('an internal request is not main even when its text names OpenCode as the agent', () => {
+    for (const text of ['You are a title generator for OpenCode. You output ONLY a thread title.', 'You are a context summarization agent for OpenCode sessions.']) {
+      expect(isMainRequest(request({ messages: [{ role: 'system', content: text }] }))).toBe(false)
+    }
+  })
+
+  test.each([
+    ['another agent prompt', 'You are an agent.'],
+    ['a mention of OpenCode that does not name it as the agent', 'Docs for OpenCode live at the project site.'],
+    ['"you are" far from the name', 'You are expected to read the notes first, every morning, before the standup. OpenCode is a tool.'],
+    ['an empty system entry', ''],
+  ])('%s is not main', (_name, text) => {
+    expect(isMainRequest(request({ messages: [{ role: 'system', content: text }] }))).toBe(false)
+  })
+
+  test('only system-level text counts: a user message or a tool result that quotes the prompt is not main', () => {
+    expect(isMainRequest(request({ messages: [{ role: 'user', content: 'You are OpenCode, the best coding agent' }] }, true))).toBe(false)
+    expect(isMainRequest(request({ input: [{ role: 'user', content: GPT_LIVE }] }))).toBe(false)
+    expect(isMainRequest(request({ messages: [{ role: 'tool', content: GPT_LIVE }] }))).toBe(false)
+  })
+
+  test('a request with no body is not main', () => {
+    expect(isMainRequest({ hasTools: false, round: 0, body: undefined })).toBe(false)
+    expect(isMainRequest({ hasTools: false, round: 0, body: {} })).toBe(false)
+  })
+})
+
+describe('checkIsolation for an arm declared tool-free', () => {
+  const main: RecordedRequest = { hasTools: false, round: 0, body: { messages: [{ role: 'system', content: 'You are opencode, an interactive CLI tool.' }, { role: 'user', content: 'hi' }] } }
+  const title: RecordedRequest = { hasTools: false, round: 0, body: { messages: [{ role: 'system', content: 'You are a title generator.' }, { role: 'user', content: 'hi' }] } }
+
+  test('passes with a recorded main request and no tools', () => {
+    const e = checkIsolation(input({ requests: [title, main], toolFree: true }))
+    expect(failedChecks(e)).toEqual([])
+    expect(e.skillListObserved).toBe(true)
+    expect(e.availableSkills).toBeNull()
+  })
+
+  test('fails closed with only a title request recorded', () => {
+    const e = checkIsolation(input({ requests: [title], toolFree: true }))
+    expect(failedChecks(e).map((c) => c.name)).toEqual(['available_skills_exact'])
+    expect(e.skillListObserved).toBe(false)
+  })
+
+  test('without the declaration a request with no tools is still unobserved (existing behaviour)', () => {
+    const e = checkIsolation(input({ requests: [title, main] }))
+    expect(e.skillListObserved).toBe(false)
+    expect(failedChecks(e).map((c) => c.name)).toEqual(['available_skills_exact'])
+  })
+
+  test('an expected skill that the zero-tool main request does not list fails', () => {
+    expect(checkIsolation(input({ requests: [main], toolFree: true, expectedSkills: ['demo'] })).passed).toBe(false)
+  })
+
+  test('a skill list in a zero-tool main request is compared exactly', () => {
+    const listed: RecordedRequest = { hasTools: false, round: 0, body: { messages: [{ role: 'system', content: `You are opencode.\n${skillsBlock(['demo'])}` }, { role: 'user', content: 'hi' }] } }
+    expect(checkIsolation(input({ requests: [listed], toolFree: true, expectedSkills: ['demo'] })).passed).toBe(true)
+    expect(checkIsolation(input({ requests: [listed], toolFree: true })).passed).toBe(false)
+  })
+
+  test('the live GPT request on the Responses wire is found as the main request, next to its title request', () => {
+    const live: RecordedRequest = { hasTools: false, round: 0, body: { include: [], input: [{ role: 'developer', content: 'You are an AI agent powered by OpenCode, a coding agent harness. Help the user.' }, { role: 'user', content: 'hi' }], store: false, stream: true } }
+    const liveTitle: RecordedRequest = { hasTools: false, round: 0, body: { input: [{ role: 'developer', content: 'You are a title generator. You output ONLY a thread title. Nothing else.\n\n<task>' }, { role: 'user', content: 'hi' }] } }
+    const e = checkIsolation(input({ requests: [liveTitle, live], toolFree: true }))
+    expect(failedChecks(e)).toEqual([])
+    expect(e.skillListObserved).toBe(true)
+    expect(failedChecks(checkIsolation(input({ requests: [liveTitle], toolFree: true }))).map((c) => c.name)).toEqual(['available_skills_exact'])
+  })
+
+  test('the expected-config object reaches the debug-config check', () => {
+    const generated = { ...GENERATED, plugin: ['file:///p.js'] }
+    const effective = { ...EFFECTIVE, plugin: ['file:///p.js'], plugin_origins: [{ spec: 'file:///p.js', source: '/c', scope: 'global' }] }
+    const withObject = input({ generatedConfig: generated, debugConfigJson: effective, expectedConfig: { pluginOrigins: true } })
+    expect(failedChecks(checkIsolation(withObject))).toEqual([])
+    expect(failedChecks(checkIsolation({ ...withObject, expectedConfig: undefined })).map((c) => c.name)).toEqual(['debug_config_generated_only'])
   })
 })

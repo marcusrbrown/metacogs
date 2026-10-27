@@ -94,6 +94,8 @@ interface RepoSpec {
   /** Replace the README table with this text instead of the rendered one. */
   table?: string
   skill?: boolean
+  /** Extra files, by repo-relative path, written after the defaults. */
+  files?: Record<string, string>
 }
 
 function repo(spec: RepoSpec = {}): string {
@@ -108,6 +110,7 @@ function repo(spec: RepoSpec = {}): string {
   if (spec.skill !== false) put('skills/synthesis/SKILL.md', '---\nname: synthesis\n---\n')
   if (spec.report !== null) put('evals/reports/synthesis/green.json', JSON.stringify(spec.report ?? greenReport()))
   if (spec.install !== null) put('docs/install.md', spec.install ?? INSTALL_DOC)
+  for (const [rel, content] of Object.entries(spec.files ?? {})) put(rel, content)
   const table = spec.table ?? renderTable(matrix)
   put('README.md', `# metacogs\n\n${README_START}\n${table}\n${README_END}\n\nafter\n`)
   return root
@@ -141,6 +144,36 @@ describe('checkMatrix: happy path', () => {
 
   test('the committed matrix, install guide, reports, and README agree', () => {
     expect(checkMatrix({ root: REPO_ROOT })).toEqual([])
+  })
+})
+
+describe('checkMatrix: the plugin entry', () => {
+  const SPIKE = 'evals/spikes/feel-drugs/README.md'
+  const entry = () => ({ host: 'opencode', host_version: '1.19.4', evidence_ref: `${SPIKE}#plugin-reads`, date: '2026-10-26', note: 'Tested on the pinned release.' })
+  const files = { [SPIKE]: '# Spike\n\n## Plugin reads\n\nFacts.\n' }
+  const withPlugin = (patch: Record<string, unknown> = {}, spec: RepoSpec = { files }) =>
+    problemsFor(m => void (m.plugin = { ...entry(), ...patch } as Matrix['plugin']), spec)
+
+  test('an entry whose evidence_ref points at an existing README section passes', () => {
+    expect(withPlugin()).toEqual([])
+    expect(withPlugin({ evidence_ref: 'README.md#plugin' })).toEqual(['plugin: README.md has no section for #plugin'])
+  })
+
+  test('an unknown key is rejected', () => {
+    expect(withPlugin({ stauts: 'verified' })).toEqual(['plugin: unknown field "stauts"'])
+  })
+
+  test('a missing section, a missing file and a foreign ref are rejected', () => {
+    expect(withPlugin({ evidence_ref: `${SPIKE}#nowhere` })).toEqual([`plugin: ${SPIKE} has no section for #nowhere`])
+    expect(withPlugin({}, {})).toEqual([`plugin: evidence_ref points into ${SPIKE}, which does not exist`])
+    expect(withPlugin({ evidence_ref: 'docs/install.md#opencode' }).join('\n')).toContain('evidence_ref must be README.md#<section>')
+  })
+
+  test('an undeclared host, an empty version and a bad date are rejected', () => {
+    const out = withPlugin({ host: 'vim', host_version: '', date: '2026-13-40' }).join('\n')
+    expect(out).toContain('host must name a declared host')
+    expect(out).toContain('host_version must be a non-empty string')
+    expect(out).toContain('date must be a real YYYY-MM-DD date')
   })
 })
 

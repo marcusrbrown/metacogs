@@ -8,7 +8,7 @@ import { heldoutFingerprints } from './prereg'
 import { toolUses } from './events'
 import { opencodeAvailability } from './opencode'
 import { plantSkill, runOpencode } from './spike/isolation'
-import { scriptedProviderConfig } from './scripted-provider'
+import { SPIKE_MODEL_ID, SPIKE_PROVIDER_ID, scriptedProviderConfig } from './scripted-provider'
 import {
   assertInstalledSkills,
   buildConfig,
@@ -253,6 +253,68 @@ describe('run workspace seams (configExtra, permission, skillSource)', () => {
 
   test('a skillSource without SKILL.md is an error', () => {
     expect(() => base(repoWithSkill(), { condition: 'skill', skillSource: { name: 'frames', dir: tmp() } })).toThrow(/SKILL.md/)
+  })
+})
+
+describe('run workspace plugin entry and explicit expected skills', () => {
+  const base = (extra: Partial<Parameters<typeof createRunWorkspace>[0]> = {}) => {
+    const ws = createRunWorkspace({
+      repoRoot: tmp('metacogs-empty-repo-'),
+      method: 'demo',
+      condition: 'baseline',
+      fixtureId: 'f1',
+      fixtureText: 'x\n',
+      provider: { kind: 'scripted', url: 'http://127.0.0.1:1/v1' },
+      model: 'a/b',
+      ...extra,
+    })
+    cleanup.push(() => destroyFixture(ws.fixture))
+    return ws
+  }
+  const SPEC = 'file:///pkg/dist/index.js'
+
+  test('a plugin entry lands in the config after the provider block and before configExtra', () => {
+    const ws = base({ plugin: [[SPEC, { guidance: false }]], configExtra: { mcp: {} } })
+    expect(Object.keys(ws.config)).toEqual(['$schema', 'autoupdate', 'share', 'permission', 'provider', 'plugin', 'mcp'])
+    expect(ws.config.plugin).toEqual([[SPEC, { guidance: false }]])
+    expect(JSON.parse(readFileSync(ws.fixture.configPath, 'utf8')).plugin).toEqual([[SPEC, { guidance: false }]])
+  })
+
+  test('a bare spec string is accepted', () => {
+    expect(base({ plugin: [SPEC] }).config.plugin).toEqual([SPEC])
+  })
+
+  test('a plugin entry installs no skill: .agents/skills is not created', () => {
+    const ws = base({ plugin: [SPEC] })
+    expect(existsSync(join(ws.fixture.workspace, '.agents'))).toBe(false)
+    expect(ws.expectedSkills).toEqual([])
+  })
+
+  test('explicit expectedSkills names skills the plugin provides, with no copy in the workspace', () => {
+    const ws = base({ plugin: [SPEC], expectedSkills: ['synthesis', 'counterfactual'] })
+    expect(ws.expectedSkills).toEqual(['synthesis', 'counterfactual'])
+    expect(existsSync(join(ws.fixture.workspace, '.agents'))).toBe(false)
+  })
+
+  test('explicit expectedSkills do not relax the check on what is installed in the workspace', () => {
+    const dir = join(tmp('metacogs-outside-skill-'), 'frames')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'SKILL.md'), '---\nname: frames\ndescription: x\n---\nbody\n')
+    const ws = base({ condition: 'skill', skillSource: { name: 'frames', dir }, expectedSkills: ['frames', 'synthesis'] })
+    expect(readdirSync(join(ws.fixture.workspace, '.agents', 'skills'))).toEqual(['frames'])
+    expect(ws.expectedSkills).toEqual(['frames', 'synthesis'])
+  })
+
+  test('a scripted provider takes a model id to stand in for a model family; the default is the spike model', () => {
+    const models = (ws: ReturnType<typeof base>) => Object.keys((ws.config.provider as Record<string, { models: Record<string, unknown> }>)[SPIKE_PROVIDER_ID]!.models)
+    expect(models(base({ provider: { kind: 'scripted', url: 'http://127.0.0.1:1/v1', modelId: 'gpt-scripted' } }))).toEqual(['gpt-scripted'])
+    expect(models(base())).toEqual([SPIKE_MODEL_ID])
+  })
+
+  test('without the new fields nothing about the config or the expected skills changes', () => {
+    const ws = base()
+    expect(Object.keys(ws.config)).toEqual(['$schema', 'autoupdate', 'share', 'permission', 'provider'])
+    expect(ws.expectedSkills).toEqual([])
   })
 })
 

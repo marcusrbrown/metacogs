@@ -283,7 +283,7 @@ export function copySkillDir(source: string, dest: string): void {
 // ── the run workspace ──────────────────────────────────────────────────────
 
 export type ProviderWiring =
-  | { kind: 'scripted'; url: string }
+  | { kind: 'scripted'; url: string; /** Model id under the scripted provider, to stand in for a model family. Default: the spike model. */ modelId?: string }
   | { kind: 'live'; recordingProxyUrl: string }
 
 export interface RunWorkspaceInput {
@@ -308,6 +308,13 @@ export interface RunWorkspaceInput {
    * the `skills/<method>` lookup is skipped and `<name>` is the one expected skill.
    */
   skillSource?: { name: string; dir: string }
+  /** Opt-in: plugin entries for the config's `plugin` key, placed after the provider block and before `configExtra`. */
+  plugin?: readonly (string | [string, Record<string, unknown>])[]
+  /**
+   * Opt-in: the skills the model is expected to be offered, replacing the list derived from `condition`. For skills a
+   * plugin provides; what is installed under `.agents/skills` is still checked against the derived list.
+   */
+  expectedSkills?: readonly string[]
 }
 
 /** Strings that must never be quotable from inside the run. */
@@ -370,14 +377,14 @@ function populateRunWorkspace(input: RunWorkspaceInput, fixture: Fixture): RunWo
 
   const providerConfig =
     provider.kind === 'scripted'
-      ? scriptedProviderConfig(provider.url)
+      ? scriptedProviderConfig(provider.url, provider.modelId)
       : input.cliproxy
         ? cliproxyProviderConfig(provider.recordingProxyUrl)
         : { [providerOf(input.model)]: { options: { baseURL: provider.recordingProxyUrl } } }
   const config = buildConfig({
     permission: input.permission ?? permissionFor(condition, method, [...new Set([fixture.workspace, realpathSync(fixture.workspace)])]),
     provider: providerConfig,
-    ...(input.configExtra ? { extra: input.configExtra } : {}),
+    ...(input.plugin || input.configExtra ? { extra: { ...(input.plugin ? { plugin: [...input.plugin] } : {}), ...input.configExtra } } : {}),
   })
   const env = buildChildEnv({ fixture, config, withRecordsDir: true })
   writeIsolatedAuth(fixture, input.auth ?? {})
@@ -386,7 +393,7 @@ function populateRunWorkspace(input: RunWorkspaceInput, fixture: Fixture): RunWo
     fixture,
     config,
     env,
-    expectedSkills,
+    expectedSkills: input.expectedSkills ? [...input.expectedSkills] : expectedSkills,
     skill,
     decoys: {
       authorHome: author.home,

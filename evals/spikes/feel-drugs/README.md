@@ -1,6 +1,15 @@
 # feel/drugs mechanism spike
 
-An experiment with a human read, not a method: no prereg, rubric, judge, tally or matrix cell. Epoch 1 of this spike; the frozen prompt hash below is its only contract. Plan: `docs/plans/2026-10-25-001-feat-feel-drugs-spike-plan.md`. Requirements: `docs/brainstorms/2026-10-25-feel-drugs-spike-requirements.md`.
+An experiment with a human read, not a method: no prereg, rubric, judge, tally or matrix cell. Epoch 1 of this spike; the frozen prompt hash below is its only contract.
+
+**Epoch 2 (declared 2026-10-27).** Epoch 1 is the MCP spike below: arms A, B and C, the four prompts in `prompts.md`, the upstream tool names `metacog_feel` and `metacog_drugs`. Epoch 2 adds, without changing epoch 1's frozen prompts, hash or recorded results:
+
+- **Plugin reads.** The packed OpenCode plugin against nothing, in blind reads 1 and 2 (see [Guided reads: harness](#guided-reads-harness) and [Plugin reads](#plugin-reads)).
+- **Coding prompts.** `c1` and `c2`, the draft coding prompts for read 2, frozen with their own hash.
+- **The guided harness.** `src/spike/feel-drugs/guided.ts` and `blind.ts`, with their own run records, expected-tool tables and diagnostic arms. `p1` is left out of the guided reads; `prompts.md` and its hash are unchanged.
+- **The tool rename.** The plugin's tools are named `feel` and `drugs`; earlier runs recorded them as `metacogs_feel` and `metacogs_drugs`, and the MCP spike keeps `metacog_feel` and `metacog_drugs`. The blind sheet counts all three names in past records.
+
+Results recorded under epoch 1 stay epoch 1 results. Plan: `docs/plans/2026-10-25-001-feat-feel-drugs-spike-plan.md`. Requirements: `docs/brainstorms/2026-10-25-feel-drugs-spike-requirements.md`.
 
 The question: do upstream's `feel` and `drugs` change what a model produces when it composes the fields in a tool call and reads the frame back, compared with reading the same frame as skill text and writing the fields in its reply, and does the model family matter? Upstream is pinned to `inanna-malick/metacog@3d89bb30cd26369fdcd242fd704f66641dca327c` (MIT). Both tools are stateless text templates there.
 
@@ -174,3 +183,84 @@ Recorded verbatim:
 - drugs - (the ones that used it); tool vs skill: tool
 
 The read covers these four prompts and these four models, not the tools in general.
+
+## Plugin host probes
+
+What OpenCode `1.19.4` does with an object plugin, asserted at $0 against the scripted provider in `src/plugin/probe.test.ts` (a throwaway probe plugin, loaded by `file://`). The suite runs only with `METACOGS_HOST_PROBES=1`, on a host pin bump. One line per question:
+
+- **Object plugin id.** A `file://` object plugin without an `id` is not loaded: the host logs `must export id`, the run still exits 0, and the plugin's tools are absent.
+- **Default plugins switch.** A `file://` plugin loads under `OPENCODE_DISABLE_DEFAULT_PLUGINS=1`, so plugin arms do not unset it.
+- **`debug config`.** It shows what the hooks add: `skills.paths`, plus the non-empty `plugin` array and a `plugin_origins` list (`spec`, `source`, `scope`). A run with no plugin has `command: {}`, `plugin: []`, and no `skills` or `plugin_origins` key. The expected-config object for plugin arms allows the two `skills.paths` entries (`skills/` and `plugin/skills/`), the `plugin` entry and `plugin_origins`.
+- **`$ARGUMENTS`.** One word arrives raw (`caffeine`), several words arrive JSON-quoted (`"two words"`, the known argv quirk), and no argument arrives as the empty string, so `<args></args>` and the template's empty-arguments branch apply.
+- **Skill-name precedence.** A plugin `skills.paths` copy and `.agents/skills` copies (project, HOME) of one name are listed once and one copy loads, but the winner is not stable: in 6 runs of one fixture with the plugin loaded the plugin copy won 3 and the project copy 3, and in 6 runs with the copies alone the project copy won 5 and the HOME copy 1. There is no precedence to document; the docs say to remove the `.agents/skills` copy when the plugin is installed. A skill that exists only in the plugin path always loads.
+- **Title and summary signatures.** The title request starts `You are a title generator. You output ONLY a thread title.`, which matches Systematic's `You are a title generator`. Systematic's `You are a helpful AI assistant tasked with summarizing conversations` does not appear on 1.19.4: the compaction request starts `You are a context summarization agent.` The guidance constant gains that string; the transform hook fires for the title request and the compaction request, both with a `sessionID`.
+- **Built-in tools after the deny set.** Denying `glob`, `grep`, `list`, `read`, `edit`, `bash`, `task`, `todowrite`, `question`, `webfetch`, `websearch`, `lsp` and `skill` leaves no tool at all: the main request carries no `tools` array, so N1's main request is found by its `You are opencode` system text and not by `hasTools`. With the plugin loaded and only its skills allowed, the offered tools are exactly the plugin's tools and `skill`.
+- **Same plugin in two config layers.** The same spec in two layers is one entry: `server()` runs once, the project layer's options replace the file layer's, and the tool is offered once.
+- **Two distinct plugins.** Both load. They share a tool name by last-loaded-wins (the project layer over the file layer, and the later array entry over the earlier), and each transform hook runs, so a plugin that only appends adds one block per instance; the guidance strips existing blocks before it appends.
+- **`permission.skill` and per-agent lists.** `skill: deny`, `skill: {"*": "deny"}` and an agent-level `{"*": "deny"}` remove the `skill` tool and list no skills, the plugin's included. A per-name allow keeps the named skill, and a per-name deny hides just that one.
+- **Session replay after uninstall.** A resumed session replays the old `tool_calls` entry (`probe_tool`) and its result as history while the tool is no longer offered, and the run exits 0. Whether a real provider accepts that history is not tested at $0, so the docs say to start a new session after removing the plugin.
+- **Stale `skills.paths`.** A path added by an earlier plugin config does not survive a fresh config load; the host keeps no copy, so no scrub is needed.
+- **Config-dir install.** The first run that loads a plugin makes the host run `npm install @opencode-ai/plugin` in `OPENCODE_CONFIG_DIR` (about 20 s, over the network). The probe tests install it once and copy the directory into each fixture, with `npm_config_offline=true`.
+- **Not run.** `Agent.generate` (the `opencode agent create` path) also triggers the transform hook, with no `sessionID` (read from the 1.19.4 binary, not run).
+
+## Manual check: Systematic loaded alongside
+
+Not automated and not run yet. `src/plugin/integration.test.ts` covers the plugin alone; coexistence with Systematic is checked by hand when its pin changes.
+
+1. In a scratch project, set `opencode.json` to `{"plugin": ["@fro.bot/systematic@<pinned version>", "<file:// URL of the extracted metacogs package>/dist/index.js"]}` and start `opencode`.
+2. Send one message and read the request (`opencode run --print-logs`, or a recording provider). Expect the system text to hold one `<SYSTEMATIC_WORKFLOWS>` block and one `<METACOGS_GUIDANCE>` block, each once.
+3. Run `opencode debug config`. Expect `command` to hold nothing from metacogs and `skills.paths` to list the package's `skills/` and `plugin/skills/`.
+4. Expect `synthesis`, `counterfactual`, `feel` and `drugs` in the skill list. Systematic applies its own per-agent skill rules, which can hide the metacogs skills from the agents it manages; note any agent that loses them.
+
+## Guided reads: harness
+
+`src/spike/feel-drugs/guided.ts` runs the plugin arms against the packed package (`bun run spike:guided`). The model is offered, per arm:
+
+| Arm | Read | Permission | Offered tools |
+| --- | --- | --- | --- |
+| N1 | 1 | every built-in tool denied | none |
+| P1 | 1 | the same, with `skill` limited to `synthesis`, `counterfactual`, `feel` and `drugs` | `drugs`, `feel`, `skill` |
+| N2 | 2 | the shell, the network and outside directories denied; the rest at the host default | GPT: `apply_patch`, `glob`, `grep`, `read`, `skill`, `task`, `todowrite`. Anthropic: `edit`, `glob`, `grep`, `read`, `skill`, `task`, `todowrite`, `write` |
+| P2 | 2 | as N2, with the plugin loaded | N2's tools plus `feel` and `drugs` |
+
+A run is `completed` only if the offered names, the plugin tools' property names and their `required` lists match that table; otherwise it is `tools_missing` or `tools_extra`. Read 2 lists `customize-opencode` beside the plugin skills (`feel` and `drugs` also run as slash commands: the host exposes every skill that way). Read 1 uses the prompts in `prompts.md` except p1, the lighthouse story (p2 to p4; the file and its hash are unchanged); read 2 adds the two in `coding-prompts.md`, and a metacogs call on those is recorded as unwanted.
+
+Live runs refuse unless `prompts_sha256`, `guidance_sha256` and (read 2) `coding_prompts_sha256` in this README match the files. `--cells one-per-model` (or `<prompt>@<model>`) runs a first pass, and a later full run keeps those runs.
+
+### Frozen files
+
+`plugin/guidance.md` is the guidance text the owner approved as committed. `coding-prompts.md` is the owner-approved read 2 coding prompts. Any edit to either needs its hash recomputed (`shasum -a 256 <file>`) in the same commit, and a change to the guidance wording starts a fresh read.
+
+guidance_sha256: 188a643060cee63356f007da187f6bc79c128ebc6de0544872741ea617d3d369
+coding_prompts_sha256: 39351741feea49278bdfdbb261f5e691c0ff3ad4aff06d7e867b39d3ccc8b0ea
+
+### Diagnostic arms
+
+`--guidance on|off` and `--nudge` run read 1's P1 arm with the guidance block switched off (`{ "guidance": false }` in the plugin entry; the packed `plugin/guidance.md` and its frozen hash are unchanged) and/or the spike's nudge sentence appended to the prompt, exactly as the spike driver's `--nudge` does. They need `--read 1 --arm P1`. The four arms are A (guidance on, no nudge), B (guidance and nudge), C (neither) and D (nudge alone); `--start-run <n>` numbers an invocation's runs from `n` so interleaved invocations form one set. Records carry `guidance_enabled` and `nudge`, and the campaign directory is `diag-<arm>-<model>` under the guided state root. A diagnostic campaign is not part of a read: `spike:blind` refuses `diag-*` directories and any record with the nudge or guidance off.
+
+### Environment variables
+
+| Variable | Effect |
+| --- | --- |
+| `METACOGS_HOST_SUITES=1` | Runs the host-backed scripted suites in `guided.test.ts` and `blind.test.ts` (several minutes, $0). Run it before a read and on a host pin bump. The pure unit tests in those files run every time. |
+| `METACOGS_HOST_PROBES=1` | Runs the plugin host probes in `src/plugin/probe.test.ts` (about three minutes, $0). Run it on a host pin bump. |
+| `METACOGS_REQUIRE_HOST=1` | Makes `src/plugin/integration.test.ts` fail instead of skip when the pinned host is unavailable. CI sets it. |
+
+Command runs (`--read 2 --command feel --command drugs=caffeine`) send the prompt, then `opencode run --continue --command <name> [args]` in the same fixture, with isolation checked on each turn. They are P2 runs in their own campaign directory (`commands2-<model>`), one record per run with the turn-2 calls under `second_turn`. `spike:blind` puts them in the key and `spike:reveal` reports them in a checks-only table: per model and command form, how often the tool call followed, how often the main field held the argument text, and which fields were filled. They are not part of any cell or of the rule.
+
+Blind read: `bun run spike:blind --campaign <dir>...` writes `sheet.md` (answers only, a random X/Y side per cell, one hidden control cell of two nothing runs against two) and `key.json` under the state root. The control cell is a prompt and model with four nothing runs and no plugin run (`--arm N1 --runs 4`). Mark each cell's `Verdict:` line X, Y or same, then `bun run spike:reveal --dir <dir>` refuses until every cell is marked, applies the rule and writes `revealed.md`.
+
+## Plugin reads
+
+Facts from the runs against the packed plugin on OpenCode 1.19.4, through CLIProxyAPI, models `openai/gpt-6-luna`, `openai/gpt-6.1-sol`, `anthropic/claude-haiku-5-5` and `anthropic/claude-opus-5-5`. Counts come from the `run.json` files in the guided state root. The plugin's tools were named `metacogs_feel` and `metacogs_drugs` when these runs were made; they are `feel` and `drugs` now.
+
+- **Read 1** (nothing arm against plugin arm, prompts p1 to p4, blind marks by the owner). The plan's rule was met: three cells had a plugin arm that loaded a skill, all three were marked for the plugin, net +3, no model at -3 or worse. The other 12 cells were excluded because the plugin arm never fired. None of the 30 plugin runs called a metacogs tool; 6 loaded a skill (Luna 2, Haiku 2, Sol 2, Opus 0). The control cell (two nothing runs against two) was marked `same`.
+- **Guidance on and off.** Diagnostic runs of the plugin arm on p2 and p3, 6 runs per model and condition: guidance on (A), on with a nudge sentence (B), off (C), off with the nudge (D); B and D on Luna only. Runs with a metacogs call: A Luna 1, others 0; C Luna 3, others 0; B Luna 4; D Luna 3. Skill loads were 2 or 3 of 6 in every condition. Guidance on or off made no consistent difference, and Haiku, Sol and Opus made no call under either.
+- **Read 2** (nothing arm against plugin arm under the host's default tools, p1 to p4 plus the coding prompts c1 and c2). None of the 46 plugin runs called a metacogs tool, on a coding prompt or otherwise. 18 loaded a skill (Luna 6 of 12, Haiku 6 of 10, Sol 5 of 12, Opus 1 of 12). The sheet and key are written; the owner read is pending.
+- **Command runs** (prompt, then `/feel` or `/drugs` with and without arguments; 8 per model). All 32 completed, and in all 32 the second turn made a metacogs call. These ran while the plugin registered the commands itself, before `feel` and `drugs` became skills.
+- **After the reads** the guidance and the `feel` and `drugs` skills were rewritten (observable triggers, tool roles, evidence after the call, an ordering line) and `feel` and `drugs` moved from plugin commands to skills. `guidance_sha256` changed with the rewrite, so none of the runs above used the current wording. p1 was dropped from the guided reads; `prompts.md` and its hash are unchanged.
+- **Hands-on probes** (not scored): debugging, design and long sessions on Luna and Opus with Systematic, oh-my-opencode-slim, magic-context and aft loaded, each at one checkpoint with `/feel` or `/drugs` against a plain "Stop and reassess your approach before continuing." Findings:
+  - No turn that was not a `/feel` or `/drugs` invocation called `metacogs_feel` or `metacogs_drugs`. At each of four conflicts (a requirement against a test, or against a platform limit) both models loaded `counterfactual` first.
+  - At the design conflict `/drugs` was followed by a different next step on both models: Luna worked out a conditional quota-partition design and changed no code; Opus wrote a simulation and reported a design that held in every simulated case (simulated, not proved). The plain reassess prompt gave a restated conclusion on Luna and a self-critique on Opus, with no new design.
+  - At the policy-against-test conflict `/feel` was followed by evidence gathering before any change (a call-graph check on Luna, a review of its own diff on Opus). The plain reassess prompt gave reflection and a recommendation. `/feel` was slightly ahead.
+

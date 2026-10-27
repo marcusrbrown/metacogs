@@ -79,5 +79,12 @@
         "history": []
       }
     }
+  },
+  "plugin": {
+    "host": "opencode",
+    "host_version": "1.19.4",
+    "evidence_ref": "evals/spikes/feel-drugs/README.md#plugin-reads",
+    "date": "2026-10-26",
+    "note": "Tested on the pinned OpenCode release with the packed package: scripted-provider integration suite, host probes and guided reads."
   }
 }

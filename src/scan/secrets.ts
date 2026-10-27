@@ -9,6 +9,7 @@ export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', 
 /** Roots scanned, relative to the repo root. Missing entries are skipped. */
 export const SCAN_TARGETS = [
   'evals',
+  'plugin',
   'skills',
   'src',
   'docs',
