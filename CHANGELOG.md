@@ -1,5 +1,16 @@
 # metacogs
 
+## 0.2.0
+
+### Minor Changes
+
+- ca8c123: Add an OpenCode plugin and publish the package to npm. Install it with `"plugin": ["metacogs"]` in `opencode.json`. It adds the `feel` and `drugs` tools, four skills (`feel` and `drugs`, available as `/feel` and `/drugs`, plus `synthesis` and `counterfactual`), which load from the package without a copy in `.agents/skills`. A short guidance block is added to the system prompt; turn it off with `["metacogs", {"guidance": false}]`.
+- 7a6774b: Security update for npm dependency `@modelcontextprotocol/sdk` from `1.25.2` to `1.32.0`
+
+### Patch Changes
+
+- 0867b19: Update GitHub Actions workflow dependency `fro-bot/agent` from `0.125.3` to `0.125.5`
+
 ## 0.1.2
 
 ### Patch Changes
