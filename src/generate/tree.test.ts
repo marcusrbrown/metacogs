@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { buildMcpServer } from '../plugin/build'
 import { generate } from './bundle-helpers'
-import { buildHelper, buildTree, isOwnedPath, listSkills, OWNED_ROOTS, REPO_ROOT, type TreeEntry } from './tree'
+import { buildHelper, buildTree, isOwnedPath, listSkills, MCP_SERVER_PATHS, OWNED_ROOTS, REPO_ROOT, type TreeEntry } from './tree'
 
 const entry = (text: string, mode: TreeEntry['mode'] = 0o644): TreeEntry => ({ bytes: new TextEncoder().encode(text), mode })
 
@@ -58,12 +59,26 @@ describe('buildTree', () => {
     const tree = await buildTree({})
     const skills = await listSkills(REPO_ROOT)
     expect(skills.length).toBeGreaterThan(0)
-    expect([...tree.keys()].sort()).toEqual(skills.map(name => `skills/${name}/scripts/record.mjs`))
-    for (const [path, built] of tree) {
+    expect([...tree.keys()].filter(path => path.startsWith('skills/')).sort()).toEqual(skills.map(name => `skills/${name}/scripts/record.mjs`))
+    for (const [path, built] of [...tree].filter(([path]) => path.startsWith('skills/'))) {
       expect(Buffer.compare(built.bytes, readFileSync(join(REPO_ROOT, path)))).toBe(0)
       expect(built.mode).toBe(0o644)
       expect((lstatSync(join(REPO_ROOT, path)).mode & 0o111) === 0).toBe(true)
     }
+  })
+
+  test('the repository tree carries the same MCP server bundle in both host directories, mode 644', async () => {
+    const tree = await buildTree({})
+    expect([...tree.keys()].filter(path => path.startsWith('hosts/')).sort()).toEqual([...MCP_SERVER_PATHS])
+    const [claude, codex] = MCP_SERVER_PATHS.map(path => tree.get(path))
+    expect(claude?.mode).toBe(0o644)
+    expect(codex?.mode).toBe(0o644)
+    expect(Buffer.compare(claude!.bytes, codex!.bytes)).toBe(0)
+    expect(Buffer.from(claude!.bytes).toString('utf8')).toBe(await buildMcpServer())
+  })
+
+  test('a fixture root gets no MCP bundle', async () => {
+    expect([...(await buildTree({ root })).keys()]).toEqual(['skills/demo/scripts/record.mjs'])
   })
 
   test('the helper entry is exactly buildHelper output', async () => {

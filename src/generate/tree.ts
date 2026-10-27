@@ -9,12 +9,16 @@
 import { chmod, lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { buildMcpServer } from '../plugin/build'
 import { SHIPPED_METHODS } from '../record/contract'
 import { helperBanner } from './marker'
 
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 export const HELPER_RELPATH = join('scripts', 'record.mjs')
+
+/** Where each host package carries its copy of the MCP server bundle. The two copies are the same bytes. */
+export const MCP_SERVER_PATHS = ['hosts/claude/mcp/server.mjs', 'hosts/codex/mcp/server.mjs'] as const
 
 /** Directories that are fully generated. Posix, repo-relative, trailing slash. */
 export const OWNED_ROOTS = ['hosts/claude/', 'hosts/codex/', '.claude-plugin/', '.agents/plugins/'] as const
@@ -127,6 +131,11 @@ export async function buildTree(options: TreeOptions = {}): Promise<TreeMap> {
   if (skills.length > 0) {
     const helper = new TextEncoder().encode(await buildHelper(options))
     for (const name of skills) add(`skills/${name}/scripts/record.mjs`, { bytes: helper, mode: 0o644 })
+  }
+  // The bundle is built from this repository's sources, so a fixture root (tests) has none to bundle.
+  if (root === REPO_ROOT) {
+    const server = new TextEncoder().encode(await buildMcpServer(options.helperVersion === undefined ? {} : { version: options.helperVersion }))
+    for (const path of MCP_SERVER_PATHS) add(path, { bytes: server, mode: 0o644 })
   }
   for (const [path, entry] of options.extraEntries ?? []) add(path, entry)
   return tree
