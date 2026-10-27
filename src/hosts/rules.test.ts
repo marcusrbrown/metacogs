@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { REPO_ROOT } from '../generate/tree'
-import { applyRules, CLAUDE_PROFILE, claudeRules, HOST_SKILLS, MCP_SERVER_NAME, PLUGIN_NAME, readSkillSource, type Rule, skillSourcePath } from './rules'
+import { applyRules, CLAUDE_PROFILE, CODEX_PROFILE, claudeRules, codexRules, HOST_SKILLS, MCP_SERVER_NAME, PLUGIN_NAME, readSkillSource, type Rule, skillSourcePath } from './rules'
 
 const sources = Object.fromEntries(await Promise.all(HOST_SKILLS.map(async skill => [skill, await readSkillSource(REPO_ROOT, skill)] as const))) as Record<(typeof HOST_SKILLS)[number], string>
 const render = (skill: (typeof HOST_SKILLS)[number]): string => applyRules(claudeRules(), skill, sources[skill])
@@ -96,6 +96,118 @@ describe('the Claude renders (AE1 and AE5, static parts)', () => {
       expect(after.length).toBe(before.length)
       const changed = before.flatMap((line, i) => (line === after[i] ? [] : [i + 1]))
       expect(changed.length).toBe(2)
+    }
+  })
+})
+
+const renderCodex = (skill: (typeof HOST_SKILLS)[number]): string => applyRules(codexRules(), skill, sources[skill])
+
+describe('the Codex rule table', () => {
+  test('every rule matches its expected count in every skill it names, against the real sources', () => {
+    for (const rule of codexRules()) {
+      for (const skill of rule.skills) expect(occurrences(sources[skill], rule.from), `${rule.name} in ${skill}`).toBe(rule.count)
+    }
+  })
+
+  test('has the Claude rules minus the argument hint: same sources, same counts, Codex replacements', () => {
+    const claude = claudeRules()
+    const codex = codexRules()
+    expect(codex.map(rule => rule.name)).toEqual(claude.map(rule => rule.name).filter(name => !name.endsWith(': argument hint')))
+    for (const rule of codex) {
+      const twin = claude.find(other => other.name === rule.name)
+      expect(twin, rule.name).toBeDefined()
+      expect({ from: rule.from, count: rule.count, skills: rule.skills }, rule.name).toEqual({ from: twin!.from, count: twin!.count, skills: twin!.skills })
+    }
+    expect(new Set(codex.map(rule => rule.name)).size).toBe(codex.length)
+  })
+
+  test('the tool names are derived from the server name; skills are namespaced by the plugin name', () => {
+    expect(CODEX_PROFILE.toolName('feel')).toBe(`mcp__${MCP_SERVER_NAME}__feel`)
+    expect(CODEX_PROFILE.toolName('drugs')).toBe('mcp__metacogs__drugs')
+    expect(CODEX_PROFILE.invocation('feel')).toBe(`$${PLUGIN_NAME}:feel`)
+    const renamed = { ...CODEX_PROFILE, toolName: (tool: string) => `mcp__other__${tool}` }
+    expect(applyRules(codexRules(renamed), 'feel', sources.feel)).toContain('Call the `mcp__other__feel` tool')
+  })
+
+  test('a changed source string fails generation, naming the rule', () => {
+    const edited = sources.drugs.replace('the `feel` tool comes first.', 'the `feel` tool goes first.')
+    expect(() => applyRules(codexRules(), 'drugs', edited)).toThrow('rule "drugs: names the feel tool" matched 0 time(s) in plugin/skills/drugs/SKILL.md, expected 1')
+    const reworded = sources.counterfactual.replace("The host reports this skill's base directory", 'The host reports the directory')
+    expect(() => applyRules(codexRules(), 'counterfactual', reworded)).toThrow('rule "counterfactual: record helper intro" matched 0 time(s)')
+  })
+})
+
+describe('the Codex renders', () => {
+  test('both tool renders name the Codex tool and the $ mention, and carry no Claude mechanics', () => {
+    for (const skill of ['feel', 'drugs'] as const) {
+      const text = renderCodex(skill)
+      expect(text).toContain(`Call the \`mcp__metacogs__${skill}\` tool (not the \`${skill}\` skill; you are reading the skill now)`)
+      expect(text).toContain(`The user starts this skill by writing \`$metacogs:${skill}\`.`)
+      expect(text).not.toContain('$ARGUMENTS')
+      expect(text).not.toContain('argument-hint')
+      expect(text).not.toContain('mcp__plugin_')
+      expect(text).toContain('Session length alone is not a reason.\n---\n')
+    }
+    expect(renderCodex('drugs')).toContain('the `mcp__metacogs__feel` tool comes first.')
+  })
+
+  test('AE2: with no text after the mention the model picks the fields from the session', () => {
+    const text = renderCodex('feel')
+    expect(text).toContain("The arguments, if any, are the plain text that follows the mention in the user's message; read them from there.")
+    expect(text).toContain(
+      'If no text follows the mention, or you loaded this skill yourself, there are none.\n\nIf there are arguments, pass them as one string for `somewhere`.',
+    )
+    expect(text).toContain('If there are none, choose `somewhere`, `quality` and `sigil` yourself from what is going on in this session.')
+    expect(renderCodex('drugs')).toContain('If there are none, choose `substance`, `method` and `displaces` yourself from what is going on in this session.')
+  })
+
+  test('both tool renders carry the tool-unavailable fallback before the first section', () => {
+    for (const skill of ['feel', 'drugs'] as const) {
+      const fallback = `If the \`mcp__metacogs__${skill}\` tool is unavailable (for example because Node 22 is not installed), continue in plain text and say so.`
+      expect(renderCodex(skill)).toContain(`${fallback}\n\n## What it is and is not\n`)
+    }
+  })
+
+  test('the method renders run the helper from the directory of the SKILL.md path Codex gave, quoted', () => {
+    for (const skill of ['synthesis', 'counterfactual'] as const) {
+      const text = renderCodex(skill)
+      expect(text).toContain('node "<directory of this SKILL.md>/scripts/record.mjs" <<\'EOF\'')
+      expect(text).toContain('Codex gave you the path of this SKILL.md when it loaded the skill.')
+      expect(text).toContain('keep the quotes around the whole path, and never use a guessed path.')
+      expect(text).not.toContain('<skill-base-dir>')
+      expect(text).not.toMatch(/base directory/i)
+      expect(text).not.toContain('CLAUDE_SKILL_DIR')
+    }
+  })
+
+  test('AE6: a denied or failed write is reported as unrecorded, as in the source', () => {
+    expect(renderCodex('synthesis')).toContain(
+      'Exit 3 or 4, a refused command, or no Node: do not rerun. Say no record was written; `execution_mode` is `unrecorded`.',
+    )
+    expect(renderCodex('counterfactual')).toContain(
+      'Exit 3 or 4, a refused command, or no Node: rerun nothing. Reply, say no record was written, and state `execution_mode` as `unrecorded`.',
+    )
+  })
+
+  test('AE7 (static): no skill depends on the session-start hook', () => {
+    for (const skill of HOST_SKILLS) {
+      expect(renderCodex(skill), skill).not.toMatch(/session[- ]start|hooks?\b|\/hooks|guidance/i)
+    }
+  })
+
+  test('the method renders keep the rest of the evaluated text: only the helper lines differ', () => {
+    for (const skill of ['synthesis', 'counterfactual'] as const) {
+      const before = sources[skill].split('\n')
+      const after = renderCodex(skill).split('\n')
+      expect(after.length).toBe(before.length)
+      expect(before.flatMap((line, i) => (line === after[i] ? [] : [i + 1])).length).toBe(2)
+    }
+  })
+
+  test('the shared sources are left alone', () => {
+    for (const skill of HOST_SKILLS) {
+      expect(readFileSync(join(REPO_ROOT, skillSourcePath(skill)), 'utf8')).toBe(sources[skill])
+      expect(renderCodex(skill)).not.toBe(sources[skill])
     }
   })
 })

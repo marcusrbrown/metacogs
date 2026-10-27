@@ -6,14 +6,11 @@ import { join } from 'node:path'
 import type { TreeEntry } from '../generate/tree'
 import { buildSessionStartHook, renderGuidance } from './guidance'
 import { applyRules, CLAUDE_PROFILE, claudeRules, HOST_SKILLS, MCP_SERVER_NAME, METHOD_SKILLS, PLUGIN_NAME, readSkillSource } from './rules'
+import { AUTHOR, encode, file, json, type PackageFields, packageFields, TOOLS_SUMMARY } from './shared'
 
 export const CLAUDE_DIR = 'hosts/claude'
 export const CLAUDE_MARKETPLACE_PATH = '.claude-plugin/marketplace.json'
 
-const AUTHOR = { name: 'Marcus R. Brown', url: 'https://github.com/marcusrbrown' } as const
-
-const PLUGIN_DESCRIPTION =
-  'Two tools, feel and drugs, and four skills: feel, drugs, synthesis and counterfactual. The tools run through an MCP server that needs Node 22 or later on PATH.'
 const MARKETPLACE_DESCRIPTION = 'The metacogs plugin for Claude Code: reasoning tools and decision-method skills.'
 
 export interface ClaudeInputs {
@@ -25,32 +22,12 @@ export interface ClaudeInputs {
   repoRoot: string
 }
 
-interface PackageFields {
-  license: string
-  homepage: string
-  repository: string
-}
-
-async function packageFields(repoRoot: string): Promise<PackageFields> {
-  const pkg = JSON.parse(await readFile(join(repoRoot, 'package.json'), 'utf8')) as {
-    license: string
-    homepage: string
-    repository: { url: string }
-  }
-  // `git+https://github.com/o/r.git` -> `https://github.com/o/r`
-  return { license: pkg.license, homepage: pkg.homepage, repository: pkg.repository.url.replace(/^git\+/, '').replace(/\.git$/, '') }
-}
-
-const encode = (text: string): Uint8Array => new TextEncoder().encode(text)
-const json = (value: unknown): Uint8Array => encode(`${JSON.stringify(value, null, 2)}\n`)
-const file = (bytes: Uint8Array): TreeEntry => ({ bytes, mode: 0o644 })
-
 /** `plugin.json`. Its `version` is what Claude uses to detect updates, so the marketplace entry carries none. */
 export function pluginManifest(version: string, fields: PackageFields): object {
   return {
     name: PLUGIN_NAME,
     version,
-    description: PLUGIN_DESCRIPTION,
+    description: TOOLS_SUMMARY,
     author: AUTHOR,
     homepage: fields.homepage,
     repository: fields.repository,
@@ -71,7 +48,7 @@ export function marketplaceManifest(): object {
     name: PLUGIN_NAME,
     owner: { name: AUTHOR.name },
     metadata: { description: MARKETPLACE_DESCRIPTION },
-    plugins: [{ name: PLUGIN_NAME, source: `./${CLAUDE_DIR}`, description: PLUGIN_DESCRIPTION }],
+    plugins: [{ name: PLUGIN_NAME, source: `./${CLAUDE_DIR}`, description: TOOLS_SUMMARY }],
   }
 }
 

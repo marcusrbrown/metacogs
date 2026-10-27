@@ -61,6 +61,17 @@ export const CLAUDE_PROFILE: HostProfile = {
   invocation: skill => `/${PLUGIN_NAME}:${skill}`,
 }
 
+/**
+ * Codex names an MCP tool `mcp__<server>__<tool>` after the server key in `mcp.json`, and namespaces a plugin's skills
+ * as `<plugin>:<skill>`, started with a `$` mention.
+ */
+export const CODEX_PROFILE: HostProfile = {
+  id: 'codex',
+  label: 'Codex',
+  toolName: tool => `mcp__${MCP_SERVER_NAME}__${tool}`,
+  invocation: skill => `$${PLUGIN_NAME}:${skill}`,
+}
+
 /** Typed after the command on each host's tool skill. */
 const ARGUMENT_HINTS: Record<ToolSkill, string> = { feel: '[what is going on]', drugs: '[substance]' }
 
@@ -68,10 +79,41 @@ const OPENCODE_ARGUMENTS =
   "A slash command puts the user's arguments at the very end of this text, after the line about the base directory. If you loaded this skill yourself, there are none."
 const TOOL_UNAVAILABLE = (tool: string): string => `If the \`${tool}\` tool is unavailable (for example because Node 22 is not installed), continue in plain text and say so.`
 
-/** Both method skills tell the model where the helper lives. Claude Code fills in `${CLAUDE_SKILL_DIR}` in skill text. */
-const RECORD_PATH_INTRO = "The path below is this skill's own directory, filled in by Claude Code; use it as written, never a guessed path."
+/** What differs between hosts beyond names: how arguments reach the model and how the record helper is found. */
+interface RenderStyle {
+  /** Replaces the OpenCode argument paragraph; takes the skill's invocation. */
+  argumentsText: (invocation: string) => string
+  /** Whether the tool skills get an `argument-hint` frontmatter line (Claude shows it; Codex does not honour it). */
+  argumentHint: boolean
+  /** Replaces `node "<skill-base-dir>/scripts/record.mjs"` in both method skills. */
+  recordCommand: string
+  /** Replaces the sentence that tells the model where the helper lives. */
+  recordIntro: string
+}
 
-export function claudeRules(profile: HostProfile = CLAUDE_PROFILE): Rule[] {
+/** Claude Code fills in `$ARGUMENTS` and `${CLAUDE_SKILL_DIR}` in skill text. */
+const CLAUDE_STYLE: RenderStyle = {
+  argumentsText: invocation =>
+    `The user starts this skill as \`${invocation}\`. The arguments typed after the command, if any: $ARGUMENTS\n\nIf that is empty, or you loaded this skill yourself, there are none.`,
+  argumentHint: true,
+  recordCommand: 'node "${CLAUDE_SKILL_DIR}/scripts/record.mjs"',
+  recordIntro: "The path below is this skill's own directory, filled in by Claude Code; use it as written, never a guessed path.",
+}
+
+/**
+ * Codex substitutes nothing in skill text. Text after the `$` mention is plain text in the user's message, and the model
+ * is handed the path of each SKILL.md it loads, so the helper directory is that path's directory.
+ */
+const CODEX_STYLE: RenderStyle = {
+  argumentsText: invocation =>
+    `The user starts this skill by writing \`${invocation}\`. Codex does not fill in arguments. The arguments, if any, are the plain text that follows the mention in the user's message; read them from there.\n\nIf no text follows the mention, or you loaded this skill yourself, there are none.`,
+  argumentHint: false,
+  recordCommand: 'node "<directory of this SKILL.md>/scripts/record.mjs"',
+  recordIntro:
+    'Codex gave you the path of this SKILL.md when it loaded the skill. Replace `<directory of this SKILL.md>` below with the directory that path is in, keep the quotes around the whole path, and never use a guessed path.',
+}
+
+function hostRules(profile: HostProfile, style: RenderStyle): Rule[] {
   const rules: Rule[] = []
   for (const skill of TOOL_SKILLS) {
     const tool = profile.toolName(skill)
@@ -87,24 +129,26 @@ export function claudeRules(profile: HostProfile = CLAUDE_PROFILE): Rule[] {
         name: `${skill}: arguments`,
         skills: [skill],
         from: OPENCODE_ARGUMENTS,
-        to: `The user starts this skill as \`${profile.invocation(skill)}\`. The arguments typed after the command, if any: $ARGUMENTS\n\nIf that is empty, or you loaded this skill yourself, there are none.`,
+        to: style.argumentsText(profile.invocation(skill)),
         count: 1,
       },
-      {
+    )
+    if (style.argumentHint) {
+      rules.push({
         name: `${skill}: argument hint`,
         skills: [skill],
         from: 'Session length alone is not a reason.\n---\n',
         to: `Session length alone is not a reason.\nargument-hint: ${JSON.stringify(ARGUMENT_HINTS[skill])}\n---\n`,
         count: 1,
-      },
-      {
-        name: `${skill}: tool-unavailable fallback`,
-        skills: [skill],
-        from: '## What it is and is not\n',
-        to: `${TOOL_UNAVAILABLE(tool)}\n\n## What it is and is not\n`,
-        count: 1,
-      },
-    )
+      })
+    }
+    rules.push({
+      name: `${skill}: tool-unavailable fallback`,
+      skills: [skill],
+      from: '## What it is and is not\n',
+      to: `${TOOL_UNAVAILABLE(tool)}\n\n## What it is and is not\n`,
+      count: 1,
+    })
   }
   rules.push({
     name: 'drugs: names the feel tool',
@@ -118,25 +162,33 @@ export function claudeRules(profile: HostProfile = CLAUDE_PROFILE): Rule[] {
       name: 'record helper path',
       skills: METHOD_SKILLS,
       from: 'node "<skill-base-dir>/scripts/record.mjs"',
-      to: 'node "${CLAUDE_SKILL_DIR}/scripts/record.mjs"',
+      to: style.recordCommand,
       count: 1,
     },
     {
       name: 'synthesis: record helper intro',
       skills: ['synthesis'],
       from: 'Use the skill base directory the host reported, never a guessed path.',
-      to: RECORD_PATH_INTRO,
+      to: style.recordIntro,
       count: 1,
     },
     {
       name: 'counterfactual: record helper intro',
       skills: ['counterfactual'],
       from: "The host reports this skill's base directory when it loads the skill; use it, never a guessed path.",
-      to: RECORD_PATH_INTRO,
+      to: style.recordIntro,
       count: 1,
     },
   )
   return rules
+}
+
+export function claudeRules(profile: HostProfile = CLAUDE_PROFILE): Rule[] {
+  return hostRules(profile, CLAUDE_STYLE)
+}
+
+export function codexRules(profile: HostProfile = CODEX_PROFILE): Rule[] {
+  return hostRules(profile, CODEX_STYLE)
 }
 
 function occurrences(text: string, needle: string): number {

@@ -4,8 +4,8 @@ import { join } from 'node:path'
 
 import { REPO_ROOT } from '../generate/tree'
 import { GUIDANCE_BLOCK } from '../plugin/guidance'
-import { HOST_SKILLS, readSkillSource, skillSourcePath } from './rules'
-import { claudeExpectations, DENYLIST, denylistFindings, positiveFindings, scanHostTrees } from './scan'
+import { applyRules, CODEX_PROFILE, codexRules, HOST_SKILLS, readSkillSource, skillSourcePath } from './rules'
+import { claudeExpectations, codexExpectations, DENYLIST, denylistFindings, positiveFindings, scanHostTrees } from './scan'
 
 describe('the denylist', () => {
   test('every entry fires on its own example', () => {
@@ -43,6 +43,23 @@ describe('the denylist', () => {
     expect(denylistFindings('x', fine)).toEqual([])
   })
 
+  test('does not fire on Codex forms: a $ mention, a Codex tool name, a placeholder for the SKILL.md directory', () => {
+    const fine = [
+      'Start it with `$metacogs:feel`.',
+      'Call the `mcp__metacogs__feel` tool (not the `feel` skill; you are reading the skill now)',
+      'node "<directory of this SKILL.md>/scripts/record.mjs" <<\'EOF\'',
+    ].join('\n')
+    expect(denylistFindings('x', fine)).toEqual([])
+  })
+
+  test('self-test: the Codex renders pass it and the unrewritten sources do not', async () => {
+    for (const skill of HOST_SKILLS) {
+      const source = await readSkillSource(REPO_ROOT, skill)
+      expect(denylistFindings(`codex ${skill}`, applyRules(codexRules(), skill, source)), skill).toEqual([])
+      expect(denylistFindings(skillSourcePath(skill), source).length, skill).toBeGreaterThan(0)
+    }
+  })
+
   test('fires on a bare /feel or /drugs, at the start of a line and after punctuation', () => {
     for (const bad of ['/feel', 'type /drugs now', '(`/feel`)']) expect(denylistFindings('x', bad).length, bad).toBeGreaterThan(0)
   })
@@ -59,6 +76,35 @@ describe('the positive check', () => {
 
   test('a skill with no render at all is reported as missing', () => {
     expect(positiveFindings(claudeExpectations(), new Map(), '')).toContainEqual({ path: 'hosts/claude/skills/feel/SKILL.md', problem: 'missing' })
+  })
+
+  test('a Codex render that lost a token fails, naming the file and the token', () => {
+    const files = new Map(HOST_SKILLS.map(skill => [skill, 'no tokens'] as const))
+    const findings = positiveFindings(codexExpectations(), files, 'no tokens here')
+    expect(findings).toContainEqual({ path: 'hosts/codex/skills/drugs/SKILL.md', problem: 'missing token: mcp__metacogs__drugs' })
+    expect(findings).toContainEqual({ path: 'hosts/codex/skills/feel/SKILL.md', problem: 'missing token: $metacogs:feel' })
+    expect(findings).toContainEqual({ path: 'hosts/codex/skills/feel/SKILL.md', problem: 'missing token: follows the mention' })
+    expect(findings).toContainEqual({ path: 'hosts/codex/skills/counterfactual/SKILL.md', problem: 'missing token: node "<directory of this SKILL.md>/scripts/record.mjs"' })
+    expect(findings).toContainEqual({ path: 'hosts/codex (session-start note)', problem: 'missing token: $metacogs:feel' })
+  })
+
+  test("a token that belongs to the other host is reported, in a render and in the note", () => {
+    const files = new Map(HOST_SKILLS.map(skill => [skill, 'x /metacogs:feel x'] as const))
+    expect(positiveFindings(codexExpectations(), files, 'x mcp__plugin_metacogs_metacogs__feel x')).toEqual(
+      expect.arrayContaining([
+        { path: 'hosts/codex/skills/feel/SKILL.md', problem: "another host's token: /metacogs:" },
+        { path: 'hosts/codex (session-start note)', problem: "another host's token: mcp__plugin_" },
+      ]),
+    )
+    const claudeFiles = new Map(HOST_SKILLS.map(skill => [skill, 'x $metacogs:feel x'] as const))
+    expect(positiveFindings(claudeExpectations(), claudeFiles, 'x').map(f => f.problem)).toContain("another host's token: $metacogs:")
+  })
+
+  test('the Codex expectations name the tools and mentions from the profile', () => {
+    const expectations = codexExpectations()
+    expect(expectations.dir).toBe('hosts/codex')
+    expect(expectations.skills.feel).toEqual([CODEX_PROFILE.toolName('feel'), '$metacogs:feel', 'follows the mention'])
+    expect(expectations.skills.synthesis).toEqual(['node "<directory of this SKILL.md>/scripts/record.mjs"'])
   })
 
   test('hosts that are not in the tree are skipped', () => {

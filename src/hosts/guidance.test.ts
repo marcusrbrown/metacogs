@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { REPO_ROOT } from '../generate/tree'
 import { buildSessionStartHook, NOTE_MAX_CHARS, renderGuidance } from './guidance'
 import GUIDANCE_TEMPLATE from './guidance.md'
-import { CLAUDE_PROFILE, HOST_SKILLS, type HostProfile, TOOL_SKILLS } from './rules'
+import { CLAUDE_PROFILE, CODEX_PROFILE, HOST_SKILLS, type HostProfile, TOOL_SKILLS } from './rules'
 
 const note = renderGuidance(CLAUDE_PROFILE)
 
@@ -88,6 +88,44 @@ describe('the session-start note', () => {
   test('plugin/guidance.md, the OpenCode text, is unchanged', () => {
     const text = readFileSync(join(REPO_ROOT, 'plugin', 'guidance.md'), 'utf8')
     expect(text.startsWith('# metacogs\n\nIf the `feel` tool is available, call it when a tension')).toBe(true)
+  })
+})
+
+describe('the Codex session-start note', () => {
+  const codexNote = renderGuidance(CODEX_PROFILE)
+
+  test('is the same template filled with the Codex names and the $metacogs: mentions', () => {
+    expect(codexNote).toContain('metacogs is installed in Codex.')
+    expect(codexNote).toContain('The `feel` tool is `mcp__metacogs__feel`.')
+    expect(codexNote).toContain('The `drugs` tool is `mcp__metacogs__drugs`.')
+    expect(codexNote).toContain('start that skill with `$metacogs:feel`')
+    expect(codexNote).toContain('start that skill with `$metacogs:drugs`')
+    expect(codexNote).toContain('`$metacogs:synthesis` and `$metacogs:counterfactual`')
+    expect(codexNote).toBe(note.replace('Claude Code', 'Codex').replaceAll('mcp__plugin_metacogs_metacogs__', 'mcp__metacogs__').replaceAll('/metacogs:', '$metacogs:'))
+  })
+
+  test('is factual, claims no authority, and carries no markup', () => {
+    for (const sentence of sentences(codexNote)) expect(sentence, sentence).not.toMatch(/\b(call|calls|use|must|should|ensure|always|never|do not|don't|you|your)\b/i)
+    expect(codexNote).not.toMatch(/\b(system|instruction|instructions|directive|mandatory|required|override)\b/i)
+    expect(codexNote).not.toMatch(/<[^>]+>/)
+    expect(codexNote).not.toContain('METACOGS_GUIDANCE')
+  })
+
+  test('names only tools and skills the package ships', () => {
+    const tools = new Set(TOOL_SKILLS.map(tool => CODEX_PROFILE.toolName(tool)))
+    const skills = new Set<string>(HOST_SKILLS)
+    const mentions = new Set(HOST_SKILLS.map(skill => CODEX_PROFILE.invocation(skill)))
+    const quoted = [...codexNote.matchAll(/`([^`]+)`/g)].map(match => match[1] ?? '')
+    for (const name of quoted) expect(skills.has(name) || tools.has(name) || mentions.has(name), name).toBe(true)
+    for (const name of [...tools, ...skills, ...mentions]) expect(quoted).toContain(name)
+    for (const mcp of codexNote.match(/mcp__\w+/g) ?? []) expect(tools.has(mcp)).toBe(true)
+    for (const mention of codexNote.match(/\$\w+:\w+/g) ?? []) expect(mentions.has(mention)).toBe(true)
+  })
+
+  test('fits the Codex output cap, never starts like JSON and is plain text ending in a newline', () => {
+    expect(codexNote.length).toBeLessThanOrEqual(NOTE_MAX_CHARS)
+    expect(codexNote).not.toMatch(/^\s*[{[]/)
+    expect(codexNote.endsWith('\n')).toBe(true)
   })
 })
 

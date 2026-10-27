@@ -3,7 +3,7 @@
 // rules.ts bound what a rewrite changes; this scan catches what no rule covers.
 import type { TreeMap } from '../generate/tree'
 import { renderGuidance } from './guidance'
-import { CLAUDE_PROFILE, HOST_SKILLS, type HostProfile, METHOD_SKILLS, type SkillName, TOOL_SKILLS } from './rules'
+import { CLAUDE_PROFILE, CODEX_PROFILE, HOST_SKILLS, type HostProfile, METHOD_SKILLS, type SkillName, TOOL_SKILLS } from './rules'
 
 export interface DenyEntry {
   name: string
@@ -44,13 +44,22 @@ export interface HostExpectations {
   dir: string
   /** Tokens each skill render must contain. */
   skills: Record<SkillName, readonly string[]>
+  /** Tokens that belong to another host. No render and no note may contain one. */
+  forbidden: readonly string[]
 }
 
 export function claudeExpectations(profile: HostProfile = CLAUDE_PROFILE): HostExpectations {
   const skills = {} as Record<SkillName, readonly string[]>
   for (const skill of TOOL_SKILLS) skills[skill] = [profile.toolName(skill), '$ARGUMENTS', profile.invocation(skill)]
   for (const skill of METHOD_SKILLS) skills[skill] = ['${CLAUDE_SKILL_DIR}/scripts/record.mjs']
-  return { profile, dir: 'hosts/claude', skills }
+  return { profile, dir: 'hosts/claude', skills, forbidden: ['mcp__metacogs__', '$metacogs:', '<directory of this SKILL.md>'] }
+}
+
+export function codexExpectations(profile: HostProfile = CODEX_PROFILE): HostExpectations {
+  const skills = {} as Record<SkillName, readonly string[]>
+  for (const skill of TOOL_SKILLS) skills[skill] = [profile.toolName(skill), profile.invocation(skill), 'follows the mention']
+  for (const skill of METHOD_SKILLS) skills[skill] = ['node "<directory of this SKILL.md>/scripts/record.mjs"']
+  return { profile, dir: 'hosts/codex', skills, forbidden: ['$ARGUMENTS', 'argument-hint', 'CLAUDE_SKILL_DIR', 'mcp__plugin_', '/metacogs:'] }
 }
 
 /** Positive findings for one host's skills and note. A missing token means a rewrite did not land. */
@@ -64,17 +73,21 @@ export function positiveFindings(expect: HostExpectations, files: ReadonlyMap<Sk
       continue
     }
     for (const token of expect.skills[skill]) if (!text.includes(token)) findings.push({ path, problem: `missing token: ${token}` })
+    for (const token of expect.forbidden) if (text.includes(token)) findings.push({ path, problem: `another host's token: ${token}` })
   }
   for (const tool of TOOL_SKILLS) {
     for (const token of [expect.profile.toolName(tool), expect.profile.invocation(tool)]) {
       if (!note.includes(token)) findings.push({ path: `${expect.dir} (session-start note)`, problem: `missing token: ${token}` })
     }
   }
+  for (const token of expect.forbidden) {
+    if (note.includes(token)) findings.push({ path: `${expect.dir} (session-start note)`, problem: `another host's token: ${token}` })
+  }
   return findings
 }
 
 /** Denylist and positive findings for every host package present in `tree`. Hosts that are not in the tree are skipped. */
-export function scanHostTrees(tree: TreeMap, hosts: readonly HostExpectations[] = [claudeExpectations()]): Finding[] {
+export function scanHostTrees(tree: TreeMap, hosts: readonly HostExpectations[] = [claudeExpectations(), codexExpectations()]): Finding[] {
   const decode = (bytes: Uint8Array): string => new TextDecoder().decode(bytes)
   const findings: Finding[] = []
   for (const host of hosts) {
