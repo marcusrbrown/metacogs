@@ -7,9 +7,12 @@
 **License:** MIT
 **Copyright:** Copyright (c) 2025 Inanna Malick
 
-### What is copied
+### What is copied and what is adapted
 
-The descriptions, field descriptions and return templates of the upstream `feel` and `drugs` tool registrations (`src/index.ts`, `feel` at lines 34–88 and `drugs` at lines 91–133, with the `clean` helper at line 31). They live in `src/frames/feel-drugs.ts`, unchanged except that the registration handlers are lifted into the `feelText` and `drugsText` functions. The server-level `instructions` string and the other upstream registrations are not copied.
+The upstream `feel` and `drugs` tool registrations: descriptions, field descriptions and return templates (`src/index.ts`, `feel` at lines 34–88 and `drugs` at lines 91–133, with the `clean` helper at line 31). Both forms live in `src/frames/feel-drugs.ts`. The server-level `instructions` string and the other upstream registrations are not copied.
+
+- **Plugin: adapted.** The `feel` and `drugs` tool descriptions, field descriptions and return text that the OpenCode plugin ships are adapted from upstream at the pinned commit. Field names, types and the required/optional split are unchanged. Claims of efficacy and of changing how the model processes were rewritten, so the text describes a pause (`feel`) and a deliberate change of approach (`drugs`). Upstream's voice and imagery are kept where they are harmless.
+- **Spike: verbatim.** The spike's MCP server (`src/spike/feel-drugs/server.ts`) serves the upstream text byte-for-byte (`UPSTREAM_*` in `src/frames/feel-drugs.ts`), because the spike's committed records are evidence of that exact text. The registration handlers are lifted into the `upstreamFeelText` and `upstreamDrugsText` functions; the template literals are unchanged.
 
 ### License
 

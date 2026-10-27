@@ -3,12 +3,12 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import {
-  DRUGS_DESCRIPTION,
-  DRUGS_FIELD_DESCRIPTIONS,
-  DRUGS_FRAME,
-  FEEL_DESCRIPTION,
-  FEEL_FIELD_DESCRIPTIONS,
-  FEEL_FRAME,
+  UPSTREAM_DRUGS_DESCRIPTION,
+  UPSTREAM_DRUGS_FIELD_DESCRIPTIONS,
+  UPSTREAM_DRUGS_FRAME,
+  UPSTREAM_FEEL_DESCRIPTION,
+  UPSTREAM_FEEL_FIELD_DESCRIPTIONS,
+  UPSTREAM_FEEL_FRAME,
 } from '../../frames/feel-drugs'
 
 const SKILL_NAME = 'metacog-frames'
@@ -31,20 +31,20 @@ describe('arm C skill', () => {
 
   test('description is built from the two upstream tool descriptions, verbatim', () => {
     const description = String(front.description)
-    expect(description).toContain(FEEL_DESCRIPTION)
-    expect(description).toContain(DRUGS_DESCRIPTION)
-    expect(description.indexOf(FEEL_DESCRIPTION)).toBeLessThan(description.indexOf(DRUGS_DESCRIPTION))
+    expect(description).toContain(UPSTREAM_FEEL_DESCRIPTION)
+    expect(description).toContain(UPSTREAM_DRUGS_DESCRIPTION)
+    expect(description.indexOf(UPSTREAM_FEEL_DESCRIPTION)).toBeLessThan(description.indexOf(UPSTREAM_DRUGS_DESCRIPTION))
     expect(description.length).toBeLessThanOrEqual(1024)
   })
 
   test('the body carries both return templates verbatim, as the server renders them', () => {
-    expect(body).toContain(FEEL_FRAME)
-    expect(body).toContain(DRUGS_FRAME)
-    expect(body.indexOf(FEEL_FRAME)).toBeLessThan(body.indexOf(DRUGS_FRAME))
+    expect(body).toContain(UPSTREAM_FEEL_FRAME)
+    expect(body).toContain(UPSTREAM_DRUGS_FRAME)
+    expect(body.indexOf(UPSTREAM_FEEL_FRAME)).toBeLessThan(body.indexOf(UPSTREAM_DRUGS_FRAME))
   })
 
   test('the body carries every upstream field description verbatim', () => {
-    for (const text of [...Object.values(FEEL_FIELD_DESCRIPTIONS), ...Object.values(DRUGS_FIELD_DESCRIPTIONS)]) {
+    for (const text of [...Object.values(UPSTREAM_FEEL_FIELD_DESCRIPTIONS), ...Object.values(UPSTREAM_DRUGS_FIELD_DESCRIPTIONS)]) {
       expect(body).toContain(text)
     }
   })
