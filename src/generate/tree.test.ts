@@ -69,7 +69,7 @@ describe('buildTree', () => {
 
   test('the repository tree carries the same MCP server bundle in both host directories, mode 644', async () => {
     const tree = await buildTree({})
-    expect([...tree.keys()].filter(path => path.startsWith('hosts/')).sort()).toEqual([...MCP_SERVER_PATHS])
+    expect([...tree.keys()].filter(path => path.startsWith('hosts/') && path.endsWith('/mcp/server.mjs')).sort()).toEqual([...MCP_SERVER_PATHS])
     const [claude, codex] = MCP_SERVER_PATHS.map(path => tree.get(path))
     expect(claude?.mode).toBe(0o644)
     expect(codex?.mode).toBe(0o644)

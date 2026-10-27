@@ -9,6 +9,7 @@
 import { chmod, lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { buildClaudeEntries } from '../hosts/claude'
 import { buildMcpServer } from '../plugin/build'
 import { SHIPPED_METHODS } from '../record/contract'
 import { helperBanner } from './marker'
@@ -47,6 +48,11 @@ export interface BuildOptions {
 export interface TreeOptions extends BuildOptions {
   /** Project root containing `skills/`. Defaults to this repository. */
   root?: string
+  /**
+   * Whether to build the host packages (MCP bundle, Claude package), which come from this repository's own sources.
+   * Defaults to true for this repository and false for any other root; tests set it to build into a temp root.
+   */
+  hosts?: boolean
   /** Tests inject entries under an owned root here, since the real owned roots start empty. Merged after the built ones. */
   extraEntries?: ReadonlyMap<string, TreeEntry>
 }
@@ -128,14 +134,16 @@ export async function buildTree(options: TreeOptions = {}): Promise<TreeMap> {
   }
 
   const skills = await listSkills(root)
-  if (skills.length > 0) {
-    const helper = new TextEncoder().encode(await buildHelper(options))
-    for (const name of skills) add(`skills/${name}/scripts/record.mjs`, { bytes: helper, mode: 0o644 })
-  }
-  // The bundle is built from this repository's sources, so a fixture root (tests) has none to bundle.
-  if (root === REPO_ROOT) {
-    const server = new TextEncoder().encode(await buildMcpServer(options.helperVersion === undefined ? {} : { version: options.helperVersion }))
+  // The host packages are built from this repository's sources, so a fixture root (tests) has none unless asked.
+  const withHosts = options.hosts ?? root === REPO_ROOT
+  let helper: Uint8Array | undefined
+  const helperBytes = async (): Promise<Uint8Array> => (helper ??= new TextEncoder().encode(await buildHelper(options)))
+  for (const name of skills) add(`skills/${name}/scripts/record.mjs`, { bytes: await helperBytes(), mode: 0o644 })
+  if (withHosts) {
+    const version = options.helperVersion ?? (await repoVersion())
+    const server = new TextEncoder().encode(await buildMcpServer({ version }))
     for (const path of MCP_SERVER_PATHS) add(path, { bytes: server, mode: 0o644 })
+    for (const [path, entry] of await buildClaudeEntries({ version, helper: await helperBytes(), repoRoot: REPO_ROOT })) add(path, entry)
   }
   for (const [path, entry] of options.extraEntries ?? []) add(path, entry)
   return tree
