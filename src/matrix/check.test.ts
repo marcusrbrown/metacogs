@@ -9,8 +9,10 @@ import {
   loadMatrix,
   type Matrix,
   parseMatrix,
+  type PluginEntry,
   README_END,
   README_START,
+  renderMatrix,
   renderReadme,
   renderTable,
   REPO_ROOT,
@@ -55,7 +57,7 @@ function greenReport(over: Record<string, unknown> = {}): Record<string, unknown
 }
 
 const baseMatrix = (): Matrix => ({
-  schema_version: 1,
+  schema_version: 2,
   hosts: {
     opencode: { name: 'OpenCode', project_path: '.agents/skills/' },
     pi: { name: 'Pi', project_path: '.agents/skills/' },
@@ -111,7 +113,7 @@ function repo(spec: RepoSpec = {}): string {
   if (spec.report !== null) put('evals/reports/synthesis/green.json', JSON.stringify(spec.report ?? greenReport()))
   if (spec.install !== null) put('docs/install.md', spec.install ?? INSTALL_DOC)
   for (const [rel, content] of Object.entries(spec.files ?? {})) put(rel, content)
-  const table = spec.table ?? renderTable(matrix)
+  const table = spec.table ?? renderMatrix(matrix)
   put('README.md', `# metacogs\n\n${README_START}\n${table}\n${README_END}\n\nafter\n`)
   return root
 }
@@ -147,33 +149,129 @@ describe('checkMatrix: happy path', () => {
   })
 })
 
-describe('checkMatrix: the plugin entry', () => {
+describe('checkMatrix: plugin entries', () => {
   const SPIKE = 'evals/spikes/feel-drugs/README.md'
-  const entry = () => ({ host: 'opencode', host_version: '1.19.4', evidence_ref: `${SPIKE}#plugin-reads`, date: '2026-10-26', note: 'Tested on the pinned release.' })
-  const files = { [SPIKE]: '# Spike\n\n## Plugin reads\n\nFacts.\n' }
-  const withPlugin = (patch: Record<string, unknown> = {}, spec: RepoSpec = { files }) =>
-    problemsFor(m => void (m.plugin = { ...entry(), ...patch } as Matrix['plugin']), spec)
+  const opencodeEntry = (): PluginEntry => ({
+    status: 'verified',
+    host_version: '1.19.4',
+    evidence_ref: `${SPIKE}#plugin-reads`,
+    date: '2026-10-26',
+    note: 'Tested on the pinned release.',
+  })
+  const claudeEntry = (): PluginEntry => ({
+    status: 'unverified',
+    evidence_ref: 'docs/install.md#claude-code-plugin',
+    date: '2026-10-27',
+    note: 'Not installed on a real Claude Code.',
+  })
+  const codexEntry = (): PluginEntry => ({ ...claudeEntry(), evidence_ref: 'docs/install.md#codex-plugin', experimental: true })
+  const files = {
+    [SPIKE]: '# Spike\n\n## Plugin reads\n\nFacts.\n',
+    'docs/install.md': `${INSTALL_DOC}\n## Claude Code plugin\nDocs: https://code.claude.com/docs/en/plugins\n\n## Codex plugin\nDocs: https://developers.openai.com/codex/plugins/build\n`,
+  }
+  const all = (): Record<string, PluginEntry> => ({ opencode: opencodeEntry(), 'claude-code': claudeEntry(), codex: codexEntry() })
+  const withPlugins = (mutate: (plugins: Record<string, PluginEntry>) => void = () => {}, spec: RepoSpec = { files }) =>
+    problemsFor(m => {
+      const plugins = all()
+      mutate(plugins)
+      m.plugins = plugins
+    }, spec)
 
-  test('an entry whose evidence_ref points at an existing README section passes', () => {
-    expect(withPlugin()).toEqual([])
-    expect(withPlugin({ evidence_ref: 'README.md#plugin' })).toEqual(['plugin: README.md has no section for #plugin'])
+  test('OpenCode verified and the two unverified host entries pass', () => {
+    expect(withPlugins()).toEqual([])
   })
 
-  test('an unknown key is rejected', () => {
-    expect(withPlugin({ stauts: 'verified' })).toEqual(['plugin: unknown field "stauts"'])
+  test('a verified Claude Code or Codex entry without a manual_run note fails', () => {
+    for (const host of ['claude-code', 'codex']) {
+      const out = withPlugins(p => {
+        p[host] = { ...p[host]!, status: 'verified', host_version: '2.1.312' }
+        delete p[host]!.note
+      })
+      expect(out).toEqual([`plugins.${host}: verified requires a manual_run note saying what was installed and invoked by hand on a real install`])
+    }
   })
 
-  test('a missing section, a missing file and a foreign ref are rejected', () => {
-    expect(withPlugin({ evidence_ref: `${SPIKE}#nowhere` })).toEqual([`plugin: ${SPIKE} has no section for #nowhere`])
-    expect(withPlugin({}, {})).toEqual([`plugin: evidence_ref points into ${SPIKE}, which does not exist`])
-    expect(withPlugin({ evidence_ref: 'docs/install.md#opencode' }).join('\n')).toContain('evidence_ref must be README.md#<section>')
+  test('a verified Claude Code entry with a manual_run note and a host version passes', () => {
+    expect(
+      withPlugins(p => {
+        p['claude-code'] = { ...p['claude-code']!, status: 'verified', host_version: '2.1.312', manual_run: 'Installed from the marketplace and ran /metacogs:feel.' }
+      }),
+    ).toEqual([])
   })
 
-  test('an undeclared host, an empty version and a bad date are rejected', () => {
-    const out = withPlugin({ host: 'vim', host_version: '', date: '2026-13-40' }).join('\n')
-    expect(out).toContain('host must name a declared host')
-    expect(out).toContain('host_version must be a non-empty string')
+  test('a verified entry without host_version fails, and a blank manual_run does not count', () => {
+    const out = withPlugins(p => {
+      p.codex = { ...p.codex!, status: 'verified' }
+      p['claude-code'] = { ...p['claude-code']!, status: 'verified', host_version: '2.1.312' }
+    }).join('\n')
+    expect(out).toContain('plugins.codex: a verified plugin needs host_version')
+    expect(out).toContain('plugins.codex: verified requires a manual_run note')
+    expect(withPlugins(p => void (p['claude-code'] = { ...p['claude-code']!, status: 'verified', host_version: '1', manual_run: ' ' })).join('\n')).toContain('manual_run must be a non-empty string')
+  })
+
+  test('the OpenCode entry stays verified without a manual_run note', () => {
+    expect(withPlugins(p => void delete p.opencode!.note)).toEqual([])
+  })
+
+  test('an unverified entry needs a reason and cannot carry a manual_run note', () => {
+    expect(withPlugins(p => void delete p.codex!.note)).toEqual(['plugins.codex: unverified requires a note giving the reason'])
+    expect(withPlugins(p => void (p.codex!.manual_run = 'Ran it.'))).toEqual(['plugins.codex: manual_run is only valid on verified entries'])
+  })
+
+  test('evidence_ref may point into docs/install.md, the README or the spike notes, and the section must exist', () => {
+    expect(withPlugins(p => void (p.codex!.evidence_ref = 'docs/install.md#nowhere'))).toEqual(['plugins.codex: docs/install.md has no section for #nowhere'])
+    expect(withPlugins(p => void (p.opencode!.evidence_ref = 'README.md#plugin'))).toEqual(['plugins.opencode: README.md has no section for #plugin'])
+    expect(withPlugins(p => void (p.opencode!.evidence_ref = `${SPIKE}#nowhere`))).toEqual([`plugins.opencode: ${SPIKE} has no section for #nowhere`])
+    expect(withPlugins(undefined, { files: { 'docs/install.md': files['docs/install.md'] } })).toEqual([`plugins.opencode: evidence_ref points into ${SPIKE}, which does not exist`])
+  })
+
+  test('a foreign or traversal-shaped evidence_ref is rejected', () => {
+    for (const ref of ['docs/other.md#x', 'docs/install.md', '../README.md#x', 'https://example.com/#x']) {
+      expect(withPlugins(p => void (p.codex!.evidence_ref = ref)).join('\n')).toContain('plugins.codex: evidence_ref must be')
+    }
+  })
+
+  test('an unknown key, an undeclared host, a bad status, a bad date and a non-boolean experimental flag are rejected', () => {
+    expect(withPlugins(p => void Object.assign(p.codex!, { stauts: 'verified' }))).toEqual(['plugins.codex: unknown field "stauts"'])
+    expect(withPlugins(p => void (p.vim = claudeEntry()))).toEqual(['plugins.vim: entry for undeclared host "vim"'])
+    const out = withPlugins(p => {
+      Object.assign(p.codex!, { status: 'content-compatible-untested', date: '2026-13-40', experimental: 'yes' })
+    }).join('\n')
+    expect(out).toContain('status must be one of verified, unverified')
     expect(out).toContain('date must be a real YYYY-MM-DD date')
+    expect(out).toContain('experimental must be a boolean')
+  })
+
+  test('the old single `plugin` entry is no longer accepted', () => {
+    const raw = clone(baseMatrix()) as unknown as Record<string, unknown>
+    raw.plugin = { host: 'opencode' }
+    expect(parseMatrix(raw).problems.map(p => p.message)).toContain('unknown field "plugin"')
+  })
+
+  test('the README projection lists each plugin with its status, the experimental label and any manual run', () => {
+    const matrix = baseMatrix()
+    matrix.plugins = all()
+    matrix.plugins['claude-code'] = { ...claudeEntry(), status: 'verified', host_version: '2.1.312', manual_run: 'Installed and ran /metacogs:feel.' }
+    const table = renderMatrix(matrix)
+    expect(table).toContain('| Host | Plugin package |')
+    expect(table).toContain('| OpenCode | `verified`<br>OpenCode 1.19.4 · 2026-10-26 · [evidence](evals/spikes/feel-drugs/README.md#plugin-reads)')
+    expect(table).toContain('| Claude Code | `verified`<br>Claude Code 2.1.312 · 2026-10-27 · [evidence](docs/install.md#claude-code-plugin)<br>Manual run: Installed and ran /metacogs:feel.')
+    expect(table).toContain('| Codex | `unverified` (experimental)<br>2026-10-27 · [evidence](docs/install.md#codex-plugin)')
+    expect(renderMatrix(baseMatrix())).toBe(renderTable(baseMatrix()))
+  })
+
+  test('a README without the plugin table fails, and the committed one carries it', () => {
+    const matrix = baseMatrix()
+    matrix.plugins = all()
+    const root = repo({ matrix, files, table: renderTable(matrix) })
+    expect(checkMatrix({ root }).some(p => p.where === 'README.md' && p.message.includes('matrix:render'))).toBe(true)
+  })
+
+  test('the committed matrix records OpenCode as verified and Claude Code and Codex as unverified, with Codex experimental', () => {
+    const { matrix } = loadMatrix(REPO_ROOT)
+    expect(matrix?.plugins?.opencode?.status).toBe('verified')
+    expect(matrix?.plugins?.['claude-code']).toMatchObject({ status: 'unverified', evidence_ref: 'docs/install.md#claude-code-plugin' })
+    expect(matrix?.plugins?.codex).toMatchObject({ status: 'unverified', evidence_ref: 'docs/install.md#codex-plugin', experimental: true })
   })
 })
 
@@ -449,9 +547,9 @@ describe('parseMatrix', () => {
     expect(parseMatrix(raw).problems.length).toBeGreaterThanOrEqual(2)
   })
 
-  test('schema_version other than 1 is rejected', () => {
+  test('schema_version other than 2 is rejected', () => {
     const raw = clone(baseMatrix()) as unknown as Record<string, unknown>
-    raw.schema_version = 2
+    raw.schema_version = 1
     expect(parseMatrix(raw).problems.some(p => p.where === 'schema_version')).toBe(true)
   })
 

@@ -9,9 +9,19 @@ import { fileURLToPath } from 'node:url'
 
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
-export const MATRIX_SCHEMA_VERSION = 1
+export const MATRIX_SCHEMA_VERSION = 2
 export const STATUSES = ['verified', 'content-compatible-untested', 'unverified', 'unsupported'] as const
 export type Status = (typeof STATUSES)[number]
+
+/**
+ * A plugin entry is either checked by a person on a real install (`verified`) or not (`unverified`). The method
+ * statuses that describe skill discovery (`content-compatible-untested`) do not apply to a plugin package.
+ */
+export const PLUGIN_STATUSES = ['verified', 'unverified'] as const
+export type PluginStatus = (typeof PLUGIN_STATUSES)[number]
+
+/** The host whose plugin has an eval-backed record; every other host needs a manual-run note to claim `verified`. */
+const EVAL_HOST = 'opencode'
 
 export const README_START = '<!-- matrix:start -->'
 export const README_END = '<!-- matrix:end -->'
@@ -19,7 +29,7 @@ export const README_END = '<!-- matrix:end -->'
 /** The two shapes an `evidence_ref` may take. Anything else is rejected before touching the filesystem. */
 const INSTALL_REF = /^docs\/install\.md#([a-z0-9][a-z0-9-]*)$/
 const REPORT_REF = /^evals\/reports\/([a-z][a-z0-9-]{0,63})\/green\.json$/
-const PLUGIN_REF = /^(README\.md|evals\/spikes\/feel-drugs\/README\.md)#([a-z0-9][a-z0-9-]*)$/
+const PLUGIN_REF = /^(README\.md|docs\/install\.md|evals\/spikes\/feel-drugs\/README\.md)#([a-z0-9][a-z0-9-]*)$/
 const KEY = /^[a-z][a-z0-9-]{0,63}$/
 const DATE = /^\d{4}-\d{2}-\d{2}$/
 
@@ -44,20 +54,25 @@ export interface Cell extends HistoryEntry {
   history: HistoryEntry[]
 }
 
-/** The OpenCode plugin's tested host: the version it was tested on and the README section that records the tests. */
+/** One host's plugin package: what was checked on it, and where the claim is written down. */
 export interface PluginEntry {
-  host: string
-  host_version: string
+  status: PluginStatus
+  /** The host release the claim is about. Required for `verified`; an `unverified` entry has no run to name. */
+  host_version?: string
   evidence_ref: string
   date: string
   note?: string
+  /** What a person installed and invoked by hand, and what they saw. Required for `verified` on every host but OpenCode. */
+  manual_run?: string
+  experimental?: boolean
 }
 
 export interface Matrix {
   schema_version: typeof MATRIX_SCHEMA_VERSION
   hosts: Record<string, Host>
   methods: Record<string, Record<string, Cell>>
-  plugin?: PluginEntry
+  /** Plugin packages keyed by host. */
+  plugins?: Record<string, PluginEntry>
 }
 
 export interface Problem {
@@ -109,33 +124,54 @@ function parseEntry(where: string, raw: unknown, out: Problem[], extra: readonly
   return entry
 }
 
-function parsePlugin(raw: unknown, hosts: Record<string, Host>, out: Problem[]): PluginEntry | undefined {
+function parsePlugins(raw: unknown, hosts: Record<string, Host>, out: Problem[]): Record<string, PluginEntry> | undefined {
   if (raw === undefined) return undefined
-  const where = 'plugin'
   if (!isRecord(raw)) {
-    out.push({ where, message: 'must be an object' })
+    out.push({ where: 'plugins', message: 'must be an object keyed by host' })
     return undefined
   }
-  const before = out.length
-  closedKeys(where, raw, ['host', 'host_version', 'evidence_ref', 'date', 'note'], out)
-  if (!nonEmpty(raw.host) || !(raw.host in hosts)) out.push({ where, message: 'host must name a declared host' })
-  if (!nonEmpty(raw.host_version)) out.push({ where, message: 'host_version must be a non-empty string' })
-  if (!nonEmpty(raw.evidence_ref) || !PLUGIN_REF.test(raw.evidence_ref)) {
-    out.push({ where, message: 'evidence_ref must be README.md#<section> or evals/spikes/feel-drugs/README.md#<section>' })
+  const plugins: Record<string, PluginEntry> = {}
+  for (const [host, value] of Object.entries(raw)) {
+    const where = `plugins.${host}`
+    if (!(host in hosts)) {
+      out.push({ where, message: `entry for undeclared host "${host}"` })
+      continue
+    }
+    if (!isRecord(value)) {
+      out.push({ where, message: 'must be an object' })
+      continue
+    }
+    const before = out.length
+    closedKeys(where, value, ['status', 'host_version', 'evidence_ref', 'date', 'note', 'manual_run', 'experimental'], out)
+    if (!PLUGIN_STATUSES.includes(value.status as PluginStatus)) out.push({ where, message: `status must be one of ${PLUGIN_STATUSES.join(', ')}` })
+    if (!nonEmpty(value.evidence_ref) || !PLUGIN_REF.test(value.evidence_ref)) {
+      out.push({ where, message: 'evidence_ref must be README.md#<section>, docs/install.md#<section> or evals/spikes/feel-drugs/README.md#<section>' })
+    }
+    if (!validDate(value.date)) out.push({ where, message: 'date must be a real YYYY-MM-DD date' })
+    for (const key of ['host_version', 'note', 'manual_run'] as const) {
+      if (value[key] !== undefined && !nonEmpty(value[key])) out.push({ where, message: `${key} must be a non-empty string when present` })
+    }
+    if (value.experimental !== undefined && typeof value.experimental !== 'boolean') out.push({ where, message: 'experimental must be a boolean when present' })
+    if (out.length > before) continue
+    const entry: PluginEntry = {
+      status: value.status as PluginStatus,
+      evidence_ref: value.evidence_ref as string,
+      date: value.date as string,
+    }
+    for (const key of ['host_version', 'note', 'manual_run'] as const) {
+      if (value[key] !== undefined) entry[key] = value[key] as string
+    }
+    if (value.experimental !== undefined) entry.experimental = value.experimental as boolean
+    plugins[host] = entry
   }
-  if (!validDate(raw.date)) out.push({ where, message: 'date must be a real YYYY-MM-DD date' })
-  if (raw.note !== undefined && !nonEmpty(raw.note)) out.push({ where, message: 'note must be a non-empty string when present' })
-  if (out.length > before) return undefined
-  const entry: PluginEntry = { host: raw.host as string, host_version: raw.host_version as string, evidence_ref: raw.evidence_ref as string, date: raw.date as string }
-  if (raw.note !== undefined) entry.note = raw.note as string
-  return entry
+  return plugins
 }
 
 /** Structural validation only: shapes, enums, key sets. Evidence is checked by `checkEvidence`. */
 export function parseMatrix(raw: unknown): { matrix: Matrix | null; problems: Problem[] } {
   const problems: Problem[] = []
   if (!isRecord(raw)) return { matrix: null, problems: [{ where: 'matrix.json', message: 'must be a JSON object' }] }
-  closedKeys('matrix.json', raw, ['schema_version', 'hosts', 'methods', 'plugin'], problems)
+  closedKeys('matrix.json', raw, ['schema_version', 'hosts', 'methods', 'plugins'], problems)
   if (raw.schema_version !== MATRIX_SCHEMA_VERSION) {
     problems.push({ where: 'schema_version', message: `must be ${MATRIX_SCHEMA_VERSION}` })
   }
@@ -158,7 +194,7 @@ export function parseMatrix(raw: unknown): { matrix: Matrix | null; problems: Pr
     }
   }
 
-  const plugin = parsePlugin(raw.plugin, hosts, problems)
+  const plugins = parsePlugins(raw.plugins, hosts, problems)
 
   const methods: Record<string, Record<string, Cell>> = {}
   if (!isRecord(raw.methods) || Object.keys(raw.methods).length === 0) {
@@ -221,7 +257,7 @@ export function parseMatrix(raw: unknown): { matrix: Matrix | null; problems: Pr
   }
 
   if (problems.length > 0) return { matrix: null, problems }
-  return { matrix: { schema_version: MATRIX_SCHEMA_VERSION, hosts, methods, ...(plugin ? { plugin } : {}) }, problems }
+  return { matrix: { schema_version: MATRIX_SCHEMA_VERSION, hosts, methods, ...(plugins ? { plugins } : {}) }, problems }
 }
 
 // ── evidence ───────────────────────────────────────────────────────────────
@@ -350,17 +386,34 @@ function checkInstallRef(root: string, host: string, cell: Cell, where: string, 
   }
 }
 
-function checkPluginEvidence(plugin: PluginEntry, root: string, out: Problem[]): void {
+function checkPluginEvidence(host: string, plugin: PluginEntry, root: string, out: Problem[]): void {
+  const where = `plugins.${host}`
   const match = PLUGIN_REF.exec(plugin.evidence_ref)
-  if (match === null) return
-  const doc = readRepoFile(root, match[1] ?? '')
-  if (doc === null) out.push({ where: 'plugin', message: `evidence_ref points into ${match[1]}, which does not exist` })
-  else if (sectionByAnchor(doc, match[2] ?? '') === null) out.push({ where: 'plugin', message: `${match[1]} has no section for #${match[2]}` })
+  if (match !== null) {
+    const doc = readRepoFile(root, match[1] ?? '')
+    if (doc === null) out.push({ where, message: `evidence_ref points into ${match[1]}, which does not exist` })
+    else if (sectionByAnchor(doc, match[2] ?? '') === null) out.push({ where, message: `${match[1]} has no section for #${match[2]}` })
+  }
+  switch (plugin.status) {
+    case 'verified': {
+      if (!nonEmpty(plugin.host_version)) out.push({ where, message: 'a verified plugin needs host_version' })
+      // OpenCode's claim rests on the recorded scripted-provider suite; the other hosts have no runner, so a person must say what they ran.
+      if (host !== EVAL_HOST && !nonEmpty(plugin.manual_run)) {
+        out.push({ where, message: 'verified requires a manual_run note saying what was installed and invoked by hand on a real install' })
+      }
+      break
+    }
+    case 'unverified': {
+      if (!nonEmpty(plugin.note)) out.push({ where, message: 'unverified requires a note giving the reason' })
+      if (plugin.manual_run !== undefined) out.push({ where, message: 'manual_run is only valid on verified entries' })
+      break
+    }
+  }
 }
 
 export function checkEvidence(matrix: Matrix, root: string): Problem[] {
   const out: Problem[] = []
-  if (matrix.plugin) checkPluginEvidence(matrix.plugin, root, out)
+  for (const [host, plugin] of Object.entries(matrix.plugins ?? {})) checkPluginEvidence(host, plugin, root, out)
   for (const [method, cells] of Object.entries(matrix.methods)) {
     // A method may be listed only when it shipped: a skill exists and its GREEN read was green.
     if (readRepoFile(root, `skills/${method}/SKILL.md`) === null) {
@@ -453,6 +506,36 @@ export function renderTable(matrix: Matrix): string {
   return rows.join('\n')
 }
 
+function pluginCellText(host: Host, plugin: PluginEntry): string {
+  const head = `\`${plugin.status}\`${plugin.experimental ? ' (experimental)' : ''}`
+  const detail: string[] = []
+  if (plugin.host_version) detail.push(`${host.name} ${plugin.host_version}`)
+  detail.push(plugin.date)
+  detail.push(`[evidence](${plugin.evidence_ref})`)
+  const lines = [head, detail.join(' · ')]
+  if (plugin.manual_run) lines.push(`Manual run: ${plugin.manual_run}`)
+  if (plugin.note) lines.push(plugin.note)
+  return escapeCell(lines.join('<br>'))
+}
+
+/** The plugin packages, one row per host, or null when the matrix records none. Deterministic. */
+export function renderPlugins(matrix: Matrix): string | null {
+  const entries = Object.entries(matrix.plugins ?? {})
+  if (entries.length === 0) return null
+  const rows = ['| Host | Plugin package |', '| --- | --- |']
+  for (const [key, plugin] of entries) {
+    const host = matrix.hosts[key]
+    if (host) rows.push(`| ${host.name} | ${pluginCellText(host, plugin)} |`)
+  }
+  return rows.join('\n')
+}
+
+/** Everything between the README markers: the method table, then the plugin table when there is one. */
+export function renderMatrix(matrix: Matrix): string {
+  const plugins = renderPlugins(matrix)
+  return plugins === null ? renderTable(matrix) : `${renderTable(matrix)}\n\n${plugins}`
+}
+
 interface Block {
   before: string
   inner: string
@@ -474,7 +557,7 @@ const normalize = (text: string) => text.replace(/\r\n?/g, '\n').trim()
 export function checkReadme(matrix: Matrix, readme: string): Problem[] {
   const block = splitBlock(readme)
   if (typeof block === 'string') return [{ where: 'README.md', message: block }]
-  if (normalize(block.inner) !== normalize(renderTable(matrix))) {
+  if (normalize(block.inner) !== normalize(renderMatrix(matrix))) {
     return [{ where: 'README.md', message: 'matrix table differs from matrix.json; run `bun run matrix:render`' }]
   }
   return []
@@ -483,7 +566,7 @@ export function checkReadme(matrix: Matrix, readme: string): Problem[] {
 export function renderReadme(matrix: Matrix, readme: string): string {
   const block = splitBlock(readme)
   if (typeof block === 'string') throw new Error(block)
-  return `${block.before}${README_START}\n${renderTable(matrix)}\n${README_END}${block.after}`
+  return `${block.before}${README_START}\n${renderMatrix(matrix)}\n${README_END}${block.after}`
 }
 
 // ── entry points ───────────────────────────────────────────────────────────
