@@ -3,7 +3,7 @@
 // each format the result for their own channel; the exit codes are the CLI's, and the MCP tool reports them by number.
 import { homedir } from 'node:os'
 import { EXIT, type StampedRecord } from './contract'
-import { type FieldError, validateRecord } from './validate'
+import { type FieldError, type ValidationResult, validateRecord } from './validate'
 import { RecordCollisionError, RecordIoError, resolveRoot, writeRecord } from './write'
 
 export interface RunRecordInput {
@@ -31,11 +31,24 @@ export type RunRecordResult =
 /** Collision and I/O failures carry one message, not a field; `$` is the validator's name for the whole record. */
 const whole = (message: string): FieldError[] => [{ field: '$', message }]
 
+/** Hostile input must end as a validation error, never as a throw out of the helper. */
+function validate(input: unknown, methods: readonly string[]): ValidationResult {
+  try {
+    return validateRecord(input, { methods })
+  } catch (error) {
+    return { ok: false, errors: [{ field: 'record', message: `cannot be validated: ${(error as Error).message}` }] }
+  }
+}
+
 export async function runRecord({ input, methods, helperVersion, outDir, env, cwd }: RunRecordInput): Promise<RunRecordResult> {
-  const checked = validateRecord(input, { methods })
+  const checked = validate(input, methods)
   if (!checked.ok) return { ok: false, kind: 'validation', exit: EXIT.VALIDATION, errors: checked.errors }
 
+  // The limits apply to the record as it is stored, so the stamp counts. A record that was written always passes the
+  // same validation when it is read back.
   const record: StampedRecord = { ...checked.record, helper_version: helperVersion }
+  const stamped = validate(record, methods)
+  if (!stamped.ok) return { ok: false, kind: 'validation', exit: EXIT.VALIDATION, errors: stamped.errors }
 
   try {
     const root = resolveRoot({ outDir, env, cwd, home: env.HOME || homedir() })

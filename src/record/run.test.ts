@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { recordFilename } from './canonical'
 import { LIMITS } from './contract'
 import { runRecord } from './run'
-import { validRecord } from './test-support'
+import { runCli, validRecord } from './test-support'
 import { validateRecord } from './validate'
 
 let tmp: string
@@ -75,12 +75,12 @@ describe('runRecord', () => {
   })
 })
 
-describe('payload limits', () => {
-  const messages = (input: unknown): string[] => {
-    const result = validateRecord(input)
-    return result.ok ? [] : result.errors.map(error => `${error.field}: ${error.message}`)
-  }
+const messages = (input: unknown): string[] => {
+  const result = validateRecord(input)
+  return result.ok ? [] : result.errors.map(error => `${error.field}: ${error.message}`)
+}
 
+describe('payload limits', () => {
   test('limits are the documented constants', () => {
     expect(LIMITS).toEqual({ MAX_STRING_LENGTH: 4096, MAX_ARRAY_ITEMS: 64, MAX_PAYLOAD_BYTES: 65536 })
   })
@@ -137,14 +137,45 @@ describe('payload limits', () => {
     throw new Error('no padding fits')
   }
 
-  test('a record of exactly MAX_PAYLOAD_BYTES is accepted and one byte more is rejected as the record', async () => {
+  const STAMP = '1.2.3'
+  /** What the stamp adds to a record that has none: `,"helper_version":"1.2.3"`. */
+  const stampBytes = (): number => Buffer.byteLength(JSON.stringify({ ...recordOfSize(1000), helper_version: STAMP }), 'utf8') - 1000
+
+  test('a record of exactly MAX_PAYLOAD_BYTES passes the validator, but the stamp pushes it over, so it is rejected as the record', async () => {
     const exact = recordOfSize(LIMITS.MAX_PAYLOAD_BYTES)
     expect(validateRecord(exact).ok).toBe(true)
-    expect(await runRecord({ ...base(), input: exact })).toMatchObject({ ok: true, status: 'written' })
-    const over = recordOfSize(LIMITS.MAX_PAYLOAD_BYTES + 1)
-    expect(messages(over)).toEqual([`record: is ${LIMITS.MAX_PAYLOAD_BYTES + 1} bytes; the limit is ${LIMITS.MAX_PAYLOAD_BYTES}`])
-    expect(await runRecord({ ...base(), input: over })).toMatchObject({ ok: false, kind: 'validation', exit: 2, errors: [{ field: 'record' }] })
-    expect(readdirSync(join(tmp, 'records'))).toHaveLength(1)
+    const result = await runRecord({ ...base(), input: exact })
+    expect(result).toMatchObject({ ok: false, kind: 'validation', exit: 2, errors: [{ field: 'record' }] })
+    expect(messages(recordOfSize(LIMITS.MAX_PAYLOAD_BYTES + 1))).toEqual([`record: is ${LIMITS.MAX_PAYLOAD_BYTES + 1} bytes; the limit is ${LIMITS.MAX_PAYLOAD_BYTES}`])
+    expect(existsSync(join(tmp, 'records'))).toBe(false)
+  })
+
+  test('a record whose stamped form is exactly MAX_PAYLOAD_BYTES is written, revalidates when read back, and replays through the CLI --file', async () => {
+    const input = recordOfSize(LIMITS.MAX_PAYLOAD_BYTES - stampBytes())
+    const result = await runRecord({ ...base(), input })
+    expect(result).toMatchObject({ ok: true, status: 'written' })
+    const path = (result as { path: string }).path
+    const saved = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+    expect(Buffer.byteLength(JSON.stringify(saved), 'utf8')).toBe(LIMITS.MAX_PAYLOAD_BYTES)
+    expect(validateRecord(saved).ok).toBe(true)
+    // Replay: the saved file, stamp and all, goes back through the CLI by path and is accepted.
+    const replay = await runCli(['--out-dir', join(tmp, 'replayed'), '--file', path], { helperVersion: STAMP })
+    expect({ code: replay.code, stderr: replay.stderr }).toEqual({ code: 0, stderr: '' })
+    expect(readdirSync(join(tmp, 'replayed'))).toEqual([path.split('/').pop()!])
+    // One byte over, with the stamp, is refused.
+    const over = await runRecord({ ...base(), input: recordOfSize(LIMITS.MAX_PAYLOAD_BYTES - stampBytes() + 1) })
+    expect(over).toMatchObject({ ok: false, kind: 'validation', exit: 2, errors: [{ field: 'record' }] })
+  })
+
+  test('the size is counted in UTF-8 bytes: under the limit in UTF-16 code units, over it in bytes, rejected', async () => {
+    const euro = '€'.repeat(LIMITS.MAX_STRING_LENGTH) // 1 unit, 3 bytes
+    const input = validRecord({ evidence: Array.from({ length: 6 }, () => euro) })
+    const json = JSON.stringify(input)
+    expect(json.length).toBeLessThan(LIMITS.MAX_PAYLOAD_BYTES)
+    expect(Buffer.byteLength(json, 'utf8')).toBeGreaterThan(LIMITS.MAX_PAYLOAD_BYTES)
+    expect(messages(input)).toEqual([`record: is ${Buffer.byteLength(json, 'utf8')} bytes; the limit is ${LIMITS.MAX_PAYLOAD_BYTES}`])
+    expect(await runRecord({ ...base(), input })).toMatchObject({ ok: false, kind: 'validation', exit: 2 })
+    expect(existsSync(join(tmp, 'records'))).toBe(false)
   })
 
   test('a non-object input is reported against the record', () => {
@@ -158,5 +189,45 @@ describe('payload limits', () => {
       expect(result).toMatchObject({ ok: false, kind: 'validation', exit: 2 })
     }
     expect(readdirSync(tmp)).toEqual([])
+  })
+})
+
+describe('hostile input', () => {
+  const nested = (depth: number): unknown => {
+    let value: unknown = []
+    for (let i = 1; i < depth; i++) value = [value]
+    return value
+  }
+
+  test('deep nesting (which overflows JSON.stringify on V8) is a validation error, with no throw and no file', async () => {
+    const junk = nested(10_000)
+    for (const input of [{ ...validRecord(), junk }, { ...validRecord(), schema_version: junk }, { ...validRecord(), objective: junk }, { ...validRecord(), helper_version: junk }]) {
+      const result = await runRecord({ ...base(), input })
+      expect(result).toMatchObject({ ok: false, kind: 'validation', exit: 2 })
+    }
+    expect(readdirSync(tmp)).toEqual([])
+  })
+
+  test('an unknown field is rejected as unknown before anything is serialized', async () => {
+    const result = await runRecord({ ...base(), input: { ...validRecord(), junk: nested(10_000) } })
+    expect(result).toEqual({ ok: false, kind: 'validation', exit: 2, errors: [{ field: 'junk', message: 'unknown field' }] })
+  })
+
+  test('a lone surrogate in a string field, an entry or helper_version is a validation error, not an I/O error', async () => {
+    for (const [field, overrides] of [
+      ['objective', { objective: 'before \ud800 after' }],
+      ['evidence[1]', { evidence: ['fine', 'bad \udc00'] }],
+      ['helper_version', { helper_version: 'v\ud83d' }],
+    ] as const) {
+      const input = validRecord(overrides)
+      expect(messages(input)).toEqual([`${field}: contains a lone surrogate`])
+      const result = await runRecord({ ...base(), input })
+      expect(result).toMatchObject({ ok: false, kind: 'validation', exit: 2, errors: [{ field, message: 'contains a lone surrogate' }] })
+    }
+    expect(readdirSync(tmp)).toEqual([])
+  })
+
+  test('a well-formed surrogate pair is fine', () => {
+    expect(validateRecord(validRecord({ objective: 'pair 😀 ok' })).ok).toBe(true)
   })
 })

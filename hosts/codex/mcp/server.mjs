@@ -21742,19 +21742,19 @@ function validateRecord(input, options = {}) {
   if (!isPlainObject3(input))
     return fail([{ field: "record", message: "must be a JSON object" }]);
   if (input.schema_version !== SCHEMA_VERSION) {
-    const got = input.schema_version === undefined ? "missing" : JSON.stringify(input.schema_version);
+    const got = describeValue(input.schema_version);
     return fail([{ field: "schema_version", message: `unsupported value ${got}; this helper only accepts ${SCHEMA_VERSION}` }]);
   }
-  const payloadBytes = Buffer.byteLength(JSON.stringify(input), "utf8");
-  if (payloadBytes > LIMITS.MAX_PAYLOAD_BYTES) {
-    return fail([{ field: "record", message: `is ${payloadBytes} bytes; the limit is ${LIMITS.MAX_PAYLOAD_BYTES}` }]);
-  }
   const errors = [];
-  const tooLong = (field, value) => {
-    const characters = [...value].length;
+  const checkText = (field, value) => {
+    let characters = 0;
+    for (const _ of value)
+      characters++;
     if (characters > LIMITS.MAX_STRING_LENGTH) {
       errors.push({ field, message: `is ${characters} characters; the limit is ${LIMITS.MAX_STRING_LENGTH}` });
     }
+    if (!value.isWellFormed())
+      errors.push({ field, message: "contains a lone surrogate" });
   };
   const methods = options.methods ?? SHIPPED_METHODS;
   for (const key of Object.keys(input)) {
@@ -21764,7 +21764,7 @@ function validateRecord(input, options = {}) {
   if (input[STAMPED_FIELD] !== undefined && typeof input[STAMPED_FIELD] !== "string") {
     errors.push({ field: STAMPED_FIELD, message: "must be a string when present" });
   } else if (typeof input[STAMPED_FIELD] === "string") {
-    tooLong(STAMPED_FIELD, input[STAMPED_FIELD]);
+    checkText(STAMPED_FIELD, input[STAMPED_FIELD]);
   }
   const method = input.method;
   if (typeof method !== "string") {
@@ -21779,7 +21779,7 @@ function validateRecord(input, options = {}) {
     if (!isNonEmptyString(value))
       errors.push({ field, message: "is required and must be a non-empty string" });
     else
-      tooLong(field, value);
+      checkText(field, value);
   }
   for (const field of STRING_ARRAY_FIELDS) {
     const value = input[field];
@@ -21795,7 +21795,7 @@ function validateRecord(input, options = {}) {
       if (!isNonEmptyString(entry))
         errors.push({ field: `${field}[${index}]`, message: "must be a non-empty string" });
       else
-        tooLong(`${field}[${index}]`, entry);
+        checkText(`${field}[${index}]`, entry);
     });
   }
   const mode = input.execution_mode;
@@ -21804,7 +21804,23 @@ function validateRecord(input, options = {}) {
   }
   if (errors.length > 0)
     return fail(errors);
+  let payloadBytes;
+  try {
+    payloadBytes = Buffer.byteLength(JSON.stringify(input), "utf8");
+  } catch (error) {
+    return fail([{ field: "record", message: `cannot be measured: ${error.message}` }]);
+  }
+  if (payloadBytes > LIMITS.MAX_PAYLOAD_BYTES) {
+    return fail([{ field: "record", message: `is ${payloadBytes} bytes; the limit is ${LIMITS.MAX_PAYLOAD_BYTES}` }]);
+  }
   return { ok: true, record: input };
+}
+function describeValue(value) {
+  if (value === undefined)
+    return "missing";
+  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean")
+    return JSON.stringify(value);
+  return Array.isArray(value) ? "an array" : typeof value === "object" ? "an object" : typeof value;
 }
 function fail(errors) {
   return { ok: false, errors };
@@ -21950,11 +21966,21 @@ async function writeRecord({ root, record }) {
 
 // src/record/run.ts
 var whole = (message) => [{ field: "$", message }];
+function validate2(input, methods) {
+  try {
+    return validateRecord(input, { methods });
+  } catch (error) {
+    return { ok: false, errors: [{ field: "record", message: `cannot be validated: ${error.message}` }] };
+  }
+}
 async function runRecord({ input, methods, helperVersion, outDir, env, cwd }) {
-  const checked = validateRecord(input, { methods });
+  const checked = validate2(input, methods);
   if (!checked.ok)
     return { ok: false, kind: "validation", exit: EXIT.VALIDATION, errors: checked.errors };
   const record = { ...checked.record, helper_version: helperVersion };
+  const stamped = validate2(record, methods);
+  if (!stamped.ok)
+    return { ok: false, kind: "validation", exit: EXIT.VALIDATION, errors: stamped.errors };
   try {
     const root = resolveRoot({ outDir, env, cwd, home: env.HOME || homedir() });
     const { path, status } = await writeRecord({ root, record });

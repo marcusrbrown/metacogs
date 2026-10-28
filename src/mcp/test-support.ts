@@ -65,6 +65,20 @@ export class Session {
     return response
   }
 
+  /** Send a request whose JSON text the caller builds, for payloads `JSON.stringify` cannot produce or would not send. */
+  requestRaw(build: (id: number) => string): Promise<Message> {
+    const id = this.nextId++
+    const response = new Promise<Message>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`no response to raw request #${id}; stderr: ${this.stderr}`)), 10_000)
+      this.waiting.set(id, message => {
+        clearTimeout(timer)
+        resolve(message)
+      })
+    })
+    this.proc.stdin.write(`${build(id)}\n`)
+    return response
+  }
+
   notify(method: string): void {
     this.write({ jsonrpc: '2.0', method })
   }

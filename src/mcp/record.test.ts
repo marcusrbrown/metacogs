@@ -396,3 +396,89 @@ describe('parity with the CLI', () => {
     expect(existsSync(viaMcp.root)).toBe(false)
   })
 })
+
+describe('the record tool: hostile input', () => {
+  const NO_STACK = /RangeError|TypeError|Maximum call stack|\n\s+at /
+  const callRaw = (session: Session, argumentsJson: string) =>
+    session.requestRaw(id => `{"jsonrpc":"2.0","id":${id},"method":"tools/call","params":{"name":"record","arguments":${argumentsJson}}}`)
+
+  test('deeply nested junk in an unknown field is refused as a tool error with no stack trace, writes nothing, and the server keeps answering', async () => {
+    const box = sandbox()
+    await withRecordServer(box, async session => {
+      const depth = 10_000
+      const fields = JSON.stringify(args()).slice(0, -1)
+      const response = await callRaw(session, `${fields},"junk":${'['.repeat(depth)}${']'.repeat(depth)}}`)
+      const result = response.result as unknown as { isError?: boolean; content: { text: string }[] }
+      expect(result.isError).toBe(true)
+      expect(textOf(result)).toContain('junk')
+      expect(textOf(result)).not.toMatch(NO_STACK)
+      expect(existsSync(box.root)).toBe(false)
+      expect((await session.call('record', args())).isError).toBeUndefined()
+      expect(session.stderr).toBe('')
+    })
+  })
+
+  test('deeply nested junk in a known field is refused the same way', async () => {
+    const box = sandbox()
+    await withRecordServer(box, async session => {
+      const nested = `${'['.repeat(10_000)}${']'.repeat(10_000)}`
+      const fields = JSON.stringify(args({ objective: 'x' })).replace('"objective":"x"', `"objective":${nested}`)
+      const result = (await callRaw(session, fields)).result as unknown as { isError?: boolean; content: { text: string }[] }
+      expect(result.isError).toBe(true)
+      expect(textOf(result)).not.toMatch(NO_STACK)
+      expect(existsSync(box.root)).toBe(false)
+    })
+  })
+
+  test('a lone surrogate is a validation error (exit 2) naming the field, not an I/O failure', async () => {
+    const box = sandbox()
+    await withRecordServer(box, async session => {
+      const result = await session.call('record', args({ objective: 'before \ud800 after', findings: ['ok', 'bad \udc00'] }))
+      expect(result.isError).toBe(true)
+      expect(textOf(result)).toBe(['metacogs-record: validation (exit 2)', '  objective: contains a lone surrogate', '  findings[1]: contains a lone surrogate'].join('\n'))
+      expect(existsSync(box.root)).toBe(false)
+    })
+  })
+
+  test('a multibyte payload under the limit in UTF-16 units and over it in UTF-8 bytes is refused', async () => {
+    const box = sandbox()
+    await withRecordServer(box, async session => {
+      const euro = '€'.repeat(LIMITS.MAX_STRING_LENGTH)
+      const overrides = { evidence: Array.from({ length: 6 }, () => euro) }
+      expect(JSON.stringify(args(overrides)).length).toBeLessThan(LIMITS.MAX_PAYLOAD_BYTES)
+      const result = await session.call('record', args(overrides))
+      expect(result.isError).toBe(true)
+      expect(textOf(result)).toMatch(/^metacogs-record: validation \(exit 2\)\n {2}record: is \d+ bytes; the limit is 65536$/)
+      expect(existsSync(box.root)).toBe(false)
+    })
+  })
+
+  test('the stamp counts: a record that is exactly the limit before stamping is refused, and one that is exactly the limit stamped is written and replays through the CLI', async () => {
+    const bytes = (value: unknown): number => Buffer.byteLength(JSON.stringify(value), 'utf8')
+    const padded = (target: number): Record<string, unknown> => {
+      for (let full = 0; full < LIMITS.MAX_ARRAY_ITEMS; full++) {
+        const filler = Array.from({ length: full }, () => 'a'.repeat(LIMITS.MAX_STRING_LENGTH))
+        const last = target - bytes(args({ findings: filler })) - 2 - (full > 0 ? 1 : 0)
+        if (last >= 1 && last <= LIMITS.MAX_STRING_LENGTH) return args({ findings: [...filler, 'b'.repeat(last)] })
+      }
+      throw new Error('no padding fits')
+    }
+    const stampBytes = bytes({ ...args(), helper_version: VERSION }) - bytes(args())
+    const box = sandbox()
+    await withRecordServer(box, async session => {
+      const exact = padded(LIMITS.MAX_PAYLOAD_BYTES)
+      expect(bytes(exact)).toBe(LIMITS.MAX_PAYLOAD_BYTES)
+      const refused = await session.call('record', exact)
+      expect(refused.isError).toBe(true)
+      expect(textOf(refused)).toMatch(/^metacogs-record: validation \(exit 2\)\n {2}record: is \d+ bytes; the limit is 65536$/)
+      expect(existsSync(box.root)).toBe(false)
+
+      const fits = await session.call('record', padded(LIMITS.MAX_PAYLOAD_BYTES - stampBytes))
+      expect(fits.isError).toBeUndefined()
+      const { path } = JSON.parse(textOf(fits)) as { path: string }
+      expect(bytes(JSON.parse(readFileSync(path, 'utf8')))).toBe(LIMITS.MAX_PAYLOAD_BYTES)
+      const replay = await runCli(['--out-dir', join(box.root, '..', 'replayed'), '--file', path], { helperVersion: VERSION })
+      expect({ code: replay.code, stderr: replay.stderr }).toEqual({ code: 0, stderr: '' })
+    })
+  })
+})
