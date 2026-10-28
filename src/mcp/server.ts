@@ -1,9 +1,11 @@
-// Stdio MCP server offering `feel` and `drugs` to hosts that cannot register a native tool (Claude Code, Codex).
-// The text comes from src/frames/feel-drugs.ts, so it matches what the OpenCode plugin offers. The entry always
-// starts the server, so it is only ever run as the built bundle (src/plugin/build.ts, `buildMcpServer`).
+// Stdio MCP server offering `feel`, `drugs` and `record` to hosts that cannot register a native tool (Claude Code,
+// Codex). The text of `feel` and `drugs` comes from src/frames/feel-drugs.ts, so it matches what the OpenCode plugin
+// offers. The entry always starts the server, so it is only ever run as the built bundle (src/plugin/build.ts,
+// `buildMcpServer`).
 //
-// Stdout carries JSON-RPC and nothing else; the bundle does no file, network or process I/O beyond the stdio
-// transport. Imports are deep and stdio-only, so no HTTP or auth code is bundled.
+// Stdout carries JSON-RPC and nothing else. `feel` and `drugs` do no I/O. `record` writes one file into the records
+// root (src/mcp/record-tool.ts) and does no network or process I/O. Imports are deep and stdio-only, so no HTTP or
+// auth code is bundled.
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
@@ -16,6 +18,7 @@ import {
   FEEL_FIELD_DESCRIPTIONS,
   feelText,
 } from '../frames/feel-drugs'
+import { RECORD_ANNOTATIONS, RECORD_DESCRIPTION, recordInputSchema, recordTool } from './record-tool'
 
 /** Defined by the bundler from package.json. There is no fallback: an unbundled run fails here, not with a made-up version. */
 declare const __METACOGS_MCP_VERSION__: string
@@ -51,6 +54,12 @@ server.registerTool(
     annotations: READ_ONLY,
   },
   async args => ({ content: [{ type: 'text' as const, text: drugsText(args) }] }),
+)
+
+server.registerTool(
+  'record',
+  { description: RECORD_DESCRIPTION, inputSchema: recordInputSchema, annotations: RECORD_ANNOTATIONS },
+  async args => recordTool(args, { env: process.env, cwd: process.cwd(), version: __METACOGS_MCP_VERSION__ }),
 )
 
 await server.connect(new StdioServerTransport())
