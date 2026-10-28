@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
+  assessChangeset,
   type Change,
   type GateDeps,
   type GateEnv,
@@ -12,6 +13,7 @@ import {
   gitChanges,
   isAddedChangeset,
   isGatedPath,
+  parseChangesetFrontmatter,
   parseGateEnv,
   parseNameStatus,
   runGate,
@@ -21,7 +23,10 @@ import {
 const BASE = 'a'.repeat(40)
 const GATE_CLI = join(import.meta.dir, 'changeset-gate.ts')
 
-function harness(changes: Change[], env: Partial<GateEnv> = {}, fail?: Error) {
+const RELEASE = "---\n'metacogs': minor\n---\n\nA change.\n"
+
+/** `changesets` maps an added changeset's path to its text; any other path reads as a minor release of metacogs. */
+function harness(changes: Change[], env: Partial<GateEnv> = {}, fail?: Error, changesets: Record<string, string> = {}) {
   const logs: string[] = []
   const errors: string[] = []
   const asked: string[] = []
@@ -32,6 +37,7 @@ function harness(changes: Change[], env: Partial<GateEnv> = {}, fail?: Error) {
       if (fail) throw fail
       return changes
     },
+    readChangeset: path => changesets[path] ?? RELEASE,
     log: m => void logs.push(m),
     error: m => void errors.push(m),
   }
@@ -74,6 +80,80 @@ describe('runGate', () => {
     expect(runGate(h.deps)).toBe(0)
     expect(h.errors).toEqual([])
     expect(h.logs.join('\n')).toContain('a changeset is added')
+  })
+
+  describe('an added changeset has to release metacogs', () => {
+    const gate = (text: string) => {
+      const path = '.changeset/brave-owls-sing.md'
+      const h = harness([M('hosts/claude/.mcp.json'), A(path)], {}, undefined, { [path]: text })
+      return { code: runGate(h.deps), errors: h.errors.join('\n') }
+    }
+
+    test('an empty changeset fails and says it releases nothing', () => {
+      const { code, errors } = gate('---\n---\n\nNothing.\n')
+      expect(code).toBe(1)
+      expect(errors).toContain('.changeset/brave-owls-sing.md: its frontmatter is empty')
+    })
+
+    test("'metacogs': none fails and says what it needs", () => {
+      const { code, errors } = gate("---\n'metacogs': none\n---\n\nx\n")
+      expect(code).toBe(1)
+      expect(errors).toContain('it sets metacogs to "none"; it needs patch, minor or major')
+    })
+
+    test('a changeset for other packages only fails and names them', () => {
+      const { code, errors } = gate("---\n'other': patch\n'@scope/pkg': minor\n---\n\nx\n")
+      expect(code).toBe(1)
+      expect(errors).toContain('it declares only other packages (other, @scope/pkg), not metacogs')
+    })
+
+    test('a file with no frontmatter fails', () => {
+      const { code, errors } = gate('Just prose.\n')
+      expect(code).toBe(1)
+      expect(errors).toContain('it has no frontmatter block')
+    })
+
+    test.each(['patch', 'minor', 'major'])("'metacogs': %s passes", bump => {
+      const { code, errors } = gate(`---\n'metacogs': ${bump}\n---\n\nx\n`)
+      expect(code).toBe(0)
+      expect(errors).toBe('')
+    })
+
+    test('a bare metacogs: minor key passes, and so does a double-quoted one', () => {
+      expect(gate('---\nmetacogs: minor\n---\n\nx\n').code).toBe(0)
+      expect(gate('---\n"metacogs": patch\n---\n\nx\n').code).toBe(0)
+    })
+
+    test('one releasing changeset among rejected ones is enough', () => {
+      const h = harness([M('hosts/claude/.mcp.json'), A('.changeset/a.md'), A('.changeset/b.md')], {}, undefined, { '.changeset/a.md': '---\n---\n' })
+      expect(runGate(h.deps)).toBe(0)
+    })
+
+    test('with several rejected changesets, each is named', () => {
+      const h = harness([M('hosts/claude/.mcp.json'), A('.changeset/a.md'), A('.changeset/b.md')], {}, undefined, {
+        '.changeset/a.md': '---\n---\n',
+        '.changeset/b.md': "---\n'metacogs': none\n---\n",
+      })
+      expect(runGate(h.deps)).toBe(1)
+      expect(h.errors.join('\n')).toMatch(/a\.md: its frontmatter is empty[\s\S]*b\.md: it sets metacogs to "none"/)
+    })
+
+    test('an unreadable changeset fails the gate', () => {
+      const h = harness([M('hosts/claude/.mcp.json'), A('.changeset/a.md')])
+      h.deps.readChangeset = () => {
+        throw new Error('boom')
+      }
+      expect(runGate(h.deps)).toBe(1)
+      expect(h.errors.join('\n')).toContain('could not read .changeset/a.md: boom')
+    })
+
+    test('the changeset is not read when nothing gated changed', () => {
+      const h = harness([M('README.md'), A('.changeset/a.md')])
+      h.deps.readChangeset = () => {
+        throw new Error('should not be read')
+      }
+      expect(runGate(h.deps)).toBe(0)
+    })
   })
 
   test.each([
@@ -141,6 +221,24 @@ describe('path rules', () => {
     expect(isGatedPath('hosts/claudette/x')).toBe(false)
   })
 
+  test('test files under a gated prefix are not gated, so a test-only change needs no changeset', () => {
+    expect(isGatedPath('src/hosts/foo.test.ts')).toBe(false)
+    expect(isGatedPath('src/generate/tree.test.ts')).toBe(false)
+    expect(isGatedPath('src/hosts/rules.ts')).toBe(true)
+    expect(runGate(harness([M('src/hosts/foo.test.ts')]).deps)).toBe(0)
+    expect(runGate(harness([M('src/hosts/foo.test.ts'), M('src/hosts/rules.ts')]).deps)).toBe(1)
+  })
+
+  test('parseChangesetFrontmatter reads the block between the leading --- lines', () => {
+    expect([...parseChangesetFrontmatter("---\r\n'metacogs': minor\r\nother: patch # why\r\n---\r\nbody: not read\r\n")!]).toEqual([
+      ['metacogs', 'minor'],
+      ['other', 'patch'],
+    ])
+    expect(parseChangesetFrontmatter('body\n---\nmetacogs: minor\n---\n')).toBeUndefined()
+    expect(parseChangesetFrontmatter('---\nmetacogs: minor\n')).toBeUndefined()
+    expect(assessChangeset("---\n'metacogs': \"patch\"\n---\n")).toEqual({ releases: true })
+  })
+
   test('isAddedChangeset needs status A, a direct .changeset/*.md child, and not the README', () => {
     expect(isAddedChangeset(A('.changeset/x.md'))).toBe(true)
     expect(isAddedChangeset(M('.changeset/x.md'))).toBe(false)
@@ -179,7 +277,7 @@ describe('git timeout', () => {
     const changes = gitChanges('/unused', () => timedOut)
     expect(() => changes(BASE)).toThrow(/could not run git: spawnSync git ETIMEDOUT/)
     const errors: string[] = []
-    const code = runGate({ env: { eventName: 'pull_request', headRef: 'feat/x', repository: 'o/r', headRepo: 'o/r', baseSha: BASE }, changes, log: () => {}, error: m => void errors.push(m) })
+    const code = runGate({ env: { eventName: 'pull_request', headRef: 'feat/x', repository: 'o/r', headRepo: 'o/r', baseSha: BASE }, changes, readChangeset: () => '', log: () => {}, error: m => void errors.push(m) })
     expect(code).toBe(1)
     expect(errors.join('\n')).toContain('could not diff against')
   })
@@ -283,6 +381,15 @@ describe('gitChanges and the CLI over a fixture repository', () => {
     const r = cli(prEnv())
     expect(r.status).toBe(0)
     expect(r.stdout).toContain('a changeset is added')
+  })
+
+  test('CLI: an empty changeset reads from HEAD and fails, saying why', () => {
+    put('hosts/claude/.mcp.json', '{"v":2}\n')
+    put('.changeset/empty-owls.md', '---\n---\n')
+    commit('with empty changeset')
+    const r = cli(prEnv())
+    expect(r.status).toBe(1)
+    expect(r.stderr).toContain('.changeset/empty-owls.md: its frontmatter is empty')
   })
 
   test('CLI: passes the version PR branch, and passes a change outside the owned paths', () => {
