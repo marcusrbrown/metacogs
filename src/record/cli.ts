@@ -8,7 +8,7 @@ import { EXIT, SHIPPED_METHODS, type StampedRecord } from './contract'
 import { validateRecord } from './validate'
 import { RecordCollisionError, RecordIoError, resolveRoot, writeRecord } from './write'
 
-// Replaced at bundle time by Bun.build `define` (see src/generate/bundle-helpers.ts). Undeclared when run from source.
+// Replaced at bundle time by Bun.build `define` (see src/generate/tree.ts). Undeclared when run from source.
 declare const __METACOGS_HELPER_VERSION__: string | undefined
 declare const __METACOGS_METHODS__: string | undefined
 

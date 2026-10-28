@@ -21,6 +21,9 @@ export const SCAN_TARGETS = [
   'SECURITY.md',
   'package.json',
   'CHANGELOG.md',
+  'hosts',
+  '.claude-plugin',
+  '.agents/plugins',
 ] as const
 
 /** Never descended into: gitignored run artifacts, dependencies, VCS data. */

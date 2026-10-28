@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { recordFilename } from '../record/canonical'
 import { SHIPPED_METHODS } from '../record/contract'
 import { runCli, validRecord } from '../record/test-support'
-import { buildHelper, generate, REPO_ROOT } from './bundle-helpers'
-import { checkHelpers } from './check'
+import { generate } from './bundle-helpers'
+import { checkGenerated } from './check'
+import { buildHelper, REPO_ROOT, type TreeEntry } from './tree'
 
 let root: string
 
@@ -30,7 +31,7 @@ describe('generate', () => {
       expect((await generate({ root: empty })).skills).toEqual([])
       mkdirSync(join(empty, 'skills'))
       expect((await generate({ root: empty })).skills).toEqual([])
-      expect(await checkHelpers({ root: empty })).toEqual([])
+      expect((await checkGenerated({ root: empty })).drift).toEqual([])
     } finally {
       rmSync(empty, { recursive: true, force: true })
     }
@@ -78,26 +79,155 @@ describe('generate', () => {
 describe('generate:check', () => {
   test('clean after generate', async () => {
     await generate({ root })
-    expect(await checkHelpers({ root })).toEqual([])
+    expect((await checkGenerated({ root })).drift).toEqual([])
   })
 
   test('reports a missing helper', async () => {
-    expect(await checkHelpers({ root })).toEqual([HELPER])
+    expect((await checkGenerated({ root })).drift).toEqual([{ path: HELPER, kind: 'missing' }])
   })
 
   test('hand-editing a bundled helper fails the check naming the path (library and CLI)', async () => {
     await generate({ root })
     const file = join(root, HELPER)
     writeFileSync(file, `${readFileSync(file, 'utf8')}\n// sneaky hand edit\n`)
-    expect(await checkHelpers({ root })).toEqual([HELPER])
+    expect((await checkGenerated({ root })).drift).toEqual([{ path: HELPER, kind: 'changed' }])
     const proc = spawnSync('bun', [join(REPO_ROOT, 'src', 'generate', 'check.ts'), '--root', root], { encoding: 'utf8' })
     expect(proc.status).toBe(1)
-    expect(proc.stderr).toContain(HELPER)
+    expect(proc.stderr).toContain(`changed: ${HELPER}`)
   })
 
   test('CLI exits 0 when clean', async () => {
     await generate({ root })
     const proc = spawnSync('bun', [join(REPO_ROOT, 'src', 'generate', 'check.ts'), '--root', root], { encoding: 'utf8' })
+    expect(proc.status).toBe(0)
+  })
+
+  test('the committed repository has no drift', async () => {
+    expect((await checkGenerated({})).drift).toEqual([])
+  })
+})
+
+describe('generate:check over whole trees', () => {
+  const file = (text: string, mode: TreeEntry['mode'] = 0o644): TreeEntry => ({ bytes: new TextEncoder().encode(text), mode })
+  const extraEntries = new Map<string, TreeEntry>([
+    ['hosts/claude/.mcp.json', file('{}\n')],
+    ['hosts/claude/hooks/session-start.mjs', file('#!/usr/bin/env node\n', 0o755)],
+    ['hosts/codex/plugin.json', file('{}\n')],
+    ['.claude-plugin/marketplace.json', file('{}\n')],
+    ['.agents/plugins/marketplace.json', file('{}\n')],
+  ])
+  const check = async () => (await checkGenerated({ root, ownedRoots: true, extraEntries })).drift
+  const at = (path: string) => join(root, path)
+
+  beforeEach(async () => {
+    await generate({ root, ownedRoots: true, extraEntries })
+  })
+
+  test('clean after generate', async () => {
+    expect(await check()).toEqual([])
+  })
+
+  test('reports a missing file in an owned root', async () => {
+    rmSync(at('hosts/codex/plugin.json'))
+    expect(await check()).toEqual([{ path: 'hosts/codex/plugin.json', kind: 'missing' }])
+  })
+
+  test('reports a whole missing owned root, file by file', async () => {
+    rmSync(at('hosts/claude'), { recursive: true })
+    expect(await check()).toEqual([
+      { path: 'hosts/claude/.mcp.json', kind: 'missing' },
+      { path: 'hosts/claude/hooks/session-start.mjs', kind: 'missing' },
+    ])
+  })
+
+  test('reports an extra file in each owned root, including nested ones', async () => {
+    writeFileSync(at('hosts/claude/stray.txt'), 'x')
+    mkdirSync(at('hosts/codex/deep/er'), { recursive: true })
+    writeFileSync(at('hosts/codex/deep/er/stray.txt'), 'x')
+    writeFileSync(at('.claude-plugin/plugin.json'), '{}')
+    writeFileSync(at('.agents/plugins/other.json'), '{}')
+    expect(await check()).toEqual([
+      { path: '.agents/plugins/other.json', kind: 'extra' },
+      { path: '.claude-plugin/plugin.json', kind: 'extra' },
+      { path: 'hosts/claude/stray.txt', kind: 'extra' },
+      { path: 'hosts/codex/deep/er/stray.txt', kind: 'extra' },
+    ])
+  })
+
+  test('reports a changed file', async () => {
+    writeFileSync(at('hosts/claude/.mcp.json'), '{"hand":"edit"}\n')
+    expect(await check()).toEqual([{ path: 'hosts/claude/.mcp.json', kind: 'changed' }])
+  })
+
+  test('reports a mode change in both directions', async () => {
+    chmodSync(at('hosts/claude/hooks/session-start.mjs'), 0o644)
+    chmodSync(at('hosts/codex/plugin.json'), 0o755)
+    expect(await check()).toEqual([
+      { path: 'hosts/claude/hooks/session-start.mjs', kind: 'mode' },
+      { path: 'hosts/codex/plugin.json', kind: 'mode' },
+    ])
+  })
+
+  test('ignores umask-level mode differences: only the executable bit counts', async () => {
+    chmodSync(at('hosts/codex/plugin.json'), 0o600)
+    chmodSync(at('hosts/claude/hooks/session-start.mjs'), 0o700)
+    expect(await check()).toEqual([])
+  })
+
+  test('a file that is both edited and re-moded is reported once, as changed', async () => {
+    writeFileSync(at('hosts/codex/plugin.json'), '{"x":1}\n')
+    chmodSync(at('hosts/codex/plugin.json'), 0o755)
+    expect(await check()).toEqual([{ path: 'hosts/codex/plugin.json', kind: 'changed' }])
+  })
+
+  test('a mode change on a per-file helper is reported', async () => {
+    chmodSync(at(HELPER), 0o755)
+    expect(await check()).toEqual([{ path: HELPER, kind: 'mode' }])
+  })
+
+  test('a symlink is extra when the map has no such path, changed when it replaces a generated file', async () => {
+    symlinkSync(at('hosts/codex/plugin.json'), at('hosts/codex/link.json'))
+    unlinkSync(at('hosts/claude/.mcp.json'))
+    symlinkSync(at('hosts/codex/plugin.json'), at('hosts/claude/.mcp.json'))
+    expect(await check()).toEqual([
+      { path: 'hosts/claude/.mcp.json', kind: 'changed' },
+      { path: 'hosts/codex/link.json', kind: 'extra' },
+    ])
+  })
+
+  test('an owned root that is a plain file is reported, not a crash', async () => {
+    rmSync(at('.claude-plugin'), { recursive: true })
+    writeFileSync(at('.claude-plugin'), 'not a directory')
+    expect(await check()).toEqual([
+      { path: '.claude-plugin', kind: 'extra' },
+      { path: '.claude-plugin/marketplace.json', kind: 'missing' },
+    ])
+  })
+
+  test('hand-written skill files are never reported, and the dev mirror is not part of the check', async () => {
+    writeFileSync(at('skills/demo/SKILL.md'), '---\nname: demo\ndescription: edited by hand\n---\n')
+    writeFileSync(at('skills/demo/notes.md'), 'x')
+    mkdirSync(at('skills/demo/scripts'), { recursive: true })
+    writeFileSync(at('skills/demo/scripts/other.mjs'), 'x')
+    writeFileSync(at('.agents/skills/demo/stray.md'), 'x')
+    expect(await check()).toEqual([])
+  })
+
+  test('check is read-only', async () => {
+    writeFileSync(at('hosts/claude/stray.txt'), 'x')
+    await check()
+    expect(existsSync(at('hosts/claude/stray.txt'))).toBe(true)
+  })
+
+  test('an invalid tree is an error, not drift', async () => {
+    await expect(checkGenerated({ root, extraEntries: new Map([['README.md', file('x')]]) })).rejects.toThrow(/tree:/)
+  })
+
+  test('CLI --root is a foreign root: it does not own the owned roots, so a file there is not drift', () => {
+    mkdirSync(at('hosts/claude'), { recursive: true })
+    writeFileSync(at('hosts/claude/stray.txt'), 'x')
+    const proc = spawnSync('bun', [join(REPO_ROOT, 'src', 'generate', 'check.ts'), '--root', root], { encoding: 'utf8' })
+    expect(proc.stderr).toBe('')
     expect(proc.status).toBe(0)
   })
 })
