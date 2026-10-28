@@ -171,12 +171,14 @@ function hostRules(profile: HostProfile, style: RenderStyle): Rule[] {
 /**
  * Both method skills end by running a shell helper in the source. On Claude Code and Codex they call the `record` tool
  * of the MCP server instead: the helper line, its heredoc and its exit codes go, and the tool's result takes their
- * place. Steps 1 to 7 and the reply sections are left as written (step 1 still says "no helper"). Each rule matches the
+ * place. The one other change is step 1's gate, which loses "no helper". Steps 2 to 7 and the reply sections are left as
+ * written. Each rule matches the
  * unchanged source text exactly, so a wording edit upstream fails generation.
  */
 function recordRules(profile: HostProfile): Rule[] {
   const tool = `\`${profile.recordTool}\``
   return [
+    { name: 'record: gate wording', skills: METHOD_SKILLS, from: 'no announcement, no helper, no record', to: 'no announcement, no record', count: 1 },
     {
       name: 'record: compatibility',
       skills: METHOD_SKILLS,

@@ -30,8 +30,16 @@ describe('the denylist', () => {
     for (const skill of ['feel', 'drugs'] as const) {
       expect(await problems(skill)).toEqual(['denylisted: base directory reported by the host', 'denylisted: OpenCode argument wording', 'denylisted: tool called by its bare name'])
     }
-    expect(await problems('synthesis')).toEqual(['denylisted: skill base directory placeholder', 'denylisted: base directory reported by the host'])
-    expect(await problems('counterfactual')).toEqual(['denylisted: skill base directory placeholder', 'denylisted: base directory reported by the host'])
+    expect(await problems('synthesis')).toEqual(['denylisted: skill base directory placeholder', 'denylisted: base directory reported by the host', 'denylisted: record helper named in the gate'])
+    expect(await problems('counterfactual')).toEqual(['denylisted: skill base directory placeholder', 'denylisted: base directory reported by the host', 'denylisted: record helper named in the gate'])
+  })
+
+  test('fires on a method render whose gate still says "no helper"', async () => {
+    for (const skill of ['synthesis', 'counterfactual'] as const) {
+      const source = await readSkillSource(REPO_ROOT, skill)
+      expect(denylistFindings('x', applyRules(codexRules(), skill, source))).toEqual([])
+      expect(denylistFindings('x', applyRules(codexRules(), skill, source).replace('no announcement, no record', 'no announcement, no helper, no record')).map(f => f.problem)).toEqual(['denylisted: record helper named in the gate'])
+    }
   })
 
   test('does not fire on host forms: a namespaced command, a path, a Claude tool name', () => {

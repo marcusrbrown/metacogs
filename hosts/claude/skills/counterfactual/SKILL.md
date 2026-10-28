@@ -11,7 +11,7 @@ A checklist for testing a decision against its weakest premise. It structures yo
 
 ## Steps
 
-1. **Gate.** If no consequential decision rests on an uncertain premise, do nothing: no announcement, no helper, no record. Answer the task directly. A mechanical edit, rename, wording swap, or small fix is out, even when the text uses words like "assumption" or "counterfactual".
+1. **Gate.** If no consequential decision rests on an uncertain premise, do nothing: no announcement, no record. Answer the task directly. A mechanical edit, rename, wording swap, or small fix is out, even when the text uses words like "assumption" or "counterfactual".
 2. **Objective.** State the decision you are about to recommend. → `objective`
 3. **Load-bearing premise.** Find the smallest claim that links the supplied evidence to that decision and would flip it if false. Write it so an observation could prove it wrong ("the hosted runner can reach the gateway and holds the token"), not as a vague risk. → `assumptions`
 4. **Check it against the input.** Separate what the input shows (quote the config, measurement, or file) from what is only inferred or asserted: a remembered conversation, "everyone agrees", a result on one machine, CI, or staging, an average standing in for a peak. Never copy an assumption into `evidence`. → `evidence`

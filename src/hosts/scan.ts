@@ -37,6 +37,7 @@ export const DENYLIST: readonly DenyEntry[] = [
   },
   { name: 'guidance block tag', pattern: /<\/?METACOGS_GUIDANCE>/, example: '<METACOGS_GUIDANCE>' },
   { name: 'tool called by its bare name', pattern: /Call the `(?:feel|drugs)` tool/, example: 'Call the `feel` tool (not the `feel` skill' },
+  { name: 'record helper named in the gate', pattern: /no helper/, example: 'do nothing: no announcement, no helper, no record' },
 ]
 
 export interface Finding {

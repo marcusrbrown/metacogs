@@ -9,8 +9,8 @@ const sources = Object.fromEntries(await Promise.all(HOST_SKILLS.map(async skill
 const render = (skill: (typeof HOST_SKILLS)[number]): string => applyRules(claudeRules(), skill, sources[skill])
 const renderCodex = (skill: (typeof HOST_SKILLS)[number]): string => applyRules(codexRules(), skill, sources[skill])
 const occurrences = (text: string, needle: string): number => text.split(needle).length - 1
-/** Anything that tells the model to run a script or a shell command. Step 1's "no helper" is part of the evaluated text and is not matched. */
-const HELPER_OR_SHELL = /record\.mjs|<skill-base-dir>|<<'EOF'|\bEOF\b|stdin|\bbash\b|\bshell\b|\bnode "|base directory|CLAUDE_SKILL_DIR|directory of this SKILL\.md|Exit [0-9]/i
+/** Anything that tells the model to run a script or a shell command, or that still names the helper. */
+const HELPER_OR_SHELL = /record\.mjs|<skill-base-dir>|<<'EOF'|\bEOF\b|stdin|\bbash\b|\bshell\b|\bhelper\b|\bnode "|base directory|CLAUDE_SKILL_DIR|directory of this SKILL\.md|Exit [0-9]/i
 
 describe('the Claude rule table', () => {
   test('every rule matches its expected count in every skill it names, against the real sources', () => {
@@ -104,7 +104,7 @@ describe('the Claude renders (AE1 and AE5, static parts)', () => {
 
 describe('the method renders keep the evaluated text', () => {
   for (const [host, apply] of [['Claude', render], ['Codex', renderCodex]] as const) {
-    test(`${host}: reasoning steps 1 to 7, the Reply section and the frontmatter apart from compatibility are byte-identical to the canonical text`, () => {
+    test(`${host}: reasoning steps 2 to 7, the Reply section and the frontmatter apart from compatibility are byte-identical to the canonical text, and step 1 differs only by "no helper"`, () => {
       for (const skill of METHOD_SKILLS) {
         const section = (text: string, from: string, to?: string): string => {
           const start = text.indexOf(from)
@@ -114,8 +114,11 @@ describe('the method renders keep the evaluated text', () => {
         const canonical = sources[skill]
         const rendered = apply(skill)
         // Everything from the title through step 7 (counterfactual's step 8 is the record step, which is adapted).
+        // The one allowed difference: step 1's gate loses "no helper".
         const stepsEnd = skill === 'counterfactual' ? '8. **Record' : '## Record'
-        expect(section(rendered, '# ', stepsEnd), skill).toBe(section(canonical, '# ', stepsEnd))
+        const gate = 'no announcement, no helper, no record'
+        expect(occurrences(section(canonical, '# ', stepsEnd), gate), skill).toBe(1)
+        expect(section(rendered, '# ', stepsEnd), skill).toBe(section(canonical, '# ', stepsEnd).replace(gate, 'no announcement, no record'))
         expect(section(rendered, '## Reply'), skill).toBe(section(canonical, '## Reply'))
         const front = (text: string): string[] => text.split('---\n')[1]!.split('\n').filter(line => !line.startsWith('compatibility:'))
         expect(front(rendered), skill).toEqual(front(canonical))
@@ -187,7 +190,7 @@ describe('the Codex rule table', () => {
   test('every record rule keeps an exact match count of one against the unchanged canonical text', () => {
     for (const rules of [claudeRules(), codexRules()]) {
       const record = rules.filter(rule => rule.name.startsWith('record:') || /^(synthesis|counterfactual): (record|outcomes)/.test(rule.name))
-      expect(record.length).toBe(9)
+      expect(record.length).toBe(10)
       for (const rule of record) {
         expect(rule.count, rule.name).toBe(1)
         for (const skill of rule.skills) expect(occurrences(sources[skill], rule.from), `${rule.name} in ${skill}`).toBe(1)

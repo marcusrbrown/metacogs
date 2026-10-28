@@ -11,7 +11,7 @@ A checklist for reconciling several perspectives without counting heads. It stru
 
 ## Steps
 
-1. **Gate.** Without multiple material perspectives on a consequential decision, do nothing: no announcement, no helper, no record. Answer directly. A mechanical edit, sort, wording swap, or small fix is out, even when the text says "consensus", "synthesis", or "perspectives".
+1. **Gate.** Without multiple material perspectives on a consequential decision, do nothing: no announcement, no record. Answer directly. A mechanical edit, sort, wording swap, or small fix is out, even when the text says "consensus", "synthesis", or "perspectives".
 2. **Question.** Restate the decision. → `objective`
 3. **Extract each perspective** under the input's own label: claim, evidence offered, what it takes for granted. State each as its proponent would; dissent gets the same fidelity as the majority. → `evidence` (one entry per perspective, starting with its label), `assumptions`
 4. **Map shared ground.** Find premises, constraints, documents, or framings that two or more perspectives share or that all omit. Say whether the input supports each. → `assumptions`
