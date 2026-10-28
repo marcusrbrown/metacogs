@@ -230,13 +230,64 @@ describe('path rules', () => {
   })
 
   test('parseChangesetFrontmatter reads the block between the leading --- lines', () => {
-    expect([...parseChangesetFrontmatter("---\r\n'metacogs': minor\r\nother: patch # why\r\n---\r\nbody: not read\r\n")!]).toEqual([
+    const parsed = parseChangesetFrontmatter("---\r\n'metacogs': minor\r\nother: patch # why\r\n---\r\nbody: not read\r\n")
+    expect(parsed.ok && [...parsed.entries]).toEqual([
       ['metacogs', 'minor'],
       ['other', 'patch'],
     ])
-    expect(parseChangesetFrontmatter('body\n---\nmetacogs: minor\n---\n')).toBeUndefined()
-    expect(parseChangesetFrontmatter('---\nmetacogs: minor\n')).toBeUndefined()
+    expect(parseChangesetFrontmatter('body\n---\nmetacogs: minor\n---\n')).toEqual({ ok: false, reason: 'it has no frontmatter block' })
+    expect(parseChangesetFrontmatter('---\nmetacogs: minor\n')).toEqual({ ok: false, reason: 'it has no frontmatter block' })
     expect(assessChangeset("---\n'metacogs': \"patch\"\n---\n")).toEqual({ releases: true })
+  })
+
+  describe('only top-level entries count', () => {
+    const verdict = (frontmatter: string) => assessChangeset(`---\n${frontmatter}---\n\nbody\n`)
+    const rejected = (frontmatter: string, why: RegExp) => {
+      const result = verdict(frontmatter)
+      expect(result.releases).toBe(false)
+      expect(result.releases === false && result.reason).toMatch(why)
+    }
+
+    test('metacogs: patch nested under another key is rejected', () => {
+      // The parent key has no value on its own line, so that line is the first to fail.
+      rejected('other:\n  metacogs: patch\n', /plain "name: bump" lines at column 0/)
+      rejected("'other':\n  'metacogs': patch\n", /plain "name: bump" lines at column 0/)
+      rejected('metacogs: minor\n  nested: patch\n', /indented line/)
+      rejected('\tmetacogs: minor\n', /indented line/)
+    })
+
+    test('metacogs: patch inside a block scalar is rejected', () => {
+      rejected('other: |\n  metacogs: patch\n', /block scalar/)
+      rejected('other: >-\n  metacogs: patch\n', /block scalar/)
+      rejected('metacogs: |\n', /block scalar/)
+    })
+
+    test('flow mappings and sequences are rejected', () => {
+      rejected('other: { metacogs: patch }\n', /flow mapping or sequence/)
+      rejected('other: [metacogs, patch]\n', /flow mapping or sequence/)
+      rejected('{ metacogs: patch }\n', /not a top-level key: value/)
+    })
+
+    test('a line that is not a top-level key: value rejects the whole block, even beside a valid release', () => {
+      rejected('metacogs: minor\njust prose\n', /not a top-level key: value/)
+      rejected('metacogs: minor\n- metacogs\n', /not a top-level key: value/)
+      rejected('metacogs: minor\n# a comment\n', /not a top-level key: value/)
+      rejected('metacogs: minor\nmetacogs: none\n', /duplicate name/)
+      rejected('metacogs:\n', /not a top-level key: value/)
+    })
+
+    test('the plain forms still pass, with blank lines, CRLF and a trailing comment', () => {
+      expect(verdict("'metacogs': patch\n")).toEqual({ releases: true })
+      expect(verdict('"metacogs": major\n')).toEqual({ releases: true })
+      expect(verdict('metacogs: minor # why\n\n')).toEqual({ releases: true })
+      expect(assessChangeset("---\r\n'other': patch\r\nmetacogs: minor\r\n---\r\n")).toEqual({ releases: true })
+    })
+
+    test('empty and none still fail with their own reasons', () => {
+      rejected('', /frontmatter is empty/)
+      rejected('\n', /frontmatter is empty/)
+      rejected("'metacogs': none\n", /needs patch, minor or major/)
+    })
   })
 
   test('isAddedChangeset needs status A, a direct .changeset/*.md child, and not the README', () => {

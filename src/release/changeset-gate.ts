@@ -65,31 +65,50 @@ export function isAddedChangeset({ status, path }: Change): boolean {
 
 const BUMPS = ['patch', 'minor', 'major']
 
+export type ChangesetFrontmatter = { ok: true; entries: Map<string, string> } | { ok: false; reason: string }
+
+const KEY = String.raw`(?:'([^']+)'|"([^"]+)"|([^\s:'"#{}\[\],|>&*!%@\x60][^\s:'"#]*))`
+const VALUE = String.raw`(?:'([^']*)'|"([^"]*)"|([A-Za-z0-9._-]+))`
+const ENTRY = new RegExp(String.raw`^${KEY}:[ \t]+${VALUE}[ \t]*(?:#.*)?$`)
+
 /**
- * The `name: bump` entries in a changeset's frontmatter, or `undefined` when the file has no frontmatter block. A small
- * reader for the Changesets format (the block between the leading `---` lines, one entry per line, names bare or quoted),
- * not a YAML parser. A line it cannot read is skipped, so it can only lose a release, never invent one.
+ * The top-level `name: bump` entries of a changeset's frontmatter, the block between the leading `---` lines. This is a
+ * strict reader for the Changesets format, not a YAML parser: every non-blank line has to start at column 0 as
+ * `name: bump`, `'name': bump` or `"name": bump`. An indented line, a block scalar (`|`, `>`), a flow mapping or
+ * sequence, a duplicate name, or any other line makes the whole block invalid, so a `metacogs: patch` nested under another
+ * key or hidden in a scalar can never count as a release. `ok: false` with no frontmatter block at all is reported too.
  */
-export function parseChangesetFrontmatter(text: string): Map<string, string> | undefined {
+export function parseChangesetFrontmatter(text: string): ChangesetFrontmatter {
   const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/)
-  if (lines[0]?.trim() !== '---') return undefined
+  if (lines[0]?.trim() !== '---') return { ok: false, reason: 'it has no frontmatter block' }
   const end = lines.findIndex((line, i) => i > 0 && line.trim() === '---')
-  if (end === -1) return undefined
+  if (end === -1) return { ok: false, reason: 'it has no frontmatter block' }
   const entries = new Map<string, string>()
   for (const line of lines.slice(1, end)) {
-    const match = /^\s*(?:'([^']+)'|"([^"]+)"|([^\s:'"#]+))\s*:\s*(?:'([^']*)'|"([^"]*)"|([^\s#]*))\s*(?:#.*)?$/.exec(line)
-    if (match === null) continue
-    entries.set(match[1] ?? match[2] ?? match[3]!, match[4] ?? match[5] ?? match[6] ?? '')
+    if (line.trim() === '') continue
+    const invalid = (why: string): ChangesetFrontmatter => ({ ok: false, reason: `its frontmatter must be plain "name: bump" lines at column 0, but has ${why}: ${JSON.stringify(line)}` })
+    if (/^\s/.test(line)) return invalid('an indented line')
+    const match = ENTRY.exec(line)
+    if (match === null) {
+      const value = /^[^:]*:\s*(\S?)/.exec(line)?.[1]
+      if (value === '|' || value === '>') return invalid('a block scalar')
+      if (value === '{' || value === '[') return invalid('a flow mapping or sequence')
+      return invalid('a line that is not a top-level key: value')
+    }
+    const name = match[1] ?? match[2] ?? match[3]!
+    if (entries.has(name)) return invalid('a duplicate name')
+    entries.set(name, match[4] ?? match[5] ?? match[6]!)
   }
-  return entries
+  return { ok: true, entries }
 }
 
 export type ChangesetVerdict = { releases: true } | { releases: false; reason: string }
 
 /** Whether a changeset releases `metacogs` with a patch, minor or major bump; otherwise why not. */
 export function assessChangeset(text: string): ChangesetVerdict {
-  const entries = parseChangesetFrontmatter(text)
-  if (entries === undefined) return { releases: false, reason: 'it has no frontmatter block' }
+  const frontmatter = parseChangesetFrontmatter(text)
+  if (!frontmatter.ok) return { releases: false, reason: frontmatter.reason }
+  const { entries } = frontmatter
   if (entries.size === 0) return { releases: false, reason: 'its frontmatter is empty, so it releases nothing' }
   const bump = entries.get(PACKAGE_NAME)
   if (bump === undefined) return { releases: false, reason: `it declares only other packages (${[...entries.keys()].join(', ')}), not ${PACKAGE_NAME}` }
