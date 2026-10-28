@@ -1,6 +1,6 @@
 # metacogs
 
-Explicit, testable reasoning methods packaged as portable [Agent Skills](https://agentskills.io/specification). Each method is a short written procedure plus a helper that validates and stores a decision record. A method is included only after an eval shows it changes what a model does on tasks where it should apply, and stays silent on tasks where it should not. The package is also an [OpenCode plugin](#opencode-plugin).
+Explicit, testable reasoning methods packaged as portable [Agent Skills](https://agentskills.io/specification). Each method is a short written procedure plus a helper that validates and stores a decision record. A method is included only after an eval shows it changes what a model does on tasks where it should apply, and stays silent on tasks where it should not. The package is also an [OpenCode plugin](#opencode-plugin), a [Claude Code plugin](#claude-code-plugin) and an experimental [Codex plugin](#codex-plugin).
 
 ## Stance
 
@@ -62,6 +62,39 @@ Observed on OpenCode 1.19.4 with GPT-6 Luna, GPT-6.1 Sol, Claude Haiku 5.5 and C
 
 How the plugin was tested is recorded in [`evals/spikes/feel-drugs/README.md`](evals/spikes/feel-drugs/README.md).
 
+## Claude Code plugin
+
+metacogs is also a [Claude Code](https://code.claude.com) plugin, served from this repository. It adds the `feel` and `drugs` tools through a local MCP server, the four skills, and a short factual note at session start.
+
+```text
+/plugin install metacogs --marketplace marcusrbrown/metacogs
+```
+
+That one-step form needs Claude Code 2.1.275 or later. The two-step form is `/plugin marketplace add marcusrbrown/metacogs`, then `/plugin install metacogs@metacogs`.
+
+- **Node.** Node 22 or newer must be on `PATH`. Without it the MCP server does not start and the skills continue in plain text.
+- **Invoke.** `/metacogs:feel`, `/metacogs:drugs`, `/metacogs:synthesis`, `/metacogs:counterfactual`. The tools are `mcp__plugin_metacogs_metacogs__feel` and `mcp__plugin_metacogs_metacogs__drugs`.
+- **Session-start note.** Set `METACOGS_GUIDANCE=off`, create `${XDG_CONFIG_HOME:-~/.config}/metacogs/guidance-off`, or turn off the plugin's `guidance` option.
+- **Status.** The package passes `claude plugin validate --strict` but has not been installed and invoked on a real Claude Code. Its `synthesis` and `counterfactual` skills are adapted for the host and are not the exact text that was evaluated.
+
+Approvals, the record helper, the sandbox, updates and uninstall are in [docs/install.md](docs/install.md#claude-code-plugin).
+
+## Codex plugin
+
+metacogs is also an experimental [Codex](https://developers.openai.com/codex) plugin, served from this repository. It adds the same tools and skills. It has no session-start note.
+
+```sh
+codex plugin marketplace add marcusrbrown/metacogs
+codex plugin add metacogs@metacogs
+```
+
+- **Node.** Node 22 or newer must be on `PATH`. Without it the MCP server does not start and the skills continue in plain text.
+- **Invoke.** `$metacogs:feel`, `$metacogs:drugs`, `$metacogs:synthesis`, `$metacogs:counterfactual`, with any arguments as text after the mention. The tools are `mcp__metacogs__feel` and `mcp__metacogs__drugs`.
+- **Session-start note.** None. Codex discards the hooks of a plugin in the agent-plugins format, so the tools and skills work without a note. `METACOGS_GUIDANCE` and the `guidance-off` file apply to the Claude Code plugin only.
+- **Status.** The manifests validate against the agent-plugins.org 1.0.0 schemas. The install commands and the package have not been run on a real Codex. Its `synthesis` and `counterfactual` skills are adapted for the host and are not the exact text that was evaluated.
+
+Approvals, the record helper, the sandbox, updates and uninstall are in [docs/install.md](docs/install.md#codex-plugin).
+
 ## Methods
 
 ### synthesis
@@ -89,9 +122,15 @@ The other nine upstream concepts are listed in [HYPOTHESES.md](HYPOTHESES.md) wi
 | [Pi](docs/install.md#pi) | `.agents/skills/` | `content-compatible-untested`<br>Pi 1.3.0 · 2026-10-23 · [evidence](docs/install.md#pi)<br>Listing smoke only. Project skills load after trusting the project (`--approve`). | `content-compatible-untested`<br>Pi 1.3.0 · 2026-10-23 · [evidence](docs/install.md#pi)<br>Listing smoke ran on synthesis only; counterfactual was not listed on this host. Project skills load after trusting the project (`--approve`). |
 | [Codex](docs/install.md#codex) | `.agents/skills/` | `content-compatible-untested`<br>Codex 0.162.1 · 2026-10-23 · [evidence](docs/install.md#codex)<br>Listing smoke only. | `content-compatible-untested`<br>Codex 0.162.1 · 2026-10-23 · [evidence](docs/install.md#codex)<br>Listing smoke ran on synthesis only; counterfactual was not listed on this host. |
 | [Claude Code](docs/install.md#claude-code) | `.claude/skills/` | `content-compatible-untested`<br>Claude Code 2.1.270 · 2026-10-23 · [evidence](docs/install.md#claude-code)<br>Listing smoke only. Reads `.claude/skills/`, not `.agents/skills/`. | `content-compatible-untested`<br>Claude Code 2.1.270 · 2026-10-23 · [evidence](docs/install.md#claude-code)<br>Listing smoke ran on synthesis only; counterfactual was not listed on this host. Reads `.claude/skills/`, not `.agents/skills/`. |
+
+| Host | Plugin package |
+| --- | --- |
+| OpenCode | `verified`<br>OpenCode 1.19.4 · 2026-10-26 · [evidence](evals/spikes/feel-drugs/README.md#plugin-reads)<br>Tested on the pinned OpenCode release with the packed package: scripted-provider integration suite, host probes and guided reads. |
+| Claude Code | `unverified`<br>2026-10-27 · [evidence](docs/install.md#claude-code-plugin)<br>The package is generated and `claude plugin validate --strict` passes on the marketplace and the plugin (Claude Code 2.1.312). It has not been installed and invoked on a real Claude Code. The `synthesis` and `counterfactual` renders are host-adapted, not the text that was evaluated. |
+| Codex | `unverified` (experimental)<br>2026-10-27 · [evidence](docs/install.md#codex-plugin)<br>The manifests validate against the agent-plugins.org 1.0.0 schemas; Codex has no CLI validator. The package has not been installed and invoked on a real Codex. The `synthesis` and `counterfactual` renders are host-adapted, not the text that was evaluated. |
 <!-- matrix:end -->
 
-`matrix.json` is the source of truth and `bun run matrix:check` fails if this table drifts from it. "Pending human review" means the eval report is machine-green and a person has not finished reviewing the judge's verdicts. Statuses are defined in [docs/install.md](docs/install.md#status-key).
+`matrix.json` is the source of truth and `bun run matrix:check` fails if this table drifts from it. The second table records each host's plugin package. "Pending human review" means the eval report is machine-green and a person has not finished reviewing the judge's verdicts. Statuses are defined in [docs/install.md](docs/install.md#status-key).
 
 ## Evidence
 
@@ -105,7 +144,7 @@ What this does not show:
 
 - The gain is largely process visibility: the skill makes the agent write out perspectives, dependence, and a conclusion, which the rubric rewards. Whether answers are also more correct is not measured.
 - One host, one model pair, one fixture family. The judge is a single model whose draw is not fixed.
-- Pi, Codex, and Claude Code were checked for discovery only. No model was run on them.
+- Pi, Codex, and Claude Code were checked for discovery only. No model was run on them. The Claude Code and Codex plugin packages were validated but not installed and invoked on either host.
 
 **What preregistration proves.** Thresholds, rubric, and fixture hashes are committed in `evals/<method>/prereg.json` before the skill is authored, and the runner reads its bars and hashes from that file. Every manifest and report carries the sha256 of the file's canonical form, so a changed prereg no longer matches the runs made under the old one. This is a content contract, not a proof of git history: the author controls the repository and can rewrite the prereg and re-run. Held-out fixtures stay outside the repository until release.
 
@@ -124,9 +163,9 @@ Runs happen in a throwaway workspace with a scrubbed environment so nothing from
 
 ## Releases and automation
 
-Releases use [Changesets](https://github.com/changesets/changesets). Pending changesets produce a version PR; merging it creates the `v*` tag and a GitHub Release, and the release workflow then publishes the package to npm with provenance. The runbook for the first publish is in [docs/install.md](docs/install.md#publishing-the-package).
+Releases use [Changesets](https://github.com/changesets/changesets). Pending changesets produce a version PR; merging it creates the `v*` tag and a GitHub Release, and the release workflow then publishes the package to npm with provenance. The runbook for the first publish is in [docs/install.md](docs/install.md#publishing-the-package). The Claude Code and Codex marketplaces serve `main`, so a change to the generated packages (`hosts/`, `.claude-plugin/`, `.agents/plugins/`) or to their generator must carry a changeset; CI checks this.
 
-Fro Bot reviews pull requests and acts on `@fro-bot` mentions. The daily autoheal may open one fix PR and must not touch eval evidence (`evals/**`) or skill text (`skills/**`).
+Fro Bot reviews pull requests and acts on `@fro-bot` mentions. The daily autoheal may open one fix PR and must not touch eval evidence (`evals/**`), skill text (`skills/**`) or the generated host packages.
 
 ## Attribution and license
 

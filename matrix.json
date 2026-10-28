@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "hosts": {
     "opencode": { "name": "OpenCode", "project_path": ".agents/skills/" },
     "pi": { "name": "Pi", "project_path": ".agents/skills/" },
@@ -80,11 +80,26 @@
       }
     }
   },
-  "plugin": {
-    "host": "opencode",
-    "host_version": "1.19.4",
-    "evidence_ref": "evals/spikes/feel-drugs/README.md#plugin-reads",
-    "date": "2026-10-26",
-    "note": "Tested on the pinned OpenCode release with the packed package: scripted-provider integration suite, host probes and guided reads."
+  "plugins": {
+    "opencode": {
+      "status": "verified",
+      "host_version": "1.19.4",
+      "evidence_ref": "evals/spikes/feel-drugs/README.md#plugin-reads",
+      "date": "2026-10-26",
+      "note": "Tested on the pinned OpenCode release with the packed package: scripted-provider integration suite, host probes and guided reads."
+    },
+    "claude-code": {
+      "status": "unverified",
+      "evidence_ref": "docs/install.md#claude-code-plugin",
+      "date": "2026-10-27",
+      "note": "The package is generated and `claude plugin validate --strict` passes on the marketplace and the plugin (Claude Code 2.1.312). It has not been installed and invoked on a real Claude Code. The `synthesis` and `counterfactual` renders are host-adapted, not the text that was evaluated."
+    },
+    "codex": {
+      "status": "unverified",
+      "evidence_ref": "docs/install.md#codex-plugin",
+      "date": "2026-10-27",
+      "note": "The manifests validate against the agent-plugins.org 1.0.0 schemas; Codex has no CLI validator. The package has not been installed and invoked on a real Codex. The `synthesis` and `counterfactual` renders are host-adapted, not the text that was evaluated.",
+      "experimental": true
+    }
   }
 }

@@ -8,12 +8,11 @@ import { OPENCODE_PIN } from '../runner/env'
 const read = (rel: string) => readFileSync(join(REPO_ROOT, rel), 'utf8')
 
 describe('the tested OpenCode version', () => {
-  test('package.json testedWith, the matrix plugin entry and the runner pin are one version', () => {
+  test('package.json testedWith, the matrix OpenCode plugin entry and the runner pin are one version', () => {
     const pkg = JSON.parse(read('package.json')) as { testedWith?: { opencode?: string } }
     const { matrix } = loadMatrix(REPO_ROOT)
     expect(pkg.testedWith).toEqual({ opencode: OPENCODE_PIN })
-    expect(matrix?.plugin?.host).toBe('opencode')
-    expect(matrix?.plugin?.host_version).toBe(OPENCODE_PIN)
+    expect(matrix?.plugins?.opencode?.host_version).toBe(OPENCODE_PIN)
   })
 })
 

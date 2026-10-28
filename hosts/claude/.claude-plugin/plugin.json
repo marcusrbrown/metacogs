@@ -1,0 +1,20 @@
+{
+  "name": "metacogs",
+  "version": "0.2.2",
+  "description": "Two tools, feel and drugs, and four skills: feel, drugs, synthesis and counterfactual. The tools run through an MCP server that needs Node 22 or later on PATH.",
+  "author": {
+    "name": "Marcus R. Brown",
+    "url": "https://github.com/marcusrbrown"
+  },
+  "homepage": "https://github.com/marcusrbrown/metacogs#readme",
+  "repository": "https://github.com/marcusrbrown/metacogs",
+  "license": "MIT",
+  "userConfig": {
+    "guidance": {
+      "type": "boolean",
+      "title": "Session-start note",
+      "description": "Print a short factual note about the metacogs tools and skills when a session starts.",
+      "default": true
+    }
+  }
+}

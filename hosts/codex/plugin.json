@@ -1,0 +1,13 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "metacogs",
+  "version": "0.2.2",
+  "description": "Experimental Codex package, not yet installed and run on a real Codex. Two tools, feel and drugs, and four skills: feel, drugs, synthesis and counterfactual. The tools run through an MCP server that needs Node 22 or later on PATH.",
+  "author": {
+    "name": "Marcus R. Brown",
+    "url": "https://github.com/marcusrbrown"
+  },
+  "homepage": "https://github.com/marcusrbrown/metacogs#readme",
+  "repository": "https://github.com/marcusrbrown/metacogs",
+  "license": "MIT"
+}

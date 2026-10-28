@@ -334,7 +334,7 @@ describe('record provenance: helper_version', () => {
   })
 
   test('helperVersionOf reads the banner marker from a bundled helper and refuses anything else', async () => {
-    const { buildHelper } = await import('../generate/bundle-helpers')
+    const { buildHelper } = await import('../generate/tree')
     expect(helperVersionOf(await buildHelper({ methods: ['counterfactual'], helperVersion: '4.5.6-test' }))).toBe('4.5.6-test')
     expect(helperVersionOf('console.log(1)')).toBeNull()
     expect(helperVersionOf('// helper_version: 1.0.0\nconsole.log(1)')).toBeNull()

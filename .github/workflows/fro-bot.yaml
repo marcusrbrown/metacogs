@@ -146,6 +146,9 @@ env:
     - evals/**
     - skills/**
     - .agents/skills/**
+    - hosts/**
+    - .claude-plugin/**
+    - .agents/plugins/**
     - .github/**
     - AGENTS.md
     - package.json, bun.lock

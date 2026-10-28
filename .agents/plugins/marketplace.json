@@ -1,0 +1,20 @@
+{
+  "name": "metacogs",
+  "interface": {
+    "displayName": "metacogs"
+  },
+  "plugins": [
+    {
+      "name": "metacogs",
+      "source": {
+        "source": "local",
+        "path": "./hosts/codex"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}
