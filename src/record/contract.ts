@@ -32,7 +32,7 @@ export const STRING_ARRAY_FIELDS = ['evidence', 'assumptions', 'alternatives', '
  * file is created.
  */
 export const LIMITS = {
-  /** Per string field and per array entry, in UTF-16 code units (`string.length`). */
+  /** Per string field and per array entry, in Unicode code points (an emoji counts once). */
   MAX_STRING_LENGTH: 4096,
   /** Per array field. */
   MAX_ARRAY_ITEMS: 64,

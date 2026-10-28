@@ -104,7 +104,52 @@ describe('payload limits', () => {
     const record = validRecord({ evidence: Array.from({ length: 10 }, () => wide), findings: Array.from({ length: 10 }, () => wide) })
     const [error] = messages(record)
     expect(messages(record)).toHaveLength(1)
-    expect(error).toMatch(/^\$: record is \d+ bytes; the limit is 65536$/)
+    expect(error).toMatch(/^record: is \d+ bytes; the limit is 65536$/)
+  })
+
+  test('characters are code points: 4096 emoji pass, 4097 fail and the message reports 4097', () => {
+    expect(validateRecord(validRecord({ objective: '😀'.repeat(LIMITS.MAX_STRING_LENGTH) })).ok).toBe(true)
+    expect(messages(validRecord({ objective: '😀'.repeat(LIMITS.MAX_STRING_LENGTH + 1) }))).toEqual(['objective: is 4097 characters; the limit is 4096'])
+    expect(messages(validRecord({ findings: ['😀'.repeat(LIMITS.MAX_STRING_LENGTH + 1)] }))).toEqual(['findings[0]: is 4097 characters; the limit is 4096'])
+  })
+
+  test('an oversized helper_version is a validation error naming helper_version', async () => {
+    expect(messages(validRecord({ helper_version: 'v'.repeat(LIMITS.MAX_STRING_LENGTH + 1) }))).toEqual(['helper_version: is 4097 characters; the limit is 4096'])
+    const result = await runRecord({ ...base(), input: validRecord({ helper_version: 'v'.repeat(LIMITS.MAX_STRING_LENGTH + 1) }) })
+    expect(result).toMatchObject({ ok: false, kind: 'validation', exit: 2, errors: [{ field: 'helper_version' }] })
+    expect(readdirSync(tmp)).toEqual([])
+  })
+
+  /** A record whose compact UTF-8 JSON is exactly `target` bytes, padded with ASCII entries inside every per-entry and per-array limit. */
+  const recordOfSize = (target: number): Record<string, unknown> => {
+    const bytes = (record: unknown): number => Buffer.byteLength(JSON.stringify(record), 'utf8')
+    for (let full = 0; full <= LIMITS.MAX_ARRAY_ITEMS - 1; full++) {
+      const filler = Array.from({ length: full }, () => 'a'.repeat(LIMITS.MAX_STRING_LENGTH))
+      const base = bytes(validRecord({ findings: filler }))
+      // The last entry adds its quotes (2), its characters, and a comma when it is not the first entry.
+      const last = target - base - 2 - (full > 0 ? 1 : 0)
+      if (last >= 1 && last <= LIMITS.MAX_STRING_LENGTH) {
+        const record = validRecord({ findings: [...filler, 'b'.repeat(last)] })
+        expect(bytes(record)).toBe(target)
+        return record
+      }
+    }
+    throw new Error('no padding fits')
+  }
+
+  test('a record of exactly MAX_PAYLOAD_BYTES is accepted and one byte more is rejected as the record', async () => {
+    const exact = recordOfSize(LIMITS.MAX_PAYLOAD_BYTES)
+    expect(validateRecord(exact).ok).toBe(true)
+    expect(await runRecord({ ...base(), input: exact })).toMatchObject({ ok: true, status: 'written' })
+    const over = recordOfSize(LIMITS.MAX_PAYLOAD_BYTES + 1)
+    expect(messages(over)).toEqual([`record: is ${LIMITS.MAX_PAYLOAD_BYTES + 1} bytes; the limit is ${LIMITS.MAX_PAYLOAD_BYTES}`])
+    expect(await runRecord({ ...base(), input: over })).toMatchObject({ ok: false, kind: 'validation', exit: 2, errors: [{ field: 'record' }] })
+    expect(readdirSync(join(tmp, 'records'))).toHaveLength(1)
+  })
+
+  test('a non-object input is reported against the record', () => {
+    const result = validateRecord([1])
+    expect(result).toEqual({ ok: false, errors: [{ field: 'record', message: 'must be a JSON object' }] })
   })
 
   test('oversized input through runRecord creates no file and no directory', async () => {

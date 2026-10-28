@@ -30,7 +30,7 @@ After step 7, call the `mcp__plugin_metacogs_metacogs__record` tool once, before
 `execution_mode`: `direct` (you applied the steps), `sequential` (no delegation available), `delegated` (only if you did).
 
 - A successful result with a `path`: written.
-- An error naming a field: fix it and call again once.
+- An error naming a field or the record's size: fix it, splitting a long entry into several shorter entries or trimming the record, and call again once.
 - Any other error, a refused call, or no such tool: do not call again; say the run is `unrecorded`.
 
 ## Reply

@@ -3,7 +3,9 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { REPO_ROOT } from '../generate/tree'
-import { applyRules, CLAUDE_PROFILE, CLAUDE_TOOL_PREFIX, CODEX_PROFILE, CODEX_TOOL_PREFIX, claudeRules, codexRules, HOST_SKILLS, MCP_SERVER_NAME, METHOD_SKILLS, PLUGIN_NAME, RECORD_TOOL, readSkillSource, type Rule, skillSourcePath } from './rules'
+import { validRecord } from '../record/test-support'
+import { validateRecord } from '../record/validate'
+import { applyRules, CLAUDE_PROFILE, CLAUDE_TOOL_PREFIX, CODEX_PROFILE, CODEX_TOOL_PREFIX, claudeRules, codexRules, HOST_SKILLS, MCP_SERVER_NAME, METHOD_SKILLS, PLUGIN_NAME, RECORD_TOOL, readSkillSource, RETRYABLE, type Rule, skillSourcePath } from './rules'
 
 const sources = Object.fromEntries(await Promise.all(HOST_SKILLS.map(async skill => [skill, await readSkillSource(REPO_ROOT, skill)] as const))) as Record<(typeof HOST_SKILLS)[number], string>
 const render = (skill: (typeof HOST_SKILLS)[number]): string => applyRules(claudeRules(), skill, sources[skill])
@@ -141,14 +143,27 @@ describe('the method renders keep the evaluated text', () => {
       const outcomes = (skill: (typeof METHOD_SKILLS)[number]): string[] => apply(skill).split('\n').filter(line => /^- (A successful result|An error naming|Any other error)/.test(line))
       expect(outcomes('synthesis')).toEqual([
         '- A successful result with a `path`: written.',
-        '- An error naming a field: fix it and call again once.',
+        "- An error naming a field or the record's size: fix it, splitting a long entry into several shorter entries or trimming the record, and call again once.",
         '- Any other error, a refused call, or no such tool: do not call again; say the run is `unrecorded`.',
       ])
       expect(outcomes('counterfactual')).toEqual([
         '- A successful result with a `path`: written. Reply.',
-        '- An error naming a field: fix it and call again once.',
+        "- An error naming a field or the record's size: fix it, splitting a long entry into several shorter entries or trimming the record, and call again once.",
         '- Any other error, a refused call, or no such tool: do not call again. Reply and say the run is `unrecorded`.',
       ])
+    })
+
+    test(`${host}: the retry branch covers a record over the size limit, which the validator reports against the record`, () => {
+      const oversized = validateRecord(validRecord({ assumptions: Array.from({ length: 20 }, () => 'a'.repeat(4096)) }))
+      expect(oversized.ok).toBe(false)
+      const fields = oversized.ok ? [] : oversized.errors.map(error => error.field)
+      expect(fields).toEqual(['record'])
+      for (const skill of METHOD_SKILLS) {
+        const retry = apply(skill).split('\n').find(line => line.startsWith('- An error naming'))!
+        expect(retry, skill).toContain(RETRYABLE)
+        expect(retry, skill).toContain("the record's size")
+        expect(retry, skill).toContain('splitting a long entry into several shorter entries or trimming the record')
+      }
     })
 
     test(`${host}: the compatibility line names the tool and says the server needs Node 22 or later`, () => {

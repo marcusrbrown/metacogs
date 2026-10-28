@@ -30,7 +30,7 @@ const isNonEmptyString = (value: unknown): value is string => typeof value === '
 
 /** Parse untrusted input into a MetacogsRecord, or report every failing field. */
 export function validateRecord(input: unknown, options: ValidateOptions = {}): ValidationResult {
-  if (!isPlainObject(input)) return fail([{ field: '$', message: 'record must be a JSON object' }])
+  if (!isPlainObject(input)) return fail([{ field: 'record', message: 'must be a JSON object' }])
 
   // Check the version first: a record from another schema generation has no obligation to match this shape.
   if (input.schema_version !== SCHEMA_VERSION) {
@@ -41,13 +41,15 @@ export function validateRecord(input: unknown, options: ValidateOptions = {}): V
   // Size first, so an oversized payload is rejected without a per-field pass over it.
   const payloadBytes = Buffer.byteLength(JSON.stringify(input), 'utf8')
   if (payloadBytes > LIMITS.MAX_PAYLOAD_BYTES) {
-    return fail([{ field: '$', message: `record is ${payloadBytes} bytes; the limit is ${LIMITS.MAX_PAYLOAD_BYTES}` }])
+    return fail([{ field: 'record', message: `is ${payloadBytes} bytes; the limit is ${LIMITS.MAX_PAYLOAD_BYTES}` }])
   }
 
   const errors: FieldError[] = []
+  // Characters are code points, so an emoji counts once. The payload cap above bounds the cost of spreading a string.
   const tooLong = (field: string, value: string): void => {
-    if (value.length > LIMITS.MAX_STRING_LENGTH) {
-      errors.push({ field, message: `is ${value.length} characters; the limit is ${LIMITS.MAX_STRING_LENGTH}` })
+    const characters = [...value].length
+    if (characters > LIMITS.MAX_STRING_LENGTH) {
+      errors.push({ field, message: `is ${characters} characters; the limit is ${LIMITS.MAX_STRING_LENGTH}` })
     }
   }
   const methods = options.methods ?? SHIPPED_METHODS

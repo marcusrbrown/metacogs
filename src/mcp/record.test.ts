@@ -300,6 +300,9 @@ describe('the record tool: limits', () => {
         expect(textOf(result), name).toStartWith('metacogs-record: validation (exit 2)')
         expect(textOf(result), name).toContain(expected)
       }
+      // The size error names the record, which the rendered retry rule covers ("a field or the record's size").
+      const big = await session.call('record', args({ assumptions: Array.from({ length: 20 }, () => 'a'.repeat(LIMITS.MAX_STRING_LENGTH)) }))
+      expect(textOf(big)).toMatch(/^metacogs-record: validation \(exit 2\)\n {2}record: is \d+ bytes; the limit is 65536$/)
       expect(existsSync(box.root)).toBe(false)
     })
   })

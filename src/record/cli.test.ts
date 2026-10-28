@@ -222,3 +222,29 @@ describe('cli as a real process', () => {
     expect(readdirSync(cwd)).toEqual([])
   })
 })
+
+describe('cli size limits', () => {
+  test('a record over the payload limit is a validation failure naming the record, and nothing is written', async () => {
+    const out = join(tmp, 'records')
+    const big = validRecord({ assumptions: Array.from({ length: 20 }, () => 'a'.repeat(4096)) })
+    const res = await runCli(['--out-dir', out], { stdin: json(big) })
+    expect(res.code).toBe(2)
+    expect(res.stdout).toBe('')
+    expect(res.stderr).toMatch(/^metacogs-record: validation failed\n {2}record: is \d+ bytes; the limit is 65536\n$/)
+    expect(existsSync(out)).toBe(false)
+  })
+
+  test('a string over 4096 code points fails and one at the limit passes', async () => {
+    const out = join(tmp, 'records')
+    const bad = await runCli(['--out-dir', out], { stdin: json(validRecord({ objective: '😀'.repeat(4097) })) })
+    expect(bad.code).toBe(2)
+    expect(bad.stderr).toContain('objective: is 4097 characters; the limit is 4096')
+    expect((await runCli(['--out-dir', out], { stdin: json(validRecord({ objective: '😀'.repeat(4096) })) })).code).toBe(0)
+  })
+
+  test('a JSON value that is not an object names the record', async () => {
+    const res = await runCli(['--out-dir', join(tmp, 'records')], { stdin: '[1]' })
+    expect(res.code).toBe(2)
+    expect(res.stderr).toBe('metacogs-record: validation failed\n  record: must be a JSON object\n')
+  })
+})

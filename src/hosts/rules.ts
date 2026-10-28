@@ -175,6 +175,12 @@ function hostRules(profile: HostProfile, style: RenderStyle): Rule[] {
  * written. Each rule matches the
  * unchanged source text exactly, so a wording edit upstream fails generation.
  */
+/**
+ * The one retry. A field error names the field; a record over the size limit names `record`. A long entry is split
+ * into shorter entries, because the same quote retried unchanged fails again.
+ */
+export const RETRYABLE = "An error naming a field or the record's size: fix it, splitting a long entry into several shorter entries or trimming the record, and call again once."
+
 function recordRules(profile: HostProfile): Rule[] {
   const tool = `\`${profile.recordTool}\``
   return [
@@ -220,14 +226,14 @@ function recordRules(profile: HostProfile): Rule[] {
       name: 'synthesis: outcomes',
       skills: ['synthesis'],
       from: '- Exit 0: written.\n- Exit 2: the output names a field. Fix it, rerun once.\n- Exit 3 or 4, a refused command, or no Node: do not rerun. Say no record was written; `execution_mode` is `unrecorded`.',
-      to: '- A successful result with a `path`: written.\n- An error naming a field: fix it and call again once.\n- Any other error, a refused call, or no such tool: do not call again; say the run is `unrecorded`.',
+      to: `- A successful result with a \`path\`: written.\n- ${RETRYABLE}\n- Any other error, a refused call, or no such tool: do not call again; say the run is \`unrecorded\`.`,
       count: 1,
     },
     {
       name: 'counterfactual: outcomes',
       skills: ['counterfactual'],
       from: '- Exit 0: written. Reply.\n- Exit 2: the output names a field. Fix it and rerun once.\n- Exit 3 or 4, a refused command, or no Node: rerun nothing. Reply, say no record was written, and state `execution_mode` as `unrecorded`.',
-      to: '- A successful result with a `path`: written. Reply.\n- An error naming a field: fix it and call again once.\n- Any other error, a refused call, or no such tool: do not call again. Reply and say the run is `unrecorded`.',
+      to: `- A successful result with a \`path\`: written. Reply.\n- ${RETRYABLE}\n- Any other error, a refused call, or no such tool: do not call again. Reply and say the run is \`unrecorded\`.`,
       count: 1,
     },
   ]

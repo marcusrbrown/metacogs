@@ -21740,19 +21740,20 @@ var isPlainObject3 = (value) => typeof value === "object" && value !== null && !
 var isNonEmptyString = (value) => typeof value === "string" && value.trim().length > 0;
 function validateRecord(input, options = {}) {
   if (!isPlainObject3(input))
-    return fail([{ field: "$", message: "record must be a JSON object" }]);
+    return fail([{ field: "record", message: "must be a JSON object" }]);
   if (input.schema_version !== SCHEMA_VERSION) {
     const got = input.schema_version === undefined ? "missing" : JSON.stringify(input.schema_version);
     return fail([{ field: "schema_version", message: `unsupported value ${got}; this helper only accepts ${SCHEMA_VERSION}` }]);
   }
   const payloadBytes = Buffer.byteLength(JSON.stringify(input), "utf8");
   if (payloadBytes > LIMITS.MAX_PAYLOAD_BYTES) {
-    return fail([{ field: "$", message: `record is ${payloadBytes} bytes; the limit is ${LIMITS.MAX_PAYLOAD_BYTES}` }]);
+    return fail([{ field: "record", message: `is ${payloadBytes} bytes; the limit is ${LIMITS.MAX_PAYLOAD_BYTES}` }]);
   }
   const errors = [];
   const tooLong = (field, value) => {
-    if (value.length > LIMITS.MAX_STRING_LENGTH) {
-      errors.push({ field, message: `is ${value.length} characters; the limit is ${LIMITS.MAX_STRING_LENGTH}` });
+    const characters = [...value].length;
+    if (characters > LIMITS.MAX_STRING_LENGTH) {
+      errors.push({ field, message: `is ${characters} characters; the limit is ${LIMITS.MAX_STRING_LENGTH}` });
     }
   };
   const methods = options.methods ?? SHIPPED_METHODS;

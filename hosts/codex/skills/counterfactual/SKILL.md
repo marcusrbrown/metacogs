@@ -31,7 +31,7 @@ Call the `mcp__metacogs__record` tool. Its arguments are the fields of this JSON
 `execution_mode`: `direct` when you applied the steps yourself. `sequential` when the host has no way to delegate and you worked the steps one after another. `delegated` only if you actually delegated.
 
 - A successful result with a `path`: written. Reply.
-- An error naming a field: fix it and call again once.
+- An error naming a field or the record's size: fix it, splitting a long entry into several shorter entries or trimming the record, and call again once.
 - Any other error, a refused call, or no such tool: do not call again. Reply and say the run is `unrecorded`.
 
 ## Reply
