@@ -1,5 +1,12 @@
 # metacogs
 
+## 0.3.0
+
+### Minor Changes
+
+- 4cc391f: metacogs now ships a Claude Code plugin and an experimental Codex plugin, installable from this repository's marketplaces. Both add the `feel` and `drugs` tools and the four skills. The Claude Code plugin also adds a session-start note that can be switched off; the Codex plugin has no note, because Codex discards hooks from this plugin format. Neither has been installed and run on a real host yet.
+- b210d39: On Claude Code and Codex, `synthesis` and `counterfactual` now record their decision through the plugin's `record` tool instead of a shell helper, so recording works unattended once the tool is allowed. The plugins no longer ship `scripts/record.mjs`; OpenCode and copied skills keep it.
+
 ## 0.2.2
 
 ### Patch Changes
