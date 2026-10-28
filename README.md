@@ -20,7 +20,7 @@ cp -R <metacogs-clone>/skills/counterfactual .agents/skills/counterfactual
 
 `.agents/skills/` works for OpenCode, Pi, and Codex. Claude Code reads `.claude/skills/` only. Per-host paths, listing commands, and the smoke evidence are in [docs/install.md](docs/install.md).
 
-- **Helper runtime.** The record helper is one dependency-free file that needs Node 22 or newer. The agent runs it with `node`; no install step.
+- **Helper runtime.** The record helper is one dependency-free file that needs Node 22 or newer. The agent runs it with `node`; no install step. The Claude Code and Codex plugins write records through a `record` tool instead, and ship no helper.
 - **Records.** Records go to `$XDG_STATE_HOME/metacogs/records/` (default `~/.local/state/metacogs/records/`), outside your repository. `METACOGS_RECORDS_DIR` or `--out-dir` overrides it. To keep records in a project, opt in with `METACOGS_RECORDS_DIR=.metacogs/records` and add `.metacogs/records/` to `.gitignore`.
 - **`unrecorded`.** If the helper cannot run (no Node 22, a denied shell command, an unwritable directory), the skill says no record was written and the run is marked `unrecorded`. It never claims a record that does not exist.
 
@@ -64,7 +64,7 @@ How the plugin was tested is recorded in [`evals/spikes/feel-drugs/README.md`](e
 
 ## Claude Code plugin
 
-metacogs is also a [Claude Code](https://code.claude.com) plugin, served from this repository. It adds the `feel` and `drugs` tools through a local MCP server, the four skills, and a short factual note at session start.
+metacogs is also a [Claude Code](https://code.claude.com) plugin, served from this repository. It adds the `feel` and `drugs` tools and a `record` tool through a local MCP server, the four skills, and a short factual note at session start.
 
 ```text
 /plugin install metacogs --marketplace marcusrbrown/metacogs
@@ -72,28 +72,30 @@ metacogs is also a [Claude Code](https://code.claude.com) plugin, served from th
 
 That one-step form needs Claude Code 2.1.275 or later. The two-step form is `/plugin marketplace add marcusrbrown/metacogs`, then `/plugin install metacogs@metacogs`.
 
-- **Node.** Node 22 or newer must be on `PATH`. Without it the MCP server does not start and the skills continue in plain text.
-- **Invoke.** `/metacogs:feel`, `/metacogs:drugs`, `/metacogs:synthesis`, `/metacogs:counterfactual`. The tools are `mcp__plugin_metacogs_metacogs__feel` and `mcp__plugin_metacogs_metacogs__drugs`.
+- **Node.** Node 22 or newer must be on `PATH`. Without it the session-start hook fails with `node: command not found` and the MCP server does not start, so the skills continue in plain text and a method run is `unrecorded`.
+- **Invoke.** `/metacogs:feel`, `/metacogs:drugs`, `/metacogs:synthesis`, `/metacogs:counterfactual`. The tools are `mcp__plugin_metacogs_metacogs__feel`, `mcp__plugin_metacogs_metacogs__drugs` and `mcp__plugin_metacogs_metacogs__record`.
+- **Records.** `synthesis` and `counterfactual` call the `record` tool. Allow it with the rule `mcp__plugin_metacogs_metacogs__record`; the wildcard `mcp__plugin_metacogs_metacogs__*` allows all three tools. Records go to `$XDG_STATE_HOME/metacogs/records/` or `~/.local/state/metacogs/records/`, and `METACOGS_RECORDS_DIR` overrides it.
 - **Session-start note.** Set `METACOGS_GUIDANCE=off`, create `${XDG_CONFIG_HOME:-~/.config}/metacogs/guidance-off`, or turn off the plugin's `guidance` option.
 - **Status.** The package passes `claude plugin validate --strict` but has not been installed and invoked on a real Claude Code. Its `synthesis` and `counterfactual` skills are adapted for the host and are not the exact text that was evaluated.
 
-Approvals, the record helper, the sandbox, updates and uninstall are in [docs/install.md](docs/install.md#claude-code-plugin).
+Approvals, records, updates and uninstall are in [docs/install.md](docs/install.md#claude-code-plugin). Updates follow the plugin manifest `version`, which changes with each release.
 
 ## Codex plugin
 
-metacogs is also an experimental [Codex](https://developers.openai.com/codex) plugin, served from this repository. It adds the same tools and skills. It has no session-start note.
+metacogs is also an experimental [Codex](https://developers.openai.com/codex) plugin, served from this repository. It adds the same tools (`feel`, `drugs` and `record`) and skills. It has no session-start note.
 
 ```sh
 codex plugin marketplace add marcusrbrown/metacogs
 codex plugin add metacogs@metacogs
 ```
 
-- **Node.** Node 22 or newer must be on `PATH`. Without it the MCP server does not start and the skills continue in plain text.
-- **Invoke.** `$metacogs:feel`, `$metacogs:drugs`, `$metacogs:synthesis`, `$metacogs:counterfactual`, with any arguments as text after the mention. The tools are `mcp__metacogs__feel` and `mcp__metacogs__drugs`.
+- **Node.** Node 22 or newer must be on `PATH`. Without it the MCP server does not start, the skills continue in plain text and a method run is `unrecorded`.
+- **Invoke.** `$metacogs:feel`, `$metacogs:drugs`, `$metacogs:synthesis`, `$metacogs:counterfactual`, with any arguments as text after the mention. A bare `$feel` is not a mention. The tools are `mcp__metacogs__feel`, `mcp__metacogs__drugs` and `mcp__metacogs__record`.
+- **Records.** `synthesis` and `counterfactual` call the `record` tool. The MCP server runs outside the shell sandbox, so records are written under `read-only` and `workspace-write` alike. In the tested configuration they go to `~/.local/state/metacogs/records/`.
 - **Session-start note.** None. Codex discards the hooks of a plugin in the agent-plugins format, so the tools and skills work without a note. `METACOGS_GUIDANCE` and the `guidance-off` file apply to the Claude Code plugin only.
 - **Status.** The manifests validate against the agent-plugins.org 1.0.0 schemas. The install commands and the package have not been run on a real Codex. Its `synthesis` and `counterfactual` skills are adapted for the host and are not the exact text that was evaluated.
 
-Approvals, the record helper, the sandbox, updates and uninstall are in [docs/install.md](docs/install.md#codex-plugin).
+Approvals, records, updates and uninstall are in [docs/install.md](docs/install.md#codex-plugin). Codex refreshes an installed plugin only when the manifest `version` changes, which happens with each release.
 
 ## Methods
 
@@ -163,7 +165,7 @@ Runs happen in a throwaway workspace with a scrubbed environment so nothing from
 
 ## Releases and automation
 
-Releases use [Changesets](https://github.com/changesets/changesets). Pending changesets produce a version PR; merging it creates the `v*` tag and a GitHub Release, and the release workflow then publishes the package to npm with provenance. The runbook for the first publish is in [docs/install.md](docs/install.md#publishing-the-package). The Claude Code and Codex marketplaces serve `main`, so a change to the generated packages (`hosts/`, `.claude-plugin/`, `.agents/plugins/`) or to their generator must carry a changeset; CI checks this.
+Releases use [Changesets](https://github.com/changesets/changesets). Pending changesets produce a version PR; merging it creates the `v*` tag and a GitHub Release, and the release workflow then publishes the package to npm with provenance. The runbook for the first publish is in [docs/install.md](docs/install.md#publishing-the-package). Claude Code and Codex detect plugin updates from the manifest `version`, so a change to the generated packages (`hosts/`, `.claude-plugin/`, `.agents/plugins/`) or to their generator must carry a changeset to reach users; CI checks this.
 
 Fro Bot reviews pull requests and acts on `@fro-bot` mentions. The daily autoheal may open one fix PR and must not touch eval evidence (`evals/**`), skill text (`skills/**`) or the generated host packages.
 
