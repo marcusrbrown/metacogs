@@ -41,7 +41,6 @@ describe('the committed Claude package', () => {
         'hooks/session-start.mjs',
         'mcp/server.mjs',
         ...HOST_SKILLS.map(skill => `skills/${skill}/SKILL.md`),
-        ...METHOD_SKILLS.map(skill => `skills/${skill}/scripts/record.mjs`),
       ]
         .map(p => `${CLAUDE_DIR}/${p}`)
         .sort(),
@@ -91,10 +90,12 @@ describe('the committed Claude package', () => {
     expect(hooks).toEqual(JSON.parse(JSON.stringify(hooksConfig())))
   })
 
-  test('the record helper is the same bytes as the repo-level helper, LICENSE and ATTRIBUTIONS.md are copies', () => {
-    for (const skill of METHOD_SKILLS) {
-      expect(read(`${CLAUDE_DIR}/skills/${skill}/scripts/record.mjs`)).toBe(read(`skills/${skill}/scripts/record.mjs`))
-    }
+  test('ships no record helper: the method skills call the record tool of the bundled server', () => {
+    for (const skill of HOST_SKILLS) expect(existsSync(join(REPO_ROOT, CLAUDE_DIR, 'skills', skill, 'scripts')), skill).toBe(false)
+    expect(existsSync(join(REPO_ROOT, 'skills', 'synthesis', 'scripts', 'record.mjs'))).toBe(true)
+  })
+
+  test('LICENSE and ATTRIBUTIONS.md are copies, and the server bundle is the same bytes as the Codex copy', () => {
     expect(read(`${CLAUDE_DIR}/LICENSE`)).toBe(read('LICENSE'))
     expect(read(`${CLAUDE_DIR}/ATTRIBUTIONS.md`)).toBe(read('ATTRIBUTIONS.md'))
     expect(read(`${CLAUDE_DIR}/mcp/server.mjs`)).toBe(read('hosts/codex/mcp/server.mjs'))
@@ -102,7 +103,11 @@ describe('the committed Claude package', () => {
 
   test('the renders are the rule-table output of the shared sources', () => {
     expect(read(`${CLAUDE_DIR}/skills/drugs/SKILL.md`)).toContain('mcp__plugin_metacogs_metacogs__drugs')
-    expect(read(`${CLAUDE_DIR}/skills/synthesis/SKILL.md`)).toContain('node "${CLAUDE_SKILL_DIR}/scripts/record.mjs"')
+    for (const skill of METHOD_SKILLS) {
+      const text = read(`${CLAUDE_DIR}/skills/${skill}/SKILL.md`)
+      expect(text).toContain(`\`${CLAUDE_PROFILE.recordTool}\``)
+      expect(text).not.toContain('record.mjs')
+    }
     // the shared sources themselves are untouched
     expect(read('skills/synthesis/SKILL.md')).toContain('<skill-base-dir>')
     expect(read('plugin/skills/drugs/SKILL.md')).toContain('Call the `drugs` tool (not the `drugs` skill')
@@ -123,6 +128,25 @@ describe('the generated Claude tree and the rewrite scan', () => {
     if (entry === undefined) throw new Error('missing render')
     tree.set(path, { ...entry, bytes: new TextEncoder().encode(`${text(tree, path)}\nnode "<skill-base-dir>/scripts/record.mjs"\n`) })
     expect(scanHostTrees(tree)).toContainEqual({ path, problem: 'denylisted: skill base directory placeholder' })
+    expect(scanHostTrees(tree)).toContainEqual({ path, problem: 'helper instruction: record.mjs' })
+  })
+
+  test('a render that still carries the heredoc form of the helper fails the scan', async () => {
+    const tree = new Map(await buildTree({}))
+    const path = 'hosts/claude/skills/synthesis/SKILL.md'
+    const entry = tree.get(path)
+    if (entry === undefined) throw new Error('missing render')
+    tree.set(path, { ...entry, bytes: new TextEncoder().encode(`${text(tree, path)}\nnode run <<'EOF'\n`) })
+    expect(scanHostTrees(tree)).toContainEqual({ path, problem: "helper instruction: <<'EOF'" })
+  })
+
+  test('a method render that lost the record tool name fails the scan', async () => {
+    const tree = new Map(await buildTree({}))
+    const path = 'hosts/claude/skills/counterfactual/SKILL.md'
+    const entry = tree.get(path)
+    if (entry === undefined) throw new Error('missing render')
+    tree.set(path, { ...entry, bytes: new TextEncoder().encode(text(tree, path).replaceAll(CLAUDE_PROFILE.recordTool, 'record')) })
+    expect(scanHostTrees(tree)).toContainEqual({ path, problem: `missing token: ${CLAUDE_PROFILE.recordTool}` })
   })
 
   test('a render that lost its Claude tool name fails the scan', async () => {
@@ -146,7 +170,7 @@ describe('AE4: a version bump moves both manifests and the check still passes', 
 
     expect(JSON.parse(readFileSync(join(root, CLAUDE_DIR, '.claude-plugin', 'plugin.json'), 'utf8')).version).toBe('9.8.7')
     expect('version' in JSON.parse(readFileSync(join(root, CLAUDE_MARKETPLACE_PATH), 'utf8')).plugins[0]).toBe(false)
-    for (const path of ['hooks/session-start.mjs', 'mcp/server.mjs', 'skills/synthesis/scripts/record.mjs']) {
+    for (const path of ['hooks/session-start.mjs', 'mcp/server.mjs']) {
       expect(readFileSync(join(root, CLAUDE_DIR, path), 'utf8')).toContain('// helper_version: 9.8.7\n')
     }
     expect(await checkGenerated(options)).toEqual({ drift: [], findings: [] })
@@ -200,11 +224,16 @@ describe('the package relocated to a directory outside the repository', () => {
     expect(result.stdout).toBe(renderGuidance(CLAUDE_PROFILE))
   })
 
-  test("the MCP config's own command starts a server that answers tools/list from the relocated root", async () => {
+  test("the MCP config's own command starts a server that lists the three tools and writes a record from the relocated root", async () => {
+    const records = mkdtempSync(join(elsewhere, 'records-'))
     const server = obj(at(readJson(`${CLAUDE_DIR}/.mcp.json`), 'mcpServers', MCP_SERVER_NAME))
     const command = str(server.command)
     const args = arr(server.args).map(arg => str(arg))
-    const proc = spawn(command, args.map(arg => arg.replaceAll('${CLAUDE_PLUGIN_ROOT}', relocated)), { cwd: elsewhere, stdio: ['pipe', 'pipe', 'pipe'] })
+    const proc = spawn(command, args.map(arg => arg.replaceAll('${CLAUDE_PLUGIN_ROOT}', relocated)), {
+      cwd: elsewhere,
+      env: { PATH: process.env.PATH ?? '', HOME: elsewhere, METACOGS_RECORDS_DIR: records },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
     try {
       const responses = new Map<number, RpcMessage>()
       let buffer = ''
@@ -235,25 +264,15 @@ describe('the package relocated to a directory outside the repository', () => {
       send(proc, { jsonrpc: '2.0', method: 'notifications/initialized' })
       const list = await ask(2, 'tools/list')
       const tools = arr(list.result?.tools).map(tool => obj(tool))
-      expect(tools.map(tool => tool.name).sort()).toEqual(['drugs', 'feel'])
-      for (const tool of tools) expect(obj(tool.annotations).readOnlyHint).toBe(true)
+      expect(tools.map(tool => tool.name).sort()).toEqual(['drugs', 'feel', 'record'])
+      for (const tool of tools.filter(tool => tool.name !== 'record')) expect(obj(tool.annotations).readOnlyHint).toBe(true)
+      const call = await ask(3, 'tools/call', { name: 'record', arguments: validRecord({ method: 'synthesis' }) })
+      expect(call.result?.isError).toBeUndefined()
+      expect(readdirSync(records).filter(name => name.endsWith('.json'))).toHaveLength(1)
     } finally {
       proc.kill()
     }
   }, 30_000)
-
-  test('the record helper in the relocated skill writes a record from its own directory (AE5, runtime part)', () => {
-    const records = mkdtempSync(join(elsewhere, 'records-'))
-    const helper = join(relocated, 'skills', 'synthesis', 'scripts', 'record.mjs')
-    const result = spawnSync('node', [helper], {
-      cwd: elsewhere,
-      env: { PATH: process.env.PATH ?? '', HOME: elsewhere, METACOGS_RECORDS_DIR: records },
-      input: JSON.stringify(validRecord({ method: 'synthesis' })),
-      encoding: 'utf8',
-    })
-    expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: '' })
-    expect(readdirSync(records, { recursive: true }).some(name => String(name).endsWith('.json'))).toBe(true)
-  })
 })
 
 function send(proc: ChildProcessWithoutNullStreams, message: object): void {

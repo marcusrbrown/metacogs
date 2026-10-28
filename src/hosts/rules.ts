@@ -11,6 +11,9 @@ import { join } from 'node:path'
 export const PLUGIN_NAME = 'metacogs'
 export const MCP_SERVER_NAME = 'metacogs'
 
+/** The tool the method skills call to write a decision record. It has no skill of its own. */
+export const RECORD_TOOL = 'record'
+
 /** Skills that describe a tool of the same name, then the two method skills. */
 export const TOOL_SKILLS = ['feel', 'drugs'] as const
 export const METHOD_SKILLS = ['synthesis', 'counterfactual'] as const
@@ -46,6 +49,8 @@ export interface HostProfile {
   /** Display name, used in the session-start note. */
   readonly label: string
   readonly toolName: (tool: ToolSkill) => string
+  /** The `record` tool, named the way this host names the server's tools. */
+  readonly recordTool: string
   readonly invocation: (skill: SkillName) => string
 }
 
@@ -58,19 +63,19 @@ export const CODEX_TOOL_PREFIX = `mcp__${MCP_SERVER_NAME}__`
 export const CLAUDE_INVOCATION_PREFIX = `/${PLUGIN_NAME}:`
 export const CODEX_INVOCATION_PREFIX = `$${PLUGIN_NAME}:`
 
-/** How each host's record command names the skill's own directory: a variable Claude fills in, a placeholder the model fills in on Codex. */
-export const CLAUDE_SKILL_DIR_VAR = 'CLAUDE_SKILL_DIR'
-export const CODEX_SKILL_DIR_PLACEHOLDER = '<directory of this SKILL.md>'
-
 /**
  * Claude Code names a plugin's MCP tools `mcp__plugin_<plugin>_<server>__<tool>`. Plugin skills are namespaced as
  * `/<plugin>:<skill>`. A bare `/feel` also works when no other command claims the name; the renders never say so,
  * because the denylist treats a bare slash form as an unrewritten leftover. The install docs carry that note.
  */
+const claudeToolName = (tool: string): string => `${CLAUDE_TOOL_PREFIX}${PLUGIN_NAME}_${MCP_SERVER_NAME}__${tool}`
+const codexToolName = (tool: string): string => `${CODEX_TOOL_PREFIX}${tool}`
+
 export const CLAUDE_PROFILE: HostProfile = {
   id: 'claude',
   label: 'Claude Code',
-  toolName: tool => `${CLAUDE_TOOL_PREFIX}${PLUGIN_NAME}_${MCP_SERVER_NAME}__${tool}`,
+  toolName: claudeToolName,
+  recordTool: claudeToolName(RECORD_TOOL),
   invocation: skill => `${CLAUDE_INVOCATION_PREFIX}${skill}`,
 }
 
@@ -81,7 +86,8 @@ export const CLAUDE_PROFILE: HostProfile = {
 export const CODEX_PROFILE: HostProfile = {
   id: 'codex',
   label: 'Codex',
-  toolName: tool => `${CODEX_TOOL_PREFIX}${tool}`,
+  toolName: codexToolName,
+  recordTool: codexToolName(RECORD_TOOL),
   invocation: skill => `${CODEX_INVOCATION_PREFIX}${skill}`,
 }
 
@@ -92,37 +98,26 @@ const OPENCODE_ARGUMENTS =
   "A slash command puts the user's arguments at the very end of this text, after the line about the base directory. If you loaded this skill yourself, there are none."
 const TOOL_UNAVAILABLE = (tool: string): string => `If the \`${tool}\` tool is unavailable (for example because Node 22 is not installed), continue in plain text and say so.`
 
-/** What differs between hosts beyond names: how arguments reach the model and how the record helper is found. */
+/** What differs between hosts beyond names: how arguments reach the model. */
 export interface RenderStyle {
   /** Replaces the OpenCode argument paragraph; takes the skill's invocation. */
   argumentsText: (invocation: string) => string
   /** Whether the tool skills get an `argument-hint` frontmatter line (Claude shows it; Codex does not honour it). */
   argumentHint: boolean
-  /** Replaces `node "<skill-base-dir>/scripts/record.mjs"` in both method skills. */
-  recordCommand: string
-  /** Replaces the sentence that tells the model where the helper lives. */
-  recordIntro: string
 }
 
-/** Claude Code fills in `$ARGUMENTS` and `${CLAUDE_SKILL_DIR}` in skill text. */
+/** Claude Code fills in `$ARGUMENTS` in skill text. */
 export const CLAUDE_STYLE: RenderStyle = {
   argumentsText: invocation =>
     `The user starts this skill as \`${invocation}\`. The arguments typed after the command, if any: $ARGUMENTS\n\nIf that is empty, or you loaded this skill yourself, there are none.`,
   argumentHint: true,
-  recordCommand: `node "\${${CLAUDE_SKILL_DIR_VAR}}/scripts/record.mjs"`,
-  recordIntro: "The path below is this skill's own directory, filled in by Claude Code; use it as written, never a guessed path.",
 }
 
-/**
- * Codex substitutes nothing in skill text. Text after the `$` mention is plain text in the user's message, and the model
- * is handed the path of each SKILL.md it loads, so the helper directory is that path's directory.
- */
+/** Codex substitutes nothing in skill text. Text after the `$` mention is plain text in the user's message. */
 export const CODEX_STYLE: RenderStyle = {
   argumentsText: invocation =>
     `The user starts this skill by writing \`${invocation}\`. Codex does not fill in arguments. The arguments, if any, are the plain text that follows the mention in the user's message; read them from there.\n\nIf no text follows the mention, or you loaded this skill yourself, there are none.`,
   argumentHint: false,
-  recordCommand: `node "${CODEX_SKILL_DIR_PLACEHOLDER}/scripts/record.mjs"`,
-  recordIntro: `Codex gave you the path of this SKILL.md when it loaded the skill. Replace \`${CODEX_SKILL_DIR_PLACEHOLDER}\` below with the directory that path is in, keep the quotes around the whole path, and never use a guessed path.`,
 }
 
 function hostRules(profile: HostProfile, style: RenderStyle): Rule[] {
@@ -169,46 +164,79 @@ function hostRules(profile: HostProfile, style: RenderStyle): Rule[] {
     to: `the \`${profile.toolName('feel')}\` tool comes first.`,
     count: 1,
   })
-  rules.push(
-    {
-      name: 'record helper path',
-      skills: METHOD_SKILLS,
-      from: 'node "<skill-base-dir>/scripts/record.mjs"',
-      to: style.recordCommand,
-      count: 1,
-    },
-    {
-      name: 'synthesis: record helper intro',
-      skills: ['synthesis'],
-      from: 'Use the skill base directory the host reported, never a guessed path.',
-      to: style.recordIntro,
-      count: 1,
-    },
-    {
-      name: 'counterfactual: record helper intro',
-      skills: ['counterfactual'],
-      from: "The host reports this skill's base directory when it loads the skill; use it, never a guessed path.",
-      to: style.recordIntro,
-      count: 1,
-    },
-  )
+  rules.push(...recordRules(profile))
   return rules
+}
+
+/**
+ * Both method skills end by running a shell helper in the source. On Claude Code and Codex they call the `record` tool
+ * of the MCP server instead: the helper line, its heredoc and its exit codes go, and the tool's result takes their
+ * place. Steps 1 to 7 and the reply sections are left as written (step 1 still says "no helper"). Each rule matches the
+ * unchanged source text exactly, so a wording edit upstream fails generation.
+ */
+function recordRules(profile: HostProfile): Rule[] {
+  const tool = `\`${profile.recordTool}\``
+  return [
+    {
+      name: 'record: compatibility',
+      skills: METHOD_SKILLS,
+      from: 'The record helper needs Node 22 or newer.',
+      to: `The ${tool} tool is served by the metacogs MCP server, which needs Node 22 or later.`,
+      count: 1,
+    },
+    {
+      name: 'synthesis: record call intro',
+      skills: ['synthesis'],
+      from: 'run the helper once, before replying. Use the skill base directory the host reported, never a guessed path. JSON on stdin:',
+      to: `call the ${tool} tool once, before replying. Its arguments are the fields of this JSON:`,
+      count: 1,
+    },
+    {
+      name: 'counterfactual: record step',
+      skills: ['counterfactual'],
+      from: 'Run the helper (below) now, once, as a bash call.',
+      to: `Call the ${tool} tool (below) now, once.`,
+      count: 1,
+    },
+    {
+      name: 'counterfactual: record step completeness',
+      skills: ['counterfactual'],
+      from: 'an answer with no helper call, and no "unrecorded" note after a failed one, is incomplete.',
+      to: `an answer with no ${tool} call, and no "unrecorded" note after a failed one, is incomplete.`,
+      count: 1,
+    },
+    {
+      name: 'counterfactual: record call intro',
+      skills: ['counterfactual'],
+      from: "The host reports this skill's base directory when it loads the skill; use it, never a guessed path. Send the record as JSON on stdin. The last line of the command is `EOF` and nothing follows it:",
+      to: `Call the ${tool} tool. Its arguments are the fields of this JSON:`,
+      count: 1,
+    },
+    { name: 'record: command line', skills: METHOD_SKILLS, from: 'node "<skill-base-dir>/scripts/record.mjs" <<\'EOF\'\n', to: '', count: 1 },
+    { name: 'record: heredoc terminator', skills: METHOD_SKILLS, from: '\nEOF\n```', to: '\n```', count: 1 },
+    {
+      name: 'synthesis: outcomes',
+      skills: ['synthesis'],
+      from: '- Exit 0: written.\n- Exit 2: the output names a field. Fix it, rerun once.\n- Exit 3 or 4, a refused command, or no Node: do not rerun. Say no record was written; `execution_mode` is `unrecorded`.',
+      to: '- A successful result with a `path`: written.\n- An error naming a field: fix it and call again once.\n- Any other error, a refused call, or no such tool: do not call again; say the run is `unrecorded`.',
+      count: 1,
+    },
+    {
+      name: 'counterfactual: outcomes',
+      skills: ['counterfactual'],
+      from: '- Exit 0: written. Reply.\n- Exit 2: the output names a field. Fix it and rerun once.\n- Exit 3 or 4, a refused command, or no Node: rerun nothing. Reply, say no record was written, and state `execution_mode` as `unrecorded`.',
+      to: '- A successful result with a `path`: written. Reply.\n- An error naming a field: fix it and call again once.\n- Any other error, a refused call, or no such tool: do not call again. Reply and say the run is `unrecorded`.',
+      count: 1,
+    },
+  ]
 }
 
 export function claudeRules(profile: HostProfile = CLAUDE_PROFILE): Rule[] {
   return hostRules(profile, CLAUDE_STYLE)
 }
 
-/** The source says "a bash call"; Claude's shell tool is Bash, so its render keeps that. Codex runs a shell command. */
-export const CLAUDE_SHELL_WORDING = 'as a bash call'
-export const CODEX_SHELL_WORDING = 'as one shell command'
-
 export function codexRules(profile: HostProfile = CODEX_PROFILE): Rule[] {
-  return [
-    ...hostRules(profile, CODEX_STYLE),
-    // Only counterfactual says it (its record step); synthesis has no such wording.
-    { name: 'counterfactual: shell wording', skills: ['counterfactual'], from: CLAUDE_SHELL_WORDING, to: CODEX_SHELL_WORDING, count: 1 },
-  ]
+  return hostRules(profile, CODEX_STYLE)
 }
 
 function occurrences(text: string, needle: string): number {

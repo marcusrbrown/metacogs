@@ -2,7 +2,7 @@
 name: counterfactual
 description: Required before answering a go/no-go, approval, or migration or implementation-plan request for a consequential change (dependency swap, removal, adoption, merge), because such cases often rest on a claim the input only asserts, a result from a non-representative environment, a newly surfaced fact, or a hard constraint the preferred option may violate. Not for mechanical edits, renames, wording changes, or bug fixes whose expected result is given.
 license: MIT
-compatibility: The record helper needs Node 22 or newer. Without it the method still runs and the run is marked unrecorded.
+compatibility: The `mcp__plugin_metacogs_metacogs__record` tool is served by the metacogs MCP server, which needs Node 22 or later. Without it the method still runs and the run is marked unrecorded.
 ---
 
 # Counterfactual
@@ -18,23 +18,21 @@ A checklist for testing a decision against its weakest premise. It structures yo
 5. **Counterfactual.** In conditional wording ("if the premise is false, then..."), say what breaks and what plan follows. Give a feasible alternative or adjusted plan. → `alternatives`, `findings`
 6. **Discriminating test.** Name one observation whose result differs between "holds" and "fails", where to get it (file, command, log, owner), and which result changes the decision. → `evidence`, `next_action`
 7. **Decide.** Give go, no-go, or conditional. The premise must change the action or its conditions, not sit in a footnote. Name an observable event that should reopen the decision, different from `next_action`. → `findings`, `reopen_condition`
-8. **Record, before any reply text.** Run the helper (below) now, once, as a bash call. Once the gate has passed this step is not optional and the reply comes after it: an answer with no helper call, and no "unrecorded" note after a failed one, is incomplete.
+8. **Record, before any reply text.** Call the `mcp__plugin_metacogs_metacogs__record` tool (below) now, once. Once the gate has passed this step is not optional and the reply comes after it: an answer with no `mcp__plugin_metacogs_metacogs__record` call, and no "unrecorded" note after a failed one, is incomplete.
 
 ## Record
 
-The path below is this skill's own directory, filled in by Claude Code; use it as written, never a guessed path. Send the record as JSON on stdin. The last line of the command is `EOF` and nothing follows it:
+Call the `mcp__plugin_metacogs_metacogs__record` tool. Its arguments are the fields of this JSON:
 
 ```
-node "${CLAUDE_SKILL_DIR}/scripts/record.mjs" <<'EOF'
 {"schema_version":1,"method":"counterfactual","method_version":"1","objective":"...","evidence":["..."],"assumptions":["..."],"alternatives":["..."],"findings":["..."],"next_action":"...","reopen_condition":"...","execution_mode":"direct","status":"recommended"}
-EOF
 ```
 
 `execution_mode`: `direct` when you applied the steps yourself. `sequential` when the host has no way to delegate and you worked the steps one after another. `delegated` only if you actually delegated.
 
-- Exit 0: written. Reply.
-- Exit 2: the output names a field. Fix it and rerun once.
-- Exit 3 or 4, a refused command, or no Node: rerun nothing. Reply, say no record was written, and state `execution_mode` as `unrecorded`.
+- A successful result with a `path`: written. Reply.
+- An error naming a field: fix it and call again once.
+- Any other error, a refused call, or no such tool: do not call again. Reply and say the run is `unrecorded`.
 
 ## Reply
 

@@ -4,8 +4,8 @@ import { join } from 'node:path'
 
 import { REPO_ROOT } from '../generate/tree'
 import { GUIDANCE_BLOCK } from '../plugin/guidance'
-import { applyRules, CODEX_PROFILE, codexRules, HOST_SKILLS, readSkillSource, skillSourcePath } from './rules'
-import { claudeExpectations, codexExpectations, DENYLIST, denylistFindings, positiveFindings, scanHostTrees } from './scan'
+import { applyRules, CLAUDE_PROFILE, CODEX_PROFILE, codexRules, HOST_SKILLS, readSkillSource, skillSourcePath } from './rules'
+import { claudeExpectations, codexExpectations, DENYLIST, denylistFindings, HELPER_TOKENS, positiveFindings, scanHostTrees } from './scan'
 
 describe('the denylist', () => {
   test('every entry fires on its own example', () => {
@@ -43,11 +43,11 @@ describe('the denylist', () => {
     expect(denylistFindings('x', fine)).toEqual([])
   })
 
-  test('does not fire on Codex forms: a $ mention, a Codex tool name, a placeholder for the SKILL.md directory', () => {
+  test('does not fire on Codex forms: a $ mention, a Codex tool name, the record tool', () => {
     const fine = [
       'Start it with `$metacogs:feel`.',
       'Call the `mcp__metacogs__feel` tool (not the `feel` skill; you are reading the skill now)',
-      'node "<directory of this SKILL.md>/scripts/record.mjs" <<\'EOF\'',
+      'Call the `mcp__metacogs__record` tool.',
     ].join('\n')
     expect(denylistFindings('x', fine)).toEqual([])
   })
@@ -70,7 +70,7 @@ describe('the positive check', () => {
     const files = new Map(HOST_SKILLS.map(skill => [skill, 'no tokens'] as const))
     const findings = positiveFindings(claudeExpectations(), files, 'no tokens here')
     expect(findings).toContainEqual({ path: 'hosts/claude/skills/drugs/SKILL.md', problem: 'missing token: mcp__plugin_metacogs_metacogs__drugs' })
-    expect(findings).toContainEqual({ path: 'hosts/claude/skills/synthesis/SKILL.md', problem: 'missing token: ${CLAUDE_SKILL_DIR}/scripts/record.mjs' })
+    expect(findings).toContainEqual({ path: 'hosts/claude/skills/synthesis/SKILL.md', problem: 'missing token: mcp__plugin_metacogs_metacogs__record' })
     expect(findings).toContainEqual({ path: 'hosts/claude (session-start note)', problem: 'missing token: /metacogs:feel' })
   })
 
@@ -84,7 +84,7 @@ describe('the positive check', () => {
     expect(findings).toContainEqual({ path: 'hosts/codex/skills/drugs/SKILL.md', problem: 'missing token: mcp__metacogs__drugs' })
     expect(findings).toContainEqual({ path: 'hosts/codex/skills/feel/SKILL.md', problem: 'missing token: $metacogs:feel' })
     expect(findings).toContainEqual({ path: 'hosts/codex/skills/feel/SKILL.md', problem: 'missing token: follows the mention' })
-    expect(findings).toContainEqual({ path: 'hosts/codex/skills/counterfactual/SKILL.md', problem: 'missing token: node "<directory of this SKILL.md>/scripts/record.mjs"' })
+    expect(findings).toContainEqual({ path: 'hosts/codex/skills/counterfactual/SKILL.md', problem: 'missing token: mcp__metacogs__record' })
     // Codex ships no session-start note, so there is nothing to check in one.
     expect(findings.filter(f => f.path.includes('session-start note'))).toEqual([])
   })
@@ -102,13 +102,22 @@ describe('the positive check', () => {
     expect(positiveFindings(claudeExpectations(), claudeFiles, 'x').map(f => f.problem)).toContain("another host's token: $metacogs:")
   })
 
-  test('Claude\'s "as a bash call" wording in a Codex render is reported', () => {
-    const files = new Map(HOST_SKILLS.map(skill => [skill, 'Run the helper now, once, as a bash call.'] as const))
-    expect(positiveFindings(codexExpectations(), files, 'x')).toContainEqual({
-      path: 'hosts/codex/skills/counterfactual/SKILL.md',
-      problem: "another host's token: as a bash call",
-    })
-    expect(positiveFindings(claudeExpectations(), files, 'x').map(f => f.problem)).not.toContain("another host's token: as a bash call")
+  test('helper text is reported in a render of either host, and is not another host\'s token', () => {
+    expect(HELPER_TOKENS).toEqual(['record.mjs', "<<'EOF'", '<skill-base-dir>'])
+    for (const [expect_, dir] of [[claudeExpectations(), 'hosts/claude'], [codexExpectations(), 'hosts/codex']] as const) {
+      for (const token of HELPER_TOKENS) {
+        const files = new Map(HOST_SKILLS.map(skill => [skill, `x ${token} x`] as const))
+        expect(positiveFindings(expect_, files, 'x')).toContainEqual({ path: `${dir}/skills/synthesis/SKILL.md`, problem: `helper instruction: ${token}` })
+      }
+    }
+  })
+
+  test('the method skills expect the host\'s own record tool; the tool skills do not', () => {
+    for (const skill of ['synthesis', 'counterfactual'] as const) {
+      expect(claudeExpectations().skills[skill]).toEqual([CLAUDE_PROFILE.recordTool])
+      expect(codexExpectations().skills[skill]).toEqual([CODEX_PROFILE.recordTool])
+    }
+    expect(claudeExpectations().skills.feel).not.toContain(CLAUDE_PROFILE.recordTool)
   })
 
   test('the Codex expectations name the tools and mentions from the profile, and expect no note', () => {
@@ -117,7 +126,7 @@ describe('the positive check', () => {
     expect(expectations.note).toBe(false)
     expect(claudeExpectations().note).toBe(true)
     expect(expectations.skills.feel).toEqual([CODEX_PROFILE.toolName('feel'), '$metacogs:feel', 'follows the mention'])
-    expect(expectations.skills.synthesis).toEqual(['node "<directory of this SKILL.md>/scripts/record.mjs"'])
+    expect(expectations.skills.synthesis).toEqual(['mcp__metacogs__record'])
   })
 
   test('hosts that are not in the tree are skipped', () => {

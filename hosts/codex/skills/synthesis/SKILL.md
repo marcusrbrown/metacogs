@@ -2,7 +2,7 @@
 name: synthesis
 description: Required before answering a request to decide, approve, or choose between options when several analyses, reviews, votes, debaters, or proposals disagree or converge, because their agreement often rests on one shared source, premise, or constraint nobody checked, and a minority may cite evidence the majority lacks. Not for single-source questions, mechanical edits, wording changes, or routine fixes.
 license: MIT
-compatibility: The record helper needs Node 22 or newer. Without it the method still runs and the run is marked unrecorded.
+compatibility: The `mcp__metacogs__record` tool is served by the metacogs MCP server, which needs Node 22 or later. Without it the method still runs and the run is marked unrecorded.
 ---
 
 # Synthesis
@@ -21,19 +21,17 @@ A checklist for reconciling several perspectives without counting heads. It stru
 
 ## Record
 
-After step 7, run the helper once, before replying. Codex gave you the path of this SKILL.md when it loaded the skill. Replace `<directory of this SKILL.md>` below with the directory that path is in, keep the quotes around the whole path, and never use a guessed path. JSON on stdin:
+After step 7, call the `mcp__metacogs__record` tool once, before replying. Its arguments are the fields of this JSON:
 
 ```
-node "<directory of this SKILL.md>/scripts/record.mjs" <<'EOF'
 {"schema_version":1,"method":"synthesis","method_version":"1","objective":"...","evidence":["Label: claim and evidence"],"assumptions":["..."],"alternatives":["..."],"findings":["..."],"next_action":"...","reopen_condition":"...","execution_mode":"direct","status":"recommended"}
-EOF
 ```
 
 `execution_mode`: `direct` (you applied the steps), `sequential` (no delegation available), `delegated` (only if you did).
 
-- Exit 0: written.
-- Exit 2: the output names a field. Fix it, rerun once.
-- Exit 3 or 4, a refused command, or no Node: do not rerun. Say no record was written; `execution_mode` is `unrecorded`.
+- A successful result with a `path`: written.
+- An error naming a field: fix it and call again once.
+- Any other error, a refused call, or no such tool: do not call again; say the run is `unrecorded`.
 
 ## Reply
 

@@ -6,19 +6,13 @@ import { renderGuidance } from './guidance'
 import {
   CLAUDE_INVOCATION_PREFIX,
   CLAUDE_PROFILE,
-  CLAUDE_SHELL_WORDING,
-  CLAUDE_SKILL_DIR_VAR,
-  CLAUDE_STYLE,
   CLAUDE_TOOL_PREFIX,
   CODEX_INVOCATION_PREFIX,
   CODEX_PROFILE,
-  CODEX_SKILL_DIR_PLACEHOLDER,
-  CODEX_STYLE,
   CODEX_TOOL_PREFIX,
   HOST_SKILLS,
   type HostProfile,
   METHOD_SKILLS,
-  type RenderStyle,
   type SkillName,
   TOOL_SKILLS,
 } from './rules'
@@ -68,34 +62,27 @@ export interface HostExpectations {
   forbidden: readonly string[]
 }
 
-/** The script path inside a style's `node "<path>"` record command. */
-function recordScript(style: RenderStyle): string {
-  const match = /^node "(.*)"$/.exec(style.recordCommand)
-  if (match?.[1] === undefined) throw new Error(`scan: unexpected record command shape: ${style.recordCommand}`)
-  return match[1]
-}
+/**
+ * Text of the shell helper. The host renders call the `record` tool, so none of this may remain in a render: a rewrite
+ * that missed a helper line would leave the model told to run a script the package no longer ships.
+ */
+export const HELPER_TOKENS = ['record.mjs', "<<'EOF'", '<skill-base-dir>'] as const
 
 export function claudeExpectations(profile: HostProfile = CLAUDE_PROFILE): HostExpectations {
   const skills = {} as Record<SkillName, readonly string[]>
   for (const skill of TOOL_SKILLS) skills[skill] = [profile.toolName(skill), '$ARGUMENTS', profile.invocation(skill)]
-  for (const skill of METHOD_SKILLS) skills[skill] = [recordScript(CLAUDE_STYLE)]
-  // What belongs to Codex: its tool and mention prefixes and its record placeholder.
-  return { profile, dir: 'hosts/claude', note: true, skills, forbidden: [CODEX_TOOL_PREFIX, CODEX_INVOCATION_PREFIX, CODEX_SKILL_DIR_PLACEHOLDER] }
+  for (const skill of METHOD_SKILLS) skills[skill] = [profile.recordTool]
+  // What belongs to Codex: its tool and mention prefixes.
+  return { profile, dir: 'hosts/claude', note: true, skills, forbidden: [CODEX_TOOL_PREFIX, CODEX_INVOCATION_PREFIX] }
 }
 
 export function codexExpectations(profile: HostProfile = CODEX_PROFILE): HostExpectations {
   const skills = {} as Record<SkillName, readonly string[]>
   for (const skill of TOOL_SKILLS) skills[skill] = [profile.toolName(skill), profile.invocation(skill), 'follows the mention']
-  for (const skill of METHOD_SKILLS) skills[skill] = [CODEX_STYLE.recordCommand]
-  // What belongs to Claude: its tool and command prefixes, its skill-directory variable and its Bash wording.
+  for (const skill of METHOD_SKILLS) skills[skill] = [profile.recordTool]
+  // What belongs to Claude: its tool and command prefixes.
   // `$ARGUMENTS` and the `argument-hint` frontmatter line are Claude's too, but no profile or style constant holds them as a token.
-  return {
-    profile,
-    dir: 'hosts/codex',
-    note: false,
-    skills,
-    forbidden: ['$ARGUMENTS', 'argument-hint', CLAUDE_SKILL_DIR_VAR, CLAUDE_TOOL_PREFIX, CLAUDE_INVOCATION_PREFIX, CLAUDE_SHELL_WORDING],
-  }
+  return { profile, dir: 'hosts/codex', note: false, skills, forbidden: ['$ARGUMENTS', 'argument-hint', CLAUDE_TOOL_PREFIX, CLAUDE_INVOCATION_PREFIX] }
 }
 
 /** Positive findings for one host's skills and, where it ships one, its note. A missing token means a rewrite did not land. */
@@ -110,6 +97,7 @@ export function positiveFindings(expect: HostExpectations, files: ReadonlyMap<Sk
     }
     for (const token of expect.skills[skill]) if (!text.includes(token)) findings.push({ path, problem: `missing token: ${token}` })
     for (const token of expect.forbidden) if (text.includes(token)) findings.push({ path, problem: `another host's token: ${token}` })
+    for (const token of HELPER_TOKENS) if (text.includes(token)) findings.push({ path, problem: `helper instruction: ${token}` })
   }
   if (!expect.note) return findings
   for (const tool of TOOL_SKILLS) {

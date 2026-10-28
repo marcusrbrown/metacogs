@@ -14,6 +14,7 @@ const OTHER: HostProfile = {
   id: 'other',
   label: 'Other Host',
   toolName: tool => `other_srv_${tool}`,
+  recordTool: 'other_srv_record',
   invocation: skill => `$other:${skill}`,
 }
 
