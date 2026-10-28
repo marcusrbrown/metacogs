@@ -2,11 +2,9 @@
 // This file is the single source for every skill's generated `scripts/record.mjs` (see src/generate/).
 import { realpathSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
-import { EXIT, SHIPPED_METHODS, type StampedRecord } from './contract'
-import { validateRecord } from './validate'
-import { RecordCollisionError, RecordIoError, resolveRoot, writeRecord } from './write'
+import { EXIT, SHIPPED_METHODS } from './contract'
+import { runRecord } from './run'
 
 // Replaced at bundle time by Bun.build `define` (see src/generate/tree.ts). Undeclared when run from source.
 declare const __METACOGS_HELPER_VERSION__: string | undefined
@@ -111,32 +109,21 @@ export async function run(argv: readonly string[], ctx: CliContext): Promise<num
     return EXIT.VALIDATION
   }
 
-  const checked = validateRecord(input, { methods: ctx.methods ?? buildMethods() })
-  if (!checked.ok) {
-    err(`validation failed\n${checked.errors.map(e => `  ${e.field}: ${e.message}`).join('\n')}`)
-    return EXIT.VALIDATION
+  const result = await runRecord({
+    input,
+    methods: ctx.methods ?? buildMethods(),
+    helperVersion: ctx.helperVersion ?? buildHelperVersion(),
+    outDir: args.outDir,
+    env: ctx.env,
+    cwd: ctx.cwd,
+  })
+  if (result.ok) {
+    ctx.stdout(`${JSON.stringify({ path: result.path, next_action: result.next_action })}\n`)
+    return result.exit
   }
-
-  const record: StampedRecord = { ...checked.record, helper_version: ctx.helperVersion ?? buildHelperVersion() }
-
-  try {
-    const root = resolveRoot({
-      outDir: args.outDir,
-      env: ctx.env,
-      cwd: ctx.cwd,
-      home: ctx.env.HOME || homedir(),
-    })
-    const { path } = await writeRecord({ root, record })
-    ctx.stdout(`${JSON.stringify({ path, next_action: record.next_action })}\n`)
-    return EXIT.OK
-  } catch (error) {
-    if (error instanceof RecordCollisionError) {
-      err(`collision: ${error.message}`)
-      return EXIT.COLLISION
-    }
-    err(`I/O failure: ${error instanceof RecordIoError ? error.message : (error as Error).message}`)
-    return EXIT.IO
-  }
+  if (result.kind === 'validation') err(`validation failed\n${result.errors.map(e => `  ${e.field}: ${e.message}`).join('\n')}`)
+  else err(`${result.kind === 'collision' ? 'collision' : 'I/O failure'}: ${result.errors[0]?.message}`)
+  return result.exit
 }
 
 async function readProcessStdin(): Promise<string> {

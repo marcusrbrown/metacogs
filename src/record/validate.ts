@@ -1,5 +1,6 @@
 import {
   EXECUTION_MODES,
+  LIMITS,
   METHOD_PATTERN,
   type MetacogsRecord,
   RECORD_FIELDS,
@@ -37,7 +38,18 @@ export function validateRecord(input: unknown, options: ValidateOptions = {}): V
     return fail([{ field: 'schema_version', message: `unsupported value ${got}; this helper only accepts ${SCHEMA_VERSION}` }])
   }
 
+  // Size first, so an oversized payload is rejected without a per-field pass over it.
+  const payloadBytes = Buffer.byteLength(JSON.stringify(input), 'utf8')
+  if (payloadBytes > LIMITS.MAX_PAYLOAD_BYTES) {
+    return fail([{ field: '$', message: `record is ${payloadBytes} bytes; the limit is ${LIMITS.MAX_PAYLOAD_BYTES}` }])
+  }
+
   const errors: FieldError[] = []
+  const tooLong = (field: string, value: string): void => {
+    if (value.length > LIMITS.MAX_STRING_LENGTH) {
+      errors.push({ field, message: `is ${value.length} characters; the limit is ${LIMITS.MAX_STRING_LENGTH}` })
+    }
+  }
   const methods = options.methods ?? SHIPPED_METHODS
 
   for (const key of Object.keys(input)) {
@@ -46,6 +58,8 @@ export function validateRecord(input: unknown, options: ValidateOptions = {}): V
 
   if (input[STAMPED_FIELD] !== undefined && typeof input[STAMPED_FIELD] !== 'string') {
     errors.push({ field: STAMPED_FIELD, message: 'must be a string when present' })
+  } else if (typeof input[STAMPED_FIELD] === 'string') {
+    tooLong(STAMPED_FIELD, input[STAMPED_FIELD])
   }
 
   const method = input.method
@@ -58,7 +72,9 @@ export function validateRecord(input: unknown, options: ValidateOptions = {}): V
   }
 
   for (const field of REQUIRED_STRING_FIELDS) {
-    if (!isNonEmptyString(input[field])) errors.push({ field, message: 'is required and must be a non-empty string' })
+    const value = input[field]
+    if (!isNonEmptyString(value)) errors.push({ field, message: 'is required and must be a non-empty string' })
+    else tooLong(field, value)
   }
 
   for (const field of STRING_ARRAY_FIELDS) {
@@ -67,8 +83,13 @@ export function validateRecord(input: unknown, options: ValidateOptions = {}): V
       errors.push({ field, message: 'is required and must be an array of strings' })
       continue
     }
+    if (value.length > LIMITS.MAX_ARRAY_ITEMS) {
+      errors.push({ field, message: `has ${value.length} entries; the limit is ${LIMITS.MAX_ARRAY_ITEMS}` })
+      continue
+    }
     value.forEach((entry, index) => {
       if (!isNonEmptyString(entry)) errors.push({ field: `${field}[${index}]`, message: 'must be a non-empty string' })
+      else tooLong(`${field}[${index}]`, entry)
     })
   }
 

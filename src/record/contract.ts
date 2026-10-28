@@ -25,6 +25,21 @@ export const REQUIRED_STRING_FIELDS = ['method_version', 'objective', 'next_acti
 /** Arrays of non-empty strings. Empty arrays are valid. Entries are opaque; refs are never dereferenced. */
 export const STRING_ARRAY_FIELDS = ['evidence', 'assumptions', 'alternatives', 'findings'] as const
 
+/**
+ * Payload limits, enforced by the validator so the CLI and the MCP `record` tool agree. They are generous: the largest
+ * record observed in any run so far has 415-character strings, 4 entries per array and 2,869 bytes in all, and the
+ * largest committed fixture is 1,621 bytes. A record this size is a mistake or an attack, and is rejected before any
+ * file is created.
+ */
+export const LIMITS = {
+  /** Per string field and per array entry, in UTF-16 code units (`string.length`). */
+  MAX_STRING_LENGTH: 4096,
+  /** Per array field. */
+  MAX_ARRAY_ITEMS: 64,
+  /** The record as compact JSON (`JSON.stringify`), in UTF-8 bytes. */
+  MAX_PAYLOAD_BYTES: 65536,
+} as const
+
 /** The one field the helper stamps and the canonical hash excludes. */
 export const STAMPED_FIELD = 'helper_version' as const
 
