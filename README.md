@@ -76,7 +76,7 @@ That one-step form needs Claude Code 2.1.275 or later. The two-step form is `/pl
 - **Invoke.** `/metacogs:feel`, `/metacogs:drugs`, `/metacogs:synthesis`, `/metacogs:counterfactual`. The tools are `mcp__plugin_metacogs_metacogs__feel`, `mcp__plugin_metacogs_metacogs__drugs` and `mcp__plugin_metacogs_metacogs__record`.
 - **Records.** `synthesis` and `counterfactual` call the `record` tool. Allow it with the rule `mcp__plugin_metacogs_metacogs__record`; the wildcard `mcp__plugin_metacogs_metacogs__*` allows all three tools. Records go to `$XDG_STATE_HOME/metacogs/records/` or `~/.local/state/metacogs/records/`, and `METACOGS_RECORDS_DIR` overrides it.
 - **Session-start note.** Set `METACOGS_GUIDANCE=off`, create `${XDG_CONFIG_HOME:-~/.config}/metacogs/guidance-off`, or turn off the plugin's `guidance` option.
-- **Status.** The package passes `claude plugin validate --strict` but has not been installed and invoked on a real Claude Code. Its `synthesis` and `counterfactual` skills are adapted for the host and are not the exact text that was evaluated.
+- **Status.** The package passes `claude plugin validate --strict`. Checked in scripted headless runs (`claude -p`) of Claude Code 2.1.312: install from the marketplace, the MCP tools, the session note and its off switches, `/metacogs:feel` and `/metacogs:drugs`, and recording through the `record` tool. The interactive session has not been checked by hand. Its `synthesis` and `counterfactual` skills are adapted for the host and are not the exact text that was evaluated.
 
 Approvals, records, updates and uninstall are in [docs/install.md](docs/install.md#claude-code-plugin). Updates follow the plugin manifest `version`, which changes with each release.
 
@@ -93,7 +93,7 @@ codex plugin add metacogs@metacogs
 - **Invoke.** `$metacogs:feel`, `$metacogs:drugs`, `$metacogs:synthesis`, `$metacogs:counterfactual`, with any arguments as text after the mention. A bare `$feel` is not a mention. The tools are `mcp__metacogs__feel`, `mcp__metacogs__drugs` and `mcp__metacogs__record`.
 - **Records.** `synthesis` and `counterfactual` call the `record` tool. The MCP server runs outside the shell sandbox, so records are written under `read-only` and `workspace-write` alike. In the tested configuration they go to `~/.local/state/metacogs/records/`.
 - **Session-start note.** None. Codex discards the hooks of a plugin in the agent-plugins format, so the tools and skills work without a note. `METACOGS_GUIDANCE` and the `guidance-off` file apply to the Claude Code plugin only.
-- **Status.** The manifests validate against the agent-plugins.org 1.0.0 schemas. The install commands and the package have not been run on a real Codex. Its `synthesis` and `counterfactual` skills are adapted for the host and are not the exact text that was evaluated.
+- **Status.** The manifests validate against the agent-plugins.org 1.0.0 schemas. Checked in scripted `codex exec` runs of Codex 0.162.1: `marketplace add` and `plugin add`, the MCP server and its tools, `$metacogs:feel` and `$metacogs:drugs`, and recording through the `record` tool under `workspace-write` and `read-only`. The interactive TUI has not been checked by hand. Its `synthesis` and `counterfactual` skills are adapted for the host and are not the exact text that was evaluated.
 
 Approvals, records, updates and uninstall are in [docs/install.md](docs/install.md#codex-plugin). Codex refreshes an installed plugin only when the manifest `version` changes, which happens with each release.
 
@@ -146,7 +146,7 @@ What this does not show:
 
 - The gain is largely process visibility: the skill makes the agent write out perspectives, dependence, and a conclusion, which the rubric rewards. Whether answers are also more correct is not measured.
 - One host, one model pair, one fixture family. The judge is a single model whose draw is not fixed.
-- Pi, Codex, and Claude Code were checked for discovery only. No model was run on them. The Claude Code and Codex plugin packages were validated but not installed and invoked on either host.
+- Pi, Codex, and Claude Code were checked for discovery only. No model was run on them. The Claude Code and Codex plugin packages were checked in scripted headless runs (`claude -p`, `codex exec`) only. The interactive Claude Code session and the Codex TUI have not been checked by hand.
 
 **What preregistration proves.** Thresholds, rubric, and fixture hashes are committed in `evals/<method>/prereg.json` before the skill is authored, and the runner reads its bars and hashes from that file. Every manifest and report carries the sha256 of the file's canonical form, so a changed prereg no longer matches the runs made under the old one. This is a content contract, not a proof of git history: the author controls the repository and can rewrite the prereg and re-run. Held-out fixtures stay outside the repository until release.
 
