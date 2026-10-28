@@ -1,7 +1,7 @@
 ---
 title: "feat: Claude Code and Codex plugin packages"
 type: feat
-status: active
+status: completed
 date: 2026-10-27
 origin: docs/brainstorms/2026-10-27-multi-host-packaging-requirements.md
 ---
