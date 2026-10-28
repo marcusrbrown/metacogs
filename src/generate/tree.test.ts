@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildMcpServer } from '../plugin/build'
@@ -239,5 +239,70 @@ describe('generate over the tree map', () => {
     writeFileSync(join(root, 'hosts', 'claude', 'keep.json'), '{}')
     await expect(generate({ root, extraEntries: new Map([['skills/demo/SKILL.md', entry('x')]]) })).rejects.toThrow(/tree:/)
     expect(existsSync(join(root, 'hosts', 'claude', 'keep.json'))).toBe(true)
+  })
+})
+
+describe('a symlinked parent never lets generate delete or write outside the project', () => {
+  let external: string
+  const options = () => ({ root, ownedRoots: true, extraEntries: OWNED_FIXTURE })
+
+  beforeEach(() => {
+    external = mkdtempSync(join(tmpdir(), 'metacogs-external-'))
+  })
+
+  afterEach(() => {
+    rmSync(external, { recursive: true, force: true })
+  })
+
+  test('.agents linked to an external directory: generate throws and the shared plugins/keep.json survives', async () => {
+    mkdirSync(join(external, 'plugins'))
+    writeFileSync(join(external, 'plugins', 'keep.json'), '{"keep":true}\n')
+    symlinkSync(external, join(root, '.agents'))
+    await expect(generate(options())).rejects.toThrow(/\.agents is a symbolic link/)
+    expect(readFileSync(join(external, 'plugins', 'keep.json'), 'utf8')).toBe('{"keep":true}\n')
+    expect(readdirSync(external)).toEqual(['plugins'])
+    expect(readdirSync(join(external, 'plugins'))).toEqual(['keep.json'])
+  })
+
+  test('hosts linked to an external directory: generate throws and hosts/claude/keep.json survives', async () => {
+    mkdirSync(join(external, 'claude'))
+    writeFileSync(join(external, 'claude', 'keep.json'), '{"keep":true}\n')
+    symlinkSync(external, join(root, 'hosts'))
+    await expect(generate(options())).rejects.toThrow(/hosts is a symbolic link/)
+    expect(readdirSync(external)).toEqual(['claude'])
+    expect(readdirSync(join(external, 'claude'))).toEqual(['keep.json'])
+  })
+
+  test('nothing is deleted before the check: a clean owned root is untouched when another is linked', async () => {
+    mkdirSync(join(root, '.claude-plugin'))
+    writeFileSync(join(root, '.claude-plugin', 'stale.json'), '{}')
+    symlinkSync(external, join(root, 'hosts'))
+    await expect(generate(options())).rejects.toThrow(/symbolic link/)
+    expect(existsSync(join(root, '.claude-plugin', 'stale.json'))).toBe(true)
+  })
+
+  test('a link in the way of a per-file output is refused, not followed', async () => {
+    mkdirSync(join(root, 'skills', 'demo', 'scripts'), { recursive: true })
+    writeFileSync(join(external, 'target.txt'), 'untouched')
+    symlinkSync(join(external, 'target.txt'), join(root, 'skills', 'demo', 'scripts', 'record.mjs'))
+    await expect(generate({ root })).rejects.toThrow(/record\.mjs is a symbolic link/)
+    expect(readFileSync(join(external, 'target.txt'), 'utf8')).toBe('untouched')
+  })
+
+  test('a linked .agents also stops the dev mirror from deleting through it', async () => {
+    mkdirSync(join(external, 'skills', 'demo'), { recursive: true })
+    writeFileSync(join(external, 'skills', 'demo', 'keep.md'), 'keep')
+    symlinkSync(external, join(root, '.agents'))
+    await expect(generate({ root })).rejects.toThrow(/\.agents is a symbolic link/)
+    expect(readFileSync(join(external, 'skills', 'demo', 'keep.md'), 'utf8')).toBe('keep')
+  })
+
+  test('real directories still work, including a root reached through a symlinked temp path', async () => {
+    const { written } = await generate(options())
+    expect(written).toContain('.agents/plugins/marketplace.json')
+    const alias = join(external, 'alias')
+    symlinkSync(root, alias)
+    await generate({ root: alias, ownedRoots: true, extraEntries: OWNED_FIXTURE })
+    expect(existsSync(join(root, 'hosts', 'claude', '.mcp.json'))).toBe(true)
   })
 })

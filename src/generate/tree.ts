@@ -9,8 +9,8 @@
 //    `.claude-plugin/` and `.agents/plugins/` are not ours. `generate` and the check read the same `ownsRoots`.
 //  - Per-file outputs (`skills/<name>/scripts/record.mjs`) sit beside hand-written files. They are written and
 //    checked one by one and their directories are never cleared.
-import { chmod, lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { chmod, lstat, mkdir, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildClaudeEntries } from '../hosts/claude'
 import { buildCodexEntries } from '../hosts/codex'
@@ -180,11 +180,58 @@ export async function buildTree(options: TreeOptions = {}): Promise<TreeMap> {
 const fsPath = (root: string, path: string): string => join(root, ...path.split('/'))
 
 /**
+ * Reject, before anything is deleted or written, a `rel` whose parent chain below `root` passes through a symbolic
+ * link or resolves outside `realpath(root)`. `rm` and `mkdir` follow an intermediate link, so a `.agents` that points
+ * at a shared directory elsewhere would otherwise have its `plugins/` emptied. An ancestor that does not exist yet is
+ * fine: nothing below it can be a link. The last component is not checked here.
+ */
+export async function assertNoLinkedAncestors(root: string, rel: string, checked: Set<string> = new Set()): Promise<void> {
+  const base = await realpath(root)
+  const segments = rel.split('/').slice(0, -1)
+  for (let i = 1; i <= segments.length; i++) {
+    const prefix = segments.slice(0, i).join('/')
+    if (checked.has(prefix)) continue
+    let stat: Awaited<ReturnType<typeof lstat>>
+    try {
+      stat = await lstat(fsPath(root, prefix))
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === 'ENOENT' || code === 'ENOTDIR') return
+      throw error
+    }
+    if (stat.isSymbolicLink()) throw new Error(`tree: ${prefix} is a symbolic link; refusing to delete or write through it (needed for ${rel})`)
+    const real = await realpath(fsPath(root, prefix))
+    if (real !== base && !real.startsWith(base + sep)) throw new Error(`tree: ${prefix} resolves outside the project root; refusing to delete or write through it (needed for ${rel})`)
+    checked.add(prefix)
+  }
+}
+
+/** A symbolic link where a file is about to be written: `writeFile` would follow it. */
+async function assertNotLink(root: string, rel: string): Promise<void> {
+  try {
+    if ((await lstat(fsPath(root, rel))).isSymbolicLink()) throw new Error(`tree: ${rel} is a symbolic link; refusing to write through it`)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error
+  }
+}
+
+/**
  * Write the map. With `owned` (see `ownsRoots`), first clear every owned root, whether or not the map has entries
  * under it. Without it the owned roots are not touched: another project's `.claude-plugin/` or `.agents/plugins/`
  * is not ours to delete. Per-file outputs are overwritten in place; their siblings stay.
+ *
+ * Every clear and write is checked first (`assertNoLinkedAncestors`), so a symlinked parent fails the run with
+ * nothing deleted.
  */
 export async function writeTree(root: string, tree: TreeMap, owned: boolean): Promise<void> {
+  const checked = new Set<string>()
+  if (owned) for (const dir of OWNED_ROOTS) await assertNoLinkedAncestors(root, dir.slice(0, -1), checked)
+  for (const path of tree.keys()) {
+    await assertNoLinkedAncestors(root, path, checked)
+    // A file inside an owned root is cleared first, so only the others can be a link in the way.
+    if (!(owned && isOwnedPath(path))) await assertNotLink(root, path)
+  }
   if (owned) for (const dir of OWNED_ROOTS) await rm(fsPath(root, dir.slice(0, -1)), { recursive: true, force: true })
   for (const [path, entry] of [...tree].sort(([a], [b]) => (a < b ? -1 : 1))) {
     const file = fsPath(root, path)
