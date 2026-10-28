@@ -2,14 +2,14 @@
 // skill directory into the gitignored .agents/skills/ for in-repo dogfooding.
 import { cp, mkdir, rm } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
-import { buildTree, listSkills, REPO_ROOT, type TreeOptions, writeTree } from './tree'
+import { buildTree, listSkills, ownsRoots, REPO_ROOT, type TreeOptions, writeTree } from './tree'
 
 export type GenerateOptions = TreeOptions
 
 export async function generate(options: GenerateOptions = {}): Promise<{ skills: string[]; written: string[] }> {
   const root = resolve(options.root ?? REPO_ROOT)
   const tree = await buildTree({ ...options, root })
-  await writeTree(root, tree)
+  await writeTree(root, tree, ownsRoots({ ...options, root }))
 
   const skills = await listSkills(root)
   for (const name of skills) {

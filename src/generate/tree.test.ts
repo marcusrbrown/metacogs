@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildMcpServer } from '../plugin/build'
 import { generate } from './bundle-helpers'
+import { checkGenerated } from './check'
 import { buildHelper, buildTree, isOwnedPath, listSkills, MCP_SERVER_PATHS, OWNED_ROOTS, REPO_ROOT, type TreeEntry } from './tree'
 
 const entry = (text: string, mode: TreeEntry['mode'] = 0o644): TreeEntry => ({ bytes: new TextEncoder().encode(text), mode })
@@ -97,7 +98,7 @@ describe('buildTree', () => {
   })
 
   test('merges extra entries after the built ones', async () => {
-    const tree = await buildTree({ root, extraEntries: OWNED_FIXTURE })
+    const tree = await buildTree({ root, ownedRoots: true, extraEntries: OWNED_FIXTURE })
     expect(tree.size).toBe(OWNED_FIXTURE.size + 1)
     expect(tree.get('hosts/claude/hooks/session-start.mjs')?.mode).toBe(0o755)
   })
@@ -124,7 +125,7 @@ describe('buildTree', () => {
 
 describe('generate over the tree map', () => {
   test('writes the owned roots and per-file outputs, with the executable bit', async () => {
-    const { written } = await generate({ root, extraEntries: OWNED_FIXTURE })
+    const { written } = await generate({ root, ownedRoots: true, extraEntries: OWNED_FIXTURE })
     expect(written).toEqual([...OWNED_FIXTURE.keys(), 'skills/demo/scripts/record.mjs'].sort())
     expect(readFileSync(join(root, 'hosts/codex/plugin.json'), 'utf8')).toBe('{"codex":true}\n')
     expect(lstatSync(join(root, 'hosts/claude/hooks/session-start.mjs')).mode & 0o111).not.toBe(0)
@@ -132,7 +133,7 @@ describe('generate over the tree map', () => {
   })
 
   test('is idempotent: a second run changes nothing', async () => {
-    const options = { root, extraEntries: OWNED_FIXTURE }
+    const options = { root, ownedRoots: true, extraEntries: OWNED_FIXTURE }
     await generate(options)
     const first = snapshot(root)
     await generate(options)
@@ -144,25 +145,26 @@ describe('generate over the tree map', () => {
     writeFileSync(join(root, 'hosts', 'claude', 'old', 'deep', 'stale.txt'), 'x')
     mkdirSync(join(root, '.agents', 'plugins'), { recursive: true })
     writeFileSync(join(root, '.agents', 'plugins', 'stray.json'), '{}')
-    await generate({ root, extraEntries: OWNED_FIXTURE })
+    await generate({ root, ownedRoots: true, extraEntries: OWNED_FIXTURE })
     expect(existsSync(join(root, 'hosts', 'claude', 'old'))).toBe(false)
     expect(existsSync(join(root, '.agents', 'plugins', 'stray.json'))).toBe(false)
     expect(existsSync(join(root, 'hosts', 'claude', '.mcp.json'))).toBe(true)
   })
 
-  test('leaves every owned root alone when there is nothing to generate', async () => {
+  test('a tree that does not own the roots leaves them alone when there is nothing to generate', async () => {
     const empty = mkdtempSync(join(tmpdir(), 'metacogs-empty-'))
     try {
       mkdirSync(join(empty, 'hosts', 'codex'), { recursive: true })
       writeFileSync(join(empty, 'hosts', 'codex', 'stray.json'), '{}')
       await generate({ root: empty })
       expect(existsSync(join(empty, 'hosts', 'codex', 'stray.json'))).toBe(true)
+      expect((await checkGenerated({ root: empty })).drift).toEqual([])
     } finally {
       rmSync(empty, { recursive: true, force: true })
     }
   })
 
-  test('a root with skills but no host packages keeps its own .claude-plugin/ and .agents/plugins/', async () => {
+  test('a foreign root keeps its own .claude-plugin/ and .agents/plugins/, and the check is clean after generate', async () => {
     mkdirSync(join(root, '.claude-plugin'), { recursive: true })
     writeFileSync(join(root, '.claude-plugin', 'plugin.json'), '{"name":"theirs"}\n')
     mkdirSync(join(root, '.agents', 'plugins'), { recursive: true })
@@ -171,17 +173,35 @@ describe('generate over the tree map', () => {
     expect(readFileSync(join(root, '.claude-plugin', 'plugin.json'), 'utf8')).toBe('{"name":"theirs"}\n')
     expect(readFileSync(join(root, '.agents', 'plugins', 'marketplace.json'), 'utf8')).toBe('{"name":"theirs"}\n')
     expect(existsSync(join(root, 'skills', 'demo', 'scripts', 'record.mjs'))).toBe(true)
+    expect((await checkGenerated({ root })).drift).toEqual([])
   })
 
-  test('only the owned roots the tree has entries under are cleared', async () => {
+  test('a tree that owns the roots clears every one, including a root the generator emits nothing under', async () => {
     mkdirSync(join(root, 'hosts', 'claude'), { recursive: true })
     writeFileSync(join(root, 'hosts', 'claude', 'stale.json'), '{}')
     mkdirSync(join(root, 'hosts', 'codex'), { recursive: true })
-    writeFileSync(join(root, 'hosts', 'codex', 'theirs.json'), '{}')
-    await generate({ root, extraEntries: new Map([['hosts/claude/.mcp.json', entry('{}\n')]]) })
+    writeFileSync(join(root, 'hosts', 'codex', 'stale.json'), '{}')
+    mkdirSync(join(root, '.claude-plugin'), { recursive: true })
+    writeFileSync(join(root, '.claude-plugin', 'stale.json'), '{}')
+    // Only hosts/claude/ has an entry; the other three roots are emptied.
+    const options = { root, ownedRoots: true, extraEntries: new Map([['hosts/claude/.mcp.json', entry('{}\n')]]) }
+    expect((await checkGenerated(options)).drift).toEqual([
+      { path: '.claude-plugin/stale.json', kind: 'extra' },
+      { path: 'hosts/claude/.mcp.json', kind: 'missing' },
+      { path: 'hosts/claude/stale.json', kind: 'extra' },
+      { path: 'hosts/codex/stale.json', kind: 'extra' },
+      { path: 'skills/demo/scripts/record.mjs', kind: 'missing' },
+    ])
+    await generate(options)
     expect(existsSync(join(root, 'hosts', 'claude', 'stale.json'))).toBe(false)
+    expect(existsSync(join(root, 'hosts', 'codex'))).toBe(false)
+    expect(existsSync(join(root, '.claude-plugin'))).toBe(false)
     expect(existsSync(join(root, 'hosts', 'claude', '.mcp.json'))).toBe(true)
-    expect(existsSync(join(root, 'hosts', 'codex', 'theirs.json'))).toBe(true)
+    expect((await checkGenerated(options)).drift).toEqual([])
+  })
+
+  test('entries under an owned root are an error for a tree that does not own the roots', async () => {
+    await expect(buildTree({ root, extraEntries: new Map([['hosts/claude/.mcp.json', entry('{}\n')]]) })).rejects.toThrow(/does not own the owned roots/)
   })
 
   test('a hand-written SKILL.md survives, and so do other files beside the helper', async () => {
@@ -189,26 +209,26 @@ describe('generate over the tree map', () => {
     writeFileSync(join(root, 'skills', 'demo', 'notes.md'), 'keep')
     mkdirSync(join(root, 'skills', 'demo', 'scripts'), { recursive: true })
     writeFileSync(join(root, 'skills', 'demo', 'scripts', 'other.mjs'), 'keep')
-    await generate({ root, extraEntries: OWNED_FIXTURE })
-    await generate({ root, extraEntries: OWNED_FIXTURE })
+    await generate({ root, ownedRoots: true, extraEntries: OWNED_FIXTURE })
+    await generate({ root, ownedRoots: true, extraEntries: OWNED_FIXTURE })
     expect(readFileSync(join(root, 'skills', 'demo', 'SKILL.md'), 'utf8')).toBe(skillText)
     expect(readFileSync(join(root, 'skills', 'demo', 'notes.md'), 'utf8')).toBe('keep')
     expect(readFileSync(join(root, 'skills', 'demo', 'scripts', 'other.mjs'), 'utf8')).toBe('keep')
   })
 
   test('the .agents/skills dev mirror survives clearing .agents/plugins', async () => {
-    await generate({ root, extraEntries: OWNED_FIXTURE })
+    await generate({ root, ownedRoots: true, extraEntries: OWNED_FIXTURE })
     expect(readFileSync(join(root, '.agents', 'skills', 'demo', 'SKILL.md'), 'utf8')).toContain('hand-written')
     expect(existsSync(join(root, '.agents', 'skills', 'demo', 'scripts', 'record.mjs'))).toBe(true)
     expect(existsSync(join(root, '.agents', 'plugins', 'marketplace.json'))).toBe(true)
   })
 
   test('restores the mode of a file that lost or gained the executable bit, including a helper', async () => {
-    await generate({ root, extraEntries: OWNED_FIXTURE })
+    await generate({ root, ownedRoots: true, extraEntries: OWNED_FIXTURE })
     chmodSync(join(root, 'hosts/claude/hooks/session-start.mjs'), 0o644)
     chmodSync(join(root, 'hosts/codex/plugin.json'), 0o755)
     chmodSync(join(root, 'skills/demo/scripts/record.mjs'), 0o755)
-    await generate({ root, extraEntries: OWNED_FIXTURE })
+    await generate({ root, ownedRoots: true, extraEntries: OWNED_FIXTURE })
     expect(lstatSync(join(root, 'hosts/claude/hooks/session-start.mjs')).mode & 0o111).not.toBe(0)
     expect(lstatSync(join(root, 'hosts/codex/plugin.json')).mode & 0o111).toBe(0)
     expect(lstatSync(join(root, 'skills/demo/scripts/record.mjs')).mode & 0o111).toBe(0)

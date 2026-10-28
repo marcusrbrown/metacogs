@@ -4,6 +4,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 
+import { generate } from '../generate/bundle-helpers'
 import { checkGenerated } from '../generate/check'
 import { buildTree, REPO_ROOT, type TreeMap, writeTree } from '../generate/tree'
 import { validRecord } from '../record/test-support'
@@ -199,7 +200,7 @@ describe('with both marketplace files present, generate:check covers both', () =
   beforeAll(async () => {
     root = mkdtempSync(join(scratch, 'both-'))
     tree = await buildTree({ root, hosts: true })
-    await writeTree(root, tree)
+    await writeTree(root, tree, true)
   }, 60_000)
 
   test('both catalogs are in the tree map, and a clean write has no drift', async () => {
@@ -228,6 +229,15 @@ describe('with both marketplace files present, generate:check covers both', () =
     expect(await checkGenerated(options())).toEqual({ drift: [], findings: [] })
   })
 
+  test('a stale file in an owned root is reported by the check, then removed by generate', async () => {
+    const stale = join(root, 'hosts', 'claude', 'stale.json')
+    writeFileSync(stale, '{}')
+    expect((await checkGenerated(options())).drift).toEqual([{ path: 'hosts/claude/stale.json', kind: 'extra' }])
+    await generate(options())
+    expect(existsSync(stale)).toBe(false)
+    expect(await checkGenerated(options())).toEqual({ drift: [], findings: [] })
+  })
+
   test('a stale Codex file is reported alongside the Claude package', async () => {
     const file = join(root, CODEX_DIR, 'skills', 'feel', 'SKILL.md')
     const original = readFileSync(file)
@@ -243,7 +253,7 @@ describe('a version bump moves the Codex manifest and the check still passes', (
   test('plugin.json, the hook banner and the server banner carry the new version', async () => {
     const root = mkdtempSync(join(scratch, 'bump-'))
     const options = { root, hosts: true, helperVersion: '9.8.7' } as const
-    await writeTree(root, await buildTree(options))
+    await writeTree(root, await buildTree(options), true)
 
     expect(JSON.parse(readFileSync(join(root, CODEX_DIR, 'plugin.json'), 'utf8')).version).toBe('9.8.7')
     expect('version' in JSON.parse(readFileSync(join(root, CODEX_MARKETPLACE_PATH), 'utf8')).plugins[0]).toBe(false)

@@ -141,7 +141,7 @@ describe('AE4: a version bump moves both manifests and the check still passes', 
     const root = mkdtempSync(join(scratch, 'bump-'))
     const options = { root, hosts: true, helperVersion: '9.8.7' } as const
     const tree = await buildTree(options)
-    await writeTree(root, tree)
+    await writeTree(root, tree, true)
 
     expect(JSON.parse(readFileSync(join(root, CLAUDE_DIR, '.claude-plugin', 'plugin.json'), 'utf8')).version).toBe('9.8.7')
     expect('version' in JSON.parse(readFileSync(join(root, CLAUDE_MARKETPLACE_PATH), 'utf8')).plugins[0]).toBe(false)

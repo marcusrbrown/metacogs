@@ -2,9 +2,11 @@
 // `generate:check` diffs it against disk, so the two cannot disagree about what is generated.
 //
 // Two kinds of output:
-//  - Owned roots are generated wholesale. `generate` clears an owned root before writing when the map has entries
-//    under it, and the check reports any file under them that the map does not contain. A root the map has nothing
-//    for (a `--root` that is not this repository, which builds no host packages) is left alone.
+//  - Owned roots are generated wholesale, but only for a tree built with hosts (`ownsRoots`: this repository, or a
+//    test that asks). Then `generate` clears every owned root before writing and the check reports any file under
+//    one that the map does not contain, so a root the generator now leaves empty is still cleaned. Any other tree,
+//    such as a `--root` that is another project, neither clears nor checks the owned roots: its own
+//    `.claude-plugin/` and `.agents/plugins/` are not ours. `generate` and the check read the same `ownsRoots`.
 //  - Per-file outputs (`skills/<name>/scripts/record.mjs`) sit beside hand-written files. They are written and
 //    checked one by one and their directories are never cleared.
 import { chmod, lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
@@ -57,8 +59,25 @@ export interface TreeOptions extends BuildOptions {
    * Defaults to true for this repository and false for any other root; tests set it to build into a temp root.
    */
   hosts?: boolean
-  /** Tests inject entries under an owned root here, since the real owned roots start empty. Merged after the built ones. */
+  /**
+   * Whether the owned roots are generated and checked. Defaults to `hosts`. Tests set it to true to inject stand-in
+   * entries (`extraEntries`) into a fixture root without building the real host packages.
+   */
+  ownedRoots?: boolean
+  /** Tests inject entries under an owned root here, since the real owned roots start empty. Needs `ownedRoots`. Merged after the built ones. */
   extraEntries?: ReadonlyMap<string, TreeEntry>
+}
+
+function hostsOf(options: TreeOptions, root: string): boolean {
+  return options.hosts ?? root === REPO_ROOT
+}
+
+/**
+ * Whether `generate` clears the owned roots and the check diffs them. One answer for both, so they cannot disagree.
+ * Pass the same options that built the tree.
+ */
+export function ownsRoots(options: TreeOptions = {}): boolean {
+  return options.ownedRoots ?? hostsOf(options, resolve(options.root ?? REPO_ROOT))
 }
 
 export type DriftKind = 'missing' | 'extra' | 'changed' | 'mode'
@@ -139,7 +158,7 @@ export async function buildTree(options: TreeOptions = {}): Promise<TreeMap> {
 
   const skills = await listSkills(root)
   // The host packages are built from this repository's sources, so a fixture root (tests) has none unless asked.
-  const withHosts = options.hosts ?? root === REPO_ROOT
+  const withHosts = hostsOf(options, root)
   let helper: Uint8Array | undefined
   const helperBytes = async (): Promise<Uint8Array> => (helper ??= new TextEncoder().encode(await buildHelper(options)))
   for (const name of skills) add(helperPath(name), { bytes: await helperBytes(), mode: 0o644 })
@@ -151,21 +170,22 @@ export async function buildTree(options: TreeOptions = {}): Promise<TreeMap> {
     for (const [path, entry] of await buildCodexEntries({ version, helper: await helperBytes(), repoRoot: REPO_ROOT })) add(path, entry)
   }
   for (const [path, entry] of options.extraEntries ?? []) add(path, entry)
+  if (!ownsRoots(options)) {
+    const stray = [...tree.keys()].find(isOwnedPath)
+    if (stray !== undefined) throw new Error(`tree: ${stray} is under an owned root, but this tree does not own the owned roots (set hosts or ownedRoots)`)
+  }
   return tree
 }
 
 const fsPath = (root: string, path: string): string => join(root, ...path.split('/'))
 
 /**
- * Clear each owned root the map has entries under, then write the map. Per-file outputs are overwritten in place; their
- * siblings stay. A root with no entry in the map is not touched: a tree built without host packages (another project's
- * `--root`, or no skills at all) must not delete that project's own `.claude-plugin/` or `.agents/plugins/`.
+ * Write the map. With `owned` (see `ownsRoots`), first clear every owned root, whether or not the map has entries
+ * under it. Without it the owned roots are not touched: another project's `.claude-plugin/` or `.agents/plugins/`
+ * is not ours to delete. Per-file outputs are overwritten in place; their siblings stay.
  */
-export async function writeTree(root: string, tree: TreeMap): Promise<void> {
-  const paths = [...tree.keys()]
-  for (const owned of OWNED_ROOTS) {
-    if (paths.some(path => path.startsWith(owned))) await rm(fsPath(root, owned.slice(0, -1)), { recursive: true, force: true })
-  }
+export async function writeTree(root: string, tree: TreeMap, owned: boolean): Promise<void> {
+  if (owned) for (const dir of OWNED_ROOTS) await rm(fsPath(root, dir.slice(0, -1)), { recursive: true, force: true })
   for (const [path, entry] of [...tree].sort(([a], [b]) => (a < b ? -1 : 1))) {
     const file = fsPath(root, path)
     await mkdir(dirname(file), { recursive: true })
@@ -209,8 +229,8 @@ async function walk(root: string, rel: string, found: Map<string, Actual>): Prom
   for (const entry of await readdir(fsPath(root, rel), { withFileTypes: true })) await walk(root, `${rel}/${entry.name}`, found)
 }
 
-/** Compare the map with what is on disk. Empty means no drift. */
-export async function diffTree(root: string, tree: TreeMap): Promise<Drift[]> {
+/** Compare the map with what is on disk. Empty means no drift. With `owned` (see `ownsRoots`), every owned root is diffed, extras included. */
+export async function diffTree(root: string, tree: TreeMap, owned: boolean): Promise<Drift[]> {
   const drift: Drift[] = []
 
   const compare = async (path: string, actual: Actual | undefined): Promise<void> => {
@@ -227,9 +247,9 @@ export async function diffTree(root: string, tree: TreeMap): Promise<Drift[]> {
   }
 
   const paths = new Set<string>()
-  for (const owned of OWNED_ROOTS) {
+  for (const dir of owned ? OWNED_ROOTS : []) {
     const found = new Map<string, Actual>()
-    await walk(root, owned.slice(0, -1), found)
+    await walk(root, dir.slice(0, -1), found)
     for (const [path, actual] of found) {
       paths.add(path)
       await compare(path, actual)

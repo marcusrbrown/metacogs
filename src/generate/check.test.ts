@@ -116,11 +116,11 @@ describe('generate:check over whole trees', () => {
     ['.claude-plugin/marketplace.json', file('{}\n')],
     ['.agents/plugins/marketplace.json', file('{}\n')],
   ])
-  const check = async () => (await checkGenerated({ root, extraEntries })).drift
+  const check = async () => (await checkGenerated({ root, ownedRoots: true, extraEntries })).drift
   const at = (path: string) => join(root, path)
 
   beforeEach(async () => {
-    await generate({ root, extraEntries })
+    await generate({ root, ownedRoots: true, extraEntries })
   })
 
   test('clean after generate', async () => {
@@ -223,13 +223,12 @@ describe('generate:check over whole trees', () => {
     await expect(checkGenerated({ root, extraEntries: new Map([['README.md', file('x')]]) })).rejects.toThrow(/tree:/)
   })
 
-  test('CLI names each drifted path with its kind and exits 1 (no extra entries: the stray is extra)', () => {
+  test('CLI --root is a foreign root: it does not own the owned roots, so a file there is not drift', () => {
     mkdirSync(at('hosts/claude'), { recursive: true })
     writeFileSync(at('hosts/claude/stray.txt'), 'x')
     const proc = spawnSync('bun', [join(REPO_ROOT, 'src', 'generate', 'check.ts'), '--root', root], { encoding: 'utf8' })
-    expect(proc.status).toBe(1)
-    expect(proc.stderr).toContain('extra: hosts/claude/stray.txt')
-    expect(proc.stderr).toContain('run `bun run generate`')
+    expect(proc.stderr).toBe('')
+    expect(proc.status).toBe(0)
   })
 })
 

@@ -1,8 +1,8 @@
 // generate:check — rebuild the tree map in memory and report every generated file that is missing, extra, changed
-// or has the wrong executable bit: whole owned roots, plus each per-file output.
+// or has the wrong executable bit: whole owned roots (when the tree owns them; see `ownsRoots`), plus each per-file output.
 import { resolve } from 'node:path'
 import { type Finding, scanHostTrees } from '../hosts/scan'
-import { buildTree, type Drift, diffTree, REPO_ROOT, type TreeOptions } from './tree'
+import { buildTree, type Drift, diffTree, ownsRoots, REPO_ROOT, type TreeOptions } from './tree'
 
 export type CheckOptions = TreeOptions
 
@@ -16,7 +16,7 @@ export interface CheckResult {
 export async function checkGenerated(options: CheckOptions = {}): Promise<CheckResult> {
   const root = resolve(options.root ?? REPO_ROOT)
   const tree = await buildTree({ ...options, root })
-  return { drift: await diffTree(root, tree), findings: scanHostTrees(tree) }
+  return { drift: await diffTree(root, tree, ownsRoots({ ...options, root })), findings: scanHostTrees(tree) }
 }
 
 if (import.meta.main) {
