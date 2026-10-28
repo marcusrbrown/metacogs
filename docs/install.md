@@ -52,7 +52,7 @@ echo '.metacogs/records/' >> .gitignore
 
 ## `unrecorded`
 
-If the helper or the `record` tool cannot run, the skill does not retry blindly and does not pretend a record exists. It tells the user no record was written, and the run's `execution_mode` is `unrecorded`. This covers: no Node 22, a denied shell command or a denied `record` call, an unwritable records directory (exit 3), and a different record already at the same path (exit 4). A validation error (exit 2) names the field; the agent fixes it and tries once more. The `record` tool reports the same errors as `metacogs-record: <kind> (exit N)` with one line per field. An argument that is not a record field, or a value the tool's schema rejects, is refused by the MCP library with its own `Input validation error` text before the tool runs. Both forms name the field and nothing is written.
+If the helper or the `record` tool cannot run, the skill does not retry blindly and does not pretend a record exists. It tells the user no record was written, and the run's `execution_mode` is `unrecorded`. This covers: no Node 22, a denied shell command or a denied `record` call, an unwritable records directory (exit 3), and a different record already at the same path (exit 4). A validation error (exit 2) names the field, or `record` when the whole record is over the size limit. Correct that field and retry once. Split a long entry into shorter entries, or trim the record, when a limit caused the error. The `record` tool reports the same errors as `metacogs-record: <kind> (exit N)` with one line per field. An argument that is not a record field, or a value the tool's schema rejects, is refused by the MCP library with its own `Input validation error` text before the tool runs. Both forms name the field and nothing is written.
 
 ## OpenCode plugin
 
@@ -149,7 +149,7 @@ To uninstall, run `/plugin uninstall metacogs@metacogs`. `/plugin marketplace re
 
 ### Status of the Claude Code plugin
 
-Status: `unverified`. The generated plugin and the marketplace pass `claude plugin validate --strict` (Claude Code 2.1.312), which needs no login. The plugin has not been installed and invoked on a real Claude Code, so the install steps, the invocation forms and the allow rules above are from Claude Code's documentation, not from a run.
+Status: `unverified`. The generated plugin and the marketplace pass `claude plugin validate --strict` (Claude Code 2.1.312), which needs no login. Checked in scripted headless runs (`claude -p`) of Claude Code 2.1.312: install from the marketplace, the MCP tools, the session note and its off switches, `/metacogs:feel` and `/metacogs:drugs`, and recording through the `record` tool. The interactive session has not been checked by hand.
 
 The `feel` and `drugs` tools and skills have no eval. `synthesis` and `counterfactual` were evaluated on OpenCode with the text in `skills/` (see [Evidence](../README.md#evidence)). The plugin's copies of these two skills are adapted for Claude Code: the record step calls the `record` tool instead of running the helper, and the compatibility line differs. They are not the exact text that was evaluated.
 
@@ -193,14 +193,14 @@ The Codex plugin has no session-start note. Codex discards the hooks of a plugin
 
 ### Approvals on Codex
 
-Codex asks before an MCP tool call according to your approval policy. `feel` and `drugs` are read-only tools. `record` is a write that is not destructive and touches nothing outside the machine. All three ran without a prompt under the default approval mode in `codex exec` 0.162.1. A tool approval mode of `prompt` or `writes` makes the `record` call fail in a non-interactive run, and the run is reported as `unrecorded`. To approve this server's tools in `~/.codex/config.toml`:
+Codex asks before an MCP tool call according to your approval policy. `feel` and `drugs` are read-only tools. `record` is a write that is not destructive and touches nothing outside the machine. All three ran without a prompt under the default approval mode in `codex exec` 0.162.1. A tool approval mode of `prompt` or `writes` makes the `record` call fail in a non-interactive run, and the run is reported as `unrecorded`. If you configured a stricter mode, set this in `~/.codex/config.toml`; under the default mode it is not needed, because `record` already runs without a prompt:
 
 ```toml
 [plugins."metacogs@metacogs".mcp_servers.metacogs]
 default_tools_approval_mode = "approve"
 ```
 
-The key form for per-tool approval settings has not been verified.
+This approves every tool on the `metacogs` server: `feel`, `drugs` and `record`. Per-tool approval keys have not been verified.
 
 ### Records on Codex
 
@@ -218,7 +218,7 @@ To uninstall, run `codex plugin remove metacogs@metacogs`. `codex plugin marketp
 
 ### Status of the Codex plugin
 
-Status: `unverified`, and experimental. The generated `plugin.json` and `mcp.json` validate against the agent-plugins.org 1.0.0 JSON Schemas they declare. Codex ships no validator, so this is schema validation only. The plugin has not been installed and invoked on a real Codex.
+Status: `unverified`, and experimental. The generated `plugin.json` and `mcp.json` validate against the agent-plugins.org 1.0.0 JSON Schemas they declare. Codex ships no validator, so this is schema validation only. Checked in scripted `codex exec` runs of Codex 0.162.1: `marketplace add` and `plugin add`, the MCP server and its tools, `$metacogs:feel` and `$metacogs:drugs`, and recording through the `record` tool under `workspace-write` and `read-only`. The interactive TUI has not been checked by hand.
 
 The `feel` and `drugs` tools and skills have no eval. `synthesis` and `counterfactual` were evaluated on OpenCode with the text in `skills/` (see [Evidence](../README.md#evidence)). The plugin's copies of these two skills are adapted for Codex: the record step calls the `record` tool instead of running the helper, and the compatibility line differs. They are not the exact text that was evaluated.
 
