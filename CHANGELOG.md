@@ -1,5 +1,11 @@
 # metacogs
 
+## 0.2.2
+
+### Patch Changes
+
+- 4f8b5db: The plugin bundle no longer includes the unused upstream tool text.
+
 ## 0.2.1
 
 ### Patch Changes
