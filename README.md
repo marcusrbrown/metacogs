@@ -146,7 +146,7 @@ What this does not show:
 
 - The gain is largely process visibility: the skill makes the agent write out perspectives, dependence, and a conclusion, which the rubric rewards. Whether answers are also more correct is not measured.
 - One host, one model pair, one fixture family. The judge is a single model whose draw is not fixed.
-- Pi, Codex, and Claude Code were checked for discovery only. No model was run on them. The Claude Code and Codex plugin packages were checked in scripted headless runs (`claude -p`, `codex exec`) only. The interactive Claude Code session and the Codex TUI have not been checked by hand.
+- The copied skills were checked for discovery only on Pi, Codex, and Claude Code, with no model run. The Claude Code and Codex plugin packages were checked in scripted headless runs (`claude -p`, `codex exec`) only. The interactive Claude Code session and the Codex TUI have not been checked by hand.
 
 **What preregistration proves.** Thresholds, rubric, and fixture hashes are committed in `evals/<method>/prereg.json` before the skill is authored, and the runner reads its bars and hashes from that file. Every manifest and report carries the sha256 of the file's canonical form, so a changed prereg no longer matches the runs made under the old one. This is a content contract, not a proof of git history: the author controls the repository and can rewrite the prereg and re-run. Held-out fixtures stay outside the repository until release.
 
