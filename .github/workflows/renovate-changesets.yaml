@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  # Changesets only when a PR changes runtime dependencies or shipped files; the shared action cannot tell dev from runtime bumps.
+  # Changesets only when a PR changes runtime dependencies, the two bundled devDependencies, or shipped files; the shared action cannot tell dev from runtime bumps.
   scope:
     name: Detect Bundle-Affecting Update
     if: >-
@@ -21,7 +21,7 @@ jobs:
       bundle-affecting: ${{ steps.diff.outputs.bundle-affecting }}
     steps:
       - id: diff
-        name: Compare runtime dependencies and shipped files
+        name: Compare runtime and bundled dependencies and shipped files
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -30,9 +30,15 @@ jobs:
         run: |
           set -euo pipefail
 
+          # zod and @modelcontextprotocol/sdk are devDependencies, but they are bundled into hosts/*/mcp/server.mjs, so a bump changes shipped bytes.
           runtime_deps() {
             gh api -H 'Accept: application/vnd.github.raw+json' "repos/${REPO}/contents/package.json?ref=$1" |
-              jq -S -c '[.dependencies, .peerDependencies, .optionalDependencies]'
+              jq -S -c '[
+                .dependencies,
+                .peerDependencies,
+                .optionalDependencies,
+                {zod: .devDependencies.zod, "@modelcontextprotocol/sdk": .devDependencies["@modelcontextprotocol/sdk"]}
+              ]'
           }
 
           compare=$(gh api "repos/${REPO}/compare/${BASE_SHA}...${HEAD_SHA}")
@@ -42,7 +48,7 @@ jobs:
           head_deps=$(runtime_deps "$HEAD_SHA")
 
           if [ "$base_deps" != "$head_deps" ]; then
-            reason='runtime dependencies changed'
+            reason='runtime or bundled dependencies changed'
           elif jq -e 'any(.files[]; .filename | startswith("skills/") or startswith("dist/") or startswith("plugin/") or startswith("hosts/") or startswith(".claude-plugin/") or startswith(".agents/plugins/"))' <<<"$compare" >/dev/null; then
             reason='shipped files changed'
           else
@@ -53,7 +59,7 @@ jobs:
             echo "Bundle-affecting: ${reason}"
             echo 'bundle-affecting=true' >> "$GITHUB_OUTPUT"
           else
-            echo 'Not bundle-affecting: no runtime dependency or shipped file changes; no changeset needed'
+            echo 'Not bundle-affecting: no runtime or bundled dependency or shipped file changes; no changeset needed'
             echo 'bundle-affecting=false' >> "$GITHUB_OUTPUT"
           fi
 
