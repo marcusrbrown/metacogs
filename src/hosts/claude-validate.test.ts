@@ -26,6 +26,9 @@ function validate(path: string) {
   const run = spawnSync('claude', ['plugin', 'validate', '--strict', '--json', path], {
     cwd: REPO_ROOT,
     encoding: 'utf8',
+    // spawnSync blocks the event loop, so the per-test timeouts below cannot interrupt a hung CLI; this can.
+    // A timed-out run sets `run.error`, which is thrown below. Kept under the 60 s test timeout.
+    timeout: 50_000,
     // An isolated home and config directory: nothing from the machine's own Claude setup is read or written.
     env: {
       ...process.env,

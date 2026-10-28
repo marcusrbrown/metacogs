@@ -19,11 +19,6 @@ export async function checkGenerated(options: CheckOptions = {}): Promise<CheckR
   return { drift: await diffTree(root, tree), findings: scanHostTrees(tree) }
 }
 
-/** Drift between the committed tree and a fresh build, sorted by path. Empty means none. */
-export async function checkTree(options: CheckOptions = {}): Promise<Drift[]> {
-  return (await checkGenerated(options)).drift
-}
-
 if (import.meta.main) {
   const at = process.argv.indexOf('--root')
   const root = at === -1 ? undefined : process.argv[at + 1]

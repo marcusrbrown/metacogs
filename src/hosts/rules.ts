@@ -50,6 +50,19 @@ export interface HostProfile {
 }
 
 /**
+ * The text each host puts in front of a tool name or a skill name. The profiles build their output from these, and the
+ * rewrite scan (scan.ts) reads them back as the other host's forbidden tokens, so the two cannot drift apart.
+ */
+export const CLAUDE_TOOL_PREFIX = 'mcp__plugin_'
+export const CODEX_TOOL_PREFIX = `mcp__${MCP_SERVER_NAME}__`
+export const CLAUDE_INVOCATION_PREFIX = `/${PLUGIN_NAME}:`
+export const CODEX_INVOCATION_PREFIX = `$${PLUGIN_NAME}:`
+
+/** How each host's record command names the skill's own directory: a variable Claude fills in, a placeholder the model fills in on Codex. */
+export const CLAUDE_SKILL_DIR_VAR = 'CLAUDE_SKILL_DIR'
+export const CODEX_SKILL_DIR_PLACEHOLDER = '<directory of this SKILL.md>'
+
+/**
  * Claude Code names a plugin's MCP tools `mcp__plugin_<plugin>_<server>__<tool>`. Plugin skills are namespaced as
  * `/<plugin>:<skill>`. A bare `/feel` also works when no other command claims the name; the renders never say so,
  * because the denylist treats a bare slash form as an unrewritten leftover. The install docs carry that note.
@@ -57,8 +70,8 @@ export interface HostProfile {
 export const CLAUDE_PROFILE: HostProfile = {
   id: 'claude',
   label: 'Claude Code',
-  toolName: tool => `mcp__plugin_${PLUGIN_NAME}_${MCP_SERVER_NAME}__${tool}`,
-  invocation: skill => `/${PLUGIN_NAME}:${skill}`,
+  toolName: tool => `${CLAUDE_TOOL_PREFIX}${PLUGIN_NAME}_${MCP_SERVER_NAME}__${tool}`,
+  invocation: skill => `${CLAUDE_INVOCATION_PREFIX}${skill}`,
 }
 
 /**
@@ -68,8 +81,8 @@ export const CLAUDE_PROFILE: HostProfile = {
 export const CODEX_PROFILE: HostProfile = {
   id: 'codex',
   label: 'Codex',
-  toolName: tool => `mcp__${MCP_SERVER_NAME}__${tool}`,
-  invocation: skill => `$${PLUGIN_NAME}:${skill}`,
+  toolName: tool => `${CODEX_TOOL_PREFIX}${tool}`,
+  invocation: skill => `${CODEX_INVOCATION_PREFIX}${skill}`,
 }
 
 /** Typed after the command on each host's tool skill. */
@@ -80,7 +93,7 @@ const OPENCODE_ARGUMENTS =
 const TOOL_UNAVAILABLE = (tool: string): string => `If the \`${tool}\` tool is unavailable (for example because Node 22 is not installed), continue in plain text and say so.`
 
 /** What differs between hosts beyond names: how arguments reach the model and how the record helper is found. */
-interface RenderStyle {
+export interface RenderStyle {
   /** Replaces the OpenCode argument paragraph; takes the skill's invocation. */
   argumentsText: (invocation: string) => string
   /** Whether the tool skills get an `argument-hint` frontmatter line (Claude shows it; Codex does not honour it). */
@@ -92,11 +105,11 @@ interface RenderStyle {
 }
 
 /** Claude Code fills in `$ARGUMENTS` and `${CLAUDE_SKILL_DIR}` in skill text. */
-const CLAUDE_STYLE: RenderStyle = {
+export const CLAUDE_STYLE: RenderStyle = {
   argumentsText: invocation =>
     `The user starts this skill as \`${invocation}\`. The arguments typed after the command, if any: $ARGUMENTS\n\nIf that is empty, or you loaded this skill yourself, there are none.`,
   argumentHint: true,
-  recordCommand: 'node "${CLAUDE_SKILL_DIR}/scripts/record.mjs"',
+  recordCommand: `node "\${${CLAUDE_SKILL_DIR_VAR}}/scripts/record.mjs"`,
   recordIntro: "The path below is this skill's own directory, filled in by Claude Code; use it as written, never a guessed path.",
 }
 
@@ -104,13 +117,12 @@ const CLAUDE_STYLE: RenderStyle = {
  * Codex substitutes nothing in skill text. Text after the `$` mention is plain text in the user's message, and the model
  * is handed the path of each SKILL.md it loads, so the helper directory is that path's directory.
  */
-const CODEX_STYLE: RenderStyle = {
+export const CODEX_STYLE: RenderStyle = {
   argumentsText: invocation =>
     `The user starts this skill by writing \`${invocation}\`. Codex does not fill in arguments. The arguments, if any, are the plain text that follows the mention in the user's message; read them from there.\n\nIf no text follows the mention, or you loaded this skill yourself, there are none.`,
   argumentHint: false,
-  recordCommand: 'node "<directory of this SKILL.md>/scripts/record.mjs"',
-  recordIntro:
-    'Codex gave you the path of this SKILL.md when it loaded the skill. Replace `<directory of this SKILL.md>` below with the directory that path is in, keep the quotes around the whole path, and never use a guessed path.',
+  recordCommand: `node "${CODEX_SKILL_DIR_PLACEHOLDER}/scripts/record.mjs"`,
+  recordIntro: `Codex gave you the path of this SKILL.md when it loaded the skill. Replace \`${CODEX_SKILL_DIR_PLACEHOLDER}\` below with the directory that path is in, keep the quotes around the whole path, and never use a guessed path.`,
 }
 
 function hostRules(profile: HostProfile, style: RenderStyle): Rule[] {

@@ -113,17 +113,15 @@ describe('the session-start hook', () => {
       expect(run({}, 'codex')).toEqual(PRINTS_CODEX)
     })
 
-    test('an unreadable config directory fails open', () => {
+    // chmod 000 does not block root, so the directory stays readable and the case is not exercised there.
+    test.skipIf(process.getuid?.() === 0)('an unreadable config directory fails open', () => {
       const h = mkdtempSync(join(scratch, 'h-'))
       mkdirSync(join(h, '.config', 'metacogs'), { recursive: true })
       writeFileSync(join(h, '.config', 'metacogs', 'guidance-off'), '')
       chmodSync(join(h, '.config'), 0o000)
       try {
-        // Where the directory really is unreadable (not root), the marker cannot be seen and the note prints.
-        const out = run({ HOME: h })
-        expect(out.status).toBe(0)
-        expect(out.stderr).toBe('')
-        expect([PRINTS.stdout, SILENT.stdout]).toContain(out.stdout)
+        // existsSync returns false on EACCES, so the marker is invisible and the note prints.
+        expect(run({ HOME: h })).toEqual(PRINTS)
       } finally {
         chmodSync(join(h, '.config'), 0o755)
       }

@@ -4,7 +4,7 @@
 //
 // Env: GITHUB_EVENT_NAME, GITHUB_HEAD_REF, GITHUB_REPOSITORY (all set by Actions) and, passed by ci.yml,
 // PR_BASE_SHA (github.event.pull_request.base.sha) and PR_HEAD_REPO (github.event.pull_request.head.repo.full_name).
-import { spawnSync } from 'node:child_process'
+import { type SpawnSyncOptionsWithStringEncoding, type SpawnSyncReturns, spawnSync } from 'node:child_process'
 import { OWNED_ROOTS } from '../generate/tree'
 
 /** Branch of the Changesets version PR. */
@@ -104,8 +104,15 @@ export function runGate(deps: GateDeps): number {
 
 const SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/
 
-function git(args: string[], cwd: string): { status: number | null; stdout: string; stderr: string } {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+/** A stalled fetch or diff must fail the gate, not hold the CI job until the platform's own limit. */
+export const GIT_TIMEOUT_MS = 120_000
+
+/** `spawnSync`, as far as `git()` uses it; tests pass a stub. */
+export type GitRunner = (command: string, args: string[], options: SpawnSyncOptionsWithStringEncoding) => SpawnSyncReturns<string>
+
+function git(args: string[], cwd: string, run: GitRunner): { status: number | null; stdout: string; stderr: string } {
+  // A timed-out child comes back with `error` set, which is thrown below like any other failure to run git.
+  const r = run('git', args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: GIT_TIMEOUT_MS })
   if (r.error) throw new Error(`could not run git: ${r.error.message}`)
   return { status: r.status, stdout: r.stdout, stderr: r.stderr.trim() }
 }
@@ -122,14 +129,14 @@ export function parseNameStatus(output: string): Change[] {
  * Real git reads for a checkout. CI checks out shallow, so the base commit is fetched explicitly (a no-op when
  * it is already present). The diff is two-dot against the base: with the merge ref checked out that is the PR's change.
  */
-export function gitChanges(cwd: string): (baseSha: string) => Change[] {
+export function gitChanges(cwd: string, run: GitRunner = spawnSync): (baseSha: string) => Change[] {
   return baseSha => {
     if (!SHA.test(baseSha)) throw new Error(`not a commit SHA: ${JSON.stringify(baseSha)}`)
-    if (git(['cat-file', '-e', `${baseSha}^{commit}`], cwd).status !== 0) {
-      const fetched = git(['fetch', '--no-tags', '--depth=1', 'origin', baseSha], cwd)
+    if (git(['cat-file', '-e', `${baseSha}^{commit}`], cwd, run).status !== 0) {
+      const fetched = git(['fetch', '--no-tags', '--depth=1', 'origin', baseSha], cwd, run)
       if (fetched.status !== 0) throw new Error(`git fetch origin ${baseSha} failed: ${fetched.stderr}`)
     }
-    const diff = git(['diff', '--name-status', '--no-renames', '-z', baseSha, 'HEAD', '--'], cwd)
+    const diff = git(['diff', '--name-status', '--no-renames', '-z', baseSha, 'HEAD', '--'], cwd, run)
     if (diff.status !== 0) throw new Error(`git diff failed: ${diff.stderr}`)
     return parseNameStatus(diff.stdout)
   }

@@ -133,7 +133,7 @@ function parsePlugins(raw: unknown, hosts: Record<string, Host>, out: Problem[])
   const plugins: Record<string, PluginEntry> = {}
   for (const [host, value] of Object.entries(raw)) {
     const where = `plugins.${host}`
-    if (!(host in hosts)) {
+    if (!Object.hasOwn(hosts, host)) {
       out.push({ where, message: `entry for undeclared host "${host}"` })
       continue
     }
@@ -213,7 +213,7 @@ export function parseMatrix(raw: unknown): { matrix: Matrix | null; problems: Pr
       const parsed: Record<string, Cell> = {}
       for (const [host, value] of Object.entries(cells)) {
         const where = `${methodWhere}.${host}`
-        if (!(host in hosts)) {
+        if (!Object.hasOwn(hosts, host)) {
           problems.push({ where, message: `cell for undeclared host "${host}"` })
           continue
         }

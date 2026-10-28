@@ -234,6 +234,8 @@ describe('checkMatrix: plugin entries', () => {
   test('an unknown key, an undeclared host, a bad status, a bad date and a non-boolean experimental flag are rejected', () => {
     expect(withPlugins(p => void Object.assign(p.codex!, { stauts: 'verified' }))).toEqual(['plugins.codex: unknown field "stauts"'])
     expect(withPlugins(p => void (p.vim = claudeEntry()))).toEqual(['plugins.vim: entry for undeclared host "vim"'])
+    // An inherited Object.prototype name is not a declared host.
+    expect(withPlugins(p => void Object.assign(p, { constructor: claudeEntry() }))).toEqual(['plugins.constructor: entry for undeclared host "constructor"'])
     const out = withPlugins(p => {
       Object.assign(p.codex!, { status: 'content-compatible-untested', date: '2026-13-40', experimental: 'yes' })
     }).join('\n')

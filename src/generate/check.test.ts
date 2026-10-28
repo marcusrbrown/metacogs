@@ -6,9 +6,9 @@ import { join } from 'node:path'
 import { recordFilename } from '../record/canonical'
 import { SHIPPED_METHODS } from '../record/contract'
 import { runCli, validRecord } from '../record/test-support'
-import { buildHelper, generate, REPO_ROOT } from './bundle-helpers'
-import { checkTree } from './check'
-import type { TreeEntry } from './tree'
+import { generate } from './bundle-helpers'
+import { checkGenerated } from './check'
+import { buildHelper, REPO_ROOT, type TreeEntry } from './tree'
 
 let root: string
 
@@ -31,7 +31,7 @@ describe('generate', () => {
       expect((await generate({ root: empty })).skills).toEqual([])
       mkdirSync(join(empty, 'skills'))
       expect((await generate({ root: empty })).skills).toEqual([])
-      expect(await checkTree({ root: empty })).toEqual([])
+      expect((await checkGenerated({ root: empty })).drift).toEqual([])
     } finally {
       rmSync(empty, { recursive: true, force: true })
     }
@@ -79,18 +79,18 @@ describe('generate', () => {
 describe('generate:check', () => {
   test('clean after generate', async () => {
     await generate({ root })
-    expect(await checkTree({ root })).toEqual([])
+    expect((await checkGenerated({ root })).drift).toEqual([])
   })
 
   test('reports a missing helper', async () => {
-    expect(await checkTree({ root })).toEqual([{ path: HELPER, kind: 'missing' }])
+    expect((await checkGenerated({ root })).drift).toEqual([{ path: HELPER, kind: 'missing' }])
   })
 
   test('hand-editing a bundled helper fails the check naming the path (library and CLI)', async () => {
     await generate({ root })
     const file = join(root, HELPER)
     writeFileSync(file, `${readFileSync(file, 'utf8')}\n// sneaky hand edit\n`)
-    expect(await checkTree({ root })).toEqual([{ path: HELPER, kind: 'changed' }])
+    expect((await checkGenerated({ root })).drift).toEqual([{ path: HELPER, kind: 'changed' }])
     const proc = spawnSync('bun', [join(REPO_ROOT, 'src', 'generate', 'check.ts'), '--root', root], { encoding: 'utf8' })
     expect(proc.status).toBe(1)
     expect(proc.stderr).toContain(`changed: ${HELPER}`)
@@ -103,7 +103,7 @@ describe('generate:check', () => {
   })
 
   test('the committed repository has no drift', async () => {
-    expect(await checkTree({})).toEqual([])
+    expect((await checkGenerated({})).drift).toEqual([])
   })
 })
 
@@ -116,7 +116,7 @@ describe('generate:check over whole trees', () => {
     ['.claude-plugin/marketplace.json', file('{}\n')],
     ['.agents/plugins/marketplace.json', file('{}\n')],
   ])
-  const check = () => checkTree({ root, extraEntries })
+  const check = async () => (await checkGenerated({ root, extraEntries })).drift
   const at = (path: string) => join(root, path)
 
   beforeEach(async () => {
@@ -220,7 +220,7 @@ describe('generate:check over whole trees', () => {
   })
 
   test('an invalid tree is an error, not drift', async () => {
-    await expect(checkTree({ root, extraEntries: new Map([['README.md', file('x')]]) })).rejects.toThrow(/tree:/)
+    await expect(checkGenerated({ root, extraEntries: new Map([['README.md', file('x')]]) })).rejects.toThrow(/tree:/)
   })
 
   test('CLI names each drifted path with its kind and exits 1 (no extra entries: the stray is extra)', () => {

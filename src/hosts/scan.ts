@@ -3,7 +3,24 @@
 // rules.ts bound what a rewrite changes; this scan catches what no rule covers.
 import type { TreeMap } from '../generate/tree'
 import { renderGuidance } from './guidance'
-import { CLAUDE_PROFILE, CODEX_PROFILE, HOST_SKILLS, type HostProfile, METHOD_SKILLS, type SkillName, TOOL_SKILLS } from './rules'
+import {
+  CLAUDE_INVOCATION_PREFIX,
+  CLAUDE_PROFILE,
+  CLAUDE_SKILL_DIR_VAR,
+  CLAUDE_STYLE,
+  CLAUDE_TOOL_PREFIX,
+  CODEX_INVOCATION_PREFIX,
+  CODEX_PROFILE,
+  CODEX_SKILL_DIR_PLACEHOLDER,
+  CODEX_STYLE,
+  CODEX_TOOL_PREFIX,
+  HOST_SKILLS,
+  type HostProfile,
+  METHOD_SKILLS,
+  type RenderStyle,
+  type SkillName,
+  TOOL_SKILLS,
+} from './rules'
 
 export interface DenyEntry {
   name: string
@@ -48,18 +65,33 @@ export interface HostExpectations {
   forbidden: readonly string[]
 }
 
+/** The script path inside a style's `node "<path>"` record command. */
+function recordScript(style: RenderStyle): string {
+  const match = /^node "(.*)"$/.exec(style.recordCommand)
+  if (match?.[1] === undefined) throw new Error(`scan: unexpected record command shape: ${style.recordCommand}`)
+  return match[1]
+}
+
 export function claudeExpectations(profile: HostProfile = CLAUDE_PROFILE): HostExpectations {
   const skills = {} as Record<SkillName, readonly string[]>
   for (const skill of TOOL_SKILLS) skills[skill] = [profile.toolName(skill), '$ARGUMENTS', profile.invocation(skill)]
-  for (const skill of METHOD_SKILLS) skills[skill] = ['${CLAUDE_SKILL_DIR}/scripts/record.mjs']
-  return { profile, dir: 'hosts/claude', skills, forbidden: ['mcp__metacogs__', '$metacogs:', '<directory of this SKILL.md>'] }
+  for (const skill of METHOD_SKILLS) skills[skill] = [recordScript(CLAUDE_STYLE)]
+  // What belongs to Codex: its tool and mention prefixes and its record placeholder.
+  return { profile, dir: 'hosts/claude', skills, forbidden: [CODEX_TOOL_PREFIX, CODEX_INVOCATION_PREFIX, CODEX_SKILL_DIR_PLACEHOLDER] }
 }
 
 export function codexExpectations(profile: HostProfile = CODEX_PROFILE): HostExpectations {
   const skills = {} as Record<SkillName, readonly string[]>
   for (const skill of TOOL_SKILLS) skills[skill] = [profile.toolName(skill), profile.invocation(skill), 'follows the mention']
-  for (const skill of METHOD_SKILLS) skills[skill] = ['node "<directory of this SKILL.md>/scripts/record.mjs"']
-  return { profile, dir: 'hosts/codex', skills, forbidden: ['$ARGUMENTS', 'argument-hint', 'CLAUDE_SKILL_DIR', 'mcp__plugin_', '/metacogs:'] }
+  for (const skill of METHOD_SKILLS) skills[skill] = [CODEX_STYLE.recordCommand]
+  // What belongs to Claude: its tool and command prefixes and its skill-directory variable. `$ARGUMENTS` and the
+  // `argument-hint` frontmatter line are Claude's too, but no profile or style constant holds them as a token.
+  return {
+    profile,
+    dir: 'hosts/codex',
+    skills,
+    forbidden: ['$ARGUMENTS', 'argument-hint', CLAUDE_SKILL_DIR_VAR, CLAUDE_TOOL_PREFIX, CLAUDE_INVOCATION_PREFIX],
+  }
 }
 
 /** Positive findings for one host's skills and note. A missing token means a rewrite did not land. */

@@ -4,9 +4,6 @@ import { cp, mkdir, rm } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { buildTree, listSkills, REPO_ROOT, type TreeOptions, writeTree } from './tree'
 
-// Kept here so importers (the runner tests, src/record/cli.ts comments) need not know where the builder lives.
-export { buildHelper, type BuildOptions, HELPER_RELPATH, listSkills, REPO_ROOT } from './tree'
-
 export type GenerateOptions = TreeOptions
 
 export async function generate(options: GenerateOptions = {}): Promise<{ skills: string[]; written: string[] }> {

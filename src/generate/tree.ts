@@ -2,8 +2,9 @@
 // `generate:check` diffs it against disk, so the two cannot disagree about what is generated.
 //
 // Two kinds of output:
-//  - Owned roots are generated wholesale. `generate` clears them before writing, and the check reports any
-//    file under them that the map does not contain.
+//  - Owned roots are generated wholesale. `generate` clears an owned root before writing when the map has entries
+//    under it, and the check reports any file under them that the map does not contain. A root the map has nothing
+//    for (a `--root` that is not this repository, which builds no host packages) is left alone.
 //  - Per-file outputs (`skills/<name>/scripts/record.mjs`) sit beside hand-written files. They are written and
 //    checked one by one and their directories are never cleared.
 import { chmod, lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
@@ -17,16 +18,18 @@ import { helperBanner } from './marker'
 
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
-export const HELPER_RELPATH = join('scripts', 'record.mjs')
-
 /** Where each host package carries its copy of the MCP server bundle. The two copies are the same bytes. */
 export const MCP_SERVER_PATHS = ['hosts/claude/mcp/server.mjs', 'hosts/codex/mcp/server.mjs'] as const
 
 /** Directories that are fully generated. Posix, repo-relative, trailing slash. */
 export const OWNED_ROOTS = ['hosts/claude/', 'hosts/codex/', '.claude-plugin/', '.agents/plugins/'] as const
 
+/** The per-skill helper, as a posix path below `skills/<name>/`. The map key and the ownership pattern both come from it. */
+const HELPER_FILE = 'scripts/record.mjs'
+const helperPath = (skill: string): string => `skills/${skill}/${HELPER_FILE}`
+
 /** Generated files that live beside hand-written ones. */
-const PER_FILE_OUTPUT = /^skills\/[^/]+\/scripts\/record\.mjs$/
+const PER_FILE_OUTPUT = new RegExp(`^skills/[^/]+/${HELPER_FILE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`)
 
 /** Git only tracks the executable bit, so a file's mode is one of these two. */
 export type FileMode = 0o644 | 0o755
@@ -139,7 +142,7 @@ export async function buildTree(options: TreeOptions = {}): Promise<TreeMap> {
   const withHosts = options.hosts ?? root === REPO_ROOT
   let helper: Uint8Array | undefined
   const helperBytes = async (): Promise<Uint8Array> => (helper ??= new TextEncoder().encode(await buildHelper(options)))
-  for (const name of skills) add(`skills/${name}/scripts/record.mjs`, { bytes: await helperBytes(), mode: 0o644 })
+  for (const name of skills) add(helperPath(name), { bytes: await helperBytes(), mode: 0o644 })
   if (withHosts) {
     const version = options.helperVersion ?? (await repoVersion())
     const server = new TextEncoder().encode(await buildMcpServer({ version }))
@@ -153,9 +156,16 @@ export async function buildTree(options: TreeOptions = {}): Promise<TreeMap> {
 
 const fsPath = (root: string, path: string): string => join(root, ...path.split('/'))
 
-/** Clear every owned root, then write the map. Per-file outputs are overwritten in place; their siblings stay. */
+/**
+ * Clear each owned root the map has entries under, then write the map. Per-file outputs are overwritten in place; their
+ * siblings stay. A root with no entry in the map is not touched: a tree built without host packages (another project's
+ * `--root`, or no skills at all) must not delete that project's own `.claude-plugin/` or `.agents/plugins/`.
+ */
 export async function writeTree(root: string, tree: TreeMap): Promise<void> {
-  for (const owned of OWNED_ROOTS) await rm(fsPath(root, owned.slice(0, -1)), { recursive: true, force: true })
+  const paths = [...tree.keys()]
+  for (const owned of OWNED_ROOTS) {
+    if (paths.some(path => path.startsWith(owned))) await rm(fsPath(root, owned.slice(0, -1)), { recursive: true, force: true })
+  }
   for (const [path, entry] of [...tree].sort(([a], [b]) => (a < b ? -1 : 1))) {
     const file = fsPath(root, path)
     await mkdir(dirname(file), { recursive: true })

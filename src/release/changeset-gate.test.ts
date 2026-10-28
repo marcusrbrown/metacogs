@@ -7,6 +7,8 @@ import {
   type Change,
   type GateDeps,
   type GateEnv,
+  GIT_TIMEOUT_MS,
+  type GitRunner,
   gitChanges,
   isAddedChangeset,
   isGatedPath,
@@ -155,6 +157,31 @@ describe('path rules', () => {
   test('parseNameStatus reads NUL-separated pairs, including paths with spaces and newlines', () => {
     expect(parseNameStatus('M\0a b.txt\0A\0odd\nname.md\0D\0gone.txt\0')).toEqual([M('a b.txt'), A('odd\nname.md'), D('gone.txt')])
     expect(parseNameStatus('')).toEqual([])
+  })
+})
+
+describe('git timeout', () => {
+  const timedOut = { status: null, stdout: '', stderr: '', error: new Error('spawnSync git ETIMEDOUT') } as unknown as ReturnType<GitRunner>
+
+  test('every git call carries a 120 s timeout', () => {
+    expect(GIT_TIMEOUT_MS).toBe(120_000)
+    const timeouts: (number | undefined)[] = []
+    const run: GitRunner = (_command, _args, options) => {
+      timeouts.push(options.timeout)
+      return { status: 0, stdout: '', stderr: '' } as unknown as ReturnType<GitRunner>
+    }
+    expect(gitChanges('/unused', run)(BASE)).toEqual([])
+    // cat-file, then diff: the base is present, so no fetch.
+    expect(timeouts).toEqual([GIT_TIMEOUT_MS, GIT_TIMEOUT_MS])
+  })
+
+  test('a timed-out git throws, and the gate turns that into exit 1', () => {
+    const changes = gitChanges('/unused', () => timedOut)
+    expect(() => changes(BASE)).toThrow(/could not run git: spawnSync git ETIMEDOUT/)
+    const errors: string[] = []
+    const code = runGate({ env: { eventName: 'pull_request', headRef: 'feat/x', repository: 'o/r', headRepo: 'o/r', baseSha: BASE }, changes, log: () => {}, error: m => void errors.push(m) })
+    expect(code).toBe(1)
+    expect(errors.join('\n')).toContain('could not diff against')
   })
 })
 

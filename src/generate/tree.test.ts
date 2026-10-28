@@ -150,16 +150,38 @@ describe('generate over the tree map', () => {
     expect(existsSync(join(root, 'hosts', 'claude', '.mcp.json'))).toBe(true)
   })
 
-  test('clears owned roots even when there is nothing to generate', async () => {
+  test('leaves every owned root alone when there is nothing to generate', async () => {
     const empty = mkdtempSync(join(tmpdir(), 'metacogs-empty-'))
     try {
       mkdirSync(join(empty, 'hosts', 'codex'), { recursive: true })
       writeFileSync(join(empty, 'hosts', 'codex', 'stray.json'), '{}')
       await generate({ root: empty })
-      expect(existsSync(join(empty, 'hosts', 'codex'))).toBe(false)
+      expect(existsSync(join(empty, 'hosts', 'codex', 'stray.json'))).toBe(true)
     } finally {
       rmSync(empty, { recursive: true, force: true })
     }
+  })
+
+  test('a root with skills but no host packages keeps its own .claude-plugin/ and .agents/plugins/', async () => {
+    mkdirSync(join(root, '.claude-plugin'), { recursive: true })
+    writeFileSync(join(root, '.claude-plugin', 'plugin.json'), '{"name":"theirs"}\n')
+    mkdirSync(join(root, '.agents', 'plugins'), { recursive: true })
+    writeFileSync(join(root, '.agents', 'plugins', 'marketplace.json'), '{"name":"theirs"}\n')
+    await generate({ root })
+    expect(readFileSync(join(root, '.claude-plugin', 'plugin.json'), 'utf8')).toBe('{"name":"theirs"}\n')
+    expect(readFileSync(join(root, '.agents', 'plugins', 'marketplace.json'), 'utf8')).toBe('{"name":"theirs"}\n')
+    expect(existsSync(join(root, 'skills', 'demo', 'scripts', 'record.mjs'))).toBe(true)
+  })
+
+  test('only the owned roots the tree has entries under are cleared', async () => {
+    mkdirSync(join(root, 'hosts', 'claude'), { recursive: true })
+    writeFileSync(join(root, 'hosts', 'claude', 'stale.json'), '{}')
+    mkdirSync(join(root, 'hosts', 'codex'), { recursive: true })
+    writeFileSync(join(root, 'hosts', 'codex', 'theirs.json'), '{}')
+    await generate({ root, extraEntries: new Map([['hosts/claude/.mcp.json', entry('{}\n')]]) })
+    expect(existsSync(join(root, 'hosts', 'claude', 'stale.json'))).toBe(false)
+    expect(existsSync(join(root, 'hosts', 'claude', '.mcp.json'))).toBe(true)
+    expect(existsSync(join(root, 'hosts', 'codex', 'theirs.json'))).toBe(true)
   })
 
   test('a hand-written SKILL.md survives, and so do other files beside the helper', async () => {

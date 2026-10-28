@@ -23,6 +23,9 @@ export const RESERVED_ENV_KEYS = ['PLUGIN_ROOT', 'PLUGIN_DATA'] as const
 
 type Json = { [key: string]: Json } | Json[] | string | number | boolean | null
 
+const isJsonObject = (value: Json | undefined): value is { [key: string]: Json } => typeof value === 'object' && value !== null && !Array.isArray(value)
+const child = (node: Json | undefined, key: string): Json | undefined => (isJsonObject(node) ? node[key] : undefined)
+
 const here = (relative: string): URL => new URL(`../../${relative}`, import.meta.url)
 const readSchemaText = (relative: string): string => readFileSync(here(relative), 'utf8')
 
@@ -36,8 +39,8 @@ export function sha256(text: string): string {
  * checked directly by `reservedEnvKeys`. Anything else that fails to convert is a loud error, never a silent skip.
  */
 export function dropUnconvertibleKeyword(schema: Json): void {
-  const env = (schema as any)?.$defs?.stdioServer?.properties?.env
-  if (env === null || typeof env !== 'object' || !('propertyNames' in env)) {
+  const env = child(child(child(child(schema, '$defs'), 'stdioServer'), 'properties'), 'env')
+  if (!isJsonObject(env) || !('propertyNames' in env)) {
     throw new Error('mcp.schema.json: expected $defs.stdioServer.properties.env.propertyNames; the schema changed, so review this workaround')
   }
   delete env.propertyNames

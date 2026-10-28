@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
-import { buildHelper } from '../generate/bundle-helpers'
+import { buildHelper } from '../generate/tree'
 import { validRecord } from '../record/test-support'
 import { recordFilename } from '../record/canonical'
 import { listRecordFiles } from './checks'
