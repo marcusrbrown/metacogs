@@ -162,6 +162,21 @@ describe('scanRepo', () => {
     ])
   })
 
+  test('the generated host packages and marketplaces are scanned', () => {
+    const root = tree({
+      'hosts/claude/skills/x/SKILL.md': `mail ${EMAIL}`,
+      'hosts/codex/mcp/server.mjs': `const k = "${OPENAI_STYLE}"`,
+      '.claude-plugin/marketplace.json': JSON_KEY_FIELD,
+      '.agents/plugins/marketplace.json': AWS_STYLE,
+    })
+    expect(scanRepo({ root }).map((f) => `${f.path}:${f.rule}`)).toEqual([
+      'hosts/claude/skills/x/SKILL.md:email',
+      'hosts/codex/mcp/server.mjs:openai-style-key',
+      '.claude-plugin/marketplace.json:json-key-field',
+      '.agents/plugins/marketplace.json:aws-access-key-id',
+    ])
+  })
+
   test('the real repository is clean: fixtures, rubrics, redaction lists, and preregs hold no keys, emails, or held-out paths', () => {
     expect(scanRepo({ root: REPO_ROOT })).toEqual([])
   })
