@@ -1,5 +1,5 @@
 // generated — do not edit; run `bun run generate`
-// helper_version: 0.2.1
+// helper_version: 0.2.2
 
 // src/hosts/session-start.ts
 import { existsSync } from "node:fs";

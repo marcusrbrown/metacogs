@@ -1,5 +1,5 @@
 // generated — do not edit; run `bun run generate`
-// helper_version: 0.2.1
+// helper_version: 0.2.2
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
 var __defProp = Object.defineProperty;
@@ -21683,7 +21683,7 @@ var DRUGS_FRAME = drugsText({ substance: "<substance>", method: "<method>", disp
 
 // src/mcp/server.ts
 var READ_ONLY = { readOnlyHint: true };
-var server = new McpServer({ name: "metacogs", version: "0.2.1" });
+var server = new McpServer({ name: "metacogs", version: "0.2.2" });
 server.registerTool("feel", {
   description: FEEL_DESCRIPTION,
   inputSchema: {
