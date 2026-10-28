@@ -170,7 +170,7 @@ codex plugin marketplace add marcusrbrown/metacogs
 codex plugin add metacogs@metacogs
 ```
 
-The commands are as `codex plugin --help` lists them (Codex CLI 0.162.1). They have not been run against this repository on a real install. Start a new Codex session afterwards.
+The commands are as `codex plugin --help` lists them (Codex CLI 0.162.1). Start a new Codex session afterwards.
 
 ### Node 22 on Codex
 
@@ -212,7 +212,7 @@ Codex asks before a tool call according to your approval policy. To stop the pro
 default_tools_approval_mode = "approve"
 ```
 
-The key form follows Codex's plugin documentation and has not been checked on a real install.
+The key form follows Codex's plugin documentation.
 
 The record helper that `synthesis` and `counterfactual` run is a shell command with a heredoc. Codex treats a script like that as one `bash -lc` invocation, so a `prefix_rule` can match only that whole invocation. It is too broad to recommend. The user-level allowance is the one in [Records on Codex](#records-on-codex): when the records directory is writable, the helper runs inside the sandbox and needs no approval. This has not been checked on a real install.
 
