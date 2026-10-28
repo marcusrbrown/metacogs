@@ -9,10 +9,5 @@
   },
   "homepage": "https://github.com/marcusrbrown/metacogs#readme",
   "repository": "https://github.com/marcusrbrown/metacogs",
-  "license": "MIT",
-  "extensions": {
-    "com.openai": {
-      "hooks": "./hooks/hooks.json"
-    }
-  }
+  "license": "MIT"
 }

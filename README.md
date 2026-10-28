@@ -81,7 +81,7 @@ Approvals, the record helper, the sandbox, updates and uninstall are in [docs/in
 
 ## Codex plugin
 
-metacogs is also an experimental [Codex](https://developers.openai.com/codex) plugin, served from this repository. It adds the same tools, skills and session-start note.
+metacogs is also an experimental [Codex](https://developers.openai.com/codex) plugin, served from this repository. It adds the same tools and skills. It has no session-start note.
 
 ```sh
 codex plugin marketplace add marcusrbrown/metacogs
@@ -90,7 +90,7 @@ codex plugin add metacogs@metacogs
 
 - **Node.** Node 22 or newer must be on `PATH`. Without it the MCP server does not start and the skills continue in plain text.
 - **Invoke.** `$metacogs:feel`, `$metacogs:drugs`, `$metacogs:synthesis`, `$metacogs:counterfactual`, with any arguments as text after the mention. The tools are `mcp__metacogs__feel` and `mcp__metacogs__drugs`.
-- **Session-start note.** Codex runs the hook only after you trust it in `/hooks`, and may ask again after a release. Set `METACOGS_GUIDANCE=off`, create `${XDG_CONFIG_HOME:-~/.config}/metacogs/guidance-off`, or leave the hook untrusted. The tools and skills work without it.
+- **Session-start note.** None. Codex discards the hooks of a plugin in the agent-plugins format, so the tools and skills work without a note. `METACOGS_GUIDANCE` and the `guidance-off` file apply to the Claude Code plugin only.
 - **Status.** The manifests validate against the agent-plugins.org 1.0.0 schemas. The install commands and the package have not been run on a real Codex. Its `synthesis` and `counterfactual` skills are adapted for the host and are not the exact text that was evaluated.
 
 Approvals, the record helper, the sandbox, updates and uninstall are in [docs/install.md](docs/install.md#codex-plugin).

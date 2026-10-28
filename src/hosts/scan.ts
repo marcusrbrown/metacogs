@@ -60,9 +60,11 @@ export interface HostExpectations {
   profile: HostProfile
   /** Repo-relative directory of the host package. */
   dir: string
+  /** Whether the host ships the session-start note. Codex does not: it discards the hooks of an agent-plugins package. */
+  note: boolean
   /** Tokens each skill render must contain. */
   skills: Record<SkillName, readonly string[]>
-  /** Tokens that belong to another host. No render and no note may contain one. */
+  /** Tokens that belong to another host. No render, and no note where the host ships one, may contain one. */
   forbidden: readonly string[]
 }
 
@@ -78,7 +80,7 @@ export function claudeExpectations(profile: HostProfile = CLAUDE_PROFILE): HostE
   for (const skill of TOOL_SKILLS) skills[skill] = [profile.toolName(skill), '$ARGUMENTS', profile.invocation(skill)]
   for (const skill of METHOD_SKILLS) skills[skill] = [recordScript(CLAUDE_STYLE)]
   // What belongs to Codex: its tool and mention prefixes and its record placeholder.
-  return { profile, dir: 'hosts/claude', skills, forbidden: [CODEX_TOOL_PREFIX, CODEX_INVOCATION_PREFIX, CODEX_SKILL_DIR_PLACEHOLDER] }
+  return { profile, dir: 'hosts/claude', note: true, skills, forbidden: [CODEX_TOOL_PREFIX, CODEX_INVOCATION_PREFIX, CODEX_SKILL_DIR_PLACEHOLDER] }
 }
 
 export function codexExpectations(profile: HostProfile = CODEX_PROFILE): HostExpectations {
@@ -90,12 +92,13 @@ export function codexExpectations(profile: HostProfile = CODEX_PROFILE): HostExp
   return {
     profile,
     dir: 'hosts/codex',
+    note: false,
     skills,
     forbidden: ['$ARGUMENTS', 'argument-hint', CLAUDE_SKILL_DIR_VAR, CLAUDE_TOOL_PREFIX, CLAUDE_INVOCATION_PREFIX, CLAUDE_SHELL_WORDING],
   }
 }
 
-/** Positive findings for one host's skills and note. A missing token means a rewrite did not land. */
+/** Positive findings for one host's skills and, where it ships one, its note. A missing token means a rewrite did not land. */
 export function positiveFindings(expect: HostExpectations, files: ReadonlyMap<SkillName, string>, note: string): Finding[] {
   const findings: Finding[] = []
   for (const skill of HOST_SKILLS) {
@@ -108,6 +111,7 @@ export function positiveFindings(expect: HostExpectations, files: ReadonlyMap<Sk
     for (const token of expect.skills[skill]) if (!text.includes(token)) findings.push({ path, problem: `missing token: ${token}` })
     for (const token of expect.forbidden) if (text.includes(token)) findings.push({ path, problem: `another host's token: ${token}` })
   }
+  if (!expect.note) return findings
   for (const tool of TOOL_SKILLS) {
     for (const token of [expect.profile.toolName(tool), expect.profile.invocation(tool)]) {
       if (!note.includes(token)) findings.push({ path: `${expect.dir} (session-start note)`, problem: `missing token: ${token}` })
@@ -134,8 +138,8 @@ export function scanHostTrees(tree: TreeMap, hosts: readonly HostExpectations[] 
       files.set(skill, text)
       findings.push(...denylistFindings(path, text))
     }
-    const note = renderGuidance(host.profile)
-    findings.push(...denylistFindings(`${host.dir} (session-start note)`, note))
+    const note = host.note ? renderGuidance(host.profile) : ''
+    if (host.note) findings.push(...denylistFindings(`${host.dir} (session-start note)`, note))
     findings.push(...positiveFindings(host, files, note))
   }
   return findings

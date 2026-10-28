@@ -9,7 +9,7 @@ Three hosts have a second route, a plugin, which provides the same two methods p
 ## Requirements
 
 - A host from the sections below.
-- Node 22 or newer on `PATH`, for the record helper. The Claude Code and Codex plugins also run their MCP server and session-start hook with `node`. The helper is one dependency-free file (`scripts/record.mjs`) and needs no `node_modules`. Without Node the method still runs and the run is marked `unrecorded`.
+- Node 22 or newer on `PATH`, for the record helper. The Claude Code plugin runs its MCP server and its session-start hook with `node`, and the Codex plugin runs its MCP server with `node`. The helper is one dependency-free file (`scripts/record.mjs`) and needs no `node_modules`. Without Node the method still runs and the run is marked `unrecorded`.
 - The host must let the agent run one shell command: `node <skill directory>/scripts/record.mjs`. A host that denies shell access also gives `unrecorded`.
 
 ## Copy a skill
@@ -157,7 +157,7 @@ The `feel` and `drugs` tools and skills have no eval. `synthesis` and `counterfa
 
 ## Codex plugin
 
-The `metacogs` plugin for Codex is experimental. It adds the `feel` and `drugs` tools (served by a local MCP server), the four skills `feel`, `drugs`, `synthesis` and `counterfactual`, and a short note at session start. This repository is its marketplace. The plugin is generated into [`hosts/codex/`](../hosts/codex) and the marketplace file is [`.agents/plugins/marketplace.json`](../.agents/plugins/marketplace.json). Docs: https://developers.openai.com/codex/plugins/build
+The `metacogs` plugin for Codex is experimental. It adds the `feel` and `drugs` tools (served by a local MCP server) and the four skills `feel`, `drugs`, `synthesis` and `counterfactual`. It has no session-start note (see [Session-start note on Codex](#session-start-note-on-codex)). This repository is its marketplace. The plugin is generated into [`hosts/codex/`](../hosts/codex) and the marketplace file is [`.agents/plugins/marketplace.json`](../.agents/plugins/marketplace.json). Docs: https://developers.openai.com/codex/plugins/build
 
 [Copy a skill](#copy-a-skill) stays the route without tools or a plugin. If you install the plugin, remove copies of `synthesis` and `counterfactual` from `.agents/skills/` so only one version of each method loads.
 
@@ -174,7 +174,7 @@ The commands are as `codex plugin --help` lists them (Codex CLI 0.162.1). Start 
 
 ### Node 22 on Codex
 
-Node 22 or later must be on the `PATH` of the shell that starts Codex. The MCP server and the session-start hook both run as `node`. Without Node the server does not start, so the `feel` and `drugs` tools are missing, and the hook prints nothing. The skills still load. Each one says to continue in plain text, and to say so, when its tool is unavailable. The record helper also needs Node 22; without it a method still runs and the run is `unrecorded`.
+Node 22 or later must be on the `PATH` of the shell that starts Codex. The MCP server runs as `node`. Without Node the server does not start, so the `feel` and `drugs` tools are missing. The skills still load. Each one says to continue in plain text, and to say so, when its tool is unavailable. The record helper also needs Node 22; without it a method still runs and the run is `unrecorded`.
 
 ### Invoke on Codex
 
@@ -191,17 +191,7 @@ The tools are `mcp__metacogs__feel` and `mcp__metacogs__drugs`.
 
 ### Session-start note on Codex
 
-When a session starts, a hook prints a short note that says which tools and skills exist and the situations each one fits. It states facts and gives no instructions. Codex skips plugin hooks until you review and trust them: run `/hooks` and trust the metacogs hook. Until then Codex warns that hooks need review, and the tools and skills work without the note.
-
-Codex pins that trust to a hash of the whole plugin directory. A new release can change the hash, so after an update Codex may ask you to trust the hook again.
-
-Three switches turn the note off. The tools and skills keep working.
-
-- Set `METACOGS_GUIDANCE=off` in the environment of the shell that starts Codex.
-- Create the file `${XDG_CONFIG_HOME:-~/.config}/metacogs/guidance-off`, for example with `mkdir -p ~/.config/metacogs && touch ~/.config/metacogs/guidance-off`. Delete it to turn the note back on.
-- Leave the hook untrusted, or untrust it, in `/hooks`.
-
-There is no `guidance` option on Codex.
+The Codex plugin has no session-start note. Codex discards the hooks of a plugin in the agent-plugins format, which this package uses, so a hook would never run. The `feel` and `drugs` tools and the four skills work without it. `METACOGS_GUIDANCE` and the `guidance-off` file apply to the Claude Code plugin only; they do nothing on Codex.
 
 ### Approvals on Codex
 
@@ -235,7 +225,7 @@ To uninstall, run `codex plugin remove metacogs@metacogs`. `codex plugin marketp
 
 ### Status of the Codex plugin
 
-Status: `unverified`, and experimental. The generated `plugin.json` and `mcp.json` validate against the agent-plugins.org 1.0.0 JSON Schemas they declare. Codex ships no validator, so this is schema validation only. The plugin has not been installed and invoked on a real Codex. Codex's documentation describes plugin hooks for manually installed plugins in the desktop app and does not say the same for the CLI, so the hook may not run on every surface.
+Status: `unverified`, and experimental. The generated `plugin.json` and `mcp.json` validate against the agent-plugins.org 1.0.0 JSON Schemas they declare. Codex ships no validator, so this is schema validation only. The plugin has not been installed and invoked on a real Codex.
 
 The `feel` and `drugs` tools and skills have no eval. `synthesis` and `counterfactual` were evaluated on OpenCode with the text in `skills/` (see [Evidence](../README.md#evidence)). The plugin's copies of these two skills are adapted for Codex: tool names, the invocation line, the helper path and one fallback line differ. They are not the exact text that was evaluated.
 

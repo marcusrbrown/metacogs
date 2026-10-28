@@ -91,44 +91,6 @@ describe('the session-start note', () => {
   })
 })
 
-describe('the Codex session-start note', () => {
-  const codexNote = renderGuidance(CODEX_PROFILE)
-
-  test('is the same template filled with the Codex names and the $metacogs: mentions', () => {
-    expect(codexNote).toContain('metacogs is installed in Codex.')
-    expect(codexNote).toContain('The `feel` tool is `mcp__metacogs__feel`.')
-    expect(codexNote).toContain('The `drugs` tool is `mcp__metacogs__drugs`.')
-    expect(codexNote).toContain('start that skill with `$metacogs:feel`')
-    expect(codexNote).toContain('start that skill with `$metacogs:drugs`')
-    expect(codexNote).toContain('`$metacogs:synthesis` and `$metacogs:counterfactual`')
-    expect(codexNote).toBe(note.replace('Claude Code', 'Codex').replaceAll('mcp__plugin_metacogs_metacogs__', 'mcp__metacogs__').replaceAll('/metacogs:', '$metacogs:'))
-  })
-
-  test('is factual, claims no authority, and carries no markup', () => {
-    for (const sentence of sentences(codexNote)) expect(sentence, sentence).not.toMatch(/\b(call|calls|use|must|should|ensure|always|never|do not|don't|you|your)\b/i)
-    expect(codexNote).not.toMatch(/\b(system|instruction|instructions|directive|mandatory|required|override)\b/i)
-    expect(codexNote).not.toMatch(/<[^>]+>/)
-    expect(codexNote).not.toContain('METACOGS_GUIDANCE')
-  })
-
-  test('names only tools and skills the package ships', () => {
-    const tools = new Set(TOOL_SKILLS.map(tool => CODEX_PROFILE.toolName(tool)))
-    const skills = new Set<string>(HOST_SKILLS)
-    const mentions = new Set(HOST_SKILLS.map(skill => CODEX_PROFILE.invocation(skill)))
-    const quoted = [...codexNote.matchAll(/`([^`]+)`/g)].map(match => match[1] ?? '')
-    for (const name of quoted) expect(skills.has(name) || tools.has(name) || mentions.has(name), name).toBe(true)
-    for (const name of [...tools, ...skills, ...mentions]) expect(quoted).toContain(name)
-    for (const mcp of codexNote.match(/mcp__\w+/g) ?? []) expect(tools.has(mcp)).toBe(true)
-    for (const mention of codexNote.match(/\$\w+:\w+/g) ?? []) expect(mentions.has(mention)).toBe(true)
-  })
-
-  test('fits the Codex output cap, never starts like JSON and is plain text ending in a newline', () => {
-    expect(codexNote.length).toBeLessThanOrEqual(NOTE_MAX_CHARS)
-    expect(codexNote).not.toMatch(/^\s*[{[]/)
-    expect(codexNote.endsWith('\n')).toBe(true)
-  })
-})
-
 describe('the hook bundle', () => {
   test('is deterministic and embeds the note and the host', async () => {
     const options = { host: 'claude', note, version: '1.2.3' } as const

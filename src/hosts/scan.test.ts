@@ -85,17 +85,19 @@ describe('the positive check', () => {
     expect(findings).toContainEqual({ path: 'hosts/codex/skills/feel/SKILL.md', problem: 'missing token: $metacogs:feel' })
     expect(findings).toContainEqual({ path: 'hosts/codex/skills/feel/SKILL.md', problem: 'missing token: follows the mention' })
     expect(findings).toContainEqual({ path: 'hosts/codex/skills/counterfactual/SKILL.md', problem: 'missing token: node "<directory of this SKILL.md>/scripts/record.mjs"' })
-    expect(findings).toContainEqual({ path: 'hosts/codex (session-start note)', problem: 'missing token: $metacogs:feel' })
+    // Codex ships no session-start note, so there is nothing to check in one.
+    expect(findings.filter(f => f.path.includes('session-start note'))).toEqual([])
   })
 
-  test("a token that belongs to the other host is reported, in a render and in the note", () => {
+  test("a token that belongs to the other host is reported in a render, and in the Claude note", () => {
     const files = new Map(HOST_SKILLS.map(skill => [skill, 'x /metacogs:feel x'] as const))
-    expect(positiveFindings(codexExpectations(), files, 'x mcp__plugin_metacogs_metacogs__feel x')).toEqual(
-      expect.arrayContaining([
-        { path: 'hosts/codex/skills/feel/SKILL.md', problem: "another host's token: /metacogs:" },
-        { path: 'hosts/codex (session-start note)', problem: "another host's token: mcp__plugin_" },
-      ]),
+    expect(positiveFindings(codexExpectations(), files, '')).toEqual(
+      expect.arrayContaining([{ path: 'hosts/codex/skills/feel/SKILL.md', problem: "another host's token: /metacogs:" }]),
     )
+    expect(positiveFindings(claudeExpectations(), new Map(), 'x mcp__metacogs__feel x')).toContainEqual({
+      path: 'hosts/claude (session-start note)',
+      problem: "another host's token: mcp__metacogs__",
+    })
     const claudeFiles = new Map(HOST_SKILLS.map(skill => [skill, 'x $metacogs:feel x'] as const))
     expect(positiveFindings(claudeExpectations(), claudeFiles, 'x').map(f => f.problem)).toContain("another host's token: $metacogs:")
   })
@@ -109,9 +111,11 @@ describe('the positive check', () => {
     expect(positiveFindings(claudeExpectations(), files, 'x').map(f => f.problem)).not.toContain("another host's token: as a bash call")
   })
 
-  test('the Codex expectations name the tools and mentions from the profile', () => {
+  test('the Codex expectations name the tools and mentions from the profile, and expect no note', () => {
     const expectations = codexExpectations()
     expect(expectations.dir).toBe('hosts/codex')
+    expect(expectations.note).toBe(false)
+    expect(claudeExpectations().note).toBe(true)
     expect(expectations.skills.feel).toEqual([CODEX_PROFILE.toolName('feel'), '$metacogs:feel', 'follows the mention'])
     expect(expectations.skills.synthesis).toEqual(['node "<directory of this SKILL.md>/scripts/record.mjs"'])
   })
