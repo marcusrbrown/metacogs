@@ -1,4 +1,4 @@
-// SessionStart hook for Claude Code and Codex: prints the metacogs note to stdout and exits 0. The entry always
+// SessionStart hook for Claude Code: prints the metacogs note to stdout and exits 0. The entry always
 // runs, so it is only ever used as the built bundle (src/hosts/guidance.ts, `buildSessionStartHook`), which embeds
 // the note for one host at build time.
 //
@@ -11,7 +11,7 @@
 import { existsSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 
-declare const __METACOGS_HOOK_HOST__: 'claude' | 'codex'
+declare const __METACOGS_HOOK_HOST__: 'claude'
 declare const __METACOGS_NOTE__: string
 
 const FALSE_LIKE = new Set(['false', '0', 'off', 'no'])

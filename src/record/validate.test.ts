@@ -79,6 +79,6 @@ describe('validateRecord', () => {
   })
 
   test('rejects non-object input', () => {
-    for (const input of [null, [], 'x', 3, undefined]) expect(fields(input)).toEqual(['$'])
+    for (const input of [null, [], 'x', 3, undefined]) expect(fields(input)).toEqual(['record'])
   })
 })

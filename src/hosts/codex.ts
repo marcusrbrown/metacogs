@@ -9,7 +9,7 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { TreeEntry } from '../generate/tree'
-import { applyRules, codexRules, HOST_SKILLS, MCP_SERVER_NAME, METHOD_SKILLS, PLUGIN_NAME, readSkillSource } from './rules'
+import { applyRules, codexRules, HOST_SKILLS, MCP_SERVER_NAME, PLUGIN_NAME, readSkillSource } from './rules'
 import { AUTHOR, encode, file, json, type PackageFields, packageFields, TOOLS_SUMMARY } from './shared'
 
 export const CODEX_DIR = 'hosts/codex'
@@ -23,8 +23,6 @@ const CODEX_DESCRIPTION = `Experimental Codex package, not yet installed and run
 export interface CodexInputs {
   /** The one version, from package.json. `plugin.json` carries it as a literal field. */
   version: string
-  /** The record helper, built once for every host. `buildTree` adds the MCP server bundle beside these entries. */
-  helper: Uint8Array
   /** Repository that holds the shared sources, LICENSE and ATTRIBUTIONS.md. */
   repoRoot: string
 }
@@ -85,7 +83,6 @@ export async function buildCodexEntries(input: CodexInputs): Promise<Map<string,
 
   const rules = codexRules()
   for (const skill of HOST_SKILLS) put(`${CODEX_DIR}/skills/${skill}/SKILL.md`, encode(applyRules(rules, skill, await readSkillSource(input.repoRoot, skill))))
-  for (const skill of METHOD_SKILLS) put(`${CODEX_DIR}/skills/${skill}/scripts/record.mjs`, input.helper)
 
   // The renders adapt upstream MIT text, so the notice travels with the package.
   put(`${CODEX_DIR}/LICENSE`, await readFile(join(input.repoRoot, 'LICENSE')))

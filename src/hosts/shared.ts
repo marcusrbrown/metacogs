@@ -8,7 +8,7 @@ export const AUTHOR = { name: 'Marcus R. Brown', url: 'https://github.com/marcus
 
 /** What the package ships and what it needs. A host may add its own label in front. */
 export const TOOLS_SUMMARY =
-  'Two tools, feel and drugs, and four skills: feel, drugs, synthesis and counterfactual. The tools run through an MCP server that needs Node 22 or later on PATH.'
+  'Two reasoning tools, feel and drugs, a record tool for decision records, and four skills: feel, drugs, synthesis and counterfactual. The tools run through an MCP server that needs Node 22 or later on PATH.'
 
 export interface PackageFields {
   license: string

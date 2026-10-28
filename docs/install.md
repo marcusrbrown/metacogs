@@ -9,8 +9,8 @@ Three hosts have a second route, a plugin, which provides the same two methods p
 ## Requirements
 
 - A host from the sections below.
-- Node 22 or newer on `PATH`, for the record helper. The Claude Code plugin runs its MCP server and its session-start hook with `node`, and the Codex plugin runs its MCP server with `node`. The helper is one dependency-free file (`scripts/record.mjs`) and needs no `node_modules`. Without Node the method still runs and the run is marked `unrecorded`.
-- The host must let the agent run one shell command: `node <skill directory>/scripts/record.mjs`. A host that denies shell access also gives `unrecorded`.
+- Node 22 or newer on `PATH`. The copy route and the OpenCode plugin run the record helper with `node`. The helper is one dependency-free file (`scripts/record.mjs`) and needs no `node_modules`. The Claude Code plugin runs its MCP server, which holds the `record` tool, and its session-start hook with `node`. The Codex plugin runs its MCP server with `node`. Without Node the method still runs and the run is marked `unrecorded`.
+- On the copy route and in OpenCode, the host must let the agent run one shell command: `node <skill directory>/scripts/record.mjs`. A host that denies shell access gives `unrecorded`. The Claude Code and Codex plugins write records through the `record` tool and need no shell command.
 
 ## Copy a skill
 
@@ -30,14 +30,16 @@ For all your projects, use the user-level path from the host section instead of 
 
 ## Records
 
-A method writes its record with the helper, once, after it finishes. The record is a JSON file named `<method>-<hash>.json`. The reply the user reads does not depend on the record.
+A method writes its record once, after it finishes: with the helper on the copy route and in OpenCode, and with the plugin's `record` tool on Claude Code and Codex. The record is a JSON file named `<method>-<hash>.json`. The reply the user reads does not depend on the record.
 
 Where records go, first match wins:
 
-1. `--out-dir <dir>`
+1. `--out-dir <dir>` (the helper only; the `record` tool has no path argument)
 2. `METACOGS_RECORDS_DIR`
 3. `$XDG_STATE_HOME/metacogs/records/`
 4. `~/.local/state/metacogs/records/`
+
+A record is rejected, before anything is written, when a string field or list entry is longer than 4096 characters, a list has more than 64 entries, or the record is larger than 64 KiB as compact JSON. The helper and the `record` tool apply the same limits.
 
 The default is outside your repository, so records never land in a commit by accident. The current directory is never used unless you pass a relative path yourself. Directories are created with mode 0700 and files with 0600.
 
@@ -50,7 +52,7 @@ echo '.metacogs/records/' >> .gitignore
 
 ## `unrecorded`
 
-If the helper cannot run, the skill does not retry blindly and does not pretend a record exists. It tells the user no record was written, and the run's `execution_mode` is `unrecorded`. This covers: no Node 22, a denied shell command, an unwritable records directory (exit 3), and a different record already at the same path (exit 4). A validation error (exit 2) names the field; the agent fixes it and reruns once.
+If the helper or the `record` tool cannot run, the skill does not retry blindly and does not pretend a record exists. It tells the user no record was written, and the run's `execution_mode` is `unrecorded`. This covers: no Node 22, a denied shell command or a denied `record` call, an unwritable records directory (exit 3), and a different record already at the same path (exit 4). A validation error (exit 2) names the field, or `record` when the whole record is over the size limit. Correct that field and retry once. Split a long entry into shorter entries, or trim the record, when a limit caused the error. The `record` tool reports the same errors as `metacogs-record: <kind> (exit N)` with one line per field. An argument that is not a record field, or a value the tool's schema rejects, is refused by the MCP library with its own `Input validation error` text before the tool runs. Both forms name the field and nothing is written.
 
 ## OpenCode plugin
 
@@ -73,7 +75,7 @@ To uninstall, remove the entry. The tools, skills and guidance block go away on 
 
 ## Claude Code plugin
 
-The `metacogs` plugin for Claude Code adds the `feel` and `drugs` tools (served by a local MCP server), the four skills `feel`, `drugs`, `synthesis` and `counterfactual`, and a short note at session start. This repository is its marketplace. The plugin is generated into [`hosts/claude/`](../hosts/claude) and the marketplace file is [`.claude-plugin/marketplace.json`](../.claude-plugin/marketplace.json). Docs: https://code.claude.com/docs/en/discover-plugins and https://code.claude.com/docs/en/plugins/marketplace-reference
+The `metacogs` plugin for Claude Code adds the `feel` and `drugs` tools and a `record` tool (all served by a local MCP server), the four skills `feel`, `drugs`, `synthesis` and `counterfactual`, and a short note at session start. This repository is its marketplace. The plugin is generated into [`hosts/claude/`](../hosts/claude) and the marketplace file is [`.claude-plugin/marketplace.json`](../.claude-plugin/marketplace.json). Docs: https://code.claude.com/docs/en/discover-plugins and https://code.claude.com/docs/en/plugins/marketplace-reference
 
 [Copy a skill](#copy-a-skill) stays the route without tools or a plugin. If you install the plugin, remove copies of `synthesis` and `counterfactual` from `.claude/skills/` so only one version of each method loads.
 
@@ -86,13 +88,13 @@ In a Claude Code session:
 /plugin install metacogs@metacogs
 ```
 
-`/plugin install` opens the plugin panel, where you pick an install scope. On Claude Code 2.1.275 or later one command does both steps: `/plugin install metacogs --marketplace marcusrbrown/metacogs`. From a shell, run `claude plugin marketplace add marcusrbrown/metacogs`, then `claude plugin install metacogs@metacogs`. If Claude Code says the plugin needs a reload, run `/reload-plugins`.
+`/plugin install` opens the plugin panel, where you pick an install scope. On Claude Code 2.1.275 or later one command does both steps: `/plugin install metacogs --marketplace marcusrbrown/metacogs`. From a shell, `claude plugin install metacogs --marketplace marcusrbrown/metacogs` does both steps too, or run `claude plugin marketplace add marcusrbrown/metacogs` and then `claude plugin install metacogs@metacogs`. If Claude Code says the plugin needs a reload, run `/reload-plugins`.
 
 To check the install, type `/` and look for `/metacogs:feel`, or run `claude plugin list` in a shell.
 
 ### Node 22 on Claude Code
 
-Node 22 or later must be on the `PATH` of the shell that starts Claude Code. The MCP server and the session-start hook both run as `node`. Without Node the server does not start, so the `feel` and `drugs` tools are missing, and the hook prints nothing. The skills still load. Each one says to continue in plain text, and to say so, when its tool is unavailable. The record helper also needs Node 22; without it a method still runs and the run is `unrecorded`.
+Node 22 or later must be on the `PATH` of the shell that starts Claude Code. The MCP server and the session-start hook both run as `node`. Without Node the hook fails with `node: command not found` (exit 127) and the MCP server does not start, so the `feel`, `drugs` and `record` tools are missing. The skills still load. The reasoning skills say to continue in plain text, and to say so, when their tool is unavailable. A method skill without the `record` tool still runs and the run is `unrecorded`.
 
 ### Invoke on Claude Code
 
@@ -105,7 +107,7 @@ Node 22 or later must be on the `PATH` of the shell that starts Claude Code. The
 
 Text after the command goes to the skill. `/metacogs:drugs caffeine` has the model call the `drugs` tool with `substance` set to `caffeine`. A bare `/feel` or `/drugs` also works unless another command already uses that name. The model can also load a skill on its own when the situation fits its description.
 
-The tools are `mcp__plugin_metacogs_metacogs__feel` and `mcp__plugin_metacogs_metacogs__drugs`. These are the names that appear in permission rules and in the skill text.
+The tools are `mcp__plugin_metacogs_metacogs__feel`, `mcp__plugin_metacogs_metacogs__drugs` and `mcp__plugin_metacogs_metacogs__record`. These are the names that appear in permission rules and in the skill text. `synthesis` and `counterfactual` call `record` at the end of a run.
 
 ### Session-start note on Claude Code
 
@@ -113,51 +115,47 @@ When a session starts, a hook prints a short note that says which tools and skil
 
 - Set `METACOGS_GUIDANCE=off` in the environment of the shell that starts Claude Code.
 - Create the file `${XDG_CONFIG_HOME:-~/.config}/metacogs/guidance-off`, for example with `mkdir -p ~/.config/metacogs && touch ~/.config/metacogs/guidance-off`. Delete it to turn the note back on.
-- Turn off the plugin's `guidance` option: run `/plugin`, open the Installed tab, select `metacogs`, then choose Configure options. The hook reads the option from `CLAUDE_PLUGIN_OPTION_GUIDANCE` and treats `false`, `0`, `no` and `off` as off. The exact string Claude Code passes for a boolean option has not been checked on a real install.
+- Turn off the plugin's `guidance` option: run `/plugin`, open the Installed tab, select `metacogs`, then choose Configure options. From a shell, run `echo '{"guidance":"false"}' | claude plugin configure metacogs@metacogs --values-stdin`, or install with `claude plugin install metacogs@metacogs --config guidance=false`. Restart Claude Code afterwards. The hook reads the option from `CLAUDE_PLUGIN_OPTION_GUIDANCE`. Claude Code passes the string `true` or `false`, and passes nothing until the option is configured. The hook treats `false`, `0`, `no` and `off` as off, and an unset option as on.
 
 To turn off everything, including the tools and skills, run `/plugin disable metacogs@metacogs`.
 
 ### Approvals on Claude Code
 
-Claude Code may ask you to approve the plugin's MCP server, and then each tool call. Both tools carry read-only annotations. That is a hint to the host, not a promise that the prompt goes away. To allow both tools, add this rule to `permissions.allow` in `~/.claude/settings.json` (all projects) or in a project settings file:
+Claude Code 2.1.312 shows no approval step for the plugin's MCP server. Each tool call prompts until it is allowed. In non-interactive (`-p`) mode a call that no rule allows is denied, and the model continues without it. For `record` that means the run is reported as `unrecorded`.
+
+`feel` and `drugs` carry read-only annotations. `record` is annotated as a write that is not destructive, is idempotent and touches nothing outside the machine. These are hints to the host, not a promise that the prompt goes away. To allow all three tools, add this rule to `permissions.allow` in `~/.claude/settings.json` (all projects) or in a project settings file:
 
 ```json
 { "permissions": { "allow": ["mcp__plugin_metacogs_metacogs__*"] } }
 ```
 
-The record helper that `synthesis` and `counterfactual` run is a shell command, so Claude Code asks for it as a Bash command. A user-level rule for it, in `~/.claude/settings.json`:
+The wildcard now also allows writing records. To allow only the `record` tool, so `feel` and `drugs` keep asking:
 
 ```json
-{ "permissions": { "allow": ["Bash(node \"*/plugins/cache/metacogs/*/skills/*/scripts/record.mjs\"*)"] } }
+{ "permissions": { "allow": ["mcp__plugin_metacogs_metacogs__record"] } }
 ```
-
-This rule has not been checked on a real install. It assumes the plugin cache path above and that Claude Code matches a command that ends in a heredoc. If the prompt still appears, approve the command from the prompt.
 
 ### Records on Claude Code
 
-The helper writes to the [records directory](#records): `$XDG_STATE_HOME/metacogs/records/`, or `~/.local/state/metacogs/records/`. `METACOGS_RECORDS_DIR` and `--out-dir` override it. The default is outside the project. If you turn on Claude Code's [Bash sandbox](https://code.claude.com/docs/en/sandboxing), which is off by default, the write is denied or needs approval. A denied run is reported as `unrecorded`. Allow the directory in `~/.claude/settings.json`:
+`synthesis` and `counterfactual` write their record through the `record` tool. The MCP server writes the file, not a shell command. The tool has no path argument. The server uses the [records directory](#records): `METACOGS_RECORDS_DIR`, else `$XDG_STATE_HOME/metacogs/records/`, else `~/.local/state/metacogs/records/`. Claude Code passes its environment to the server, so those variables take effect when set where Claude Code starts. The default is outside the project.
 
-```json
-{ "sandbox": { "filesystem": { "allowWrite": ["~/.local/state/metacogs"] } } }
-```
-
-Or point `METACOGS_RECORDS_DIR` at a directory inside the project and ignore it, as described under [Records](#records).
+Directories are created with mode 0700 and record files with 0600. Records are plain JSON files: delete one with `rm`, or all of them with `rm -r` on the records directory. The plugin keeps no other copy. To keep records in a project, set `METACOGS_RECORDS_DIR` to a directory inside the project and ignore it, as described under [Records](#records).
 
 ### Updates and uninstall on Claude Code
 
-The marketplace serves `main`, so a new install gets what is on `main`. Claude Code decides that an installed plugin has an update from the `version` in the plugin manifest, which follows the package version. Auto-update is off by default for third-party marketplaces. Run `/plugin marketplace update metacogs` to refresh the listing, then `claude plugin update metacogs@metacogs` (or Update now on the Installed tab) to update the plugin. You can also turn on auto-update for the marketplace in the Marketplaces tab. A running session keeps the version it loaded; run `/reload-plugins` or start a new session.
+Claude Code decides that an installed plugin has an update from the `version` in the plugin manifest. The version changes with each release, so a change merged to `main` between releases does not reach an installed plugin. Auto-update is off by default for third-party marketplaces. Run `/plugin marketplace update metacogs` to refresh the listing, then `claude plugin update metacogs@metacogs` (or Update now on the Installed tab) to update the plugin. You can also turn on auto-update for the marketplace in the Marketplaces tab. A running session keeps the version it loaded; run `/reload-plugins` or start a new session.
 
 To uninstall, run `/plugin uninstall metacogs@metacogs`. `/plugin marketplace remove metacogs` removes the marketplace and every plugin installed from it. Records stay where they are.
 
 ### Status of the Claude Code plugin
 
-Status: `unverified`. The generated plugin and the marketplace pass `claude plugin validate --strict` (Claude Code 2.1.312), which needs no login. The plugin has not been installed and invoked on a real Claude Code, so the install steps, the invocation forms and the allow rules above are from Claude Code's documentation, not from a run.
+Status: `unverified`. The generated plugin and the marketplace pass `claude plugin validate --strict` (Claude Code 2.1.312), which needs no login. Checked in scripted headless runs (`claude -p`) of Claude Code 2.1.312: install from the marketplace, the MCP tools, the session note and its off switches, `/metacogs:feel` and `/metacogs:drugs`, and recording through the `record` tool. The interactive session has not been checked by hand.
 
-The `feel` and `drugs` tools and skills have no eval. `synthesis` and `counterfactual` were evaluated on OpenCode with the text in `skills/` (see [Evidence](../README.md#evidence)). The plugin's copies of these two skills are adapted for Claude Code: tool names, the invocation line, the helper path and one fallback line differ. They are not the exact text that was evaluated.
+The `feel` and `drugs` tools and skills have no eval. `synthesis` and `counterfactual` were evaluated on OpenCode with the text in `skills/` (see [Evidence](../README.md#evidence)). The plugin's copies of these two skills are adapted for Claude Code: the record step calls the `record` tool instead of running the helper, and the compatibility line differs. They are not the exact text that was evaluated.
 
 ## Codex plugin
 
-The `metacogs` plugin for Codex is experimental. It adds the `feel` and `drugs` tools (served by a local MCP server) and the four skills `feel`, `drugs`, `synthesis` and `counterfactual`. It has no session-start note (see [Session-start note on Codex](#session-start-note-on-codex)). This repository is its marketplace. The plugin is generated into [`hosts/codex/`](../hosts/codex) and the marketplace file is [`.agents/plugins/marketplace.json`](../.agents/plugins/marketplace.json). Docs: https://developers.openai.com/codex/plugins/build
+The `metacogs` plugin for Codex is experimental. It adds the `feel` and `drugs` tools and a `record` tool (all served by a local MCP server) and the four skills `feel`, `drugs`, `synthesis` and `counterfactual`. It has no session-start note (see [Session-start note on Codex](#session-start-note-on-codex)). This repository is its marketplace. The plugin is generated into [`hosts/codex/`](../hosts/codex) and the marketplace file is [`.agents/plugins/marketplace.json`](../.agents/plugins/marketplace.json). Docs: https://developers.openai.com/codex/plugins/build
 
 [Copy a skill](#copy-a-skill) stays the route without tools or a plugin. If you install the plugin, remove copies of `synthesis` and `counterfactual` from `.agents/skills/` so only one version of each method loads.
 
@@ -170,11 +168,11 @@ codex plugin marketplace add marcusrbrown/metacogs
 codex plugin add metacogs@metacogs
 ```
 
-The commands are as `codex plugin --help` lists them (Codex CLI 0.162.1). Start a new Codex session afterwards.
+The commands are as `codex plugin --help` lists them (Codex CLI 0.162.1). If the first `marketplace add` fails on a dropped clone, run it again. Start a new Codex session afterwards.
 
 ### Node 22 on Codex
 
-Node 22 or later must be on the `PATH` of the shell that starts Codex. The MCP server runs as `node`. Without Node the server does not start, so the `feel` and `drugs` tools are missing. The skills still load. Each one says to continue in plain text, and to say so, when its tool is unavailable. The record helper also needs Node 22; without it a method still runs and the run is `unrecorded`.
+Node 22 or later must be on the `PATH` of the shell that starts Codex. The MCP server runs as `node`. Without Node the server does not start, so the `feel`, `drugs` and `record` tools are missing. The skills still load. The reasoning skills say to continue in plain text, and to say so, when their tool is unavailable. A method skill without the `record` tool still runs and the run is `unrecorded`.
 
 ### Invoke on Codex
 
@@ -185,9 +183,9 @@ Node 22 or later must be on the `PATH` of the shell that starts Codex. The MCP s
 | `synthesis` | `$metacogs:synthesis` |
 | `counterfactual` | `$metacogs:counterfactual` |
 
-Write any arguments as plain text after the mention: `$metacogs:drugs caffeine`. Codex does not fill in arguments; the skill tells the model to read the text that follows the mention. With no text after `$metacogs:feel`, the model picks the fields from the session. Whether a bare `$feel` resolves to the plugin skill has not been checked.
+Write any arguments as plain text after the mention: `$metacogs:drugs caffeine`. Codex does not fill in arguments; the skill tells the model to read the text that follows the mention. With no text after `$metacogs:feel`, the model picks the fields from the session. A bare `$feel` is not a mention; use `$metacogs:feel`.
 
-The tools are `mcp__metacogs__feel` and `mcp__metacogs__drugs`.
+The tools are `mcp__metacogs__feel`, `mcp__metacogs__drugs` and `mcp__metacogs__record`.
 
 ### Session-start note on Codex
 
@@ -195,39 +193,34 @@ The Codex plugin has no session-start note. Codex discards the hooks of a plugin
 
 ### Approvals on Codex
 
-Codex asks before a tool call according to your approval policy. To stop the prompts for this server, set its tool approval mode in `~/.codex/config.toml`:
+Codex asks before an MCP tool call according to your approval policy. `feel` and `drugs` are read-only tools. `record` is a write that is not destructive and touches nothing outside the machine. All three ran without a prompt under the default approval mode in `codex exec` 0.162.1. A tool approval mode of `prompt` or `writes` makes the `record` call fail in a non-interactive run, and the run is reported as `unrecorded`. If you configured a stricter mode, set this in `~/.codex/config.toml`; under the default mode it is not needed, because `record` already runs without a prompt:
 
 ```toml
 [plugins."metacogs@metacogs".mcp_servers.metacogs]
 default_tools_approval_mode = "approve"
 ```
 
-The key form follows Codex's plugin documentation.
-
-The record helper that `synthesis` and `counterfactual` run is a shell command with a heredoc. Codex treats a script like that as one `bash -lc` invocation, so a `prefix_rule` can match only that whole invocation. It is too broad to recommend. The user-level allowance is the one in [Records on Codex](#records-on-codex): when the records directory is writable, the helper runs inside the sandbox and needs no approval. This has not been checked on a real install.
+This approves every tool on the `metacogs` server: `feel`, `drugs` and `record`. Per-tool approval keys have not been verified.
 
 ### Records on Codex
 
-The helper writes to the [records directory](#records): `$XDG_STATE_HOME/metacogs/records/`, or `~/.local/state/metacogs/records/`. `METACOGS_RECORDS_DIR` and `--out-dir` override it. That directory is outside the workspace. Under Codex's default `workspace-write` sandbox the write is denied or needs approval. A denied run is reported as `unrecorded`. Allow the directory in `~/.codex/config.toml`, with an absolute path:
+`synthesis` and `counterfactual` write their record through the `record` tool. The MCP server runs outside the shell sandbox, so the record is written under `read-only` and under `workspace-write`; no `writable_roots` entry is needed. The tool has no path argument.
 
-```toml
-[sandbox_workspace_write]
-writable_roots = ["/home/you/.local/state/metacogs"]
-```
+In the tested configuration Codex does not forward `XDG_STATE_HOME` or `METACOGS_RECORDS_DIR` to MCP servers, so records go to `~/.local/state/metacogs/records/`. Directories are created with mode 0700 and record files with 0600. Records are plain JSON files: delete one with `rm`, or all of them with `rm -r` on the records directory. The plugin keeps no other copy.
 
-Or point `METACOGS_RECORDS_DIR` at a directory inside the workspace and ignore it, as described under [Records](#records). Codex keeps `.git`, `.codex` and `.agents` read-only inside a writable root, so do not put records under them.
+Unattended recording was verified for the default approval configuration only.
 
 ### Updates and uninstall on Codex
 
-The marketplace serves `main`. Codex upgrades Git marketplaces at startup, so an installed plugin follows `main`. Run `codex plugin marketplace upgrade metacogs` to refresh by hand. Because installs follow `main`, a change to the plugin can reach you before a release.
+Codex refreshes the installed copy of a plugin only when the `version` in the plugin manifest changes. At startup Codex upgrades the marketplace clone, but a commit to `main` without a version bump does not reach an installed plugin. The version changes with each release. The installed copy is under `$CODEX_HOME/plugins/cache/metacogs/metacogs/<version>/`. Run `codex plugin marketplace upgrade metacogs` to refresh the marketplace clone by hand.
 
 To uninstall, run `codex plugin remove metacogs@metacogs`. `codex plugin marketplace remove metacogs` removes the marketplace. Records stay where they are.
 
 ### Status of the Codex plugin
 
-Status: `unverified`, and experimental. The generated `plugin.json` and `mcp.json` validate against the agent-plugins.org 1.0.0 JSON Schemas they declare. Codex ships no validator, so this is schema validation only. The plugin has not been installed and invoked on a real Codex.
+Status: `unverified`, and experimental. The generated `plugin.json` and `mcp.json` validate against the agent-plugins.org 1.0.0 JSON Schemas they declare. Codex ships no validator, so this is schema validation only. Checked in scripted `codex exec` runs of Codex 0.162.1: `marketplace add` and `plugin add`, the MCP server and its tools, `$metacogs:feel` and `$metacogs:drugs`, and recording through the `record` tool under `workspace-write` and `read-only`. The interactive TUI has not been checked by hand.
 
-The `feel` and `drugs` tools and skills have no eval. `synthesis` and `counterfactual` were evaluated on OpenCode with the text in `skills/` (see [Evidence](../README.md#evidence)). The plugin's copies of these two skills are adapted for Codex: tool names, the invocation line, the helper path and one fallback line differ. They are not the exact text that was evaluated.
+The `feel` and `drugs` tools and skills have no eval. `synthesis` and `counterfactual` were evaluated on OpenCode with the text in `skills/` (see [Evidence](../README.md#evidence)). The plugin's copies of these two skills are adapted for Codex: the record step calls the `record` tool instead of running the helper, and the compatibility line differs. They are not the exact text that was evaluated.
 
 ## Verify an install
 

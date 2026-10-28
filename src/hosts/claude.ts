@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { TreeEntry } from '../generate/tree'
 import { buildSessionStartHook, renderGuidance } from './guidance'
-import { applyRules, CLAUDE_PROFILE, claudeRules, HOST_SKILLS, MCP_SERVER_NAME, METHOD_SKILLS, PLUGIN_NAME, readSkillSource } from './rules'
+import { applyRules, CLAUDE_PROFILE, claudeRules, HOST_SKILLS, MCP_SERVER_NAME, PLUGIN_NAME, readSkillSource } from './rules'
 import { AUTHOR, encode, file, json, type PackageFields, packageFields, TOOLS_SUMMARY } from './shared'
 
 export const CLAUDE_DIR = 'hosts/claude'
@@ -16,8 +16,6 @@ const MARKETPLACE_DESCRIPTION = 'The metacogs plugin for Claude Code: reasoning 
 export interface ClaudeInputs {
   /** The one version, from package.json. Both manifests carry it as a literal field. */
   version: string
-  /** The record helper, built once for every host. `buildTree` adds the MCP server bundle beside these entries. */
-  helper: Uint8Array
   /** Repository that holds the shared sources, LICENSE and ATTRIBUTIONS.md. */
   repoRoot: string
 }
@@ -80,7 +78,6 @@ export async function buildClaudeEntries(input: ClaudeInputs): Promise<Map<strin
 
   const rules = claudeRules()
   for (const skill of HOST_SKILLS) put(`${CLAUDE_DIR}/skills/${skill}/SKILL.md`, encode(applyRules(rules, skill, await readSkillSource(input.repoRoot, skill))))
-  for (const skill of METHOD_SKILLS) put(`${CLAUDE_DIR}/skills/${skill}/scripts/record.mjs`, input.helper)
 
   // The renders adapt upstream MIT text, so the notice travels with the package.
   put(`${CLAUDE_DIR}/LICENSE`, await readFile(join(input.repoRoot, 'LICENSE')))

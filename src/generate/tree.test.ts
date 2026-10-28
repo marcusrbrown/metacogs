@@ -273,12 +273,17 @@ describe('a symlinked parent never lets generate delete or write outside the pro
     expect(readdirSync(join(external, 'claude'))).toEqual(['keep.json'])
   })
 
-  test('nothing is deleted before the check: a clean owned root is untouched when another is linked', async () => {
-    mkdirSync(join(root, '.claude-plugin'))
-    writeFileSync(join(root, '.claude-plugin', 'stale.json'), '{}')
-    symlinkSync(external, join(root, 'hosts'))
-    await expect(generate(options())).rejects.toThrow(/symbolic link/)
-    expect(existsSync(join(root, '.claude-plugin', 'stale.json'))).toBe(true)
+  test('nothing is deleted before the check: real owned roots are untouched when a later one is linked', async () => {
+    // `hosts/claude/` is cleared before `.agents/plugins/` in OWNED_ROOTS order, and is a real directory that passes
+    // validation. If a clear were interleaved with validation, the sentinel would be gone by the time `.agents` throws.
+    mkdirSync(join(root, 'hosts', 'claude'), { recursive: true })
+    writeFileSync(join(root, 'hosts', 'claude', 'sentinel.json'), '{"sentinel":true}\n')
+    mkdirSync(join(external, 'plugins'))
+    writeFileSync(join(external, 'plugins', 'keep.json'), '{"keep":true}\n')
+    symlinkSync(external, join(root, '.agents'))
+    await expect(generate(options())).rejects.toThrow(/\.agents is a symbolic link/)
+    expect(readFileSync(join(root, 'hosts', 'claude', 'sentinel.json'), 'utf8')).toBe('{"sentinel":true}\n')
+    expect(readFileSync(join(external, 'plugins', 'keep.json'), 'utf8')).toBe('{"keep":true}\n')
   })
 
   test('a link in the way of a per-file output is refused, not followed', async () => {

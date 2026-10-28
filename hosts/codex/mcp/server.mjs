@@ -16884,6 +16884,14 @@ function object2(shape, params) {
   };
   return new ZodObject2(def);
 }
+function strictObject(shape, params) {
+  return new ZodObject2({
+    type: "object",
+    shape,
+    catchall: never(),
+    ...normalizeParams(params)
+  });
+}
 function looseObject(shape, params) {
   return new ZodObject2({
     type: "object",
@@ -21540,7 +21548,7 @@ var EMPTY_COMPLETION_RESULT = {
 };
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
-import process from "node:process";
+import process2 from "node:process";
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
 var STDIO_DEFAULT_MAX_BUFFER_SIZE = 10 * 1024 * 1024;
@@ -21584,7 +21592,7 @@ function serializeMessage(message) {
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
 class StdioServerTransport {
-  constructor(_stdin = process.stdin, _stdout = process.stdout, options) {
+  constructor(_stdin = process2.stdin, _stdout = process2.stdout, options) {
     this._stdin = _stdin;
     this._stdout = _stdout;
     this._started = false;
@@ -21681,6 +21689,338 @@ This is your approach for the next attempt, not a change to what you may do. Say
 }
 var DRUGS_FRAME = drugsText({ substance: "<substance>", method: "<method>", displaces: "<displaces>" });
 
+// src/record/contract.ts
+var SCHEMA_VERSION = 1;
+var SHIPPED_METHODS = ["counterfactual", "synthesis"];
+var METHOD_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
+var EXECUTION_MODES = [
+  "direct",
+  "sequential",
+  "delegated",
+  "unrecorded",
+  "counterfactual",
+  "synthesis"
+];
+var REQUIRED_STRING_FIELDS = ["method_version", "objective", "next_action", "reopen_condition", "status"];
+var STRING_ARRAY_FIELDS = ["evidence", "assumptions", "alternatives", "findings"];
+var LIMITS = {
+  MAX_STRING_LENGTH: 4096,
+  MAX_ARRAY_ITEMS: 64,
+  MAX_PAYLOAD_BYTES: 65536
+};
+var STAMPED_FIELD = "helper_version";
+var RECORD_FIELDS = [
+  "schema_version",
+  "helper_version",
+  "method",
+  "method_version",
+  "objective",
+  "evidence",
+  "assumptions",
+  "alternatives",
+  "findings",
+  "next_action",
+  "reopen_condition",
+  "execution_mode",
+  "status"
+];
+var EXIT = {
+  OK: 0,
+  VALIDATION: 2,
+  IO: 3,
+  COLLISION: 4,
+  USAGE: 64
+};
+
+// src/record/run.ts
+import { homedir } from "node:os";
+
+// src/record/validate.ts
+var isPlainObject3 = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+var isNonEmptyString = (value) => typeof value === "string" && value.trim().length > 0;
+function validateRecord(input, options = {}) {
+  if (!isPlainObject3(input))
+    return fail([{ field: "record", message: "must be a JSON object" }]);
+  if (input.schema_version !== SCHEMA_VERSION) {
+    const got = describeValue(input.schema_version);
+    return fail([{ field: "schema_version", message: `unsupported value ${got}; this helper only accepts ${SCHEMA_VERSION}` }]);
+  }
+  const errors = [];
+  const checkText = (field, value) => {
+    let characters = 0;
+    for (const _ of value)
+      characters++;
+    if (characters > LIMITS.MAX_STRING_LENGTH) {
+      errors.push({ field, message: `is ${characters} characters; the limit is ${LIMITS.MAX_STRING_LENGTH}` });
+    }
+    if (!value.isWellFormed())
+      errors.push({ field, message: "contains a lone surrogate" });
+  };
+  const methods = options.methods ?? SHIPPED_METHODS;
+  for (const key of Object.keys(input)) {
+    if (!RECORD_FIELDS.includes(key))
+      errors.push({ field: key, message: "unknown field" });
+  }
+  if (input[STAMPED_FIELD] !== undefined && typeof input[STAMPED_FIELD] !== "string") {
+    errors.push({ field: STAMPED_FIELD, message: "must be a string when present" });
+  } else if (typeof input[STAMPED_FIELD] === "string") {
+    checkText(STAMPED_FIELD, input[STAMPED_FIELD]);
+  }
+  const method = input.method;
+  if (typeof method !== "string") {
+    errors.push({ field: "method", message: "is required and must be a string" });
+  } else if (!METHOD_PATTERN.test(method)) {
+    errors.push({ field: "method", message: `must match ${METHOD_PATTERN.source}` });
+  } else if (!methods.includes(method)) {
+    errors.push({ field: "method", message: `must be one of: ${methods.join(", ")}` });
+  }
+  for (const field of REQUIRED_STRING_FIELDS) {
+    const value = input[field];
+    if (!isNonEmptyString(value))
+      errors.push({ field, message: "is required and must be a non-empty string" });
+    else
+      checkText(field, value);
+  }
+  for (const field of STRING_ARRAY_FIELDS) {
+    const value = input[field];
+    if (!Array.isArray(value)) {
+      errors.push({ field, message: "is required and must be an array of strings" });
+      continue;
+    }
+    if (value.length > LIMITS.MAX_ARRAY_ITEMS) {
+      errors.push({ field, message: `has ${value.length} entries; the limit is ${LIMITS.MAX_ARRAY_ITEMS}` });
+      continue;
+    }
+    value.forEach((entry, index) => {
+      if (!isNonEmptyString(entry))
+        errors.push({ field: `${field}[${index}]`, message: "must be a non-empty string" });
+      else
+        checkText(`${field}[${index}]`, entry);
+    });
+  }
+  const mode = input.execution_mode;
+  if (typeof mode !== "string" || !EXECUTION_MODES.includes(mode)) {
+    errors.push({ field: "execution_mode", message: `must be one of: ${EXECUTION_MODES.join(", ")}` });
+  }
+  if (errors.length > 0)
+    return fail(errors);
+  let payloadBytes;
+  try {
+    payloadBytes = Buffer.byteLength(JSON.stringify(input), "utf8");
+  } catch (error) {
+    return fail([{ field: "record", message: `cannot be measured: ${error.message}` }]);
+  }
+  if (payloadBytes > LIMITS.MAX_PAYLOAD_BYTES) {
+    return fail([{ field: "record", message: `is ${payloadBytes} bytes; the limit is ${LIMITS.MAX_PAYLOAD_BYTES}` }]);
+  }
+  return { ok: true, record: input };
+}
+function describeValue(value) {
+  if (value === undefined)
+    return "missing";
+  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean")
+    return JSON.stringify(value);
+  return Array.isArray(value) ? "an array" : typeof value === "object" ? "an object" : typeof value;
+}
+function fail(errors) {
+  return { ok: false, errors };
+}
+
+// src/record/write.ts
+import { randomBytes } from "node:crypto";
+import { link, mkdir, open as open2, readFile, unlink } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
+
+// src/record/canonical.ts
+import { createHash } from "node:crypto";
+function canonicalize(value) {
+  if (value === null)
+    return "null";
+  switch (typeof value) {
+    case "boolean":
+      return value ? "true" : "false";
+    case "number":
+      if (!Number.isFinite(value))
+        throw new TypeError("canonicalize: non-finite number");
+      return JSON.stringify(value);
+    case "string":
+      if (!value.isWellFormed())
+        throw new TypeError("canonicalize: string contains a lone surrogate");
+      return JSON.stringify(value);
+    case "object": {
+      if (Array.isArray(value))
+        return `[${value.map(canonicalize).join(",")}]`;
+      const proto = Object.getPrototypeOf(value);
+      if (proto !== Object.prototype && proto !== null)
+        throw new TypeError("canonicalize: only plain objects are supported");
+      const entries = Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+      return `{${entries.map(([key, val]) => `${canonicalize(key)}:${canonicalize(val)}`).join(",")}}`;
+    }
+    default:
+      throw new TypeError(`canonicalize: unsupported value of type ${typeof value}`);
+  }
+}
+function canonicalPayload(record) {
+  const { [STAMPED_FIELD]: _stamped, ...payload } = record;
+  return canonicalize(payload);
+}
+function recordHash(record) {
+  return createHash("sha256").update(canonicalPayload(record), "utf8").digest("hex");
+}
+function recordFilename(record) {
+  return `${record.method}-${recordHash(record).slice(0, 16)}.json`;
+}
+
+// src/record/write.ts
+class RecordIoError extends Error {
+  name = "RecordIoError";
+}
+
+class RecordCollisionError extends Error {
+  path;
+  name = "RecordCollisionError";
+  constructor(path) {
+    super(`${path} already exists with different content; refusing to overwrite`);
+    this.path = path;
+  }
+}
+var set2 = (value) => value !== undefined && value !== "";
+function resolveRoot({ outDir, env, cwd, home }) {
+  if (set2(outDir))
+    return resolve(cwd, outDir);
+  const fromEnv = env.METACOGS_RECORDS_DIR;
+  if (set2(fromEnv))
+    return resolve(cwd, fromEnv);
+  const xdg = env.XDG_STATE_HOME;
+  if (set2(xdg) && isAbsolute(xdg))
+    return join(xdg, "metacogs", "records");
+  return join(home, ".local", "state", "metacogs", "records");
+}
+function assertDirectChild(root, path) {
+  const rel = relative(root, path);
+  if (rel === "" || isAbsolute(rel) || rel.startsWith("..") || rel.includes(sep)) {
+    throw new RecordIoError(`resolved path ${path} is not a direct child of the output root ${root}`);
+  }
+}
+var code = (error) => error?.code;
+async function isEquivalent(path, expectedBytes, record) {
+  const existing = await readFile(path, "utf8");
+  if (existing === expectedBytes)
+    return true;
+  try {
+    return canonicalPayload(JSON.parse(existing)) === canonicalPayload(record);
+  } catch {
+    return false;
+  }
+}
+async function writeRecord({ root, record }) {
+  let name;
+  let bytes;
+  try {
+    name = recordFilename(record);
+    bytes = `${canonicalize(record)}
+`;
+  } catch (error) {
+    throw new RecordIoError(`cannot serialize record: ${error.message}`);
+  }
+  const resolvedRoot = resolve(root);
+  const final = resolve(resolvedRoot, name);
+  assertDirectChild(resolvedRoot, final);
+  try {
+    await mkdir(resolvedRoot, { recursive: true, mode: 448 });
+  } catch (error) {
+    throw new RecordIoError(`cannot create ${resolvedRoot}: ${error.message}`);
+  }
+  const tmp = join(resolvedRoot, `.${name}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`);
+  let tmpCreated = false;
+  try {
+    const handle = await open2(tmp, "wx", 384);
+    tmpCreated = true;
+    try {
+      await handle.writeFile(bytes, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    try {
+      await link(tmp, final);
+      return { path: final, status: "written" };
+    } catch (error) {
+      if (code(error) !== "EEXIST")
+        throw error;
+    }
+    if (await isEquivalent(final, bytes, record))
+      return { path: final, status: "exists" };
+    throw new RecordCollisionError(final);
+  } catch (error) {
+    if (error instanceof RecordCollisionError || error instanceof RecordIoError)
+      throw error;
+    throw new RecordIoError(`cannot write ${final}: ${error.message}`);
+  } finally {
+    if (tmpCreated)
+      await unlink(tmp).catch(() => {
+        return;
+      });
+  }
+}
+
+// src/record/run.ts
+var whole = (message) => [{ field: "$", message }];
+function validate2(input, methods) {
+  try {
+    return validateRecord(input, { methods });
+  } catch (error) {
+    return { ok: false, errors: [{ field: "record", message: `cannot be validated: ${error.message}` }] };
+  }
+}
+async function runRecord({ input, methods, helperVersion, outDir, env, cwd }) {
+  const checked = validate2(input, methods);
+  if (!checked.ok)
+    return { ok: false, kind: "validation", exit: EXIT.VALIDATION, errors: checked.errors };
+  const record = { ...checked.record, helper_version: helperVersion };
+  const stamped = validate2(record, methods);
+  if (!stamped.ok)
+    return { ok: false, kind: "validation", exit: EXIT.VALIDATION, errors: stamped.errors };
+  try {
+    const root = resolveRoot({ outDir, env, cwd, home: env.HOME || homedir() });
+    const { path, status } = await writeRecord({ root, record });
+    return { ok: true, exit: EXIT.OK, path, next_action: record.next_action, status };
+  } catch (error) {
+    if (error instanceof RecordCollisionError)
+      return { ok: false, kind: "collision", exit: EXIT.COLLISION, errors: whole(error.message) };
+    const message = error instanceof RecordIoError ? error.message : error.message;
+    return { ok: false, kind: "io", exit: EXIT.IO, errors: whole(message) };
+  }
+}
+
+// src/mcp/record-tool.ts
+var MCP_EXECUTION_MODES = ["direct", "sequential", "delegated"];
+var RECORD_DESCRIPTION = `Write the decision record that a metacogs method skill (synthesis, counterfactual) ends with. The arguments are the fields of the skill's JSON record. On success the result is {"path","next_action"}. On an error the record was not written.`;
+var entries = (what) => array(string2()).describe(`${what} One string per entry. An empty list is allowed.`);
+var recordInputSchema = strictObject({
+  schema_version: literal(SCHEMA_VERSION).describe(`Always ${SCHEMA_VERSION}.`),
+  method: _enum(SHIPPED_METHODS).describe("The method skill whose run this records."),
+  method_version: string2().describe("The method version shown in the skill's record template, as a string."),
+  objective: string2().describe("The decision, restated."),
+  evidence: entries("What the input shows. For synthesis, one entry per perspective, starting with its label."),
+  assumptions: entries("What is assumed, asserted or inferred rather than shown."),
+  alternatives: entries("The options compared or the adjusted plan, including the dissent."),
+  findings: entries("What survives the checks, and the conclusion."),
+  next_action: string2().describe("The next action. The result returns it to you."),
+  reopen_condition: string2().describe("An observable event that should reopen the decision. Not the next action."),
+  execution_mode: _enum(MCP_EXECUTION_MODES).describe("direct: you applied the steps. sequential: no delegation was available. delegated: only if you delegated."),
+  status: string2().describe('The outcome label, for example "recommended".')
+});
+var RECORD_ANNOTATIONS = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+async function recordTool(args, ctx) {
+  const result = await runRecord({ input: args, methods: SHIPPED_METHODS, helperVersion: ctx.version, env: ctx.env, cwd: ctx.cwd });
+  if (result.ok)
+    return { content: [{ type: "text", text: JSON.stringify({ path: result.path, next_action: result.next_action }) }] };
+  const lines = result.errors.map((error) => `  ${error.field}: ${error.message}`);
+  return { content: [{ type: "text", text: [`metacogs-record: ${result.kind} (exit ${result.exit})`, ...lines].join(`
+`) }], isError: true };
+}
+
 // src/mcp/server.ts
 var READ_ONLY = { readOnlyHint: true };
 var server = new McpServer({ name: "metacogs", version: "0.2.2" });
@@ -21703,4 +22043,5 @@ server.registerTool("drugs", {
   },
   annotations: READ_ONLY
 }, async (args) => ({ content: [{ type: "text", text: drugsText(args) }] }));
+server.registerTool("record", { description: RECORD_DESCRIPTION, inputSchema: recordInputSchema, annotations: RECORD_ANNOTATIONS }, async (args) => recordTool(args, { env: process.env, cwd: process.cwd(), version: "0.2.2" }));
 await server.connect(new StdioServerTransport);

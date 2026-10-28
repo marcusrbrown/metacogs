@@ -1,11 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { readHelperVersion } from '../generate/marker'
 import { buildMcpServer, REPO_ROOT } from '../plugin/build'
+import { type Message, Session } from './test-support'
 
 // The protocol tests run the built bundle under `node` from PATH (CI pins Node 22), from a directory that has no
 // node_modules and is not the working directory, so nothing resolves through the repository.
@@ -36,96 +36,6 @@ const DRUGS_RETURN =
 
 const FEEL_ARGS = { somewhere: 'chest', quality: 'tight', sigil: '🪨', since_last: 'the pressure eased' }
 const DRUGS_ARGS = { substance: 'caffeine', method: 'Emphasize speed of checks; set aside long deliberation.', displaces: 'baseline.' }
-
-interface Message {
-  jsonrpc?: string
-  id?: number | string
-  method?: string
-  result?: Record<string, unknown>
-  error?: { code: number; message: string }
-}
-
-interface ToolResult {
-  isError?: boolean
-  content: { type: string; text: string }[]
-}
-
-/** A running server: requests are matched to responses by `id`, since responses may arrive in any order. */
-class Session {
-  readonly stdoutLines: string[] = []
-  stderr = ''
-  private readonly proc: ChildProcessWithoutNullStreams
-  private buffer = ''
-  private nextId = 1
-  private readonly waiting = new Map<number | string, (message: Message) => void>()
-  readonly exited: Promise<number | null>
-
-  constructor(bundle: string, cwd: string) {
-    this.proc = spawn('node', [bundle], { cwd, stdio: ['pipe', 'pipe', 'pipe'] })
-    this.proc.stdout.setEncoding('utf8')
-    this.proc.stderr.setEncoding('utf8')
-    this.proc.stdout.on('data', (chunk: string) => {
-      this.buffer += chunk
-      for (let newline = this.buffer.indexOf('\n'); newline !== -1; newline = this.buffer.indexOf('\n')) {
-        const line = this.buffer.slice(0, newline)
-        this.buffer = this.buffer.slice(newline + 1)
-        this.stdoutLines.push(line)
-        const message = JSON.parse(line) as Message
-        if (message.id !== undefined) this.waiting.get(message.id)?.(message)
-      }
-    })
-    this.proc.stderr.on('data', (chunk: string) => {
-      this.stderr += chunk
-    })
-    this.exited = new Promise((resolve, reject) => {
-      this.proc.on('error', reject)
-      this.proc.on('close', code => resolve(code))
-    })
-  }
-
-  private write(message: object): void {
-    this.proc.stdin.write(`${JSON.stringify(message)}\n`)
-  }
-
-  request(method: string, params?: object): Promise<Message> {
-    const id = this.nextId++
-    const response = new Promise<Message>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`no response to ${method} #${id}; stderr: ${this.stderr}`)), 10_000)
-      this.waiting.set(id, message => {
-        clearTimeout(timer)
-        resolve(message)
-      })
-    })
-    this.write({ jsonrpc: '2.0', id, method, ...(params === undefined ? {} : { params }) })
-    return response
-  }
-
-  notify(method: string): void {
-    this.write({ jsonrpc: '2.0', method })
-  }
-
-  async initialize(): Promise<Message> {
-    const response = await this.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'server-test', version: '0.0.0' } })
-    this.notify('notifications/initialized')
-    return response
-  }
-
-  async call(name: string, args: Record<string, unknown>): Promise<ToolResult> {
-    const response = await this.request('tools/call', { name, arguments: args })
-    if (response.result === undefined) throw new Error(`tools/call ${name} returned a JSON-RPC error: ${JSON.stringify(response.error)}`)
-    return response.result as unknown as ToolResult
-  }
-
-  /** Close stdin and wait for the server to exit. */
-  async end(): Promise<number | null> {
-    this.proc.stdin.end()
-    return this.exited
-  }
-
-  kill(): void {
-    this.proc.kill()
-  }
-}
 
 /**
  * Every module specifier a bundle imports: static, dynamic, re-export and `require` calls. A `require("x")` that
@@ -190,7 +100,7 @@ describe('over stdio: happy path', () => {
     })
   })
 
-  test('tools/list offers exactly feel and drugs, with the adapted text, required fields and read-only hints', async () => {
+  test('tools/list offers exactly feel, drugs and record; feel and drugs carry the adapted text, required fields and read-only hints', async () => {
     await withServer(async session => {
       await session.initialize()
       const { result } = await session.request('tools/list')
@@ -200,7 +110,7 @@ describe('over stdio: happy path', () => {
         annotations?: Record<string, unknown>
         inputSchema: { properties: Record<string, { type?: string; description?: string }>; required?: string[] }
       }[]
-      expect(tools.map(tool => tool.name).sort()).toEqual(['drugs', 'feel'])
+      expect(tools.map(tool => tool.name).sort()).toEqual(['drugs', 'feel', 'record'])
       const feel = tools.find(tool => tool.name === 'feel')!
       const drugs = tools.find(tool => tool.name === 'drugs')!
 
@@ -260,7 +170,7 @@ describe('over stdio: happy path', () => {
       await session.initialize()
       const [feel, list, drugs] = await Promise.all([session.call('feel', FEEL_ARGS), session.request('tools/list'), session.call('drugs', DRUGS_ARGS)])
       expect(feel.content[0]?.text).toBe(FEEL_RETURN)
-      expect((list.result?.tools as unknown[]).length).toBe(2)
+      expect((list.result?.tools as unknown[]).length).toBe(3)
       expect(drugs.content[0]?.text).toBe(DRUGS_RETURN)
     })
   })
@@ -353,8 +263,9 @@ describe('the built bundle', () => {
     expect(await buildMcpServer()).toBe(bundleText)
   })
 
-  test('imports only node:process', () => {
-    expect(importSpecifiers(bundleText)).toEqual(['node:process'])
+  // `record` writes a file, so the bundle reaches the filesystem, hashing and path modules. Nothing network-shaped, no child processes.
+  test('imports only the node modules the stdio transport and the record writer need', () => {
+    expect(importSpecifiers(bundleText)).toEqual(['node:crypto', 'node:fs/promises', 'node:os', 'node:path', 'node:process'])
   })
 
   test('the only other require("…") text is ajv codegen inside string literals', () => {

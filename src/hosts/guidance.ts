@@ -9,7 +9,7 @@ import { HOST_SKILLS, type HostProfile, TOOL_SKILLS } from './rules'
 /** Codex prints at most about 2,500 tokens of hook output; the note stays well inside it. */
 export const NOTE_MAX_CHARS = 3000
 
-export type HookHost = 'claude' | 'codex'
+export type HookHost = 'claude'
 
 export const SESSION_START_ENTRY = join(REPO_ROOT, 'src', 'hosts', 'session-start.ts')
 
@@ -17,6 +17,7 @@ export const SESSION_START_ENTRY = join(REPO_ROOT, 'src', 'hosts', 'session-star
 function placeholders(profile: HostProfile): Record<string, string> {
   const fill: Record<string, string> = { host: profile.label }
   for (const tool of TOOL_SKILLS) fill[`${tool}_tool`] = profile.toolName(tool)
+  fill.record_tool = profile.recordTool
   for (const skill of HOST_SKILLS) fill[`${skill}_invoke`] = profile.invocation(skill)
   return fill
 }

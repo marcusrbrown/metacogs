@@ -166,8 +166,8 @@ export async function buildTree(options: TreeOptions = {}): Promise<TreeMap> {
     const version = options.helperVersion ?? (await repoVersion())
     const server = new TextEncoder().encode(await buildMcpServer({ version }))
     for (const path of MCP_SERVER_PATHS) add(path, { bytes: server, mode: 0o644 })
-    for (const [path, entry] of await buildClaudeEntries({ version, helper: await helperBytes(), repoRoot: REPO_ROOT })) add(path, entry)
-    for (const [path, entry] of await buildCodexEntries({ version, helper: await helperBytes(), repoRoot: REPO_ROOT })) add(path, entry)
+    for (const [path, entry] of await buildClaudeEntries({ version, repoRoot: REPO_ROOT })) add(path, entry)
+    for (const [path, entry] of await buildCodexEntries({ version, repoRoot: REPO_ROOT })) add(path, entry)
   }
   for (const [path, entry] of options.extraEntries ?? []) add(path, entry)
   if (!ownsRoots(options)) {

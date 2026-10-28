@@ -3,11 +3,16 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { REPO_ROOT } from '../generate/tree'
-import { applyRules, CLAUDE_PROFILE, CODEX_PROFILE, claudeRules, codexRules, HOST_SKILLS, MCP_SERVER_NAME, PLUGIN_NAME, readSkillSource, type Rule, skillSourcePath } from './rules'
+import { validRecord } from '../record/test-support'
+import { validateRecord } from '../record/validate'
+import { applyRules, CLAUDE_PROFILE, CLAUDE_TOOL_PREFIX, CODEX_PROFILE, CODEX_TOOL_PREFIX, claudeRules, codexRules, HOST_SKILLS, MCP_SERVER_NAME, METHOD_SKILLS, PLUGIN_NAME, RECORD_TOOL, readSkillSource, RETRYABLE, type Rule, skillSourcePath } from './rules'
 
 const sources = Object.fromEntries(await Promise.all(HOST_SKILLS.map(async skill => [skill, await readSkillSource(REPO_ROOT, skill)] as const))) as Record<(typeof HOST_SKILLS)[number], string>
 const render = (skill: (typeof HOST_SKILLS)[number]): string => applyRules(claudeRules(), skill, sources[skill])
+const renderCodex = (skill: (typeof HOST_SKILLS)[number]): string => applyRules(codexRules(), skill, sources[skill])
 const occurrences = (text: string, needle: string): number => text.split(needle).length - 1
+/** Anything that tells the model to run a script or a shell command, or that still names the helper. */
+const HELPER_OR_SHELL = /record\.mjs|<skill-base-dir>|<<'EOF'|\bEOF\b|stdin|\bbash\b|\bshell\b|\bhelper\b|\bnode "|base directory|CLAUDE_SKILL_DIR|directory of this SKILL\.md|Exit [0-9]/i
 
 describe('the Claude rule table', () => {
   test('every rule matches its expected count in every skill it names, against the real sources', () => {
@@ -32,12 +37,14 @@ describe('the Claude rule table', () => {
     const edited = sources.feel.replace('Call the `feel` tool (not the `feel` skill', 'Invoke the `feel` tool (not the `feel` skill')
     expect(() => applyRules(claudeRules(), 'feel', edited)).toThrow('rule "feel: tool reference" matched 0 time(s) in plugin/skills/feel/SKILL.md, expected 1')
     const reworded = sources.synthesis.replace('Use the skill base directory the host reported', 'Use the directory the host reported')
-    expect(() => applyRules(claudeRules(), 'synthesis', reworded)).toThrow('rule "synthesis: record helper intro" matched 0 time(s)')
+    expect(() => applyRules(claudeRules(), 'synthesis', reworded)).toThrow('rule "synthesis: record call intro" matched 0 time(s)')
+    const outcomes = sources.counterfactual.replace('- Exit 0: written. Reply.', '- Exit 0: written.')
+    expect(() => applyRules(claudeRules(), 'counterfactual', outcomes)).toThrow('rule "counterfactual: outcomes" matched 0 time(s)')
   })
 
   test('a source string that now appears twice fails too', () => {
     const doubled = `${sources.counterfactual}\n\`\`\`\nnode "<skill-base-dir>/scripts/record.mjs" <<'EOF'\n`
-    expect(() => applyRules(claudeRules(), 'counterfactual', doubled)).toThrow('rule "record helper path" matched 2 time(s) in skills/counterfactual/SKILL.md, expected 1')
+    expect(() => applyRules(claudeRules(), 'counterfactual', doubled)).toThrow('rule "record: command line" matched 2 time(s) in skills/counterfactual/SKILL.md, expected 1')
   })
 
   test('rules apply literally: a replacement holding $ patterns is inserted as written', () => {
@@ -80,28 +87,101 @@ describe('the Claude renders (AE1 and AE5, static parts)', () => {
     }
   })
 
-  test('AE5: the method renders run the record helper from the skill directory', () => {
-    for (const skill of ['synthesis', 'counterfactual'] as const) {
+  test('AE5: the method renders call the record tool and carry no helper or shell instruction', () => {
+    for (const skill of METHOD_SKILLS) {
       const text = render(skill)
-      expect(text).toContain('node "${CLAUDE_SKILL_DIR}/scripts/record.mjs" <<\'EOF\'')
-      expect(text).toContain("The path below is this skill's own directory, filled in by Claude Code; use it as written, never a guessed path.")
-      expect(text).not.toContain('<skill-base-dir>')
+      expect(text).toContain(`\`${CLAUDE_PROFILE.recordTool}\``)
+      expect(text).toContain('Its arguments are the fields of this JSON:')
+      expect(text).not.toMatch(HELPER_OR_SHELL)
     }
   })
 
-  test('the method renders keep the rest of the evaluated text: only the helper lines (and counterfactual\'s shell wording) differ', () => {
-    const changedLines = { synthesis: 2, counterfactual: 3 }
-    for (const skill of ['synthesis', 'counterfactual'] as const) {
-      const before = sources[skill].split('\n')
-      const after = render(skill).split('\n')
-      expect(after.length).toBe(before.length)
-      const changed = before.flatMap((line, i) => (line === after[i] ? [] : [i + 1]))
-      expect(changed.length).toBe(2)
-    }
+  test('the record tool name is derived from the prefix constants', () => {
+    expect(CLAUDE_PROFILE.recordTool).toBe(`${CLAUDE_TOOL_PREFIX}${PLUGIN_NAME}_${MCP_SERVER_NAME}__${RECORD_TOOL}`)
+    expect(CLAUDE_PROFILE.recordTool).toBe('mcp__plugin_metacogs_metacogs__record')
+    expect(CODEX_PROFILE.recordTool).toBe(`${CODEX_TOOL_PREFIX}${RECORD_TOOL}`)
+    expect(CODEX_PROFILE.recordTool).toBe('mcp__metacogs__record')
   })
 })
 
-const renderCodex = (skill: (typeof HOST_SKILLS)[number]): string => applyRules(codexRules(), skill, sources[skill])
+describe('the method renders keep the evaluated text', () => {
+  for (const [host, apply] of [['Claude', render], ['Codex', renderCodex]] as const) {
+    test(`${host}: reasoning steps 2 to 7, the Reply section and the frontmatter apart from compatibility are byte-identical to the canonical text, and step 1 differs only by "no helper"`, () => {
+      for (const skill of METHOD_SKILLS) {
+        const section = (text: string, from: string, to?: string): string => {
+          const start = text.indexOf(from)
+          const end = to === undefined ? text.length : text.indexOf(to)
+          return text.slice(start, end)
+        }
+        const canonical = sources[skill]
+        const rendered = apply(skill)
+        // Everything from the title through step 7 (counterfactual's step 8 is the record step, which is adapted).
+        // The one allowed difference: step 1's gate loses "no helper".
+        const stepsEnd = skill === 'counterfactual' ? '8. **Record' : '## Record'
+        const gate = 'no announcement, no helper, no record'
+        expect(occurrences(section(canonical, '# ', stepsEnd), gate), skill).toBe(1)
+        expect(section(rendered, '# ', stepsEnd), skill).toBe(section(canonical, '# ', stepsEnd).replace(gate, 'no announcement, no record'))
+        expect(section(rendered, '## Reply'), skill).toBe(section(canonical, '## Reply'))
+        const front = (text: string): string[] => text.split('---\n')[1]!.split('\n').filter(line => !line.startsWith('compatibility:'))
+        expect(front(rendered), skill).toEqual(front(canonical))
+      }
+    })
+
+    test(`${host}: step 8 names the tool and keeps the completeness test`, () => {
+      const step8 = apply('counterfactual').split('\n').find(line => line.startsWith('8. **Record'))!
+      const tool = (apply === render ? CLAUDE_PROFILE : CODEX_PROFILE).recordTool
+      expect(step8).toBe(
+        `8. **Record, before any reply text.** Call the \`${tool}\` tool (below) now, once. Once the gate has passed this step is not optional and the reply comes after it: an answer with no \`${tool}\` call, and no "unrecorded" note after a failed one, is incomplete.`,
+      )
+    })
+
+    test(`${host}: no helper or shell instruction remains in a method render`, () => {
+      for (const skill of METHOD_SKILLS) expect(apply(skill), skill).not.toMatch(HELPER_OR_SHELL)
+    })
+
+    test(`${host}: the outcome lines say written, fix once, and unrecorded for everything else`, () => {
+      const outcomes = (skill: (typeof METHOD_SKILLS)[number]): string[] => apply(skill).split('\n').filter(line => /^- (A successful result|An error naming|Any other error)/.test(line))
+      expect(outcomes('synthesis')).toEqual([
+        '- A successful result with a `path`: written.',
+        "- An error naming a field or the record's size: fix it, splitting a long entry into several shorter entries or trimming the record, and call again once.",
+        '- Any other error, a refused call, or no such tool: do not call again; say the run is `unrecorded`.',
+      ])
+      expect(outcomes('counterfactual')).toEqual([
+        '- A successful result with a `path`: written. Reply.',
+        "- An error naming a field or the record's size: fix it, splitting a long entry into several shorter entries or trimming the record, and call again once.",
+        '- Any other error, a refused call, or no such tool: do not call again. Reply and say the run is `unrecorded`.',
+      ])
+    })
+
+    test(`${host}: the retry branch covers a record over the size limit, which the validator reports against the record`, () => {
+      const oversized = validateRecord(validRecord({ assumptions: Array.from({ length: 20 }, () => 'a'.repeat(4096)) }))
+      expect(oversized.ok).toBe(false)
+      const fields = oversized.ok ? [] : oversized.errors.map(error => error.field)
+      expect(fields).toEqual(['record'])
+      for (const skill of METHOD_SKILLS) {
+        const retry = apply(skill).split('\n').find(line => line.startsWith('- An error naming'))!
+        expect(retry, skill).toContain(RETRYABLE)
+        expect(retry, skill).toContain("the record's size")
+        expect(retry, skill).toContain('splitting a long entry into several shorter entries or trimming the record')
+      }
+    })
+
+    test(`${host}: the compatibility line names the tool and says the server needs Node 22 or later`, () => {
+      const tool = (apply === render ? CLAUDE_PROFILE : CODEX_PROFILE).recordTool
+      for (const skill of METHOD_SKILLS) {
+        expect(apply(skill)).toContain(`compatibility: The \`${tool}\` tool is served by the metacogs MCP server, which needs Node 22 or later. Without it the method still runs and the run is marked unrecorded.\n`)
+      }
+    })
+
+    test(`${host}: the JSON template survives without the node line and the terminator, and the fence holds only the JSON`, () => {
+      for (const skill of METHOD_SKILLS) {
+        const fence = apply(skill).match(/```\n([\s\S]*?)\n```/)![1]!
+        expect(JSON.parse(fence).method, skill).toBe(skill)
+        expect(fence.split('\n')).toHaveLength(1)
+      }
+    })
+  }
+})
 
 describe('the Codex rule table', () => {
   test('every rule matches its expected count in every skill it names, against the real sources', () => {
@@ -113,13 +193,24 @@ describe('the Codex rule table', () => {
   test('has the Claude rules minus the argument hint: same sources, same counts, Codex replacements', () => {
     const claude = claudeRules()
     const codex = codexRules()
-    expect(codex.map(rule => rule.name)).toEqual([...claude.map(rule => rule.name).filter(name => !name.endsWith(': argument hint')), 'counterfactual: shell wording'])
-    for (const rule of codex.filter(rule => rule.name !== 'counterfactual: shell wording')) {
+    expect(codex.map(rule => rule.name)).toEqual(claude.map(rule => rule.name).filter(name => !name.endsWith(': argument hint')))
+    for (const rule of codex) {
       const twin = claude.find(other => other.name === rule.name)
       expect(twin, rule.name).toBeDefined()
       expect({ from: rule.from, count: rule.count, skills: rule.skills }, rule.name).toEqual({ from: twin!.from, count: twin!.count, skills: twin!.skills })
     }
     expect(new Set(codex.map(rule => rule.name)).size).toBe(codex.length)
+  })
+
+  test('every record rule keeps an exact match count of one against the unchanged canonical text', () => {
+    for (const rules of [claudeRules(), codexRules()]) {
+      const record = rules.filter(rule => rule.name.startsWith('record:') || /^(synthesis|counterfactual): (record|outcomes)/.test(rule.name))
+      expect(record.length).toBe(10)
+      for (const rule of record) {
+        expect(rule.count, rule.name).toBe(1)
+        for (const skill of rule.skills) expect(occurrences(sources[skill], rule.from), `${rule.name} in ${skill}`).toBe(1)
+      }
+    }
   })
 
   test('the tool names are derived from the server name; skills are namespaced by the plugin name', () => {
@@ -134,21 +225,7 @@ describe('the Codex rule table', () => {
     const edited = sources.drugs.replace('the `feel` tool comes first.', 'the `feel` tool goes first.')
     expect(() => applyRules(codexRules(), 'drugs', edited)).toThrow('rule "drugs: names the feel tool" matched 0 time(s) in plugin/skills/drugs/SKILL.md, expected 1')
     const reworded = sources.counterfactual.replace("The host reports this skill's base directory", 'The host reports the directory')
-    expect(() => applyRules(codexRules(), 'counterfactual', reworded)).toThrow('rule "counterfactual: record helper intro" matched 0 time(s)')
-  })
-})
-
-describe('the shell wording', () => {
-  test('the source says "a bash call" once, in counterfactual only', () => {
-    expect(occurrences(sources.counterfactual, 'as a bash call')).toBe(1)
-    expect(occurrences(sources.synthesis, 'as a bash call')).toBe(0)
-  })
-
-  test('Codex says "one shell command"; Claude keeps "a bash call", because its tool is Bash', () => {
-    const codex = renderCodex('counterfactual')
-    expect(codex).toContain('Run the helper (below) now, once, as one shell command.')
-    expect(codex).not.toContain('bash')
-    expect(applyRules(claudeRules(), 'counterfactual', sources.counterfactual)).toContain('Run the helper (below) now, once, as a bash call.')
+    expect(() => applyRules(codexRules(), 'counterfactual', reworded)).toThrow('rule "counterfactual: record call intro" matched 0 time(s)')
   })
 })
 
@@ -183,40 +260,24 @@ describe('the Codex renders', () => {
     }
   })
 
-  test('the method renders run the helper from the directory of the SKILL.md path Codex gave, quoted', () => {
-    for (const skill of ['synthesis', 'counterfactual'] as const) {
+  test('the method renders call the Codex record tool and name no Claude mechanics', () => {
+    for (const skill of METHOD_SKILLS) {
       const text = renderCodex(skill)
-      expect(text).toContain('node "<directory of this SKILL.md>/scripts/record.mjs" <<\'EOF\'')
-      expect(text).toContain('Codex gave you the path of this SKILL.md when it loaded the skill.')
-      expect(text).toContain('keep the quotes around the whole path, and never use a guessed path.')
-      expect(text).not.toContain('<skill-base-dir>')
-      expect(text).not.toMatch(/base directory/i)
+      expect(text).toContain(`\`${CODEX_PROFILE.recordTool}\``)
+      expect(text).not.toContain('mcp__plugin_')
       expect(text).not.toContain('CLAUDE_SKILL_DIR')
+      expect(text).not.toMatch(/base directory/i)
     }
   })
 
-  test('AE6: a denied or failed write is reported as unrecorded, as in the source', () => {
-    expect(renderCodex('synthesis')).toContain(
-      'Exit 3 or 4, a refused command, or no Node: do not rerun. Say no record was written; `execution_mode` is `unrecorded`.',
-    )
-    expect(renderCodex('counterfactual')).toContain(
-      'Exit 3 or 4, a refused command, or no Node: rerun nothing. Reply, say no record was written, and state `execution_mode` as `unrecorded`.',
-    )
+  test('AE6: a denied or failed write is reported as unrecorded', () => {
+    expect(renderCodex('synthesis')).toContain('- Any other error, a refused call, or no such tool: do not call again; say the run is `unrecorded`.')
+    expect(renderCodex('counterfactual')).toContain('- Any other error, a refused call, or no such tool: do not call again. Reply and say the run is `unrecorded`.')
   })
 
   test('AE7 (static): no skill depends on the session-start hook', () => {
     for (const skill of HOST_SKILLS) {
       expect(renderCodex(skill), skill).not.toMatch(/session[- ]start|hooks?\b|\/hooks|guidance/i)
-    }
-  })
-
-  test('the method renders keep the rest of the evaluated text: only the helper lines (and counterfactual\'s shell wording) differ', () => {
-    const changedLines = { synthesis: 2, counterfactual: 3 }
-    for (const skill of ['synthesis', 'counterfactual'] as const) {
-      const before = sources[skill].split('\n')
-      const after = renderCodex(skill).split('\n')
-      expect(after.length).toBe(before.length)
-      expect(before.flatMap((line, i) => (line === after[i] ? [] : [i + 1])).length).toBe(changedLines[skill])
     }
   })
 
