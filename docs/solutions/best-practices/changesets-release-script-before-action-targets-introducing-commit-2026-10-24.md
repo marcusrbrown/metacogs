@@ -17,7 +17,7 @@ applies_when:
 
 ## Context
 
-A private package (no npm publish) is released by creating a GitHub Release `v<version>` from the Changesets-generated `CHANGELOG.md`, using `gh release create`, which also creates the tag. The release step lives in the same workflow as `changesets/action` (`.github/workflows/release.yaml`). Two ordering and targeting mistakes tag the wrong commit with the right-looking notes.
+The original release-only setup for a private package created a GitHub Release `v<version>` from the Changesets-generated `CHANGELOG.md`, using `gh release create`, which also creates the tag. The release step lives in the same workflow as `changesets/action` (`.github/workflows/release.yaml`); the current workflow also publishes the package to npm after the Release exists. Two ordering and targeting mistakes tag the wrong commit with the right-looking notes.
 
 ## Guidance
 
@@ -25,7 +25,9 @@ A private package (no npm publish) is released by creating a GitHub Release `v<v
 
 `.github/workflows/release.yaml:55-60` runs `bun run release` first, gated by `if: github.ref == 'refs/heads/main'` (`:56`). `changesets/action` follows at `:62-72`. At the pinned ref (v2.1.2), the action's `runVersion` calls `prepareBranch` ([`src/run.ts:363`](https://github.com/changesets/action/blob/ae32849d5ba541f9ae29e40e22a623bc13562f51/src/run.ts#L363)). That switches to `changeset-release/<branch>` and resets to `context.sha` ([`src/github.ts:239-242`](https://github.com/changesets/action/blob/ae32849d5ba541f9ae29e40e22a623bc13562f51/src/github.ts#L239-L242)). The version script then runs in place. A release step placed afterwards reads a bumped `package.json` and `CHANGELOG.md` while `HEAD` is still the pre-bump SHA. A push that carries a pending changeset would then create `v<next>` on the wrong commit (found in review of PR #4, fixed in `3ede53e`).
 
-The action's publish path (`src/index.ts`, [`case !hasChangesets && hasPublishScript`](https://github.com/changesets/action/blob/ae32849d5ba541f9ae29e40e22a623bc13562f51/src/index.ts#L74)) runs only when no changesets are pending. The workflow sets no `publish-script` and `create-github-releases: false` (`.github/workflows/release.yaml:68`), so the release step must be independent of the action.
+The action's publish path (`src/index.ts`, [`case !hasChangesets && hasPublishScript`](https://github.com/changesets/action/blob/ae32849d5ba541f9ae29e40e22a623bc13562f51/src/index.ts#L74)) runs only when no changesets are pending. The original workflow set no `publish-script` and `create-github-releases: false` (`.github/workflows/release.yaml:68` at the time), so the release step was independent of the action.
+
+The current workflow sets `publish-script: bun run publish-release`, `create-github-releases: false` and `push-git-tags: false`. The wrapper in `src/release/publish.ts` checks that the GitHub Release exists before running `changeset publish --no-git-tag`; `prepublishOnly` builds and tests the package when publishing. Release creation remains independent of the action and runs before it.
 
 **2. Target the commit that introduced the version, not `HEAD`.**
 
