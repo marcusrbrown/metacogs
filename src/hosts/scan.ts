@@ -6,6 +6,7 @@ import { renderGuidance } from './guidance'
 import {
   CLAUDE_INVOCATION_PREFIX,
   CLAUDE_PROFILE,
+  CLAUDE_SHELL_WORDING,
   CLAUDE_SKILL_DIR_VAR,
   CLAUDE_STYLE,
   CLAUDE_TOOL_PREFIX,
@@ -84,13 +85,13 @@ export function codexExpectations(profile: HostProfile = CODEX_PROFILE): HostExp
   const skills = {} as Record<SkillName, readonly string[]>
   for (const skill of TOOL_SKILLS) skills[skill] = [profile.toolName(skill), profile.invocation(skill), 'follows the mention']
   for (const skill of METHOD_SKILLS) skills[skill] = [CODEX_STYLE.recordCommand]
-  // What belongs to Claude: its tool and command prefixes and its skill-directory variable. `$ARGUMENTS` and the
-  // `argument-hint` frontmatter line are Claude's too, but no profile or style constant holds them as a token.
+  // What belongs to Claude: its tool and command prefixes, its skill-directory variable and its Bash wording.
+  // `$ARGUMENTS` and the `argument-hint` frontmatter line are Claude's too, but no profile or style constant holds them as a token.
   return {
     profile,
     dir: 'hosts/codex',
     skills,
-    forbidden: ['$ARGUMENTS', 'argument-hint', CLAUDE_SKILL_DIR_VAR, CLAUDE_TOOL_PREFIX, CLAUDE_INVOCATION_PREFIX],
+    forbidden: ['$ARGUMENTS', 'argument-hint', CLAUDE_SKILL_DIR_VAR, CLAUDE_TOOL_PREFIX, CLAUDE_INVOCATION_PREFIX, CLAUDE_SHELL_WORDING],
   }
 }
 

@@ -18,7 +18,7 @@ A checklist for testing a decision against its weakest premise. It structures yo
 5. **Counterfactual.** In conditional wording ("if the premise is false, then..."), say what breaks and what plan follows. Give a feasible alternative or adjusted plan. → `alternatives`, `findings`
 6. **Discriminating test.** Name one observation whose result differs between "holds" and "fails", where to get it (file, command, log, owner), and which result changes the decision. → `evidence`, `next_action`
 7. **Decide.** Give go, no-go, or conditional. The premise must change the action or its conditions, not sit in a footnote. Name an observable event that should reopen the decision, different from `next_action`. → `findings`, `reopen_condition`
-8. **Record, before any reply text.** Run the helper (below) now, once, as a bash call. Once the gate has passed this step is not optional and the reply comes after it: an answer with no helper call, and no "unrecorded" note after a failed one, is incomplete.
+8. **Record, before any reply text.** Run the helper (below) now, once, as one shell command. Once the gate has passed this step is not optional and the reply comes after it: an answer with no helper call, and no "unrecorded" note after a failed one, is incomplete.
 
 ## Record
 

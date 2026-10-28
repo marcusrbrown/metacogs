@@ -89,7 +89,8 @@ describe('the Claude renders (AE1 and AE5, static parts)', () => {
     }
   })
 
-  test('the method renders keep the rest of the evaluated text: only the helper lines differ', () => {
+  test('the method renders keep the rest of the evaluated text: only the helper lines (and counterfactual\'s shell wording) differ', () => {
+    const changedLines = { synthesis: 2, counterfactual: 3 }
     for (const skill of ['synthesis', 'counterfactual'] as const) {
       const before = sources[skill].split('\n')
       const after = render(skill).split('\n')
@@ -112,8 +113,8 @@ describe('the Codex rule table', () => {
   test('has the Claude rules minus the argument hint: same sources, same counts, Codex replacements', () => {
     const claude = claudeRules()
     const codex = codexRules()
-    expect(codex.map(rule => rule.name)).toEqual(claude.map(rule => rule.name).filter(name => !name.endsWith(': argument hint')))
-    for (const rule of codex) {
+    expect(codex.map(rule => rule.name)).toEqual([...claude.map(rule => rule.name).filter(name => !name.endsWith(': argument hint')), 'counterfactual: shell wording'])
+    for (const rule of codex.filter(rule => rule.name !== 'counterfactual: shell wording')) {
       const twin = claude.find(other => other.name === rule.name)
       expect(twin, rule.name).toBeDefined()
       expect({ from: rule.from, count: rule.count, skills: rule.skills }, rule.name).toEqual({ from: twin!.from, count: twin!.count, skills: twin!.skills })
@@ -134,6 +135,20 @@ describe('the Codex rule table', () => {
     expect(() => applyRules(codexRules(), 'drugs', edited)).toThrow('rule "drugs: names the feel tool" matched 0 time(s) in plugin/skills/drugs/SKILL.md, expected 1')
     const reworded = sources.counterfactual.replace("The host reports this skill's base directory", 'The host reports the directory')
     expect(() => applyRules(codexRules(), 'counterfactual', reworded)).toThrow('rule "counterfactual: record helper intro" matched 0 time(s)')
+  })
+})
+
+describe('the shell wording', () => {
+  test('the source says "a bash call" once, in counterfactual only', () => {
+    expect(occurrences(sources.counterfactual, 'as a bash call')).toBe(1)
+    expect(occurrences(sources.synthesis, 'as a bash call')).toBe(0)
+  })
+
+  test('Codex says "one shell command"; Claude keeps "a bash call", because its tool is Bash', () => {
+    const codex = renderCodex('counterfactual')
+    expect(codex).toContain('Run the helper (below) now, once, as one shell command.')
+    expect(codex).not.toContain('bash')
+    expect(applyRules(claudeRules(), 'counterfactual', sources.counterfactual)).toContain('Run the helper (below) now, once, as a bash call.')
   })
 })
 
@@ -195,12 +210,13 @@ describe('the Codex renders', () => {
     }
   })
 
-  test('the method renders keep the rest of the evaluated text: only the helper lines differ', () => {
+  test('the method renders keep the rest of the evaluated text: only the helper lines (and counterfactual\'s shell wording) differ', () => {
+    const changedLines = { synthesis: 2, counterfactual: 3 }
     for (const skill of ['synthesis', 'counterfactual'] as const) {
       const before = sources[skill].split('\n')
       const after = renderCodex(skill).split('\n')
       expect(after.length).toBe(before.length)
-      expect(before.flatMap((line, i) => (line === after[i] ? [] : [i + 1])).length).toBe(2)
+      expect(before.flatMap((line, i) => (line === after[i] ? [] : [i + 1])).length).toBe(changedLines[skill])
     }
   })
 

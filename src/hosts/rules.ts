@@ -199,8 +199,16 @@ export function claudeRules(profile: HostProfile = CLAUDE_PROFILE): Rule[] {
   return hostRules(profile, CLAUDE_STYLE)
 }
 
+/** The source says "a bash call"; Claude's shell tool is Bash, so its render keeps that. Codex runs a shell command. */
+export const CLAUDE_SHELL_WORDING = 'as a bash call'
+export const CODEX_SHELL_WORDING = 'as one shell command'
+
 export function codexRules(profile: HostProfile = CODEX_PROFILE): Rule[] {
-  return hostRules(profile, CODEX_STYLE)
+  return [
+    ...hostRules(profile, CODEX_STYLE),
+    // Only counterfactual says it (its record step); synthesis has no such wording.
+    { name: 'counterfactual: shell wording', skills: ['counterfactual'], from: CLAUDE_SHELL_WORDING, to: CODEX_SHELL_WORDING, count: 1 },
+  ]
 }
 
 function occurrences(text: string, needle: string): number {

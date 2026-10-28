@@ -100,6 +100,15 @@ describe('the positive check', () => {
     expect(positiveFindings(claudeExpectations(), claudeFiles, 'x').map(f => f.problem)).toContain("another host's token: $metacogs:")
   })
 
+  test('Claude\'s "as a bash call" wording in a Codex render is reported', () => {
+    const files = new Map(HOST_SKILLS.map(skill => [skill, 'Run the helper now, once, as a bash call.'] as const))
+    expect(positiveFindings(codexExpectations(), files, 'x')).toContainEqual({
+      path: 'hosts/codex/skills/counterfactual/SKILL.md',
+      problem: "another host's token: as a bash call",
+    })
+    expect(positiveFindings(claudeExpectations(), files, 'x').map(f => f.problem)).not.toContain("another host's token: as a bash call")
+  })
+
   test('the Codex expectations name the tools and mentions from the profile', () => {
     const expectations = codexExpectations()
     expect(expectations.dir).toBe('hosts/codex')
