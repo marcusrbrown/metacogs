@@ -11,10 +11,11 @@ import { validRecord } from '../record/test-support'
 import { renderGuidance } from './guidance'
 import { CLAUDE_PROFILE, HOST_SKILLS, MCP_SERVER_NAME, METHOD_SKILLS, PLUGIN_NAME } from './rules'
 import { scanHostTrees } from './scan'
+import { arr, at, obj, type RpcMessage, readJsonFile, str } from './test-support'
 
 const read = (path: string): string => readFileSync(join(REPO_ROOT, path), 'utf8')
-const readJson = (path: string): any => JSON.parse(read(path))
-const VERSION: string = readJson('package.json').version
+const readJson = (path: string) => readJsonFile(REPO_ROOT, path)
+const VERSION: string = str(at(readJson('package.json'), 'version'))
 
 let scratch: string
 beforeAll(() => {
@@ -49,7 +50,7 @@ describe('the committed Claude package', () => {
   })
 
   test('plugin.json carries the package version, the metadata --strict wants and a boolean guidance option', () => {
-    const plugin = readJson(`${CLAUDE_DIR}/.claude-plugin/plugin.json`)
+    const plugin = obj(readJson(`${CLAUDE_DIR}/.claude-plugin/plugin.json`))
     expect(plugin).toMatchObject({
       name: 'metacogs',
       version: VERSION,
@@ -65,15 +66,15 @@ describe('the committed Claude package', () => {
   })
 
   test('the marketplace has an owner and a description, and its entry points at the plugin directory with no version', () => {
-    const market = readJson(CLAUDE_MARKETPLACE_PATH)
+    const market = obj(readJson(CLAUDE_MARKETPLACE_PATH))
     expect(market.name).toBe('metacogs')
-    expect(market.owner.name).toBe('Marcus R. Brown')
-    expect(market.metadata.description.length).toBeGreaterThan(0)
+    expect(at(market, 'owner', 'name')).toBe('Marcus R. Brown')
+    expect(str(at(market, 'metadata', 'description')).length).toBeGreaterThan(0)
     expect(market.plugins).toHaveLength(1)
-    const [entry] = market.plugins
+    const entry = obj(arr(market.plugins)[0])
     expect(entry).toMatchObject({ name: PLUGIN_NAME, source: './hosts/claude' })
     expect('version' in entry).toBe(false)
-    expect(existsSync(join(REPO_ROOT, entry.source, '.claude-plugin', 'plugin.json'))).toBe(true)
+    expect(existsSync(join(REPO_ROOT, str(entry.source), '.claude-plugin', 'plugin.json'))).toBe(true)
     expect(market).toEqual(JSON.parse(JSON.stringify(marketplaceManifest())))
   })
 
@@ -174,7 +175,7 @@ describe('the package relocated to a directory outside the repository', () => {
   })
 
   /** The command Claude would run: the manifest string with ${CLAUDE_PLUGIN_ROOT} resolved by the shell's environment. */
-  const hookCommand = (): string => readJson(`${CLAUDE_DIR}/hooks/hooks.json`).hooks.SessionStart[0].hooks[0].command
+  const hookCommand = (): string => str(at(readJson(`${CLAUDE_DIR}/hooks/hooks.json`), 'hooks', 'SessionStart', 0, 'hooks', 0, 'command'))
 
   test('runs on Node 22 or later', () => {
     const major = Number(/^v(\d+)\./.exec(spawnSync('node', ['--version'], { encoding: 'utf8' }).stdout)?.[1])
@@ -200,10 +201,12 @@ describe('the package relocated to a directory outside the repository', () => {
   })
 
   test("the MCP config's own command starts a server that answers tools/list from the relocated root", async () => {
-    const { command, args } = readJson(`${CLAUDE_DIR}/.mcp.json`).mcpServers[MCP_SERVER_NAME] as { command: string; args: string[] }
+    const server = obj(at(readJson(`${CLAUDE_DIR}/.mcp.json`), 'mcpServers', MCP_SERVER_NAME))
+    const command = str(server.command)
+    const args = arr(server.args).map(arg => str(arg))
     const proc = spawn(command, args.map(arg => arg.replaceAll('${CLAUDE_PLUGIN_ROOT}', relocated)), { cwd: elsewhere, stdio: ['pipe', 'pipe', 'pipe'] })
     try {
-      const responses = new Map<number, any>()
+      const responses = new Map<number, RpcMessage>()
       let buffer = ''
       let stderr = ''
       proc.stdout.setEncoding('utf8')
@@ -214,25 +217,26 @@ describe('the package relocated to a directory outside the repository', () => {
       proc.stdout.on('data', chunk => {
         buffer += chunk
         for (let nl = buffer.indexOf('\n'); nl !== -1; nl = buffer.indexOf('\n')) {
-          const message = JSON.parse(buffer.slice(0, nl))
+          const message: RpcMessage = JSON.parse(buffer.slice(0, nl))
           buffer = buffer.slice(nl + 1)
           if (message.id !== undefined) responses.set(message.id, message)
         }
       })
-      const ask = async (id: number, method: string, params?: object): Promise<any> => {
+      const ask = async (id: number, method: string, params?: object): Promise<RpcMessage> => {
         send(proc, { jsonrpc: '2.0', id, method, ...(params === undefined ? {} : { params }) })
         for (let waited = 0; !responses.has(id); waited += 25) {
           if (waited > 10_000) throw new Error(`no response to ${method}; stderr: ${stderr}`)
           await new Promise(resolve => setTimeout(resolve, 25))
         }
-        return responses.get(id)
+        return responses.get(id)!
       }
       const init = await ask(1, 'initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'relocation-test', version: '0.0.0' } })
-      expect(init.result.serverInfo).toEqual({ name: MCP_SERVER_NAME, version: VERSION })
+      expect(init.result?.serverInfo).toEqual({ name: MCP_SERVER_NAME, version: VERSION })
       send(proc, { jsonrpc: '2.0', method: 'notifications/initialized' })
       const list = await ask(2, 'tools/list')
-      expect(list.result.tools.map((t: { name: string }) => t.name).sort()).toEqual(['drugs', 'feel'])
-      for (const tool of list.result.tools) expect(tool.annotations.readOnlyHint).toBe(true)
+      const tools = arr(list.result?.tools).map(tool => obj(tool))
+      expect(tools.map(tool => tool.name).sort()).toEqual(['drugs', 'feel'])
+      for (const tool of tools) expect(obj(tool.annotations).readOnlyHint).toBe(true)
     } finally {
       proc.kill()
     }

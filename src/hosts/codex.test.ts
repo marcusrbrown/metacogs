@@ -14,10 +14,11 @@ import { CODEX_DIR, CODEX_MARKETPLACE_PATH, hooksConfig, MCP_SCHEMA_URL, marketp
 import { renderGuidance } from './guidance'
 import { CODEX_PROFILE, HOST_SKILLS, MCP_SERVER_NAME, METHOD_SKILLS, PLUGIN_NAME } from './rules'
 import { scanHostTrees } from './scan'
+import { arr, at, obj, type RpcMessage, readJsonFile, str } from './test-support'
 
 const read = (path: string): string => readFileSync(join(REPO_ROOT, path), 'utf8')
-const readJson = (path: string): any => JSON.parse(read(path))
-const VERSION: string = readJson('package.json').version
+const readJson = (path: string) => readJsonFile(REPO_ROOT, path)
+const VERSION: string = str(at(readJson('package.json'), 'version'))
 
 let scratch: string
 beforeAll(() => {
@@ -52,7 +53,7 @@ describe('the committed Codex package', () => {
   })
 
   test('plugin.json declares the 1.0.0 schema, the package version, an experimental label and the hooks under the OpenAI namespace', () => {
-    const plugin = readJson(`${CODEX_DIR}/plugin.json`)
+    const plugin = obj(readJson(`${CODEX_DIR}/plugin.json`))
     expect(plugin).toEqual({
       $schema: 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json',
       name: 'metacogs',
@@ -66,7 +67,7 @@ describe('the committed Codex package', () => {
     })
     expect(plugin.$schema).toBe(PLUGIN_SCHEMA_URL)
     // the declared hooks file is in the package; `skills/` and `mcp.json` are found at fixed paths, so they are not declared
-    expect(existsSync(join(REPO_ROOT, CODEX_DIR, plugin.extensions['com.openai'].hooks))).toBe(true)
+    expect(existsSync(join(REPO_ROOT, CODEX_DIR, str(at(plugin, 'extensions', 'com.openai', 'hooks'))))).toBe(true)
     expect('skills' in plugin).toBe(false)
     expect('mcpServers' in plugin).toBe(false)
     expect(existsSync(join(REPO_ROOT, CODEX_DIR, 'skills'))).toBe(true)
@@ -74,7 +75,7 @@ describe('the committed Codex package', () => {
   })
 
   test('mcp.json declares the stdio server under the server name, run by node from the plugin root, with no env', () => {
-    const mcp = readJson(`${CODEX_DIR}/mcp.json`)
+    const mcp = obj(readJson(`${CODEX_DIR}/mcp.json`))
     expect(mcp).toEqual({
       $schema: 'https://agent-plugins.org/schemas/1.0.0/mcp.schema.json',
       mcpServers: { [MCP_SERVER_NAME]: { type: 'stdio', command: 'node', args: ['${PLUGIN_ROOT}/mcp/server.mjs'] } },
@@ -116,7 +117,7 @@ describe('the committed Codex package', () => {
 })
 
 describe('the Codex marketplace', () => {
-  const market = readJson(CODEX_MARKETPLACE_PATH)
+  const market = obj(readJson(CODEX_MARKETPLACE_PATH))
 
   test('names the marketplace and carries one local entry with an install policy and a category', () => {
     expect(market).toEqual({
@@ -135,21 +136,23 @@ describe('the Codex marketplace', () => {
   })
 
   test('the entry points at an existing plugin directory, inside the repository, with a ./ path', () => {
-    const [entry] = market.plugins
+    const entry = obj(arr(market.plugins)[0])
+    const sourcePath = str(at(entry, 'source', 'path'))
     expect(entry.name).toBe(PLUGIN_NAME)
-    expect(entry.source.path.startsWith('./')).toBe(true)
-    expect(isAbsolute(entry.source.path)).toBe(false)
-    const target = resolve(REPO_ROOT, entry.source.path)
+    expect(sourcePath.startsWith('./')).toBe(true)
+    expect(isAbsolute(sourcePath)).toBe(false)
+    const target = resolve(REPO_ROOT, sourcePath)
     expect(target.startsWith(`${REPO_ROOT}/`)).toBe(true)
     expect(existsSync(join(target, 'plugin.json'))).toBe(true)
-    expect(readJson(`${entry.source.path.slice(2)}/plugin.json`).name).toBe(entry.name)
+    expect(at(readJson(`${sourcePath.slice(2)}/plugin.json`), 'name')).toBe(str(entry.name))
   })
 
   test('uses the values Codex documents: AVAILABLE installation, and ON_INSTALL or ON_USE authentication', () => {
-    const { policy } = market.plugins[0]
-    expect(['NOT_AVAILABLE', 'AVAILABLE', 'INSTALLED_BY_DEFAULT']).toContain(policy.installation)
-    expect(['ON_INSTALL', 'ON_USE']).toContain(policy.authentication)
-    expect('version' in market.plugins[0]).toBe(false)
+    const entry = obj(arr(market.plugins)[0])
+    const policy = obj(entry.policy)
+    expect(['NOT_AVAILABLE', 'AVAILABLE', 'INSTALLED_BY_DEFAULT']).toContain(str(policy.installation))
+    expect(['ON_INSTALL', 'ON_USE']).toContain(str(policy.authentication))
+    expect('version' in entry).toBe(false)
   })
 })
 
@@ -286,7 +289,7 @@ describe('the package relocated to a directory outside the repository', () => {
     elsewhere = mkdtempSync(join(root, 'cwd-'))
   })
 
-  const hookCommand = (): string => readJson(`${CODEX_DIR}/hooks/hooks.json`).hooks.SessionStart[0].hooks[0].command
+  const hookCommand = (): string => str(at(readJson(`${CODEX_DIR}/hooks/hooks.json`), 'hooks', 'SessionStart', 0, 'hooks', 0, 'command'))
 
   test('runs on Node 22 or later', () => {
     const major = Number(/^v(\d+)\./.exec(spawnSync('node', ['--version'], { encoding: 'utf8' }).stdout)?.[1])
@@ -320,10 +323,12 @@ describe('the package relocated to a directory outside the repository', () => {
   })
 
   test("the MCP config's own command starts a server that answers tools/list from the relocated root", async () => {
-    const { command, args } = readJson(`${CODEX_DIR}/mcp.json`).mcpServers[MCP_SERVER_NAME] as { command: string; args: string[] }
+    const server = obj(at(readJson(`${CODEX_DIR}/mcp.json`), 'mcpServers', MCP_SERVER_NAME))
+    const command = str(server.command)
+    const args = arr(server.args).map(arg => str(arg))
     const proc = spawn(command, args.map(arg => arg.replaceAll('${PLUGIN_ROOT}', relocated)), { cwd: elsewhere, stdio: ['pipe', 'pipe', 'pipe'] })
     try {
-      const responses = new Map<number, any>()
+      const responses = new Map<number, RpcMessage>()
       let buffer = ''
       let stderr = ''
       proc.stdout.setEncoding('utf8')
@@ -334,25 +339,26 @@ describe('the package relocated to a directory outside the repository', () => {
       proc.stdout.on('data', chunk => {
         buffer += chunk
         for (let nl = buffer.indexOf('\n'); nl !== -1; nl = buffer.indexOf('\n')) {
-          const message = JSON.parse(buffer.slice(0, nl))
+          const message: RpcMessage = JSON.parse(buffer.slice(0, nl))
           buffer = buffer.slice(nl + 1)
           if (message.id !== undefined) responses.set(message.id, message)
         }
       })
-      const ask = async (id: number, method: string, params?: object): Promise<any> => {
+      const ask = async (id: number, method: string, params?: object): Promise<RpcMessage> => {
         send(proc, { jsonrpc: '2.0', id, method, ...(params === undefined ? {} : { params }) })
         for (let waited = 0; !responses.has(id); waited += 25) {
           if (waited > 10_000) throw new Error(`no response to ${method}; stderr: ${stderr}`)
           await new Promise(resolve => setTimeout(resolve, 25))
         }
-        return responses.get(id)
+        return responses.get(id)!
       }
       const init = await ask(1, 'initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'relocation-test', version: '0.0.0' } })
-      expect(init.result.serverInfo).toEqual({ name: MCP_SERVER_NAME, version: VERSION })
+      expect(init.result?.serverInfo).toEqual({ name: MCP_SERVER_NAME, version: VERSION })
       send(proc, { jsonrpc: '2.0', method: 'notifications/initialized' })
       const list = await ask(2, 'tools/list')
-      expect(list.result.tools.map((t: { name: string }) => t.name).sort()).toEqual(['drugs', 'feel'])
-      for (const tool of list.result.tools) expect(tool.annotations.readOnlyHint).toBe(true)
+      const tools = arr(list.result?.tools).map(tool => obj(tool))
+      expect(tools.map(tool => tool.name).sort()).toEqual(['drugs', 'feel'])
+      for (const tool of tools) expect(obj(tool.annotations).readOnlyHint).toBe(true)
     } finally {
       proc.kill()
     }

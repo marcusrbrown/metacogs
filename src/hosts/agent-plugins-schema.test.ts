@@ -15,15 +15,29 @@ import {
   validateMcpConfig,
   validatePluginManifest,
 } from './agent-plugins-schema'
+import { at, type JsonValue, parseJson, str } from './test-support'
 
 const readRepo = (path: string): string => readFileSync(join(REPO_ROOT, path), 'utf8')
-const readJson = (path: string): any => JSON.parse(readRepo(path))
+const readJson = (path: string): JsonValue => parseJson(readRepo(path))
 
-const PLUGIN_SCHEMA_URL: string = readJson(PLUGIN_SCHEMA_PATH).$id
-const MCP_SCHEMA_URL: string = readJson(MCP_SCHEMA_PATH).$id
+const PLUGIN_SCHEMA_URL: string = str(at(readJson(PLUGIN_SCHEMA_PATH), '$id'))
+const MCP_SCHEMA_URL: string = str(at(readJson(MCP_SCHEMA_PATH), '$id'))
 
 const goodPlugin = (): Record<string, unknown> => ({ $schema: PLUGIN_SCHEMA_URL, name: 'metacogs', version: '1.0.0', extensions: { 'com.openai': { hooks: './hooks/hooks.json' } } })
-const goodMcp = (): any => ({ $schema: MCP_SCHEMA_URL, mcpServers: { metacogs: { type: 'stdio', command: 'node', args: ['${PLUGIN_ROOT}/mcp/server.mjs'] } } })
+/** The stdio server entry the tests edit one field of at a time; every field a test deletes or adds is optional here. */
+interface StdioServerFixture {
+  type?: string
+  command?: string
+  args: string[]
+  cwd?: string
+  env?: Record<string, string>
+  extra?: boolean
+}
+interface McpFixture {
+  $schema: string
+  mcpServers: { metacogs: StdioServerFixture }
+}
+const goodMcp = (): McpFixture => ({ $schema: MCP_SCHEMA_URL, mcpServers: { metacogs: { type: 'stdio', command: 'node', args: ['${PLUGIN_ROOT}/mcp/server.mjs'] } } })
 
 describe('the vendored agent-plugins.org 1.0.0 schemas', () => {
   test('stay byte-identical to the published files (recorded sha256)', () => {
@@ -35,7 +49,7 @@ describe('the vendored agent-plugins.org 1.0.0 schemas', () => {
   })
 
   test('are unmodified: they still carry the keyword the validator drops in memory, and name their own ids', () => {
-    expect(readJson(MCP_SCHEMA_PATH).$defs.stdioServer.properties.env.propertyNames).toEqual({ not: { enum: ['PLUGIN_ROOT', 'PLUGIN_DATA'] } })
+    expect(at(readJson(MCP_SCHEMA_PATH), '$defs', 'stdioServer', 'properties', 'env', 'propertyNames')).toEqual({ not: { enum: ['PLUGIN_ROOT', 'PLUGIN_DATA'] } })
     expect(PLUGIN_SCHEMA_URL).toBe('https://agent-plugins.org/schemas/1.0.0/plugin.schema.json')
     expect(MCP_SCHEMA_URL).toBe('https://agent-plugins.org/schemas/1.0.0/mcp.schema.json')
   })

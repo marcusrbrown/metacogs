@@ -41,7 +41,7 @@ interface Message {
   jsonrpc?: string
   id?: number | string
   method?: string
-  result?: Record<string, any>
+  result?: Record<string, unknown>
   error?: { code: number; message: string }
 }
 
