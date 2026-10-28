@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { REPO_ROOT } from '../generate/tree'
 import { buildSessionStartHook, NOTE_MAX_CHARS, renderGuidance } from './guidance'
 import GUIDANCE_TEMPLATE from './guidance.md'
-import { CLAUDE_PROFILE, CODEX_PROFILE, HOST_SKILLS, type HostProfile, TOOL_SKILLS } from './rules'
+import { CLAUDE_PROFILE, CODEX_PROFILE, HOST_SKILLS, type HostProfile, RECORD_TOOL, TOOL_SKILLS } from './rules'
 
 const note = renderGuidance(CLAUDE_PROFILE)
 
@@ -32,12 +32,12 @@ describe('the session-start note', () => {
   })
 
   test('names only tools and skills the package ships', () => {
-    const tools = new Set(TOOL_SKILLS.map(tool => CLAUDE_PROFILE.toolName(tool)))
+    const tools = new Set([...TOOL_SKILLS.map(tool => CLAUDE_PROFILE.toolName(tool)), CLAUDE_PROFILE.recordTool])
     const skills = new Set<string>(HOST_SKILLS)
     const invocations = new Set(HOST_SKILLS.map(skill => CLAUDE_PROFILE.invocation(skill)))
     const quoted = [...note.matchAll(/`([^`]+)`/g)].map(match => match[1] ?? '')
     expect(quoted.length).toBeGreaterThan(0)
-    for (const name of quoted) expect(skills.has(name) || tools.has(name) || invocations.has(name), name).toBe(true)
+    for (const name of quoted) expect(skills.has(name) || tools.has(name) || invocations.has(name) || name === RECORD_TOOL, name).toBe(true)
     // every shipped tool, skill and invocation is named
     for (const name of [...tools, ...skills, ...invocations]) expect(quoted).toContain(name)
     // and nothing that looks like a tool or a command but is not shipped
@@ -53,6 +53,7 @@ describe('the session-start note', () => {
 
   test('says what each tool and skill is for and how a person starts it', () => {
     expect(note).toContain('metacogs is installed in Claude Code.')
+    expect(note).toContain('It provides two reasoning tools, `feel` and `drugs`, a `record` tool, and four skills:')
     expect(note).toContain('The `feel` tool is `mcp__plugin_metacogs_metacogs__feel`.')
     expect(note).toContain('the same failure persists after materially different attempts')
     expect(note).toContain('stalled on the same few alternatives')
@@ -60,12 +61,14 @@ describe('the session-start note', () => {
     expect(note).toContain('start that skill with `/metacogs:drugs`')
     expect(note).toContain('`/metacogs:synthesis` and `/metacogs:counterfactual`')
     expect(note).toContain('Neither tool supplies facts or checks anything.')
+    expect(note).toContain('The `record` tool is `mcp__plugin_metacogs_metacogs__record`. It writes the decision record that `synthesis` and `counterfactual` end with to a file on this machine.')
   })
 
   test('is filled from the profile alone', () => {
     const other = renderGuidance(OTHER)
     expect(other).toContain('metacogs is installed in Other Host.')
     expect(other).toContain('`other_srv_feel`')
+    expect(other).toContain('`other_srv_record`')
     expect(other).toContain('`$other:counterfactual`')
     expect(other).not.toContain('mcp__plugin')
     expect(other).not.toContain('{{')

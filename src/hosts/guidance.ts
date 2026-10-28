@@ -17,6 +17,7 @@ export const SESSION_START_ENTRY = join(REPO_ROOT, 'src', 'hosts', 'session-star
 function placeholders(profile: HostProfile): Record<string, string> {
   const fill: Record<string, string> = { host: profile.label }
   for (const tool of TOOL_SKILLS) fill[`${tool}_tool`] = profile.toolName(tool)
+  fill.record_tool = profile.recordTool
   for (const skill of HOST_SKILLS) fill[`${skill}_invoke`] = profile.invocation(skill)
   return fill
 }

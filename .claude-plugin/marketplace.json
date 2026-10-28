@@ -10,7 +10,7 @@
     {
       "name": "metacogs",
       "source": "./hosts/claude",
-      "description": "Two tools, feel and drugs, and four skills: feel, drugs, synthesis and counterfactual. The tools run through an MCP server that needs Node 22 or later on PATH."
+      "description": "Two reasoning tools, feel and drugs, a record tool for decision records, and four skills: feel, drugs, synthesis and counterfactual. The tools run through an MCP server that needs Node 22 or later on PATH."
     }
   ]
 }
