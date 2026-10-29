@@ -485,6 +485,17 @@ describe('S1: shipped-method judge hashes are pinned', () => {
     })
   }
 
+  // The two pins above hash raw blocks (identity redactor). This one runs the real `redactText` built from evals/counterfactual/redact.json
+  // on the same inputs, so a change in which blocks are redacted, or in redaction order before hashing, moves the literal. Computed
+  // against e311d39 (before the declarations existed); HEAD reproduced it.
+  test('counterfactual withRecord: the real redaction path hashes to the pre-declaration literals', async () => {
+    const { judge } = judgeWith([{ text: allPass('The config pins node20, so that claim is false today.') }], { nonces: ['fixed-nonce'] })
+    const verdict = await judge.hook(inputFor(ANSWER, { recordJson: PINNED_INPUTS.withRecord.recordJson }))
+    expect(verdict.evidence!.redacted_input_sha256).toBe('0ae291780d749cb50a5ae49ba643e17b976dcd3b1dc75f7062a7c1083a682958')
+    expect(verdict.evidence!.input_sha256).toBe('7e1ccaf9594c23275b3bbc6eb18c4ae4d646e2201c7d85a16ba47250acac5d35')
+    expect(verdict.evidence!.redacted_input_sha256).not.toBe(PINNED_INPUTS.withRecord.redacted)
+  })
+
   test('an expectation on the fixture changes nothing for a rubric that does not declare it', async () => {
     const { judge, calls } = judgeWith([{ text: allPass('The config pins node20, so that claim is false today.') }], { nonces: ['fixed-nonce'], redactText: (t) => t })
     const verdict = await judge.hook(inputFor(ANSWER, { expectation: { outcome: 'anything', excludedTopics: [], maxWords: 50 } }))

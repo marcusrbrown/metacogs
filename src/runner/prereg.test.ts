@@ -16,9 +16,10 @@ import {
   type ViolationCode,
   verifyPreregContent,
 } from './prereg'
+import { Git } from './git'
 import { parseDeclarations, parseRubric } from './judge'
 import { loadRedactTokens, survivingTokens } from './redact'
-import { buildHappyChain, scaffoldMethod, TEST_SALT, TestRepo, writePrereg } from './test-support'
+import { buildHappyChain, JUDGED_RUBRIC_TEXT, scaffoldMethod, TEST_SALT, TestRepo, writePrereg } from './test-support'
 import { heldoutDir } from './workspace'
 
 const repos: TestRepo[] = []
@@ -585,6 +586,89 @@ describe('expectation sidecars (verifyPreregContent)', () => {
       expect(verify(bare, true).problems.map((p) => `${p.set}/${p.id} ${p.kind}`)).toContain('expectation.heldout/h1 extra')
     })
   })
+})
+
+describe('a rubric that declares expectation: true needs a sidecar for every listed fixture', () => {
+  const X = { outcome: 'names the deciding constraint', excludedTopics: [], maxWords: 250 }
+  const DECLARED_RUBRIC = JUDGED_RUBRIC_TEXT.replace('\n## Criteria\n', '\n## Declarations\n\nexpectation: true\n\n## Criteria\n')
+
+  /** `d1` is the one listed dev fixture and `h1` the one listed held-out fixture; `expectations` says which of them carry a sidecar. */
+  function declaredRepo(rubric: string, expectations?: { dev?: Record<string, unknown>; heldout?: Record<string, unknown> }) {
+    const { repo, heldout } = setup()
+    const scaffold = scaffoldMethod(repo, 'demo', { heldoutDir: heldout, rubric, ...(expectations ? { expectations } : {}) })
+    writePrereg(repo, scaffold)
+    const enforce = (mode: 'dev' | 'red' | 'green' = 'dev') => enforcePrereg({ git: repo.git, repoRoot: repo.dir, method: 'demo', mode, heldoutDir: heldout })
+    return { enforce }
+  }
+  const refusalOf = (fn: () => unknown): PreregRefusal => {
+    try {
+      fn()
+    } catch (e) {
+      if (e instanceof PreregRefusal) return e
+      throw e
+    }
+    throw new Error('expected a PreregRefusal')
+  }
+
+  test('sidecars for every dev and held-out fixture: accepted', () => {
+    const { enforce } = declaredRepo(DECLARED_RUBRIC, { dev: { d1: X }, heldout: { h1: X } })
+    expect(enforce().prereg.method).toBe('demo')
+  })
+
+  test('no expectation_hashes at all: prereg_invalid naming every listed dev and held-out fixture', () => {
+    const r = refusalOf(() => declaredRepo(DECLARED_RUBRIC).enforce())
+    expect(codes(r.violations)).toEqual(['prereg_invalid'])
+    expect(r.violations[0]!.message).toContain('dev/d1')
+    expect(r.violations[0]!.message).toContain('heldout/h1')
+  })
+
+  test('a dev fixture without a sidecar is refused, with the held-out one covered', () => {
+    const r = refusalOf(() => declaredRepo(DECLARED_RUBRIC, { dev: {}, heldout: { h1: X } }).enforce())
+    expect(codes(r.violations)).toEqual(['prereg_invalid'])
+    expect(r.violations[0]!.message).toContain('dev/d1')
+    expect(r.violations[0]!.message).not.toContain('heldout/h1')
+  })
+
+  test('a held-out fixture without a sidecar is refused even in a mode that never reads held-out content', () => {
+    for (const mode of ['dev', 'red'] as const) {
+      const r = refusalOf(() => declaredRepo(DECLARED_RUBRIC, { dev: { d1: X }, heldout: {} }).enforce(mode))
+      expect(codes(r.violations)).toEqual(['prereg_invalid'])
+      expect(r.violations[0]!.message).toContain('heldout/h1')
+      expect(r.violations[0]!.message).not.toContain('dev/d1')
+    }
+  })
+
+  test('a rubric that does not declare it needs no sidecars, with or without expectation_hashes', () => {
+    expect(declaredRepo(JUDGED_RUBRIC_TEXT).enforce().prereg.method).toBe('demo')
+    expect(declaredRepo(JUDGED_RUBRIC_TEXT, { dev: { d1: X } }).enforce().prereg.method).toBe('demo')
+  })
+
+  test('expectation: false is the same as undeclared', () => {
+    const explicitFalse = JUDGED_RUBRIC_TEXT.replace('\n## Criteria\n', '\n## Declarations\n\nexpectation: false\n\n## Criteria\n')
+    expect(declaredRepo(explicitFalse).enforce().prereg.method).toBe('demo')
+  })
+})
+
+describe('committed preregs still verify', () => {
+  const root = join(import.meta.dir, '..', '..')
+  const committed = [
+    ['synthesis epoch 3', 'synthesis', 'evals/synthesis/prereg.json'],
+    ['counterfactual epoch 3', 'counterfactual', 'evals/counterfactual/prereg.json'],
+    ['tether pilot', 'tether', 'evals/tether/pilot/prereg.json'],
+    ['synthesis pilot', 'synthesis', 'evals/synthesis/pilot/prereg.json'],
+  ] as const
+  for (const [label, method, rel] of committed) {
+    test(`${label}: enforcePrereg (dev mode) accepts it, content hashes unchanged, and a declared rubric lists a sidecar for every fixture`, () => {
+      // Dev mode re-hashes dev and negative fixtures, sidecars and the rubric against the committed prereg; held-out files are not in the tree.
+      const verification = enforcePrereg({ git: new Git(root), repoRoot: root, method, mode: 'dev', heldoutDir: join(root, 'no-heldout-in-the-tree'), preregPath: rel })
+      const { prereg } = verification
+      expect(verification.content.problems).toEqual([])
+      const declared = parseDeclarations(readFileSync(join(root, preregContentDirRel(prereg), 'rubric.md'), 'utf8')).expectation
+      if (declared) {
+        for (const set of ['dev', 'heldout'] as const) expect(Object.keys(prereg.expectation_hashes?.[set] ?? {}).sort()).toEqual(Object.keys(prereg.fixture_hashes[set]).sort())
+      }
+    })
+  }
 })
 
 // ── content_dir ────────────────────────────────────────────────────────────

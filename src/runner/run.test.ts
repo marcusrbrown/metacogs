@@ -297,6 +297,19 @@ describe('final answer scoring (fake host)', () => {
     expect(res.results[0]).toMatchObject({ outcome: 'fail', reasons: ['answer_over_limit'] })
   })
 
+  test('declared: a long analysis before a tool call and a short closing line passes a 250-word limit, by design (the limit counts the final segment only)', async () => {
+    const seen: JudgeInput[] = []
+    const judge = async (i: JudgeInput) => (seen.push(i), { verdict: 'pass' as const })
+    const analysis = `Full analysis before the tool call: ${words(400)}.`
+    const stdout = stdoutOf(say(analysis), readCall, say('Keep the current library.'))
+    const c = campaign([plan('dev', 250)], fakeHost({ stdout }), { judge, declarations: declared })
+    const res = await runCampaign(c)
+    // The judge reads the 400-word analysis; the word limit does not count it.
+    expect(seen[0]!.finalAnswer).toContain(analysis)
+    expect(res.results[0]).toMatchObject({ outcome: 'pass', reasons: [] })
+    expect(manifestOf(c.campaignDir, res.results[0]!.runId).word_count).toBe(4)
+  })
+
   test('declared: narration with an empty final segment is judged on the text that exists; the judge sees it and the word count is 0', async () => {
     const seen: JudgeInput[] = []
     const judge = async (i: JudgeInput) => (seen.push(i), { verdict: 'pass' as const })
@@ -450,6 +463,17 @@ describe('final answer scoring (fake host)', () => {
     const res = await runCampaign(c)
     expect(res.results[0]).toMatchObject({ outcome: 'pass', reasons: [] })
     expect('word_count' in manifestOf(c.campaignDir, res.results[0]!.runId)).toBe(false)
+  })
+
+  test('word limit: a rubric that does not declare expectation never runs the check, even with a sidecar that has maxWords', async () => {
+    // plan() puts an expectation with maxWords on the fixture; without the declaration it is inert.
+    const c = campaign([plan('dev', 10)], answering(5000), { judge: judgedWith('pass') })
+    const res = await runCampaign(c)
+    expect(res.results[0]).toMatchObject({ outcome: 'pass', reasons: [] })
+    expect('word_count' in manifestOf(c.campaignDir, res.results[0]!.runId)).toBe(false)
+    // The same text over the same limit does fail once the rubric declares it.
+    const declaredRun = await runCampaign(campaign([plan('dev', 10)], answering(5000), { judge: judgedWith('pass'), declarations: declared }))
+    expect(declaredRun.results[0]).toMatchObject({ outcome: 'fail', reasons: ['answer_over_limit'] })
   })
 
   test('word limit: a judge that could not be reached is an infra_error, not a word-count failure', async () => {

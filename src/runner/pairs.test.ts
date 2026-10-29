@@ -975,7 +975,8 @@ describe('two-arm campaign, build, mark, reconcile', () => {
     const prereg: Prereg = {
       ...scaffold.prereg,
       runs_per_condition: 2,
-      fixture_hashes: { ...scaffold.prereg.fixture_hashes, dev: { ...scaffold.prereg.fixture_hashes.dev, d2: saltedHash(TEST_SALT, canonicalizeText(D2)) } },
+      // A pilot lists no held-out fixture (the committed pilots do not), which a declared rubric's sidecar rule requires of it here.
+      fixture_hashes: { ...scaffold.prereg.fixture_hashes, dev: { ...scaffold.prereg.fixture_hashes.dev, d2: saltedHash(TEST_SALT, canonicalizeText(D2)) }, heldout: {} },
       expectation_hashes: { dev: { d1: expectationHash(TEST_SALT, outcome), d2: expectationHash(TEST_SALT, outcome) }, heldout: {} },
     }
     repo.write('evals/demo/pilot/prereg.json', `${JSON.stringify(prereg, null, 2)}\n`)
@@ -1073,7 +1074,7 @@ describe('eval pairs (CLI)', () => {
     const rubric = JUDGED_RUBRIC_TEXT.replace('\n## Criteria\n', '\n## Declarations\n\nexpectation: true\n\n## Criteria\n')
     const scaffold = scaffoldMethod(repo, 'demo', { heldoutDir: heldout, rubric, expectations: { dev: { d1: OUTCOME } } })
     repo.write('evals/demo/redact.json', JSON.stringify({ tokens: TOKENS }))
-    repo.write(PILOT_PREREG, `${JSON.stringify({ ...scaffold.prereg, runs_per_condition: 3, judge_model_id: JUDGE_MODEL }, null, 2)}\n`)
+    repo.write(PILOT_PREREG, `${JSON.stringify({ ...scaffold.prereg, fixture_hashes: { ...scaffold.prereg.fixture_hashes, heldout: {} }, runs_per_condition: 3, judge_model_id: JUDGE_MODEL }, null, 2)}\n`)
     repo.commit('test: pilot content and prereg', [...scaffold.fixturePaths, 'evals/demo/redact.json', PILOT_PREREG])
     const verification = enforcePrereg({ git: repo.git, repoRoot: repo.dir, method: 'demo', mode: 'dev', heldoutDir: heldout, preregPath: PILOT_PREREG })
     const plants: Plant[] = []

@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import { canonicalize } from '../record/canonical'
 import { EXECUTION_MODES, type ExecutionMode } from '../record/contract'
 import { type Git } from './git'
+import { parseDeclarations } from './judge'
 import { sha256 } from './workspace'
 
 export const PREREG_SCHEMA_VERSION = 1 as const
@@ -528,6 +529,24 @@ export interface PreregVerification {
 }
 
 /**
+ * A rubric that declares `expectation: true` cannot grade a fixture that has no expectation, so every fixture the prereg lists in
+ * `dev` and `heldout` must have an `expectation_hashes` entry. Checked against the prereg's own listings (held-out files are not in the
+ * tree), in every mode. A missing rubric is left to the content-hash check, which reports it.
+ */
+function missingSidecarViolations(prereg: Prereg, rubricPath: string): Violation[] {
+  if (!existsSync(rubricPath)) return []
+  let declared: boolean
+  try {
+    declared = parseDeclarations(readFileSync(rubricPath, 'utf8')).expectation
+  } catch (e) {
+    return [{ code: 'prereg_invalid', message: (e as Error).message }]
+  }
+  if (!declared) return []
+  const missing = (['dev', 'heldout'] as const).flatMap((set) => Object.keys(prereg.fixture_hashes[set]).filter((id) => prereg.expectation_hashes?.[set][id] === undefined).map((id) => `${set}/${id}`))
+  return missing.length ? [{ code: 'prereg_invalid', message: `the rubric declares expectation: true, so every listed fixture needs an expectation_hashes entry; missing: ${missing.join(', ')}` }] : []
+}
+
+/**
  * Everything that must hold before the first model request: parse the committed prereg, require a committed skill for
  * GREEN, and re-hash fixtures and rubric against it. Throws `PreregRefusal` naming every violated rule.
  */
@@ -558,6 +577,7 @@ export function enforcePrereg(input: EnforceInput): PreregVerification {
   }
   const content = verifyPreregContent(prereg, { evalDir: join(repoRoot, preregContentDirRel(prereg)), heldoutDir: input.heldoutDir }, { includeHeldout: mode === 'green' })
   const violations: Violation[] = content.invalid.map((message) => ({ code: 'prereg_invalid', message }))
+  violations.push(...missingSidecarViolations(prereg, join(repoRoot, preregContentDirRel(prereg), 'rubric.md')))
   if (content.problems.length) {
     const lines = content.problems.map((p) => `${p.set}/${p.id} ${p.kind}`)
     violations.push({ code: 'content_hash_mismatch', message: `fixture/rubric hashes do not match the prereg (voided): ${lines.join(', ')}` })
