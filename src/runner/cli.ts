@@ -20,7 +20,7 @@ import { findStaleManifests, loadCampaignRuns, ManifestFormatError, pilotCampaig
 import { removeLiveFixtures } from './env'
 import { killLiveGroups, opencodeAvailability } from './opencode'
 import { isLiveModel } from './scripted-provider'
-import { enforcePrereg, heldoutFingerprints, parsePrereg, type Prereg, preregCommitViolation, preregRelPath, PreregRefusal } from './prereg'
+import { enforcePrereg, heldoutFingerprints, parsePrereg, type Prereg, preregCommitViolation, preregContentDirRel, preregRelPath, PreregRefusal } from './prereg'
 import { buildDevReport, buildGreenReport, buildRedReport, type DevReport, type DevRegressionSource, type GreenReport, greenReportPath, loadCampaignManifests, recomputeDevRegression, validateDevReport, validateGreenReport, writeDevReport, writeGreenReport, writeReport } from './report'
 import { isPilotArm, pilotPreregRel, planPilot, tallyPilotCampaign, writePilotTally } from './pilot'
 import { planRuns, type ProviderMode, runCampaign, tallyKey } from './run'
@@ -349,7 +349,7 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
         onlyFixture: fixture,
       })
 
-  const judge = providerMode === 'live' ? (io.createJudge ?? createJudge)({ repoRoot, method, model: prereg.judge_model_id, auth, signal: controller.signal }) : undefined
+  const judge = providerMode === 'live' ? (io.createJudge ?? createJudge)({ repoRoot, method, contentDir: preregContentDirRel(prereg), model: prereg.judge_model_id, auth, signal: controller.signal }) : undefined
 
   const deviates = runsPerCondition !== prereg.runs_per_condition || fixture !== undefined
   if (deviates) err('note: --runs/--fixture deviate from the prereg plan; this campaign is a debugging run, not evidence.')
@@ -368,7 +368,7 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
       campaignDir,
       runs: plan,
       judge: judge?.hook,
-      declarations: parseDeclarations(readFileSync(join(repoRoot, 'evals', method, 'rubric.md'), 'utf8')),
+      declarations: parseDeclarations(readFileSync(join(repoRoot, preregContentDirRel(prereg), 'rubric.md'), 'utf8')),
       auth,
       ...(cliproxy ? { cliproxyKeyName: cliproxy.keyName, leakNeedles: cliproxy.needles } : {}),
       signal: controller.signal,
@@ -400,7 +400,7 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
         method,
         prereg_content_hash: verification.contentHash,
         judge_model_id: prereg.judge_model_id,
-        criteria: pilotCriteria(repoRoot, method),
+        criteria: pilotCriteria(repoRoot, prereg),
         fixtures: verification.content.fixtures.dev,
       })
       out(`wrote ${writePilotTally(repoRoot, pilotTally, out).slice(repoRoot.length + 1)} (arms: ${pilotTally.arms.join(', ')})`)
@@ -437,8 +437,9 @@ interface CampaignToolArgs {
   makeJudge: typeof createJudge
 }
 
-/** The judge criterion ids the pilot tally counts: the rubric's, which the prereg's `rubric_hash` has already pinned. */
-const pilotCriteria = (repoRoot: string, method: string): string[] => parseRubric(readFileSync(join(repoRoot, 'evals', method, 'rubric.md'), 'utf8')).criteria.map((c) => c.id)
+/** The judge criterion ids the pilot tally counts: the rubric's in the prereg's content directory, which its `rubric_hash` has already pinned. */
+const pilotCriteria = (repoRoot: string, prereg: Pick<Prereg, 'method' | 'content_dir'>): string[] =>
+  parseRubric(readFileSync(join(repoRoot, preregContentDirRel(prereg), 'rubric.md'), 'utf8')).criteria.map((c) => c.id)
 
 /** `--campaign` is a directory, or a campaign id under `evals/runs/` (then the state root's `runs/`, where held-out campaigns live). */
 export function resolveCampaignDir(value: string, repoRoot: string, cwd: string, env: Record<string, string | undefined>): string | undefined {
@@ -557,7 +558,7 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
       try {
         // A rejudge rewrites judge.json under this prereg and leaves the manifests (and the hash they were run under) alone, so the
         // tally trusts a judge.json only on the strength of rejudge-summary.json under this contract (see `tallyPilotCampaign`).
-        tally = tallyPilotCampaign(campaignDir, { method, prereg_content_hash: verification.contentHash, judge_model_id: verification.prereg.judge_model_id, criteria: pilotCriteria(repoRoot, method), fixtures: verification.content.fixtures.dev })
+        tally = tallyPilotCampaign(campaignDir, { method, prereg_content_hash: verification.contentHash, judge_model_id: verification.prereg.judge_model_id, criteria: pilotCriteria(repoRoot, verification.prereg), fixtures: verification.content.fixtures.dev })
       } catch (e) {
         a.err(`REFUSED: ${(e as Error).message}`)
         return EXIT.REFUSED
@@ -581,7 +582,7 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
       a.err(`cannot launch the pinned OpenCode: ${availability.reason}`)
       return EXIT.ERROR
     }
-    const judge = a.makeJudge({ repoRoot, method, model, auth })
+    const judge = a.makeJudge({ repoRoot, method, contentDir: preregContentDirRel(verification.prereg), model, auth })
     const rows = await rejudgeCampaign({
       campaignDir,
       judge: judge.hook,

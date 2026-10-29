@@ -53,3 +53,30 @@ describe('probeJudgeInput', () => {
     expect(blockOf(sent[0]!)).toBe(blockOf(sent[sent.length - 1]!))
   })
 })
+
+describe('createJudge contentDir', () => {
+  const transport: JudgeTransport = async () => ({ ok: true, text: '{}', returnedModels: ['m'], temperature: 0, systemPromptSeen: true, toolCalls: 0, wallMs: 1 })
+
+  test('reads rubric.md and redact.json from the named directory, not evals/<method>', () => {
+    const root = declaredRepo()
+    // The pilot dir holds a different redact list; evals/declared (the default) holds `secretword`.
+    mkdirSync(join(root, 'evals', 'declared', 'pilot'), { recursive: true })
+    writeFileSync(join(root, 'evals', 'declared', 'pilot', 'rubric.md'), readFileSync(join(root, 'evals', 'declared', 'rubric.md'), 'utf8'))
+    writeFileSync(join(root, 'evals', 'declared', 'pilot', 'redact.json'), JSON.stringify({ tokens: ['pilotword'] }))
+    const base = { repoRoot: root, method: 'declared', model: 'opencode/m', transport }
+    const defaulted = createJudge(base)
+    const piloted = createJudge({ ...base, contentDir: 'evals/declared/pilot' })
+    expect(piloted.rubricSha256).toBe(defaulted.rubricSha256)
+    const bothRedact = (judge: ReturnType<typeof createJudge>) => judge.hook(probeJudgeInput('declared', 'has pilotword and secretword', EXPECTATION))
+    // Different redact lists: the hash of what is sent differs, so each judge really used its own directory.
+    return Promise.all([bothRedact(defaulted), bothRedact(piloted)]).then(([a, b]) => {
+      expect(a.evidence?.redacted_input_sha256).toBeString()
+      expect(b.evidence?.redacted_input_sha256).toBeString()
+      expect(a.evidence?.redacted_input_sha256).not.toBe(b.evidence?.redacted_input_sha256)
+    })
+  })
+
+  test('a contentDir with no rubric fails fast', () => {
+    expect(() => createJudge({ repoRoot: declaredRepo(), method: 'declared', model: 'opencode/m', transport, contentDir: 'evals/declared/nowhere' })).toThrow()
+  })
+})

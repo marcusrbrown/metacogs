@@ -469,6 +469,8 @@ function infraCodeOf(response: Pick<JudgeTransportResponse, 'error' | 'rateLimit
 export interface CreateJudgeOptions {
   repoRoot: string
   method: string
+  /** Repo-relative directory holding `rubric.md` and `redact.json`: the prereg's `content_dir`. Default `evals/<method>`. */
+  contentDir?: string
   /** Pinned `provider/model` from the prereg. */
   model: string
   transport?: JudgeTransport
@@ -495,7 +497,7 @@ export const returnedModelName = (pinned: string): string => pinned.slice(pinned
 
 export function createJudge(options: CreateJudgeOptions): Judge {
   const { repoRoot, method, model } = options
-  const evalDir = join(repoRoot, 'evals', method)
+  const evalDir = join(repoRoot, options.contentDir ?? join('evals', method))
   const rubricText = readFileSync(join(evalDir, 'rubric.md'), 'utf8')
   const spec = parseRubric(rubricText)
   const tokens = loadRedactTokens(join(evalDir, 'redact.json'))

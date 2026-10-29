@@ -15,7 +15,7 @@ import {
   tallyPilotCampaign,
   writePilotTally,
 } from './pilot'
-import { canonicalizeText, enforcePrereg, type Expectation, type LoadedFixture, type Prereg, saltedHash } from './prereg'
+import { canonicalizeText, enforcePrereg, type Expectation, expectationHash, type LoadedFixture, type Prereg, saltedHash } from './prereg'
 import { type Host, type HostRunRequest, type JudgeInput, runCampaign } from './run'
 import type { SpawnResult } from './opencode'
 import { scaffoldMethod, TEST_SALT, TestRepo } from './test-support'
@@ -536,7 +536,7 @@ function maskKeys(value: unknown): unknown {
 }
 
 /** Answers every run with `ANSWER_STDOUT`, showing the model exactly the skills the config allows. */
-function fakeHost(): Host {
+function fakeHost(stdout: string = ANSWER_STDOUT): Host {
   return {
     async debugConfig(req: { config: Record<string, unknown> }) {
       return { ...(maskKeys(req.config) as object), agent: {}, mode: {}, plugin: [], command: {}, username: 'unknown', compaction: { prune: false } }
@@ -546,7 +546,7 @@ function fakeHost(): Host {
       const names = Object.keys(skill).filter((k) => k !== '*' && skill[k] === 'allow')
       const block = names.length ? `<available_skills>\n${names.map((n) => `<skill><name>${n}</name></skill>`).join('\n')}\n</available_skills>` : 'You are an agent.'
       req.requests.push({ hasTools: true, round: 0, body: { messages: [{ role: 'system', content: block }, { role: 'user', content: 'x' }], tools: [{ function: { name: 'bash' } }] }, returnedModel: 'fake-model' })
-      return { stdout: ANSWER_STDOUT, stderr: '', exitCode: 0, timedOut: false, aborted: false, wallMs: 7, startedAtMs: Date.now() }
+      return { stdout, stderr: '', exitCode: 0, timedOut: false, aborted: false, wallMs: 7, startedAtMs: Date.now() }
     },
   }
 }
@@ -580,6 +580,41 @@ describe('baseline pilot, end to end (fake host)', () => {
     expect(verified.content.problems).toEqual([])
     expect(() => enforcePrereg({ git: repo.git, repoRoot: repo.dir, method: 'demo', mode: 'dev', heldoutDir: heldout })).toThrow(/evals\/demo\/prereg\.json does not exist/)
     expect(() => enforcePrereg({ git: repo.git, repoRoot: repo.dir, method: 'demo', mode: 'dev', heldoutDir: heldout, preregPath: 'evals/demo/pilot/missing.json' })).toThrow(/pilot\/missing\.json does not exist/)
+  })
+
+  test('an outcome-only expectation has no word limit: a 5,000-word answer is not answer_over_limit', async () => {
+    const { repo, heldout } = pilotRepo()
+    const outcomeOnly = { outcome: 'recommends keeping the current library' }
+    // Rebuild the pilot prereg with an outcome-only sidecar beside d1.
+    repo.write('evals/demo/fixtures/dev/d1.expectation.json', JSON.stringify(outcomeOnly))
+    const committed = JSON.parse(readFileSync(join(repo.dir, PILOT_PREREG), 'utf8')) as Prereg
+    repo.write(PILOT_PREREG, `${JSON.stringify({ ...committed, expectation_hashes: { ...committed.expectation_hashes, dev: { ...committed.expectation_hashes!.dev, d1: expectationHash(TEST_SALT, outcomeOnly) } } }, null, 2)}\n`)
+    const verification = enforcePrereg({ git: repo.git, repoRoot: repo.dir, method: 'demo', mode: 'dev', heldoutDir: heldout, preregPath: PILOT_PREREG })
+    const longAnswer = Array.from({ length: 5000 }, (_, i) => `w${i}`).join(' ')
+    const stdout = [
+      ev({ type: 'step_start', timestamp: 1, part: { type: 'step-start' } }),
+      ev({ type: 'text', timestamp: 2, part: { type: 'text', text: longAnswer } }),
+      ev({ type: 'step_finish', timestamp: 3, part: { type: 'step-finish', reason: 'stop', tokens: { total: 18, input: 11, output: 7, reasoning: 0, cache: { read: 0, write: 0 } }, cost: 0 } }),
+    ].join('\n')
+    const campaignDir = join(tmp('metacogs-pilot-camp-'), 'demo-pilot-2026-10-24T00-00-00-000Z')
+    const result = await runCampaign({
+      repoRoot: repo.dir,
+      method: 'demo',
+      mode: 'dev',
+      providerMode: 'scripted',
+      verification,
+      campaignId: 'demo-pilot-2026-10-24T00-00-00-000Z',
+      campaignDir,
+      runs: planPilot({ arm: 'baseline', fixtures: verification.content.fixtures.dev.filter((f) => f.id === 'd1'), runsPerCondition: 1 }),
+      host: fakeHost(stdout),
+      judge: async () => ({ verdict: 'pass' as const, evidence: evidence('pass', 'pass') }),
+      declarations: { expectation: true },
+    })
+    expect(result.results.map((r) => [r.status, r.outcome, r.reasons])).toEqual([['completed', 'pass', []]])
+    const manifest = JSON.parse(readFileSync(join(campaignDir, result.results[0]!.runId, 'manifest.json'), 'utf8')) as { word_count?: number }
+    expect(manifest.word_count).toBeUndefined()
+    const tally = tallyPilotCampaign(campaignDir, { method: 'demo', prereg_content_hash: verification.contentHash, judge_model_id: 'judge/x', criteria: ['TE1', 'TE2'], fixtures: verification.content.fixtures.dev })
+    expect(tally.tally.baseline!.d1).toMatchObject({ runs: 1, all_pass: 1, over_limit: 0 })
   })
 
   test('2 fixtures × 2 runs: pilot.json carries arms ["baseline"] and the counts; manifests carry the arm; tallies are keyed by arm', async () => {

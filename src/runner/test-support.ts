@@ -124,9 +124,11 @@ export function scaffoldMethod(
     /** The rubric text (default: a one-line stub that `parseRubric` rejects). */
     rubric?: string
     expectations?: { dev?: Record<string, unknown>; heldout?: Record<string, unknown> }
+    /** Repo-relative content directory (default `evals/<method>`). Set: the prereg carries it as `content_dir` and lives beside the content. */
+    contentDir?: string
   },
 ): MethodScaffold {
-  const dir = `evals/${method}`
+  const dir = options.contentDir ?? `evals/${method}`
   const rubricText = options.rubric ?? RUBRIC_TEXT
   const files: Record<string, string> = {
     [`${dir}/fixtures/dev/d1.md`]: DEV_TEXT,
@@ -176,6 +178,7 @@ export function scaffoldMethod(
     accepted_error_rates: { false_red: 0.1, false_green: 0.22 },
     metadata: { source_url: 'https://example.invalid/synthetic', licence: 'MIT' },
     ...(expectation_hashes ? { expectation_hashes } : {}),
+    ...(options.contentDir ? { content_dir: options.contentDir } : {}),
     ...options.overrides,
   }
   return {
