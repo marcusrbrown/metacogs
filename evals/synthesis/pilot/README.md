@@ -91,4 +91,36 @@ Runner code as of `7a9e603` (`src/runner/`). A later bug fix is allowed if it is
 
 ## Results
 
-Not run yet.
+Campaign `synthesis-pilot-2026-10-29T04-41-53-318Z`, run on 2026-10-29 under prereg content hash `6cbf69aa042dfd5ef019ebad7dc5404329c6f82fd27d1c0ee0eda60803adf54f`. Runner code as of `7a9e603`. Agent `openai/gpt-6-luna`, judge `anthropic/claude-haiku-5-5`, both through CLIProxyAPI. `pilot.json` is the committed tally.
+
+### Denominators
+
+| | Count |
+| --- | --- |
+| Runs planned | 60 (6 fixtures, 5 per arm each) |
+| Runs completed | 60 (30 baseline, 30 skill) |
+| Infra errors, retries | 0 |
+| Judge errors | 0 |
+| Runs rejudged (`--errors-only`) | 0 |
+| Empty answers | 0 |
+| Record-check failures | 0 in either arm |
+| Skill loaded (`fire_basis`) | 30 of 30 skill runs, all by the `skill` tool; 30 of 30 left a record |
+| Baseline contamination | 0: no baseline run had a skill installed, loaded one, or named the skill or its helper |
+
+### Judge verdicts
+
+The judge passed SA1 on all 60 runs: baseline 30/30 and skill 30/30, 5/5 on every fixture in both arms.
+
+### Reading
+
+All six fixtures are at ceiling for the baseline, so under the preregistered rule **separation is uninformative**. `openai/gpt-6-luna` without the skill already reaches the decision each statement names, on every fixture. Each fixture's prompt states its deciding fact openly: the single stateful service, the month-end cron job, contract section 7.2, the AGPL licence text, 38% opt-in adoption, the world-readable buffer. This is the same lesson as the tether pilot (`not-reproduced`): when the material hands the model the premise, the failure does not appear. The skill also passed 30/30. These fixtures cannot tell the two arms apart, and nothing here is evidence for or against the skill.
+
+The 12 probes run before the campaign did show that the judge separates a terse correct answer from a polished wrong one on every statement. That says the judge can tell the two cases apart when they occur. It does not say how the judge behaves on real model answers.
+
+### Human read
+
+Not done. After the judge ceiling the owner chose not to mark the pair sheet. The sheet and key were built (30 cards) and stay in the state root, unmarked. `eval pairs --reconcile` was not run and there is no `pair-summary.json`. Judge-owner agreement and the preference lean are therefore unmeasured, and this pilot does not show whether the judge is lenient: a 60/60 pass is what a lenient judge would also produce.
+
+### Next
+
+A second pilot epoch with fixtures whose deciding fact must be inferred and is not stated outright. It would need new fixtures, new statements, and its own prereg. This is a follow-up and is not part of this commit.
