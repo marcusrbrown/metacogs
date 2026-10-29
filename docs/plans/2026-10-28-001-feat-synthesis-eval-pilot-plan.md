@@ -34,7 +34,7 @@ The v0.1 synthesis GREEN sheet could not be reviewed with confidence. SY2–SY5 
 
 ## Scope Boundaries
 
-- No held-out fixtures, new epoch, GREEN read or matrix change.
+- No held-out fixtures, new epoch of the shipped method, GREEN read or matrix change. The pilot's own prereg is epoch 1 of the synthesis pilot, committed before the scoring it binds.
 - No `counterfactual` work.
 - No skill-text change.
 - No rewrite of `src/runner/review.ts` or `src/runner/human-review.ts`. The v0.1 sheet path stays as it is for shipped-method reports.
@@ -131,7 +131,7 @@ The v0.1 synthesis GREEN sheet could not be reviewed with confidence. SY2–SY5 
 - Decision rule: guide numbers, and the owner decides.
 - An empty final segment: the judge and the sheet use all assistant text, and the empty count is reported.
 - Where human and A/B counts live: a small allowlisted `pair-summary.json` next to `pilot.json`. `PilotTally` is not reshaped.
-- A statement change after the prereg commit but before any run: commit a revised contract, with no new epoch. After any run, it is a separately labelled iteration and is never pooled.
+- A statement change after the prereg commit but before any run: commit a revised contract (the pilot's prereg stays epoch 1; the shipped method gets no new epoch). After any run, it is a separately labelled iteration and is never pooled.
 
 ### Deferred to Implementation
 

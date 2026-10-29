@@ -2,7 +2,7 @@
 
 A dev-only experiment on the six `synthesis` dev fixtures. The v0.1 GREEN sheet could not be reviewed with confidence: SY2 to SY5 asked for broad reasoning standards, agreement was 0.61 to 0.77 with κ 0.03 to 0.31, and 10 of 39 runs flipped on review. This pilot asks whether a narrower contract can be reviewed, and whether it still separates the skill from the baseline: each fixture gets **one** falsifiable acceptance statement, the owner marks every answer against it, and the judge scores the same text as the instrument under test.
 
-Nothing here is a RED or GREEN read, a new epoch, or a matrix claim. `report` and `review` refuse these campaigns. The epoch-3 files (`../prereg.json`, `../rubric.md`, `../fixtures/`, `../redact.json`, `evals/reports/synthesis/`) and `skills/synthesis/**` are untouched.
+This is **synthesis pilot, epoch 1**: its prereg, `prereg.json`, declares `epoch: 1`, and it is committed before the scoring it binds (the campaign, the judge verdicts and any owner marks). That epoch number counts the pilot's own contracts, not the shipped method's: this is not a new epoch of `synthesis`, and nothing here is a RED or GREEN read or a matrix claim. `report` and `review` refuse these campaigns. The method's epoch-3 prereg, rubric and fixtures (`../prereg.json`, `../rubric.md`, `../fixtures/`, `../redact.json`, `evals/reports/synthesis/`) and `skills/synthesis/**` are unchanged.
 
 Plan: `docs/plans/2026-10-28-001-feat-synthesis-eval-pilot-plan.md`. Origin: `docs/brainstorms/2026-10-23-eval-scoring-redesign.md`.
 
@@ -65,7 +65,7 @@ bun run eval pairs --campaign <id> --build
 bun run eval pairs --campaign <id> --reconcile
 ```
 
-`pilot.json` and `pair-summary.json` are the committed projections. `eval pairs --build` prints the paths of the sheet and key. Open the key only after marking. The sheet shows only completed runs that reached the judge; a timeout, a budget breach, a host crash or a run a check kept from the judge is listed as incomplete, and so is its partner. If you rejudge after building, rebuild the sheet: `--reconcile` refuses when a shown run's `judge.json` changed. Move the old `sheet.md` and `key.json` aside first; a build never replaces a key.
+`pilot.json` and `pair-summary.json` are the committed projections. `eval pairs --build` prints the paths of the sheet and key. Open the key only after marking. The sheet shows only completed runs that reached the judge; a timeout, a budget breach, a host crash or a run a check kept from the judge is listed as incomplete, and so is its partner. If you rejudge after building, rebuild the sheet: `--reconcile` refuses when a shown run's `judge.json` changed. Move the old `sheet.md` and `key.json` aside first; a build never replaces a key. Each build also has its own random build id, printed on the sheet's `Build:` line and kept in the key, so a sheet marked for an earlier build is refused against a newer key even when the campaign is the same.
 
 ## What the sheet can and cannot hide
 
