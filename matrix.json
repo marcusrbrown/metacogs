@@ -89,16 +89,20 @@
       "note": "Tested on the pinned OpenCode release with the packed package: scripted-provider integration suite, host probes and guided reads."
     },
     "claude-code": {
-      "status": "unverified",
+      "status": "verified",
+      "host_version": "2.1.312",
       "evidence_ref": "docs/install.md#claude-code-plugin",
-      "date": "2026-10-27",
-      "note": "The package is generated and `claude plugin validate --strict` passes on the marketplace and the plugin (Claude Code 2.1.312). It has not been installed and invoked on a real Claude Code. The `synthesis` and `counterfactual` renders are host-adapted, not the text that was evaluated."
+      "date": "2026-10-28",
+      "manual_run": "Checked by hand on 2026-10-28 in an interactive Claude Code 2.1.312 session (Sonnet 5.5) with metacogs 0.3.0 installed from the marketplace. Checked: install, `/mcp` showing the server connected, the session note quoted in full, the `guidance` option turning the note off, `/metacogs:feel` and `/metacogs:drugs caffeine` calling the tools with the right arguments, `/metacogs:counterfactual` writing a record through the `record` tool with no Bash prompt, and uninstall leaving the records in place.",
+      "note": "Also checked in scripted headless runs (`claude -p`, Claude Code 2.1.312), and `claude plugin validate --strict` passes on the marketplace and the plugin. The `synthesis` and `counterfactual` renders are host-adapted, not the text that was evaluated."
     },
     "codex": {
-      "status": "unverified",
+      "status": "verified",
+      "host_version": "0.165.0",
       "evidence_ref": "docs/install.md#codex-plugin",
-      "date": "2026-10-27",
-      "note": "The manifests validate against the agent-plugins.org 1.0.0 schemas; Codex has no CLI validator. The package has not been installed and invoked on a real Codex. The `synthesis` and `counterfactual` renders are host-adapted, not the text that was evaluated.",
+      "date": "2026-10-28",
+      "manual_run": "Checked by hand on 2026-10-28 in the Codex 0.165.0 TUI (GPT-6-Astra) with metacogs 0.3.0. Checked: `codex plugin marketplace add` and `codex plugin add`, the four skills in the `$metacogs:` picker, `/mcp` showing the metacogs server connected with three tools, `$metacogs:feel` and `$metacogs:drugs caffeine`, no session note as expected, `$metacogs:counterfactual` writing a record through the `record` tool with no prompt, and `codex plugin remove` leaving the records in place.",
+      "note": "Also checked in scripted `codex exec` runs (Codex 0.162.1). The manifests validate against the agent-plugins.org 1.0.0 schemas; Codex has no CLI validator. The `synthesis` and `counterfactual` renders are host-adapted, not the text that was evaluated.",
       "experimental": true
     }
   }

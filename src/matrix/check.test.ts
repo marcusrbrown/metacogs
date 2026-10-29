@@ -269,11 +269,11 @@ describe('checkMatrix: plugin entries', () => {
     expect(checkMatrix({ root }).some(p => p.where === 'README.md' && p.message.includes('matrix:render'))).toBe(true)
   })
 
-  test('the committed matrix records OpenCode as verified and Claude Code and Codex as unverified, with Codex experimental', () => {
+  test('the committed matrix records OpenCode, Claude Code and Codex as verified, with Codex experimental', () => {
     const { matrix } = loadMatrix(REPO_ROOT)
     expect(matrix?.plugins?.opencode?.status).toBe('verified')
-    expect(matrix?.plugins?.['claude-code']).toMatchObject({ status: 'unverified', evidence_ref: 'docs/install.md#claude-code-plugin' })
-    expect(matrix?.plugins?.codex).toMatchObject({ status: 'unverified', evidence_ref: 'docs/install.md#codex-plugin', experimental: true })
+    expect(matrix?.plugins?.['claude-code']).toMatchObject({ status: 'verified', evidence_ref: 'docs/install.md#claude-code-plugin' })
+    expect(matrix?.plugins?.codex).toMatchObject({ status: 'verified', evidence_ref: 'docs/install.md#codex-plugin', experimental: true })
   })
 })
 
