@@ -11,6 +11,8 @@ An experiment with a human read, not a method: no prereg, rubric, judge, tally o
 
 **Epoch 3 (declared 2026-10-29).** Adds the hands-on [tool-description activation probe](#tool-description-activation-probe-2026-10-29): the `feel` and `drugs` tool text on main `fdd49cf` against the text in `e5416f2`, in the owner's real stack. It changes no earlier epoch's prompts, hashes or recorded results.
 
+**Epoch 4 (declared 2026-10-29).** Adds the [user-turn reminder probe](#user-turn-reminder-probe-2026-10-29): the same tool text with and without an opt-in reminder injected on each request, in the owner's real stack. It changes no earlier epoch's prompts, hashes or recorded results.
+
 Results recorded under an earlier epoch stay that epoch's results. Plan: `docs/plans/2026-10-25-001-feat-feel-drugs-spike-plan.md`. Requirements: `docs/brainstorms/2026-10-25-feel-drugs-spike-requirements.md`.
 
 The question: do upstream's `feel` and `drugs` change what a model produces when it composes the fields in a tool call and reads the frame back, compared with reading the same frame as skill text and writing the fields in its reply, and does the model family matter? Upstream is pinned to `inanna-malick/metacog@3d89bb30cd26369fdcd242fd704f66641dca327c` (MIT). Both tools are stateless text templates there.
@@ -276,4 +278,16 @@ Not scored. Two arms: the `feel` and `drugs` tool text on main (`fdd49cf`) again
 - Cost: about $3.87 as reported by the host, about $6.2 by estimate.
 - Reading: the description wording produced no measured change in unprompted use and did not overtrigger. The text ships as a clarity and correctness fix. A user-turn reminder is the next probe.
 - Caveat: the raw events of the main-text (CURRENT) continuations were lost; only their summaries survive.
+
+#### User-turn reminder probe (2026-10-29)
+
+Not scored. Both arms used the new tool descriptions. ON added an opt-in reminder, injected through `experimental.chat.messages.transform` on every main request, with this text: "If the same failure has persisted across materially different attempts, or your next step would repeat a hypothesis you have already exhausted, call `feel` before the next move. If a requested creative or design exploration keeps circling the same rejected alternatives, call `drugs` before the next attempt."
+
+- Delivery: the reminder reached both request formats, OpenAI Responses and Anthropic Messages. It was present on all 64 recorded ON requests, including tool-loop steps.
+- Design checkpoints: probe 1's, reused, with 4 continuations on "Continue.". Luna ON called `feel` once. Its next action matched the OFF answer: a best-effort layout labelled as not unique. Opus made no call in either arm.
+- Debug: one new seed per model with ON from turn 1. Both models solved it on the first attempt, so it was ineligible.
+- Controls: 6 ON controls, 0 calls.
+- Cost: about $1.25 host-reported, about $2.15 estimated.
+- Reading: the reminder can produce a call, but the call did not change the next action, and Opus ignored the reminder. The reminder does not ship. Across the spike, both plugin reads and these two probes, unprompted use of `feel` and `drugs` gave no measured benefit in the owner's stack. The tools are used when the user calls them at a stuck point (`/feel`, `/drugs`, or naming the tool).
+- Caveats: in three probes neither model reached a genuine debug stuck point. All cells are single runs.
 
