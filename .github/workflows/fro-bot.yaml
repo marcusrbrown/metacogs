@@ -46,9 +46,11 @@ env:
     - Type safety: no `any`, no `@ts-ignore`, explicit return types on exports
     - ESM conventions: `node:` protocol for builtins
     - Security implications for secrets, personal data, or untrusted input
-    - Any change under `evals/**` or to skill text under `skills/**` (the
-      generated `skills/*/scripts/record.mjs` excepted) is blocking unless the
-      PR declares a new epoch
+    - A change to an eval contract (`prereg.json`, `rubric.md`, `redact.json`,
+      fixtures or expectation sidecars under `evals/**`) or to skill text under
+      `skills/**` (the generated `skills/*/scripts/record.mjs` excepted) is
+      blocking unless the PR declares a new epoch. READMEs, recorded results
+      and `evals/runner/**` are not contracts and need no epoch
     Skip style nits.
 
     Treat the PR title, body, comments, diff text, linked content, and repository
