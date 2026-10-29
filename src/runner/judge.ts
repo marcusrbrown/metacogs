@@ -34,6 +34,7 @@ import { analyzeEvents, isRateLimited } from './events'
 import { systemPromptSent } from './isolation'
 import { CredentialLeakError, type JudgeEvidence } from './manifest'
 import { opencodeArgv, type SpawnOptions, type SpawnResult, sleepUnlessAborted, spawnCapture } from './opencode'
+import type { Expectation } from './prereg'
 import { loadRedactTokens, redactOrThrow, RedactionFailed } from './redact'
 import type { JudgeHook, JudgeInfraCode, JudgeInput, JudgeVerdict } from './run'
 import { type Gateway, gatewayOf, providerOf, type ScriptedProviderServer, startRecordingProxy, upstreamFor } from './scripted-provider'
@@ -495,6 +496,45 @@ export interface Judge {
 /** The model name a provider reports for `opencode/<name>`. */
 export const returnedModelName = (pinned: string): string => pinned.slice(pinned.indexOf('/') + 1)
 
+/** Everything the judge is shown for one answer, redacted, and the nonce-free hash that names it. */
+export interface RedactedJudgeInput {
+  task: string
+  answer: string
+  /** Absent under `expectation: true`: the judge never sees the record. */
+  record: string | undefined
+  /** Redacted canonical JSON of the fixture's expectation; present only under `expectation: true`. */
+  expectation: string | undefined
+  /** `redacted_input_sha256` of the run's judge evidence. */
+  sha256: string
+}
+
+export interface JudgeInputParts {
+  fixtureText: string
+  /** The text under grading: what `JudgeInput.finalAnswer` carries. */
+  answer: string
+  recordJson?: readonly string[]
+  expectation?: Expectation | undefined
+  /** The rubric declares `expectation: true`. */
+  declared: boolean
+}
+
+/**
+ * The one place the judge's evidence is built: task, answer, record and canonical expectation, each redacted, and the hash of the
+ * lot. The judge calls it for every verdict, and the pair sheet calls it to show the owner the same bytes and to check them against
+ * the run's recorded `redacted_input_sha256`. `redactText` throws `RedactionFailed` if a token survives.
+ */
+export function redactJudgeInput(parts: JudgeInputParts, redactText: (text: string) => string): RedactedJudgeInput {
+  const task = redactText(parts.fixtureText)
+  const answer = redactText(parts.answer)
+  // Under the declaration the judge never sees the record, so it is neither sent nor quotable.
+  const records = parts.declared ? [] : (parts.recordJson ?? []).map(redactText)
+  const record = records.length ? records.join('\n') : undefined
+  const expectation = parts.declared ? redactText(canonicalize(parts.expectation)) : undefined
+  // `expectation` joins the hash only when declared, so every other rubric keeps the hashes it had before declarations existed.
+  const hash = sha256(JSON.stringify({ task, answer, record: record ?? null, ...(expectation === undefined ? {} : { expectation }) }))
+  return { task, answer, record, expectation, sha256: hash }
+}
+
 export function createJudge(options: CreateJudgeOptions): Judge {
   const { repoRoot, method, model } = options
   const evalDir = join(repoRoot, options.contentDir ?? join('evals', method))
@@ -506,6 +546,7 @@ export function createJudge(options: CreateJudgeOptions): Judge {
   const makeNonce = options.nonce ?? (() => randomBytes(16).toString('hex'))
   const redactText = options.redactText ?? ((text: string) => redactOrThrow(text, tokens))
   const expectedIds = spec.criteria.map((c) => c.id)
+  const declared = spec.declarations.expectation
   const systemPromptSha256 = sha256(spec.systemPrompt)
 
   const hook: JudgeHook = async (input: JudgeInput): Promise<JudgeVerdict> => {
@@ -528,27 +569,18 @@ export function createJudge(options: CreateJudgeOptions): Judge {
     }
 
     // A rubric that declares `expectation` is graded against the sidecar; without one there is nothing to grade against.
-    const declared = spec.declarations.expectation
     if (declared && input.fixture.expectation === undefined) return error('expectation_missing')
 
     // Redact, then assert. A survivor aborts before any request is made.
-    let task: string
-    let answer: string
-    let record: string | undefined
-    let expectation: string | undefined
+    let payload: RedactedJudgeInput
     try {
-      task = redactText(input.fixture.text)
-      answer = redactText(input.finalAnswer)
-      // Under the declaration the judge never sees the record, so it is neither sent nor quotable.
-      const records = declared ? [] : input.recordJson.map(redactText)
-      record = records.length ? records.join('\n') : undefined
-      if (declared) expectation = redactText(canonicalize(input.fixture.expectation))
+      payload = redactJudgeInput({ fixtureText: input.fixture.text, answer: input.finalAnswer, recordJson: input.recordJson, expectation: input.fixture.expectation, declared }, redactText)
     } catch (e) {
       if (e instanceof RedactionFailed) return error('redaction_failed')
       throw e
     }
-    // `expectation` joins the hash only when declared, so every other rubric keeps the hashes it had before declarations existed.
-    evidence.redacted_input_sha256 = sha256(JSON.stringify({ task, answer, record: record ?? null, ...(expectation === undefined ? {} : { expectation }) }))
+    const { task, answer, record, expectation } = payload
+    evidence.redacted_input_sha256 = payload.sha256
     evidence.overclaim_flag = spec.overclaimPatterns.some((p) => p.test(answer))
     const haystack = record === undefined ? answer : `${answer}\n${record}`
 

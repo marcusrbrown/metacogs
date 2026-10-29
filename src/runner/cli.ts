@@ -17,6 +17,8 @@ import { HUMAN_REVIEW_FILE, reconcileCampaign, rejudgeCampaign, writeReview } fr
 import { type HumanReview, humanReviewBlock, summarize } from './human-review'
 import { createJudge, parseDeclarations, parseRubric } from './judge'
 import { findStaleManifests, loadCampaignRuns, ManifestFormatError, pilotCampaignRefusal } from './manifest'
+import { buildPairs, PairRefusal, pairsDir, PairSheetError, reconcilePairs, readPairKey, type Rng, summarizePairs, writePairFiles, writePairSummary } from './pairs'
+import { loadRedactTokens, redactOrThrow } from './redact'
 import { removeLiveFixtures } from './env'
 import { killLiveGroups, opencodeAvailability } from './opencode'
 import { isLiveModel } from './scripted-provider'
@@ -32,6 +34,11 @@ const USAGE = `usage: bun run eval <red|green> --method <name> [options]
        bun run eval pilot --method <name> --provider live [--arm baseline[,skill]] [--prereg <repo-relative file>]
                                                                     dev-only comparison of arms on evals/<m>/pilot/prereg.json; writes evals/<m>/pilot/pilot.json.
                                                                     Never reported: report and review refuse its campaigns. Arms: baseline, skill; two arms interleave
+       bun run eval pairs --campaign <id|dir> --build [--prereg <file>]
+                                                                    pilot campaigns only: write the blind pair sheet (sheet.md) and its key (key.json) under the state root. Refuses to overwrite a key
+       bun run eval pairs --campaign <id|dir> --reconcile [--sheet <file>]
+                                                                    read the marked sheet against the key (strictly): owner pass counts, judge vs owner, preference; writes
+                                                                    evals/<m>/pilot/pair-summary.json
        bun run eval report --method <name> [--campaign <dir>]
        bun run eval review --campaign <id|dir>                     write the blind review.md (fixture prompt, expected-answer notes, answer, record, an unmarked
                                                                    scoring table) and review-key.md (judge verdicts and quotes) into the campaign dir
@@ -45,6 +52,8 @@ const USAGE = `usage: bun run eval <red|green> --method <name> [options]
                           OpenCode's gateway: opencode-go/* (Go subscription, the default and preferred) or opencode/* (Zen, bills credits).
                           The one-shot held-out read (green without --dev-only) refuses anything but --provider live
   --arm baseline[,skill]  pilot only: the arm(s) to run, comma-separated (default: baseline). With both, arms interleave and the first arm flips each round
+  --build                 pairs only: build the sheet and key for the campaign
+  --sheet <file>          pairs --reconcile only: the marked sheet (default: the sheet.md beside the key)
   --errors-only           rejudge only: judge just the runs whose latest verdict is judge_error; every other run keeps its verdict
   --prereg <file>         pilot, and rejudge of a pilot campaign: the repo-relative prereg to enforce (default: evals/<m>/pilot/prereg.json)
   --fixture <id>          only this fixture (single-run debugging; marks the campaign as deviating from prereg)
@@ -78,6 +87,8 @@ export interface MainIO {
   installSignalHandlers?: (abort: () => void) => () => void
   /** Hook for tests: the judge `rejudge` builds, so a pilot rejudge can run without a gateway. */
   createJudge?: typeof createJudge
+  /** Hook for tests: the random source for the pair sheet's side draw and shuffle. Default: the system's crypto source. */
+  rng?: Rng
   cwd: string
 }
 
@@ -136,6 +147,21 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
       err,
       availability: io.opencodeAvailability ?? opencodeAvailability,
       makeJudge: io.createJudge ?? createJudge,
+    })
+  }
+  if (mode === 'pairs' && !extra.length) {
+    return pairsMain({
+      campaign: parsed.values.campaign,
+      build: parsed.values.build === true,
+      reconcile: parsed.values.reconcile === true,
+      sheet: parsed.values.sheet,
+      preregFlag: parsed.values.prereg,
+      repo,
+      cwd,
+      env,
+      out,
+      err,
+      ...(io.rng ? { rng: io.rng } : {}),
     })
   }
   if (mode === 'report' && !extra.length && method) return reportMain({ method, repo, campaign: parsed.values.campaign, devOnly, green: parsed.values.green === true, cliproxyFlag: parsed.values['auth-cliproxy'], cwd, env, out, err })
@@ -638,6 +664,116 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
   return EXIT.OK
 }
 
+interface PairsArgs {
+  campaign?: string | undefined
+  build: boolean
+  reconcile: boolean
+  sheet?: string | undefined
+  preregFlag?: string | undefined
+  repo?: string | undefined
+  cwd: string
+  env: Record<string, string | undefined>
+  out: (line: string) => void
+  err: (line: string) => void
+  rng?: Rng
+}
+
+/**
+ * `pairs --build`: the blind pair sheet and key for a finished two-arm pilot campaign, under the state root. `pairs --reconcile`: the
+ * owner's marks against the key, and `evals/<m>/pilot/pair-summary.json`. The pilot prereg must be committed and clean for a build,
+ * so the statements on the sheet are the ones the prereg hashed.
+ */
+function pairsMain(a: PairsArgs): number {
+  if (!a.campaign || a.build === a.reconcile) {
+    a.err(`pairs needs --campaign <id|dir> and exactly one of --build and --reconcile\n${USAGE}`)
+    return EXIT.USAGE
+  }
+  if (a.sheet !== undefined && !a.reconcile) {
+    a.err(`--sheet applies to pairs --reconcile only\n${USAGE}`)
+    return EXIT.USAGE
+  }
+  if (a.preregFlag !== undefined && !a.build) {
+    a.err(`--prereg applies to pairs --build only\n${USAGE}`)
+    return EXIT.USAGE
+  }
+  const repoRoot = new Git(a.repo ?? a.cwd).toplevel()
+  const campaignDir = resolveCampaignDir(a.campaign, repoRoot, a.cwd, a.env)
+  if (!campaignDir) {
+    a.err(`no campaign directory found for ${a.campaign}`)
+    return EXIT.ERROR
+  }
+  let runs: ReturnType<typeof loadCampaignRuns>
+  try {
+    runs = loadCampaignRuns(campaignDir)
+  } catch (e) {
+    if (!(e instanceof ManifestFormatError)) throw e
+    a.err(`REFUSED: ${campaignDir}: ${e.message}`)
+    return EXIT.REFUSED
+  }
+  if (runs.length === 0) {
+    a.err(`no run manifests in ${a.campaign}`)
+    return EXIT.ERROR
+  }
+  if (runs.some((r) => r.manifest.arm === undefined)) {
+    a.err(`REFUSED: ${campaignDir} is not a pilot campaign (a manifest carries no arm); a pair sheet pairs the arms of one`)
+    return EXIT.REFUSED
+  }
+  const campaignId = runs[0]!.manifest.campaign_id
+  const method = runs[0]!.manifest.method
+  const dir = pairsDir(a.env, campaignId)
+
+  try {
+    if (a.reconcile) {
+      const key = readPairKey(dir)
+      if (key.campaign_id !== campaignId) throw new PairRefusal(`the key at ${dir} is for campaign ${key.campaign_id}, not ${campaignId}`)
+      const sheetPath = a.sheet ? resolve(a.cwd, a.sheet) : join(dir, 'sheet.md')
+      if (!existsSync(sheetPath)) throw new PairRefusal(`no sheet at ${sheetPath}`)
+      const reconciled = reconcilePairs(key, readFileSync(sheetPath, 'utf8'))
+      for (const line of summarizePairs(reconciled)) a.out(line)
+      a.out(`wrote ${writePairSummary(repoRoot, reconciled.summary).slice(repoRoot.length + 1)}`)
+      return EXIT.OK
+    }
+
+    const preregPath = pilotPreregRel(repoRoot, method, a.preregFlag)
+    if (preregPath === undefined) throw new PairRefusal(`--prereg ${a.preregFlag} is outside the repository`)
+    const uncommitted = preregCommitViolation(new Git(repoRoot), repoRoot, preregPath)
+    if (uncommitted) throw new PairRefusal(uncommitted.message)
+    const verification = enforcePrereg({ git: new Git(repoRoot), repoRoot, method, mode: 'dev', heldoutDir: heldoutDir(method, a.env, undefined, repoRoot), preregPath })
+    const stale = runs.filter((r) => r.manifest.prereg.content_hash !== verification.contentHash)
+    if (stale.length) throw new PairRefusal(`${stale.length} run(s) were made under another prereg content (${stale[0]!.manifest.run_id} under ${stale[0]!.manifest.prereg.content_hash.slice(0, 12)}, not the current ${verification.contentHash.slice(0, 12)}); the statements on the sheet would not be the ones they ran against`)
+    const contentDir = join(repoRoot, preregContentDirRel(verification.prereg))
+    const spec = parseRubric(readFileSync(join(contentDir, 'rubric.md'), 'utf8'))
+    const tokens = loadRedactTokens(join(contentDir, 'redact.json'))
+    const built = buildPairs({
+      campaignDir,
+      fixtures: verification.content.fixtures.dev,
+      redactText: (text) => redactOrThrow(text, tokens),
+      preregContentHash: verification.contentHash,
+      declared: spec.declarations.expectation,
+      ...(a.rng ? { rng: a.rng } : {}),
+    })
+    const paths = writePairFiles(dir, built)
+    a.out(`wrote ${paths.sheet} (${built.key.cards.length} cards in ${built.key.fixtures.length} fixtures)`)
+    a.out(`wrote ${paths.key} (which side holds which arm, and the judge's verdicts; do not open it before marking)`)
+    for (const i of built.key.incomplete) a.out(`incomplete, not shown: ${i.fixture_id} #${i.index}: ${i.missing.map((m) => `${m.arm} (${m.reason})`).join(', ')}`)
+    return EXIT.OK
+  } catch (e) {
+    if (e instanceof PairRefusal || e instanceof PreregRefusal || e instanceof CustodyError) {
+      a.err(`REFUSED: ${e.message}`)
+      return EXIT.REFUSED
+    }
+    if (e instanceof PairSheetError) {
+      a.err(`${e.message}\nnothing was written`)
+      return EXIT.ERROR
+    }
+    if (e instanceof Error) {
+      a.err(`pairs ${a.build ? '--build' : '--reconcile'} failed: ${e.message}`)
+      return EXIT.ERROR
+    }
+    throw e
+  }
+}
+
 /** `review --reconcile`: agreement and flips from the marked sheet; refreshes only the `human_review` block of a matching GREEN report. */
 function reconcileMain(c: { a: CampaignToolArgs; repoRoot: string; campaignDir: string; method: string }): number {
   const { a, repoRoot, campaignDir, method } = c
@@ -929,6 +1065,8 @@ const OPTIONS = {
   green: { type: 'boolean' },
   'tally-only': { type: 'boolean' },
   'errors-only': { type: 'boolean' },
+  build: { type: 'boolean' },
+  sheet: { type: 'string' },
 } as const
 
 if (import.meta.main) {
