@@ -23,19 +23,21 @@
  * `cryptoRng`, `Side`, the strict-marks reader and the refuse-overwrite key follow `src/spike/feel-drugs/blind.ts` and are copied,
  * not imported: this is their second use.
  */
+import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { readJudgeRecord } from './judge-record'
 import { redactJudgeInput } from './judge'
 import { type CampaignRun, JUDGE_BLOCKING_CHECK_CODES, loadCampaignRuns, PILOT_ARMS, type PilotArm } from './manifest'
-import { pilotDir } from './pilot'
+import { pilotDir, readRejudgeSummary, type RejudgeSummary, vouchedRejudge, verdictUnderContract } from './pilot'
 import type { LoadedFixture } from './prereg'
 import { wilson95 } from './report'
 import { judgedAnswerOf } from './review'
 import { sha256, stateRoot } from './workspace'
 
-export const PAIR_SCHEMA_VERSION = 1 as const
+/** 2: the key carries `build_id`, which the sheet must repeat. A version-1 key is refused. */
+export const PAIR_SCHEMA_VERSION = 2 as const
 export const PAIR_SUMMARY_FILE = 'pair-summary.json'
 
 export type Side = 'X' | 'Y'
@@ -89,6 +91,8 @@ export interface RunSlotCount {
 export interface PairKey {
   schema_version: typeof PAIR_SCHEMA_VERSION
   campaign_id: string
+  /** 16 random bytes, hex, drawn at build time and printed on the sheet's `Build:` line. A sheet marked for another build is refused. */
+  build_id: string
   method: string
   prereg_content_hash: string
   created_at: string
@@ -133,15 +137,73 @@ function latestSlots(runs: readonly CampaignRun[]): Slot[] {
   return [...best.values()]
 }
 
-/** What the judge last said for a run: `judge.json` (written by the run and by every rejudge), else nothing. */
-function judgeSaysOf(runDir: string): { says: JudgeSays; hash: string | null | undefined; fileSha256: string | null } {
-  const path = join(runDir, 'judge.json')
-  if (!existsSync(path)) return { says: 'none', hash: undefined, fileSha256: null }
-  const text = readFileSync(path, 'utf8')
-  const record = readJudgeRecord(text)
-  const fileSha256 = sha256(text)
-  if (record.error !== undefined || record.criteria.length === 0) return { says: 'judge_error', hash: record.redacted_input_sha256, fileSha256 }
-  return { says: record.criteria.every((c) => c.verdict === 'pass') ? 'pass' : 'fail', hash: record.redacted_input_sha256, fileSha256 }
+interface JudgeContext {
+  summary: RejudgeSummary | undefined
+  /** The pilot prereg's current content hash. */
+  contract: string
+  judgeModelId: string
+  criteria: readonly string[]
+}
+
+interface JudgeFor {
+  says: JudgeSays
+  /** `redacted_input_sha256` that `judge.json` recorded, when it exists. */
+  hash: string | null | undefined
+  /** sha256 of `judge.json` as it is now, `null` when there is none. */
+  fileSha256: string | null
+  /** Every way this run's judge record is not bound to the current contract. Empty when it is, and when there is no record. */
+  problems: string[]
+}
+
+/**
+ * What the judge said for a run, once that verdict is bound to the current contract. The verdict comes from the same place the pilot
+ * tally takes it (`verdictUnderContract`): a `judge.json` that a rejudge under this prereg content hash vouches for, else the
+ * manifest's own recorded evidence. Anything else is a problem, never a silent drop: the manifest made under another prereg; a rejudge
+ * row that is not under this prereg, or whose file is not the one it vouched for; another judge model; criteria other than the
+ * rubric's. A judge that errored has no criteria to compare. A run with no judge record at all has no verdict and nothing to bind.
+ */
+function judgeFor(slot: Slot, ctx: JudgeContext): JudgeFor {
+  const m = slot.run.manifest
+  const path = join(slot.run.dir, 'judge.json')
+  const fileText = existsSync(path) ? readFileSync(path, 'utf8') : undefined
+  const fileSha256 = fileText === undefined ? null : sha256(fileText)
+  const hash = fileText === undefined ? undefined : readJudgeRecord(fileText).redacted_input_sha256
+  const row = ctx.summary?.rows.get(m.run_id)
+  const rejudged = row !== undefined && row.verdict !== 'skipped' && row.judge_json_sha256 !== undefined
+  if (m.judge === undefined && fileText === undefined && !rejudged) return { says: 'none', hash, fileSha256, problems: [] }
+
+  const problems: string[] = []
+  const bad = (why: string) => problems.push(`${m.run_id}: ${why}`)
+  if (m.prereg.content_hash !== ctx.contract) bad(`it was run under prereg ${m.prereg.content_hash.slice(0, 12)}, not the current ${ctx.contract.slice(0, 12)}`)
+  let verdicts: readonly { id: string; verdict: string }[] = []
+  let errored = false
+  let model: string | undefined
+  let resolved = false
+  if (rejudged) {
+    const vouched = vouchedRejudge(ctx.summary, slot.run.dir, m.run_id, ctx.contract)
+    if (vouched.ok) {
+      ;({ verdicts, errored, model } = vouched)
+      resolved = true
+    }
+    else bad(`it was rejudged, but the rejudge does not bind to the current contract: ${vouched.why}`)
+  } else if (m.prereg.content_hash === ctx.contract) {
+    const found = verdictUnderContract(ctx.summary, slot.run.dir, m, ctx.contract)
+    if (found.ok && m.judge === undefined) bad('its judge.json is not vouched for by a rejudge under the current contract, and the manifest records no judge evidence')
+    else if (found.ok) {
+      ;({ verdicts, errored, model } = found)
+      resolved = true
+    }
+  }
+  if (resolved) {
+    if (model !== ctx.judgeModelId) bad(`the verdict is from judge ${model ?? 'unknown'}, not the prereg's ${ctx.judgeModelId}`)
+    if (!errored) {
+      const ids = verdicts.map((v) => v.id)
+      const same = ids.length === ctx.criteria.length && ctx.criteria.every((c) => ids.includes(c)) && new Set(ids).size === ids.length
+      if (!same) bad(`its verdict criteria [${ids.join(', ')}] are not exactly the rubric's [${ctx.criteria.join(', ')}]`)
+    }
+  }
+  const says: JudgeSays = errored ? 'judge_error' : verdicts.every((v) => v.verdict === 'pass') ? 'pass' : 'fail'
+  return { says, hash, fileSha256, problems }
 }
 
 interface Shown {
@@ -175,10 +237,16 @@ export interface BuildPairsInput {
   /** The judge's redaction (`redactOrThrow` over the content directory's `redact.json`); throws if a token survives. */
   redactText: (text: string) => string
   preregContentHash: string
+  /** The prereg's `judge_model_id`: every shown verdict must come from this judge. */
+  judgeModelId: string
+  /** The rubric's declared judge criterion ids: every shown verdict must carry exactly these. */
+  criteria: readonly string[]
   /** The rubric declares `expectation: true`. The sheet is the statement-plus-answer view of that contract; without it there is no statement. */
   declared: boolean
   rng?: Rng
   now?: Date
+  /** Test seam; default 16 random bytes, hex. */
+  buildId?: string
 }
 
 function shuffled<T>(items: readonly T[], rng: Rng): T[] {
@@ -210,6 +278,8 @@ export function buildPairs(input: BuildPairsInput): { sheet: string; key: PairKe
   const arms = [...new Set(slots.map((s) => s.arm))]
   if (!arms.includes('baseline') || !arms.includes('skill')) throw new Error(`a pair sheet needs both arms; ${campaignId} has ${arms.join(', ')}`)
 
+  const judgeCtx: JudgeContext = { summary: readRejudgeSummary(input.campaignDir), contract: input.preregContentHash, judgeModelId: input.judgeModelId, criteria: input.criteria }
+  const problems: string[] = []
   const summary: PairKey['campaign'] = { slots: {}, check_failures: {}, skill_loaded: { answered: 0, loaded: 0 } }
   const shown = new Map<string, Shown>()
   const missing = new Map<string, { arm: PilotArm; reason: string }[]>()
@@ -240,7 +310,8 @@ export function buildPairs(input: BuildPairsInput): { sheet: string; key: PairKe
     if (fixture.expectation === undefined) throw new Error(`fixture ${fixture.id} has no verified expectation`)
     // The judge's own function builds the evidence; a different hash means the card would show other text than the judge read.
     const payload = redactJudgeInput({ fixtureText: fixture.text, answer: answer.text, declared: true, expectation: fixture.expectation }, input.redactText)
-    const judged = judgeSaysOf(slot.run.dir)
+    const judged = judgeFor(slot, judgeCtx)
+    problems.push(...judged.problems)
     const recorded = [m.judge?.redacted_input_sha256, judged.hash].filter((h): h is string => typeof h === 'string')
     for (const hash of recorded) {
       if (hash !== payload.sha256) throw new Error(`${m.run_id}: the judged text does not match what the judge was sent (rebuilt ${payload.sha256.slice(0, 12)}, recorded ${hash.slice(0, 12)}); the sheet would not show the judge's evidence`)
@@ -260,6 +331,9 @@ export function buildPairs(input: BuildPairsInput): { sheet: string; key: PairKe
       },
     })
   }
+
+  // A verdict not bound to the current contract is never shown, and never dropped quietly: the build stops and names every such run.
+  if (problems.length) throw new PairSheetError(problems)
 
   // Pairs: both arms shown. Anything else is incomplete and reported, not shown.
   const incomplete: IncompletePair[] = []
@@ -306,6 +380,7 @@ export function buildPairs(input: BuildPairsInput): { sheet: string; key: PairKe
   const key: PairKey = {
     schema_version: PAIR_SCHEMA_VERSION,
     campaign_id: campaignId,
+    build_id: input.buildId ?? randomBytes(16).toString('hex'),
     method,
     prereg_content_hash: input.preregContentHash,
     created_at: (input.now ?? new Date()).toISOString(),
@@ -350,6 +425,7 @@ function renderSheet(
     `# Pair sheet: ${key.campaign_id}`,
     '',
     `Campaign: ${key.campaign_id}`,
+    `Build: ${key.build_id}`,
     'Started:',
     'Finished:',
     '',
@@ -406,6 +482,7 @@ export interface ParsedCard {
 
 export interface ParsedSheet {
   campaign: string[]
+  build: string[]
   started: string[]
   finished: string[]
   cards: ParsedCard[]
@@ -413,11 +490,11 @@ export interface ParsedSheet {
 
 const FENCE_OPEN = /^(~{3,})/
 const CARD_HEADING = /^## (card-\d+)\s*$/
-const FIELD = /^(Campaign|Started|Finished|Mark X|Mark Y|Use|note):(.*)$/i
+const FIELD = /^(Campaign|Build|Started|Finished|Mark X|Mark Y|Use|note):(.*)$/i
 
 /** Reads the header and the mark lines of every card. Text inside a fenced answer is never a heading or a mark. */
 export function parseSheet(sheet: string): ParsedSheet {
-  const parsed: ParsedSheet = { campaign: [], started: [], finished: [], cards: [] }
+  const parsed: ParsedSheet = { campaign: [], build: [], started: [], finished: [], cards: [] }
   let current: ParsedCard | undefined
   let fence = 0
   for (const line of sheet.split(/\r?\n/)) {
@@ -445,7 +522,7 @@ export function parseSheet(sheet: string): ParsedSheet {
     if (!field) continue
     const name = field[1]!.toLowerCase()
     const value = field[2]!.trim()
-    if (name === 'campaign' || name === 'started' || name === 'finished') {
+    if (name === 'campaign' || name === 'build' || name === 'started' || name === 'finished') {
       if (current === undefined) parsed[name].push(value)
     } else if (current !== undefined) {
       if (name === 'mark x') current.markX.push(value)
@@ -511,6 +588,16 @@ export function readMarks(sheet: string, key: PairKey): ReadMarks {
   const parsed = parseSheet(sheet)
   if (parsed.campaign.length !== 1) throw new PairRefusal(`the sheet names ${parsed.campaign.length === 0 ? 'no campaign' : 'more than one campaign'} on its Campaign line; it is not a sheet for ${key.campaign_id}`)
   if (parsed.campaign[0] !== key.campaign_id) throw new PairRefusal(`the sheet is for campaign ${parsed.campaign[0]}, the key is for ${key.campaign_id}`)
+  // The campaign id alone cannot tell two builds of one campaign apart, and a rebuild can draw the same card ids.
+  if (parsed.build.length !== 1 || parsed.build[0] !== key.build_id) {
+    throw new PairSheetError([
+      parsed.build.length === 0
+        ? 'the sheet has no Build line, so it is from another build (or an older one) than the key; mark the sheet this key was built with'
+        : parsed.build.length > 1
+          ? 'the sheet has more than one Build line; it is from another build than the key'
+          : `the sheet is from another build (sheet ${parsed.build[0]!.slice(0, 12)}, key ${key.build_id.slice(0, 12)}); mark the sheet this key was built with, or rebuild`,
+    ])
+  }
   const problems: string[] = []
   try {
     assertSheetMatchesKey(sheet, key)
@@ -744,7 +831,9 @@ export function readPairKey(dir: string): PairKey {
   const path = join(dir, 'key.json')
   if (!existsSync(path)) throw new PairRefusal(`no key at ${path}; run \`eval pairs --build\` first`)
   const key = JSON.parse(readFileSync(path, 'utf8')) as PairKey
-  if (key.schema_version !== PAIR_SCHEMA_VERSION) throw new PairRefusal(`${path} has schema_version ${String(key.schema_version)}, this build reads ${PAIR_SCHEMA_VERSION}`)
+  if (key.schema_version !== PAIR_SCHEMA_VERSION) {
+    throw new PairRefusal(`${path} has schema_version ${String(key.schema_version)}, this build reads ${PAIR_SCHEMA_VERSION} (version 2 added the build id); rebuild the sheet and key, moving the old ones aside first`)
+  }
   return key
 }
 

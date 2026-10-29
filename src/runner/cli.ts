@@ -749,6 +749,8 @@ function pairsMain(a: PairsArgs): number {
       fixtures: verification.content.fixtures.dev,
       redactText: (text) => redactOrThrow(text, tokens),
       preregContentHash: verification.contentHash,
+      judgeModelId: verification.prereg.judge_model_id,
+      criteria: spec.criteria.map((c) => c.id),
       declared: spec.declarations.expectation,
       ...(a.rng ? { rng: a.rng } : {}),
     })

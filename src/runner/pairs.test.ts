@@ -1,5 +1,5 @@
 import { afterAll, afterEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -18,6 +18,7 @@ import {
   pairsDir,
   parseSheet,
   readMarks,
+  readPairKey,
   reconcilePairs,
   summarizePairs,
   writePairFiles,
@@ -88,19 +89,25 @@ interface Plant {
   /** The hash the manifest records, instead of the true one. */
   recordedHash?: string
   attempt?: number
+  /** Criterion ids the judge evidence carries (default `['SA1']`). */
+  criteria?: string[]
+  /** The judge model the manifest records (default `judge/x`). */
+  judgeModel?: string
+  /** The prereg content hash the manifest records (default: the campaign's). */
+  contract?: string
 }
 
-function evidenceFor(fixture: LoadedFixture, answer: string, says: Says, hash?: string, redact: (text: string) => string = redactText): JudgeEvidence {
+function evidenceFor(fixture: LoadedFixture, answer: string, says: Says, hash?: string, redact: (text: string) => string = redactText, opts: { criteria?: string[]; model?: string } = {}): JudgeEvidence {
   const payload = redactJudgeInput({ fixtureText: fixture.text, answer, declared: true, expectation: fixture.expectation! }, redact)
   return {
-    model: { pinned: 'judge/x', returned: ['x'] },
+    model: { pinned: opts.model ?? 'judge/x', returned: ['x'] },
     system_prompt_sha256: 'a'.repeat(64),
     input_sha256: 'b'.repeat(64),
     redacted_input_sha256: hash ?? payload.sha256,
     attempts: 1,
     temperature: 0,
     error_code: says === 'error' ? 'invalid_malformed_json' : null,
-    criteria: says === 'error' ? [] : [{ id: 'SA1', verdict: says === 'pass' ? 'pass' : 'fail', quote: 'JUDGE-QUOTE-MARKER', quote_verified: true }],
+    criteria: says === 'error' ? [] : (opts.criteria ?? ['SA1']).map((id) => ({ id, verdict: says === 'pass' ? ('pass' as const) : ('fail' as const), quote: 'JUDGE-QUOTE-MARKER', quote_verified: true })),
     overclaim_flag: false,
     tool_calls: 0,
     wall_ms: 1,
@@ -125,7 +132,7 @@ function plantCampaign(plants: Plant[], campaignId = CAMPAIGN, where: PlantWhere
     const fixture = fixtures.find((f) => f.id === p.fixture)!
     const says: Says = p.judge ?? 'pass'
     const judged = p.answer !== undefined && says !== 'none'
-    const ev = judged ? evidenceFor(fixture, p.answer!, says, p.recordedHash) : undefined
+    const ev = judged ? evidenceFor(fixture, p.answer!, says, p.recordedHash, redactText, { ...(p.criteria ? { criteria: p.criteria } : {}), ...(p.judgeModel ? { model: p.judgeModel } : {}) }) : undefined
     writeManifest(dir, {
       schema_version: 1,
       run_id: runId,
@@ -141,7 +148,7 @@ function plantCampaign(plants: Plant[], campaignId = CAMPAIGN, where: PlantWhere
       check_failures: (p.checks ?? []).map((code) => ({ code, message: 'm' })),
       records: [],
       artifacts: {},
-      prereg: { content_hash: where.preregHash ?? PREREG_HASH, epoch: 1 },
+      prereg: { content_hash: p.contract ?? where.preregHash ?? PREREG_HASH, epoch: 1 },
       model: { pinned: 'agent/x', returned: [] },
       ...(p.arm === 'skill' ? { fire_basis: p.fire === undefined ? 'skill_tool' : p.fire } : {}),
       ...(ev ? { judge: ev } : {}),
@@ -155,7 +162,7 @@ function plantCampaign(plants: Plant[], campaignId = CAMPAIGN, where: PlantWhere
         join(dir, 'judge.json'),
         JSON.stringify({
           redacted_input_sha256: ev.redacted_input_sha256,
-          model_pinned: 'judge/x',
+          model_pinned: ev.model.pinned,
           model_returned: ['x'],
           criteria: ev.criteria.map((c) => ({ id: c.id, verdict: c.verdict, quotes: [c.quote] })),
           attempts: 1,
@@ -181,8 +188,10 @@ function fullPlants(over: (p: Plant) => Partial<Plant> = () => ({}), runs = 5): 
   return plants
 }
 
+const JUDGE_MODEL = 'judge/x'
+const CRITERIA = ['SA1']
 const build = (campaign: string, extra: Partial<Parameters<typeof buildPairs>[0]> = {}) =>
-  buildPairs({ campaignDir: campaign, fixtures: FIXTURES, redactText, preregContentHash: PREREG_HASH, declared: true, rng: seeded(7), now: new Date('2026-10-29T00:00:00Z'), ...extra })
+  buildPairs({ campaignDir: campaign, fixtures: FIXTURES, redactText, preregContentHash: PREREG_HASH, judgeModelId: JUDGE_MODEL, criteria: CRITERIA, declared: true, rng: seeded(7), now: new Date('2026-10-29T00:00:00Z'), ...extra })
 
 /** Fills in the marks of every card: `mark(armLabelOfSide, answerText)` decides pass or fail, `use` the preference. */
 function markSheet(
@@ -305,7 +314,7 @@ describe('buildPairs: 30 complete pairs', () => {
 
   test('with no rng the default crypto source draws: two builds of one campaign differ (30 coin flips; identical by chance is 2^-30)', () => {
     // `build` always injects an rng, so call buildPairs directly with the key left out.
-    const direct = () => buildPairs({ campaignDir: campaign, fixtures: FIXTURES, redactText, preregContentHash: PREREG_HASH, declared: true })
+    const direct = () => buildPairs({ campaignDir: campaign, fixtures: FIXTURES, redactText, preregContentHash: PREREG_HASH, judgeModelId: JUDGE_MODEL, criteria: CRITERIA, declared: true })
     const first = direct().key.cards.map((c) => `${c.fixture_id}#${c.index}:${c.sides.X.arm}`)
     const second = direct().key.cards.map((c) => `${c.fixture_id}#${c.index}:${c.sides.X.arm}`)
     expect(first).toHaveLength(30)
@@ -533,6 +542,180 @@ describe('reconcile refuses when a shown run\'s judge.json changed after the bui
       rmSync(judgeFile(appeared.run_id), { force: true })
       writeFileSync(judgeFile(vanished.run_id), kept)
     }
+  })
+})
+
+describe('judge-record provenance is bound to the current contract before any verdict is used', () => {
+  const refusal = (campaign: string, extra: Partial<Parameters<typeof buildPairs>[0]> = {}): string[] => {
+    try {
+      build(campaign, extra)
+    } catch (e) {
+      if (e instanceof PairSheetError) return e.problems
+      throw e
+    }
+    throw new Error('expected a PairSheetError')
+  }
+  const runDirOf = (campaign: string, part: string) => join(campaign, readdirSyncSorted(campaign).find((n) => n.includes(part))!)
+  /** What a rejudge leaves: judge.json (already there) vouched by a summary row, under `contract` and `model`; `skipped` rows vouch for nothing. */
+  function plantSummary(campaign: string, rows: { part: string; verdict?: string; hash?: string | null }[], contract = PREREG_HASH, model = JUDGE_MODEL): void {
+    const runs = rows.map((r) => {
+      const dir = runDirOf(campaign, r.part)
+      const runId = dir.slice(dir.lastIndexOf('/') + 1)
+      const file = join(dir, 'judge.json')
+      const hash = r.hash === undefined ? (existsSync(file) ? sha256(readFileSync(file, 'utf8')) : undefined) : (r.hash ?? undefined)
+      return { run_id: runId, prior_outcome: 'pass', verdict: r.verdict ?? 'pass', ...(hash ? { judge_json_sha256: hash } : {}) }
+    })
+    writeFileSync(join(campaign, 'rejudge-summary.json'), JSON.stringify({ judge_prompt_sha256: 'f'.repeat(64), prereg_content_hash: contract, judge_model_id: model, runs }))
+  }
+  const fresh = (over: (p: Plant) => Partial<Plant> = () => ({})) => plantCampaign(fullPlants(over))
+
+  test('the matching contract builds as before, with or without a rejudge summary of skipped rows (the live campaign\'s state)', () => {
+    const plain = fresh()
+    expect(build(plain).key.cards).toHaveLength(30)
+    const skippedOnly = fresh()
+    plantSummary(skippedOnly, [{ part: '-d1-baseline-r1', verdict: 'skipped', hash: null }])
+    expect(build(skippedOnly).key.cards).toHaveLength(30)
+  })
+
+  test('a judge.json (and manifest record) with a foreign criterion id is refused, naming the run', () => {
+    const campaign = fresh((p) => (p.fixture === 'd2' && p.index === 2 && p.arm === 'skill' ? { criteria: ['SA1', 'TE9'] } : {}))
+    const problems = refusal(campaign)
+    expect(problems).toHaveLength(1)
+    expect(problems[0]).toContain('-d2-skill-r2')
+    expect(problems[0]).toContain('criteria')
+    expect(problems[0]).toContain('TE9')
+  })
+
+  test('a missing criterion is refused too: the rubric declares more than the verdict carries', () => {
+    const problems = refusal(fresh(), { criteria: ['SA1', 'SA2'] })
+    expect(problems).toHaveLength(60)
+    expect(problems[0]).toContain('SA2')
+    // A verdict with no criteria and no error is not a judge error either.
+    const empty = refusal(fresh((p) => (p.fixture === 'd3' && p.arm === 'baseline' && p.index === 1 ? { criteria: [] } : {})))
+    expect(empty).toHaveLength(1)
+    expect(empty[0]).toContain('-d3-baseline-r1')
+  })
+
+  test('a judge_error run has no criteria and is not refused for that', () => {
+    expect(build(fresh((p) => (p.fixture === 'd1' && p.index === 1 && p.arm === 'skill' ? { judge: 'error' } : {}))).key.cards).toHaveLength(30)
+  })
+
+  test('a rejudge summary under a different judge_model_id is refused', () => {
+    const campaign = fresh()
+    plantSummary(campaign, [{ part: '-d1-skill-r1' }], PREREG_HASH, 'judge/other')
+    const problems = refusal(campaign)
+    expect(problems).toHaveLength(1)
+    expect(problems[0]).toContain('-d1-skill-r1')
+    expect(problems[0]).toContain('judge/other')
+  })
+
+  test('a rejudge summary under a different prereg_content_hash is refused', () => {
+    const campaign = fresh()
+    plantSummary(campaign, [{ part: '-d1-skill-r1' }], 'e'.repeat(64))
+    const problems = refusal(campaign)
+    expect(problems).toHaveLength(1)
+    expect(problems[0]).toContain('-d1-skill-r1')
+    expect(problems[0]).toContain('prereg')
+  })
+
+  test('a rejudged run whose judge.json is not the file the summary vouches for is refused', () => {
+    const campaign = fresh()
+    plantSummary(campaign, [{ part: '-d1-skill-r1', hash: 'd'.repeat(64) }])
+    expect(refusal(campaign)[0]).toContain('not the file the rejudge wrote')
+  })
+
+  test('a vouched rejudge is the verdict used: its judge.json decides the key, not the manifest\'s older record', () => {
+    const campaign = fresh()
+    const file = join(runDirOf(campaign, '-d1-skill-r1'), 'judge.json')
+    writeFileSync(file, readFileSync(file, 'utf8').replace('"verdict":"pass"', '"verdict":"fail"'))
+    plantSummary(campaign, [{ part: '-d1-skill-r1' }])
+    const { key } = build(campaign)
+    const run = key.cards.flatMap((c) => [c.sides.X, c.sides.Y]).find((r) => r.run_id.includes('-d1-skill-r1'))!
+    expect(run.judge).toBe('fail')
+  })
+
+  test('a run made under another prereg content hash is refused, naming it', () => {
+    const problems = refusal(fresh((p) => (p.fixture === 'd4' && p.index === 3 && p.arm === 'baseline' ? { contract: 'c'.repeat(64) } : {})))
+    expect(problems).toHaveLength(1)
+    expect(problems[0]).toContain('-d4-baseline-r3')
+    expect(problems[0]).toContain('prereg')
+  })
+
+  test('a run whose manifest recorded another judge model is refused', () => {
+    const problems = refusal(fresh((p) => (p.fixture === 'd5' && p.index === 4 && p.arm === 'skill' ? { judgeModel: 'judge/other' } : {})))
+    expect(problems[0]).toContain('-d5-skill-r4')
+    expect(problems[0]).toContain('judge/other')
+  })
+
+  test('every offending run is named, not only the first; nothing is dropped silently', () => {
+    const campaign = fresh((p) => (p.index === 1 && p.arm === 'skill' && (p.fixture === 'd1' || p.fixture === 'd2') ? { judgeModel: 'judge/other' } : {}))
+    const problems = refusal(campaign)
+    expect(problems).toHaveLength(2)
+    expect(problems.join('\n')).toContain('-d1-skill-r1')
+    expect(problems.join('\n')).toContain('-d2-skill-r1')
+  })
+
+  test('a run with no judge record at all needs no provenance (it is shown with no verdict)', () => {
+    const { key } = build(fresh((p) => (p.fixture === 'd6' && p.index === 5 && p.arm === 'baseline' ? { judge: 'none' } : {})))
+    expect(key.cards).toHaveLength(30)
+  })
+})
+
+describe('a sheet is bound to the build that made it', () => {
+  const campaign = plantCampaign(fullPlants())
+
+  test('the key carries a random 16-byte build id, and the sheet prints it on a Build: line', () => {
+    const { sheet, key } = build(campaign)
+    expect(key.build_id).toMatch(/^[0-9a-f]{32}$/)
+    expect(sheet).toContain(`Build: ${key.build_id}`)
+    expect(parseSheet(sheet).build).toEqual([key.build_id])
+    expect(build(campaign).key.build_id).not.toBe(build(campaign).key.build_id)
+  })
+
+  test('a sheet reconciles against its own key', () => {
+    const { sheet, key } = build(campaign)
+    expect(reconcilePairs(key, markSheet(sheet, key)).summary.pairs.shown).toBe(30)
+  })
+
+  test('build, move the files aside, rebuild the same campaign: the old marked sheet is refused against the new key', () => {
+    const dir = join(tmp('metacogs-pairs-state-'), 'pairs')
+    const first = build(campaign, { rng: seeded(1) })
+    writePairFiles(join(dir, 'first'), first)
+    const markedOld = markSheet(first.sheet, first.key)
+    // The first build's files are moved aside, and the same campaign is built again.
+    const second = build(campaign, { rng: seeded(1) })
+    writePairFiles(dir, second)
+    // Same seed, same draw, same card ids: only the build id tells the two sheets apart.
+    expect(second.key.cards.map((c) => c.id)).toEqual(first.key.cards.map((c) => c.id))
+    let error: unknown
+    try {
+      reconcilePairs(second.key, markedOld)
+    } catch (e) {
+      error = e
+    }
+    expect(error).toBeInstanceOf(PairSheetError)
+    expect((error as PairSheetError).problems.join('\n')).toContain('another build')
+    // The new sheet marked the same way is fine.
+    expect(reconcilePairs(second.key, markSheet(second.sheet, second.key)).summary.pairs.shown).toBe(30)
+  })
+
+  test('a sheet with no Build line, or two, is refused', () => {
+    const { sheet, key } = build(campaign)
+    const marked = markSheet(sheet, key)
+    const bare = marked.replace(/^Build: .*\n/m, '')
+    expect(() => reconcilePairs(key, bare)).toThrow(PairSheetError)
+    expect(() => reconcilePairs(key, bare)).toThrow(/another build|no Build line/)
+    expect(() => reconcilePairs(key, marked.replace(/^Build: .*$/m, `Build: ${key.build_id}\nBuild: ${key.build_id}`))).toThrow(PairSheetError)
+  })
+
+  test('a key from before build ids (schema 1) is refused with a message to rebuild', () => {
+    const { sheet, key } = build(campaign)
+    const old = { ...key, schema_version: 1 } as unknown as PairKey
+    const dir = tmp('metacogs-pairs-oldkey-')
+    writeFileSync(join(dir, 'key.json'), JSON.stringify(old))
+    expect(() => readPairKey(dir)).toThrow(PairRefusal)
+    expect(() => readPairKey(dir)).toThrow(/rebuild/)
+    void sheet
   })
 })
 
@@ -831,6 +1014,8 @@ describe('two-arm campaign, build, mark, reconcile', () => {
       fixtures: verification.content.fixtures.dev,
       redactText: (t) => redactOrThrow(t, tokens),
       preregContentHash: verification.contentHash,
+      judgeModelId: verification.prereg.judge_model_id,
+      criteria: judge.spec.criteria.map((c) => c.id),
       declared: judge.spec.declarations.expectation,
       rng: seeded(3),
       now: new Date('2026-10-29T00:00:00Z'),
@@ -888,13 +1073,13 @@ describe('eval pairs (CLI)', () => {
     const rubric = JUDGED_RUBRIC_TEXT.replace('\n## Criteria\n', '\n## Declarations\n\nexpectation: true\n\n## Criteria\n')
     const scaffold = scaffoldMethod(repo, 'demo', { heldoutDir: heldout, rubric, expectations: { dev: { d1: OUTCOME } } })
     repo.write('evals/demo/redact.json', JSON.stringify({ tokens: TOKENS }))
-    repo.write(PILOT_PREREG, `${JSON.stringify({ ...scaffold.prereg, runs_per_condition: 3 }, null, 2)}\n`)
+    repo.write(PILOT_PREREG, `${JSON.stringify({ ...scaffold.prereg, runs_per_condition: 3, judge_model_id: JUDGE_MODEL }, null, 2)}\n`)
     repo.commit('test: pilot content and prereg', [...scaffold.fixturePaths, 'evals/demo/redact.json', PILOT_PREREG])
     const verification = enforcePrereg({ git: repo.git, repoRoot: repo.dir, method: 'demo', mode: 'dev', heldoutDir: heldout, preregPath: PILOT_PREREG })
     const plants: Plant[] = []
     for (let index = 1; index <= 3; index += 1) {
       for (const arm of ['baseline', 'skill'] as const) {
-        const base: Plant = { fixture: 'd1', arm, index, answer: `${arm === 'skill' ? 'Labelled' : 'Plain'} answer ${index}: ${index === 1 && arm === 'baseline' ? 'BAD' : 'GOOD'} recommendation.` }
+        const base: Plant = { fixture: 'd1', arm, index, criteria: ['TE1', 'TE2'], answer: `${arm === 'skill' ? 'Labelled' : 'Plain'} answer ${index}: ${index === 1 && arm === 'baseline' ? 'BAD' : 'GOOD'} recommendation.` }
         plants.push({ ...base, ...over(base) })
       }
     }
@@ -952,6 +1137,27 @@ describe('eval pairs (CLI)', () => {
     expect(await main(args(repo, '--build'), again.io)).toBe(EXIT.REFUSED)
     expect(again.lines.err.join('\n')).toContain('never replaced')
     expect(readFileSync(keyPath, 'utf8')).toBe(before)
+  })
+
+  test('a rebuilt sheet and key: the old marked sheet is refused against them (another build), and the new sheet reconciles', async () => {
+    const { repo } = await pilotWithCampaign()
+    const t = cliIo()
+    expect(await main(args(repo, '--build'), t.io)).toBe(EXIT.OK)
+    const dir = pairsDir(t.io.env, CAMPAIGN)
+    const oldKey = JSON.parse(readFileSync(join(dir, 'key.json'), 'utf8')) as PairKey
+    const oldMarked = markSheet(readFileSync(join(dir, 'sheet.md'), 'utf8'), oldKey)
+    // Move the first build aside, as the README says, and build again.
+    renameSync(dir, `${dir}.first`)
+    const again = cliIo()
+    again.io.env.XDG_STATE_HOME = t.stateHome
+    expect(await main(args(repo, '--build'), again.io)).toBe(EXIT.OK)
+    const oldSheetFile = join(tmp('metacogs-pairs-oldsheet-'), 'old.md')
+    writeFileSync(oldSheetFile, oldMarked)
+    const r = cliIo()
+    r.io.env.XDG_STATE_HOME = t.stateHome
+    expect(await main(args(repo, '--reconcile', '--sheet', oldSheetFile), r.io)).toBe(EXIT.ERROR)
+    expect(r.lines.err.join('\n')).toContain('another build')
+    expect(existsSync(join(repo.dir, 'evals', 'demo', 'pilot', 'pair-summary.json'))).toBe(false)
   })
 
   test('--reconcile with no key, and a sheet that names another campaign, are refused', async () => {
