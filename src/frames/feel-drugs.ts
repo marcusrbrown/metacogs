@@ -34,7 +34,7 @@ export interface DrugsArgs {
   displaces: string
 }
 
-export const FEEL_DESCRIPTION = `Pause on a tension you can't yet name, before you choose the next move. This borrows Gendlin's focusing move: attend to what is here before it has words, and leave a handle for it.`
+export const FEEL_DESCRIPTION = `Pause on a stuck point you can't yet name, to work out what your next move should change. Use when the same failure persists after materially different attempts, conflicting constraints block a commitment, or your next step would repeat a hypothesis you already exhausted. It is a working metaphor; evidence still decides.`
 
 export const FEEL_FIELD_DESCRIPTIONS = {
   somewhere: `Where the tension sits. Vague is correct — precision comes later. "somewhere in the response to what they said." "in the gap between analysis and reaction."`,
@@ -56,11 +56,11 @@ This is a working label, not a report of an inner state. Hold the texture unspok
 /** The `feel` return template with the three required fields as `<name>` placeholders. */
 export const FEEL_FRAME = feelText({ sigil: '<sigil>', somewhere: '<somewhere>', quality: '<quality>' })
 
-export const DRUGS_DESCRIPTION = `Deliberately change your approach for the next attempt, when the approach itself is the problem. The substance is only a handle: it supplies no facts, adds no capability, and changes nothing about what you may do.`
+export const DRUGS_DESCRIPTION = `Deliberately replace an exhausted approach with a different one for the next attempt. Use when requested creative or design exploration has stalled on the same few alternatives, or another attempt would repeat the last one. It is a working metaphor; evidence still decides.`
 
 export const DRUGS_FIELD_DESCRIPTIONS = {
-  substance: `The handle. Name a specific drug, neurotransmitter, or fictional substance whose usual associations you can spell out in method. Use × to combine.`,
-  method: `The change of approach, in task terms. What you will emphasize, what you will set aside, which assumptions you will stop leaning on. Name the tradeoff — every change of approach costs something.`,
+  substance: `Name a specific real drug or neurotransmitter, such as caffeine or acetylcholine, as a metaphorical handle — not a person, character, school, or method. In method, state the task-level change and its tradeoff. Use × to combine two.`,
+  method: `The task-level change of approach: what you will emphasize, what you will set aside, which assumptions you will stop leaning on. Name its tradeoff — every change of approach costs something.`,
   displaces: `The approach this replaces. Name the previous substance, or "baseline" for your default. Naming it keeps to one change at a time, unless you're deliberately combining with ×.`,
 } as const
 
