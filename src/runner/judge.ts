@@ -508,15 +508,18 @@ export interface RedactedJudgeInput {
   sha256: string
 }
 
-export interface JudgeInputParts {
+interface JudgeInputBase {
   fixtureText: string
   /** The text under grading: what `JudgeInput.finalAnswer` carries. */
   answer: string
   recordJson?: readonly string[]
-  expectation?: Expectation | undefined
-  /** The rubric declares `expectation: true`. */
-  declared: boolean
 }
+
+/**
+ * `declared` is whether the rubric declares `expectation: true`. When it does, the fixture's expectation is required and the record is
+ * never sent; when it does not, there is no expectation to send. The union makes the two impossible mixes unwritable.
+ */
+export type JudgeInputParts = (JudgeInputBase & { declared: true; expectation: Expectation }) | (JudgeInputBase & { declared: false; expectation?: undefined })
 
 /**
  * The one place the judge's evidence is built: task, answer, record and canonical expectation, each redacted, and the hash of the
@@ -569,12 +572,14 @@ export function createJudge(options: CreateJudgeOptions): Judge {
     }
 
     // A rubric that declares `expectation` is graded against the sidecar; without one there is nothing to grade against.
-    if (declared && input.fixture.expectation === undefined) return error('expectation_missing')
+    const fixtureExpectation = input.fixture.expectation
+    if (declared && fixtureExpectation === undefined) return error('expectation_missing')
 
     // Redact, then assert. A survivor aborts before any request is made.
     let payload: RedactedJudgeInput
     try {
-      payload = redactJudgeInput({ fixtureText: input.fixture.text, answer: input.finalAnswer, recordJson: input.recordJson, expectation: input.fixture.expectation, declared }, redactText)
+      const base = { fixtureText: input.fixture.text, answer: input.finalAnswer, recordJson: input.recordJson }
+      payload = redactJudgeInput(declared && fixtureExpectation !== undefined ? { ...base, declared: true, expectation: fixtureExpectation } : { ...base, declared: false }, redactText)
     } catch (e) {
       if (e instanceof RedactionFailed) return error('redaction_failed')
       throw e

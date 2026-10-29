@@ -91,7 +91,7 @@ interface Plant {
 }
 
 function evidenceFor(fixture: LoadedFixture, answer: string, says: Says, hash?: string, redact: (text: string) => string = redactText): JudgeEvidence {
-  const payload = redactJudgeInput({ fixtureText: fixture.text, answer, expectation: fixture.expectation, declared: true }, redact)
+  const payload = redactJudgeInput({ fixtureText: fixture.text, answer, declared: true, expectation: fixture.expectation! }, redact)
   return {
     model: { pinned: 'judge/x', returned: ['x'] },
     system_prompt_sha256: 'a'.repeat(64),
@@ -267,12 +267,19 @@ describe('buildPairs: 30 complete pairs', () => {
 
   test('the sheet carries no run id, arm, condition, judge verdict, quote or path', () => {
     for (const c of key.cards) for (const side of ['X', 'Y'] as const) expect(sheet).not.toContain(c.sides[side].run_id)
-    expect(sheet).not.toMatch(/baseline|skill|JUDGE-QUOTE-MARKER|attempt|fire_basis|verdict/i)
+    // The header's one disclosure sentence names the skill arm; nothing else on the sheet may.
+    const withoutDisclosure = sheet.replace(/, and `\[redacted\]` placeholders mostly replace skill vocabulary, so a placeholder can hint that an answer came from the skill arm\./, '.')
+    expect(withoutDisclosure).not.toMatch(/baseline|skill|JUDGE-QUOTE-MARKER|attempt|fire_basis|verdict/i)
     expect(sheet).not.toContain(campaign.slice(0, campaign.lastIndexOf('/')))
     expect(sheet).not.toContain('/var/')
     // The answers themselves are there, as the judge read them.
     expect(sheet).toContain('Plain d1 answer 1')
     expect(sheet).toContain('Labelled d1 answer 1')
+  })
+
+  test('the header says the sheet is only partly blind, and that a [redacted] placeholder can hint at the skill arm', () => {
+    expect(sheet).toContain('This sheet is only partly blind')
+    expect(sheet).toContain('`[redacted]` placeholders mostly replace skill vocabulary, so a placeholder can hint that an answer came from the skill arm.')
   })
 
   test('the key has no answer text, and the sheet and key carry the campaign id', () => {
@@ -325,6 +332,54 @@ describe('buildPairs: runs that cannot be shown', () => {
     const { key } = build(campaign)
     const card = key.cards.find((c) => c.fixture_id === 'd2' && c.index === 3)!
     expect([card.sides.X, card.sides.Y].find((s) => s.arm === 'baseline')).toMatchObject({ judge: 'none', hash_checked: false })
+  })
+
+  test('runs the protocol scores as fail without judging (timeout, budget_exceeded, host_crash) are incomplete with their status, and the partner is not shown', () => {
+    const campaign = plantCampaign(
+      fullPlants((p) => {
+        if (p.fixture === 'd1' && p.index === 1 && p.arm === 'skill') return { status: 'timeout', judge: 'none' }
+        if (p.fixture === 'd2' && p.index === 2 && p.arm === 'baseline') return { status: 'budget_exceeded', judge: 'none' }
+        if (p.fixture === 'd3' && p.index === 3 && p.arm === 'skill') return { status: 'host_crash', judge: 'none' }
+        return {}
+      }),
+    )
+    const { sheet, key } = build(campaign)
+    expect(key.cards).toHaveLength(27)
+    expect(key.incomplete).toEqual([
+      { fixture_id: 'd1', index: 1, missing: [{ arm: 'skill', reason: 'status timeout' }] },
+      { fixture_id: 'd2', index: 2, missing: [{ arm: 'baseline', reason: 'status budget_exceeded' }] },
+      { fixture_id: 'd3', index: 3, missing: [{ arm: 'skill', reason: 'status host_crash' }] },
+    ])
+    // They had answer text, but neither they nor their partners are on the sheet.
+    for (const text of ['Labelled d1 answer 1', 'Plain d1 answer 1', 'Plain d2 answer 2', 'Labelled d2 answer 2', 'Labelled d3 answer 3', 'Plain d3 answer 3']) expect(sheet).not.toContain(text)
+    expect(key.campaign.slots.skill!.d1).toEqual({ runs: 5, answered: 4 })
+  })
+
+  test('a completed run blocked from the judge by a check (unrecognized_events, false_fire_*) is incomplete with "blocked by <code>", and the partner is not shown', () => {
+    const campaign = plantCampaign(
+      fullPlants((p) => {
+        if (p.fixture === 'd4' && p.index === 1 && p.arm === 'skill') return { checks: ['record_missing', 'unrecognized_events'], judge: 'none' }
+        if (p.fixture === 'd5' && p.index === 2 && p.arm === 'skill') return { checks: ['false_fire_helper'], judge: 'none' }
+        // Not blocking: judged, shown, recorded.
+        if (p.fixture === 'd6' && p.index === 3 && p.arm === 'skill') return { checks: ['skill_not_loaded', 'record_missing'] }
+        return {}
+      }),
+    )
+    const { sheet, key } = build(campaign)
+    expect(key.cards).toHaveLength(28)
+    expect(key.incomplete).toEqual([
+      { fixture_id: 'd4', index: 1, missing: [{ arm: 'skill', reason: 'blocked by unrecognized_events' }] },
+      { fixture_id: 'd5', index: 2, missing: [{ arm: 'skill', reason: 'blocked by false_fire_helper' }] },
+    ])
+    expect(sheet).not.toContain('Plain d4 answer 1')
+    expect(sheet).not.toContain('Plain d5 answer 2')
+    expect(sheet).toContain('Labelled d6 answer 3')
+  })
+
+  test('a completed run with an answer but a judge_error is still shown (it was judged, and failed to grade)', () => {
+    const { key } = build(plantCampaign(fullPlants((p) => (p.fixture === 'd1' && p.index === 5 && p.arm === 'baseline' ? { judge: 'error' } : {}))))
+    expect(key.cards).toHaveLength(30)
+    expect(key.incomplete).toEqual([])
   })
 
   test('a skill run that completed with no stdout.jsonl is incomplete with the reason "no stdout retained"', () => {
@@ -417,6 +472,69 @@ describe('buildPairs: the shown text is the judge\'s evidence', () => {
 function readdirSyncSorted(dir: string): string[] {
   return require('node:fs').readdirSync(dir).sort()
 }
+
+describe('reconcile refuses when a shown run\'s judge.json changed after the build', () => {
+  const campaign = plantCampaign(fullPlants((p) => (p.fixture === 'd1' && p.index === 1 && p.arm === 'baseline' ? { judge: 'none' } : {})))
+  const { sheet, key } = build(campaign)
+  const marked = markSheet(sheet, key)
+  const judgeFile = (runId: string) => join(campaign, runId, 'judge.json')
+  const shownRun = (arm: 'baseline' | 'skill', fixture = 'd2') => key.cards.flatMap((c) => [c.sides.X, c.sides.Y]).find((s) => s.arm === arm && s.run_id.includes(`-${fixture}-`))!
+  const refusal = (): string[] => {
+    try {
+      reconcilePairs(key, marked, { campaignDir: campaign })
+    } catch (e) {
+      if (e instanceof PairSheetError) return e.problems
+      throw e
+    }
+    throw new Error('expected a PairSheetError')
+  }
+
+  test('the key records the sha256 of each shown run\'s judge.json, and null for a run with none', () => {
+    const runs = key.cards.flatMap((c) => [c.sides.X, c.sides.Y])
+    const none = runs.find((r) => r.run_id.includes('-d1-baseline-r1'))!
+    expect(none.judge_json_sha256).toBeNull()
+    const other = shownRun('skill')
+    expect(other.judge_json_sha256).toBe(sha256(readFileSync(judgeFile(other.run_id), 'utf8')))
+  })
+
+  test('an unchanged campaign reconciles as before', () => {
+    expect(reconcilePairs(key, marked, { campaignDir: campaign }).summary.pairs.shown).toBe(30)
+  })
+
+  test('a rejudge after the build (rewritten judge.json) makes reconcile refuse, naming the run and saying to rebuild', () => {
+    const run = shownRun('skill')
+    const path = judgeFile(run.run_id)
+    const before = readFileSync(path, 'utf8')
+    writeFileSync(path, before.replace('"verdict":"pass"', '"verdict":"fail"'))
+    try {
+      const problems = refusal()
+      expect(problems).toHaveLength(1)
+      expect(problems[0]).toContain(run.run_id)
+      expect(problems[0]).toContain('rebuild the sheet')
+      expect(problems[0]).toContain('rejudge')
+    } finally {
+      writeFileSync(path, before)
+    }
+    expect(reconcilePairs(key, marked, { campaignDir: campaign }).summary.pairs.shown).toBe(30)
+  })
+
+  test('a judge.json that appeared or vanished is a change too; every changed run is named', () => {
+    const appeared = key.cards.flatMap((c) => [c.sides.X, c.sides.Y]).find((r) => r.run_id.includes('-d1-baseline-r1'))!
+    const vanished = shownRun('baseline', 'd3')
+    const kept = readFileSync(judgeFile(vanished.run_id), 'utf8')
+    writeFileSync(judgeFile(appeared.run_id), '{"criteria":[]}')
+    rmSync(judgeFile(vanished.run_id))
+    try {
+      const problems = refusal()
+      expect(problems).toHaveLength(2)
+      expect(problems.join('\n')).toContain(appeared.run_id)
+      expect(problems.join('\n')).toContain(vanished.run_id)
+    } finally {
+      rmSync(judgeFile(appeared.run_id), { force: true })
+      writeFileSync(judgeFile(vanished.run_id), kept)
+    }
+  })
+})
 
 describe('files', () => {
   test('sheet and key are written 0600 under the state root, and a second build over them refuses', () => {
@@ -856,6 +974,23 @@ describe('eval pairs (CLI)', () => {
     expect(existsSync(join(repo.dir, 'evals', 'demo', 'pilot', 'pair-summary.json'))).toBe(false)
   })
 
+  test('--reconcile after a rejudge rewrote a shown run\'s judge.json is refused, names the run, and writes nothing', async () => {
+    const { repo } = await pilotWithCampaign()
+    const t = cliIo()
+    await main(args(repo, '--build'), t.io)
+    const dir = pairsDir(t.io.env, CAMPAIGN)
+    const key = JSON.parse(readFileSync(join(dir, 'key.json'), 'utf8')) as PairKey
+    writeFileSync(join(dir, 'sheet.md'), markSheet(readFileSync(join(dir, 'sheet.md'), 'utf8'), key))
+    const runId = key.cards[0]!.sides.X.run_id
+    writeFileSync(join(repo.dir, 'evals', 'runs', CAMPAIGN, runId, 'judge.json'), '{"criteria":[]}')
+    const r = cliIo()
+    r.io.env.XDG_STATE_HOME = t.stateHome
+    expect(await main(args(repo, '--reconcile'), r.io)).toBe(EXIT.ERROR)
+    expect(r.lines.err.join('\n')).toContain(runId)
+    expect(r.lines.err.join('\n')).toContain('rebuild the sheet')
+    expect(existsSync(join(repo.dir, 'evals', 'demo', 'pilot', 'pair-summary.json'))).toBe(false)
+  })
+
   test('an unmarked card stops --reconcile, names the card, and writes nothing', async () => {
     const { repo } = await pilotWithCampaign()
     const t = cliIo()
@@ -909,5 +1044,32 @@ describe('eval pairs (CLI)', () => {
     const usage = t.lines.err.join('\n')
     expect(usage).toContain('eval pairs --campaign <id|dir> --build')
     expect(usage).toContain('eval pairs --campaign <id|dir> --reconcile')
+  })
+})
+
+describe('redactJudgeInput takes a discriminated union', () => {
+  const exp: Expectation = { outcome: 'Recommends keeping the current library.' }
+  const base = { fixtureText: 'Prompt.\n', answer: 'An answer.' }
+
+  test('declared: true needs an expectation and carries it; declared: false forbids one and sends none', () => {
+    const declared = redactJudgeInput({ ...base, declared: true, expectation: exp }, redactText)
+    expect(declared.expectation).toBe(JSON.stringify(exp))
+    const plain = redactJudgeInput({ ...base, recordJson: ['{"r":1}'], declared: false }, redactText)
+    expect(plain.expectation).toBeUndefined()
+    expect(plain.record).toBe('{"r":1}')
+    // The hash formula is unchanged: expectation joins it only when declared.
+    expect(plain.sha256).toBe(sha256(JSON.stringify({ task: 'Prompt.\n', answer: 'An answer.', record: '{"r":1}' })))
+    expect(declared.sha256).toBe(sha256(JSON.stringify({ task: 'Prompt.\n', answer: 'An answer.', record: null, expectation: JSON.stringify(exp) })))
+  })
+
+  test('the impossible states do not typecheck', () => {
+    // These lines are only type-checked: the @ts-expect-error comments make `tsc` fail if the union ever loosens.
+    const never = (): void => {
+      // @ts-expect-error declared: true requires an expectation
+      redactJudgeInput({ ...base, declared: true }, redactText)
+      // @ts-expect-error declared: false forbids an expectation
+      redactJudgeInput({ ...base, declared: false, expectation: exp }, redactText)
+    }
+    expect(typeof never).toBe('function')
   })
 })

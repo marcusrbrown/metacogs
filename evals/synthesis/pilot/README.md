@@ -65,11 +65,11 @@ bun run eval pairs --campaign <id> --build
 bun run eval pairs --campaign <id> --reconcile
 ```
 
-`pilot.json` and `pair-summary.json` are the committed projections. `eval pairs --build` prints the paths of the sheet and key. Open the key only after marking.
+`pilot.json` and `pair-summary.json` are the committed projections. `eval pairs --build` prints the paths of the sheet and key. Open the key only after marking. The sheet shows only completed runs that reached the judge; a timeout, a budget breach, a host crash or a run a check kept from the judge is listed as incomplete, and so is its partner. If you rejudge after building, rebuild the sheet: `--reconcile` refuses when a shown run's `judge.json` changed. Move the old `sheet.md` and `key.json` aside first; a build never replaces a key.
 
 ## What the sheet can and cannot hide
 
-The pair sheet is only **partly blind**. The skill makes its answers carry labelled lines (`Perspectives:`, `Dependence:`, `Conclusion:` and so on), so an answer's layout can reveal its side. The judge instruction not to infer the condition is a request, not a control. The report states this; a preference lean toward the skill with no pass difference is read with that in mind.
+The pair sheet is only **partly blind**. The skill makes its answers carry labelled lines (`Perspectives:`, `Dependence:`, `Conclusion:` and so on), so an answer's layout can reveal its side. The `[redacted]` placeholders mostly replace skill vocabulary, so a placeholder can hint at the skill arm too. The judge instruction not to infer the condition is a request, not a control. The report states this; a preference lean toward the skill with no pass difference is read with that in mind.
 
 There is one agent model (`openai/gpt-6-luna`) and one judge model (`anthropic/claude-haiku-5-5`). Nothing here generalises across models.
 

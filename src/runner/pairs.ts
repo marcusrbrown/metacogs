@@ -28,12 +28,12 @@ import { join } from 'node:path'
 
 import { readJudgeRecord } from './judge-record'
 import { redactJudgeInput } from './judge'
-import { type CampaignRun, loadCampaignRuns, type ManifestStatus, PILOT_ARMS, type PilotArm } from './manifest'
+import { type CampaignRun, JUDGE_BLOCKING_CHECK_CODES, loadCampaignRuns, PILOT_ARMS, type PilotArm } from './manifest'
 import { pilotDir } from './pilot'
 import type { LoadedFixture } from './prereg'
 import { wilson95 } from './report'
 import { judgedAnswerOf } from './review'
-import { stateRoot } from './workspace'
+import { sha256, stateRoot } from './workspace'
 
 export const PAIR_SCHEMA_VERSION = 1 as const
 export const PAIR_SUMMARY_FILE = 'pair-summary.json'
@@ -48,9 +48,6 @@ export type Preference = 'X' | 'Y' | 'same'
 /** What the judge said about a run: a verdict, an error, or nothing (it never reached the judge). */
 export type JudgeSays = 'pass' | 'fail' | 'judge_error' | 'none'
 
-/** Statuses of a run that can have delivered an answer. An infra error, an isolation breach or an interrupt delivered none. */
-const ANSWERING_STATUSES: readonly ManifestStatus[] = ['completed', 'timeout', 'budget_exceeded', 'host_crash']
-
 // ── the key ────────────────────────────────────────────────────────────────
 
 export interface PairRunKey {
@@ -63,6 +60,8 @@ export interface PairRunKey {
   check_codes: string[]
   /** The rebuilt judge payload hash. */
   payload_sha256: string
+  /** sha256 of the run's `judge.json` as it was when the sheet was built; `null` when it had none. Reconcile re-reads it. */
+  judge_json_sha256: string | null
   /** The hash was compared with the hash the run recorded (false: the run recorded none, e.g. it never reached the judge). */
   hash_checked: boolean
 }
@@ -135,12 +134,14 @@ function latestSlots(runs: readonly CampaignRun[]): Slot[] {
 }
 
 /** What the judge last said for a run: `judge.json` (written by the run and by every rejudge), else nothing. */
-function judgeSaysOf(runDir: string): { says: JudgeSays; hash: string | null | undefined } {
+function judgeSaysOf(runDir: string): { says: JudgeSays; hash: string | null | undefined; fileSha256: string | null } {
   const path = join(runDir, 'judge.json')
-  if (!existsSync(path)) return { says: 'none', hash: undefined }
-  const record = readJudgeRecord(readFileSync(path, 'utf8'))
-  if (record.error !== undefined || record.criteria.length === 0) return { says: 'judge_error', hash: record.redacted_input_sha256 }
-  return { says: record.criteria.every((c) => c.verdict === 'pass') ? 'pass' : 'fail', hash: record.redacted_input_sha256 }
+  if (!existsSync(path)) return { says: 'none', hash: undefined, fileSha256: null }
+  const text = readFileSync(path, 'utf8')
+  const record = readJudgeRecord(text)
+  const fileSha256 = sha256(text)
+  if (record.error !== undefined || record.criteria.length === 0) return { says: 'judge_error', hash: record.redacted_input_sha256, fileSha256 }
+  return { says: record.criteria.every((c) => c.verdict === 'pass') ? 'pass' : 'fail', hash: record.redacted_input_sha256, fileSha256 }
 }
 
 interface Shown {
@@ -150,10 +151,17 @@ interface Shown {
   key: PairRunKey
 }
 
-/** Why a slot has no answer to show, or its judged text. */
+/**
+ * Why a slot has nothing to show, or its judged text. Only a `completed` run that reached the judge is shown: a timeout, a budget
+ * breach or a host crash is a fail the protocol scores without judging, and a run a check kept from the judge (`unrecognized_events`,
+ * `false_fire_*`) has no verdict to compare with. Its pair partner is then incomplete too. A completed run whose judge errored is
+ * shown, because the owner can still mark its answer.
+ */
 function answerOf(slot: Slot): { reason: string } | { text: string } {
   const m = slot.run.manifest
-  if (!ANSWERING_STATUSES.includes(m.status)) return { reason: `status ${m.status}` }
+  if (m.status !== 'completed') return { reason: `status ${m.status}` }
+  const blocking = m.check_failures.find((f) => (JUDGE_BLOCKING_CHECK_CODES as readonly string[]).includes(f.code))
+  if (blocking) return { reason: `blocked by ${blocking.code}` }
   const text = judgedAnswerOf(slot.run.dir, { expectation: true })
   if (text === undefined) return { reason: 'no stdout retained' }
   if (text.trim() === '') return { reason: 'no answer text' }
@@ -231,7 +239,7 @@ export function buildPairs(input: BuildPairsInput): { sheet: string; key: PairKe
     if (fixture.hash !== m.fixture.hash) throw new Error(`${m.run_id}: fixture ${fixture.id} changed since the run`)
     if (fixture.expectation === undefined) throw new Error(`fixture ${fixture.id} has no verified expectation`)
     // The judge's own function builds the evidence; a different hash means the card would show other text than the judge read.
-    const payload = redactJudgeInput({ fixtureText: fixture.text, answer: answer.text, expectation: fixture.expectation, declared: true }, input.redactText)
+    const payload = redactJudgeInput({ fixtureText: fixture.text, answer: answer.text, declared: true, expectation: fixture.expectation }, input.redactText)
     const judged = judgeSaysOf(slot.run.dir)
     const recorded = [m.judge?.redacted_input_sha256, judged.hash].filter((h): h is string => typeof h === 'string')
     for (const hash of recorded) {
@@ -247,6 +255,7 @@ export function buildPairs(input: BuildPairsInput): { sheet: string; key: PairKe
         skill_loaded: skillLoaded,
         check_codes: m.check_failures.map((f) => f.code),
         payload_sha256: payload.sha256,
+        judge_json_sha256: judged.fileSha256,
         hash_checked: recorded.length > 0,
       },
     })
@@ -309,7 +318,8 @@ export function buildPairs(input: BuildPairsInput): { sheet: string; key: PairKe
   const prompts = new Map<string, { prompt: string; statement: string }>()
   for (const g of groups) {
     const fixture = input.fixtures.find((f) => f.id === g.fixtureId)!
-    const payload = redactJudgeInput({ fixtureText: fixture.text, answer: '-', expectation: fixture.expectation, declared: true }, input.redactText)
+    if (fixture.expectation === undefined) throw new Error(`fixture ${fixture.id} has no verified expectation`)
+    const payload = redactJudgeInput({ fixtureText: fixture.text, answer: '-', declared: true, expectation: fixture.expectation }, input.redactText)
     prompts.set(g.fixtureId, { prompt: payload.task, statement: (JSON.parse(payload.expectation!) as { outcome: string }).outcome })
   }
   const sheet = renderSheet(key, groups, prompts)
@@ -353,7 +363,7 @@ function renderSheet(
     '',
     'Every mark line must be filled in. A blank, repeated or unreadable mark stops the reconcile and names the card.',
     '',
-    'Answers are shown exactly as a judge read them: all of the assistant text, with some terms replaced by `[redacted]`. Paths are not redacted. This sheet is only partly blind: how an answer is laid out can still hint at where it came from.',
+    'Answers are shown exactly as a judge read them: all of the assistant text, with some terms replaced by `[redacted]`. Paths are not redacted. This sheet is only partly blind: how an answer is laid out can still hint at where it came from, and `[redacted]` placeholders mostly replace skill vocabulary, so a placeholder can hint that an answer came from the skill arm.',
     '',
   ]
   for (const g of groups) {
@@ -589,7 +599,33 @@ export interface Reconciled {
   notes: { fixture_id: string; index: number; arm: PilotArm; judge: 'pass' | 'fail'; owner: OwnerMark; note: string }[]
 }
 
-export function reconcilePairs(key: PairKey, sheet: string): Reconciled {
+/**
+ * The key records each shown run's `judge.json` hash at build time. A rejudge after the build rewrites those files, so the judge
+ * column of the four-cell table would no longer be the verdict the owner's sheet was built beside. Refuses, naming every run whose
+ * file changed, appeared or vanished.
+ */
+export function verifyJudgeFiles(key: PairKey, campaignDir: string): void {
+  const problems: string[] = []
+  for (const card of key.cards) {
+    for (const side of ['X', 'Y'] as const) {
+      const run = card.sides[side]
+      const path = join(campaignDir, run.run_id, 'judge.json')
+      const now = existsSync(path) ? sha256(readFileSync(path, 'utf8')) : null
+      if (now === run.judge_json_sha256) continue
+      const what = run.judge_json_sha256 === null ? 'a judge.json appeared' : now === null ? 'its judge.json vanished' : 'its judge.json was rewritten'
+      problems.push(`${run.run_id}: ${what} after the sheet was built (a rejudge?); rebuild the sheet after a rejudge, so the judge verdicts match the answers shown`)
+    }
+  }
+  if (problems.length) throw new PairSheetError(problems)
+}
+
+export interface ReconcileOptions {
+  /** The campaign directory the key was built from. When given, the shown runs' `judge.json` files are re-read (`verifyJudgeFiles`); `eval pairs --reconcile` always gives it. */
+  campaignDir?: string
+}
+
+export function reconcilePairs(key: PairKey, sheet: string, options: ReconcileOptions = {}): Reconciled {
+  if (options.campaignDir !== undefined) verifyJudgeFiles(key, options.campaignDir)
   const marks = readMarks(sheet, key)
   const byArmFixture: Record<string, Record<string, PairCell>> = {}
   const pooled: Record<string, PairCell> = Object.fromEntries(PILOT_ARMS.map((arm) => [arm, { pass: 0, graded: 0 }]))

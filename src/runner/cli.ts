@@ -728,7 +728,7 @@ function pairsMain(a: PairsArgs): number {
       if (key.campaign_id !== campaignId) throw new PairRefusal(`the key at ${dir} is for campaign ${key.campaign_id}, not ${campaignId}`)
       const sheetPath = a.sheet ? resolve(a.cwd, a.sheet) : join(dir, 'sheet.md')
       if (!existsSync(sheetPath)) throw new PairRefusal(`no sheet at ${sheetPath}`)
-      const reconciled = reconcilePairs(key, readFileSync(sheetPath, 'utf8'))
+      const reconciled = reconcilePairs(key, readFileSync(sheetPath, 'utf8'), { campaignDir })
       for (const line of summarizePairs(reconciled)) a.out(line)
       a.out(`wrote ${writePairSummary(repoRoot, reconciled.summary).slice(repoRoot.length + 1)}`)
       return EXIT.OK

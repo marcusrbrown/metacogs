@@ -371,6 +371,18 @@ describe('final answer scoring (fake host)', () => {
       expect(manifestOf(c.campaignDir, res.results[0]!.runId).fire_basis).toBeNull()
     })
 
+    test('no judge wired: a declared run with a non-blocking check failure settles completed, ungraded, pending-judge (a later rejudge grades it)', async () => {
+      const c = campaign([skillPlan()], fakeHost({ stdout: textEvents }), { judge: undefined as never, declarations: declared })
+      const res = await runCampaign(c)
+      expect(res.results[0]).toMatchObject({ status: 'completed', reasons: [] })
+      expect(res.results[0]!.outcome).toBeUndefined()
+      const m = manifestOf(c.campaignDir, res.results[0]!.runId)
+      expect(m).toMatchObject({ status: 'completed', verdict_basis: 'pending-judge' })
+      expect(m.outcome).toBeUndefined()
+      expect(m.judge).toBeUndefined()
+      expect(m.check_failures.map((f) => f.code)).toEqual(expect.arrayContaining(['skill_not_loaded', 'record_missing']))
+    })
+
     test('a judge fail still fails the run, and the check failures are not folded into its reasons', async () => {
       const c = campaign([skillPlan()], fakeHost({ stdout: textEvents }), { judge: judgedWith('fail'), declarations: declared })
       const res = await runCampaign(c)
