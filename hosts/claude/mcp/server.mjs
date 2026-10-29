@@ -1,5 +1,5 @@
 // generated — do not edit; run `bun run generate`
-// helper_version: 0.3.0
+// helper_version: 0.3.1
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
 var __defProp = Object.defineProperty;
@@ -22023,7 +22023,7 @@ async function recordTool(args, ctx) {
 
 // src/mcp/server.ts
 var READ_ONLY = { readOnlyHint: true };
-var server = new McpServer({ name: "metacogs", version: "0.3.0" });
+var server = new McpServer({ name: "metacogs", version: "0.3.1" });
 server.registerTool("feel", {
   description: FEEL_DESCRIPTION,
   inputSchema: {
@@ -22043,5 +22043,5 @@ server.registerTool("drugs", {
   },
   annotations: READ_ONLY
 }, async (args) => ({ content: [{ type: "text", text: drugsText(args) }] }));
-server.registerTool("record", { description: RECORD_DESCRIPTION, inputSchema: recordInputSchema, annotations: RECORD_ANNOTATIONS }, async (args) => recordTool(args, { env: process.env, cwd: process.cwd(), version: "0.3.0" }));
+server.registerTool("record", { description: RECORD_DESCRIPTION, inputSchema: recordInputSchema, annotations: RECORD_ANNOTATIONS }, async (args) => recordTool(args, { env: process.env, cwd: process.cwd(), version: "0.3.1" }));
 await server.connect(new StdioServerTransport);

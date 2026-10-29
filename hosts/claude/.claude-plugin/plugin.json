@@ -1,6 +1,6 @@
 {
   "name": "metacogs",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Two reasoning tools, feel and drugs, a record tool for decision records, and four skills: feel, drugs, synthesis and counterfactual. The tools run through an MCP server that needs Node 22 or later on PATH.",
   "author": {
     "name": "Marcus R. Brown",
