@@ -291,9 +291,18 @@ describe('buildPairs: 30 complete pairs', () => {
     expect(readMarks(markSheet(built.sheet, built.key), built.key).cards).toHaveLength(30)
   })
 
-  test('the draw is random per call when no rng is given, and fixed when one is', () => {
+  test('a seeded rng fixes the draw, and a different seed changes it', () => {
     expect(build(campaign, { rng: seeded(7) }).key.cards.map((c) => c.sides.X.arm)).toEqual(key.cards.map((c) => c.sides.X.arm))
     expect(build(campaign, { rng: seeded(8) }).key.cards.map((c) => c.sides.X.arm)).not.toEqual(key.cards.map((c) => c.sides.X.arm))
+  })
+
+  test('with no rng the default crypto source draws: two builds of one campaign differ (30 coin flips; identical by chance is 2^-30)', () => {
+    // `build` always injects an rng, so call buildPairs directly with the key left out.
+    const direct = () => buildPairs({ campaignDir: campaign, fixtures: FIXTURES, redactText, preregContentHash: PREREG_HASH, declared: true })
+    const first = direct().key.cards.map((c) => `${c.fixture_id}#${c.index}:${c.sides.X.arm}`)
+    const second = direct().key.cards.map((c) => `${c.fixture_id}#${c.index}:${c.sides.X.arm}`)
+    expect(first).toHaveLength(30)
+    expect(first).not.toEqual(second)
   })
 })
 
@@ -316,6 +325,15 @@ describe('buildPairs: runs that cannot be shown', () => {
     const { key } = build(campaign)
     const card = key.cards.find((c) => c.fixture_id === 'd2' && c.index === 3)!
     expect([card.sides.X, card.sides.Y].find((s) => s.arm === 'baseline')).toMatchObject({ judge: 'none', hash_checked: false })
+  })
+
+  test('a skill run that completed with no stdout.jsonl is incomplete with the reason "no stdout retained"', () => {
+    const campaign = plantCampaign(fullPlants((p) => (p.fixture === 'd2' && p.index === 4 && p.arm === 'skill' ? { status: 'completed', answer: undefined, judge: 'none' } : {})))
+    const run = readdirSyncSorted(campaign).find((n) => n.includes('-d2-skill-r4'))!
+    expect(existsSync(join(campaign, run, 'stdout.jsonl'))).toBe(false)
+    const { key } = build(campaign)
+    expect(key.cards).toHaveLength(29)
+    expect(key.incomplete).toEqual([{ fixture_id: 'd2', index: 4, missing: [{ arm: 'skill', reason: 'no stdout retained' }] }])
   })
 
   test('a pair with one side missing an answer is reported incomplete and not shown', () => {

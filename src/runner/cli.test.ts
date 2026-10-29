@@ -596,10 +596,10 @@ describe('pilot', () => {
       expect(message).toContain('(known: baseline, skill); see evals/demo/pilot/README.md')
       expect(message).not.toContain('Unit')
     }
-    // A known list gets past the arm check: the next refusal is the (nonexistent) repo, not the arm.
+    // A known list gets past the arm check and the --provider check: the next failure is the nonexistent repo, and only that.
     for (const arm of ['skill', 'baseline,skill', 'skill,baseline']) {
       const t = io()
-      await main(['pilot', '--method', 'demo', '--arm', arm, '--repo', '/nonexistent'], t.io).catch(() => undefined)
+      await expect(main(['pilot', '--method', 'demo', '--arm', arm, '--provider', 'live', '--auth-passthrough', 'none', '--repo', '/nonexistent'], t.io)).rejects.toThrow(/rev-parse --show-toplevel failed/)
       expect(t.lines.err.join('\n')).not.toContain('pilot arm(s)')
     }
   })

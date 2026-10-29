@@ -28,7 +28,7 @@ import { join } from 'node:path'
 
 import { readJudgeRecord } from './judge-record'
 import { redactJudgeInput } from './judge'
-import { type CampaignRun, loadCampaignRuns, PILOT_ARMS, type PilotArm } from './manifest'
+import { type CampaignRun, loadCampaignRuns, type ManifestStatus, PILOT_ARMS, type PilotArm } from './manifest'
 import { pilotDir } from './pilot'
 import type { LoadedFixture } from './prereg'
 import { wilson95 } from './report'
@@ -49,7 +49,7 @@ export type Preference = 'X' | 'Y' | 'same'
 export type JudgeSays = 'pass' | 'fail' | 'judge_error' | 'none'
 
 /** Statuses of a run that can have delivered an answer. An infra error, an isolation breach or an interrupt delivered none. */
-const ANSWERING_STATUSES: readonly string[] = ['completed', 'timeout', 'budget_exceeded', 'host_crash']
+const ANSWERING_STATUSES: readonly ManifestStatus[] = ['completed', 'timeout', 'budget_exceeded', 'host_crash']
 
 // ── the key ────────────────────────────────────────────────────────────────
 
@@ -323,7 +323,7 @@ export function buildPairs(input: BuildPairsInput): { sheet: string; key: PairKe
  * A `~~~` fenced block whose fence is longer than any run of `~` or backticks in the text, so nothing inside it (an answer's own
  * code fences, `#` lines, a stray `~~~`) can close it or reach the sheet's outline.
  */
-export function fenced(text: string, info = ''): string {
+function tildeFenced(text: string, info = ''): string {
   const longest = Math.max(0, ...(text.match(/[`~]+/g) ?? []).map((m) => m.length))
   const fence = '~'.repeat(Math.max(3, longest + 1))
   return `${fence}${info}\n${text}\n${fence}`
@@ -361,7 +361,7 @@ function renderSheet(
     out.push(`# Fixture: ${g.fixtureId}`, '', 'Prompt:', '', ...quoted(p.prompt), '', 'Statement (an answer passes if it satisfies this):', '', ...quoted(p.statement), '')
     for (const card of g.cards) {
       out.push(`## ${card.id}`, '')
-      for (const side of ['X', 'Y'] as const) out.push(`### ${side}`, '', fenced(g.answers[card.id]![side], 'markdown'), '')
+      for (const side of ['X', 'Y'] as const) out.push(`### ${side}`, '', tildeFenced(g.answers[card.id]![side], 'markdown'), '')
       out.push('Mark X:', 'Mark Y:', 'Use:', 'note:', '')
     }
   }
