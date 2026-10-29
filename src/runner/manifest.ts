@@ -59,8 +59,11 @@ export interface JudgeEvidence {
   wall_ms: number
 }
 
-/** The arms of an `eval pilot` campaign. Only `baseline` runs, under condition `baseline`; a manifest naming any other arm is refused. */
-export const PILOT_ARMS = ['baseline'] as const
+/**
+ * The arms of an `eval pilot` campaign: `baseline` runs under condition `baseline`, `skill` under condition `skill`. A manifest naming
+ * any other arm is refused.
+ */
+export const PILOT_ARMS = ['baseline', 'skill'] as const
 export type PilotArm = (typeof PILOT_ARMS)[number]
 
 export interface RunManifest {
@@ -175,15 +178,35 @@ export function loadCampaignRuns(campaignDir: string): CampaignRun[] {
 }
 
 /**
+ * The check codes that still keep a run from the judge under a rubric that declares `expectation: true`. The stream could not be read
+ * (`unrecognized_events`) or the run fired a skill it must not have (`false_fire_*`): the answer is not a clean observation of its
+ * arm. Every other check (the skill never loaded, no record, a bad record) is recorded on the manifest and the answer is still judged,
+ * so a skill arm is scored as run (intent to treat) and the load rate is a number, not an exclusion.
+ */
+export const JUDGE_BLOCKING_CHECK_CODES = [
+  'unrecognized_events',
+  'false_fire_skill_call',
+  'false_fire_denied_skill_call',
+  'false_fire_direct_read',
+  'false_fire_helper',
+  'false_fire_record',
+] as const satisfies readonly CheckFailure['code'][]
+
+/** Whether any of `failures` keeps the run from the judge. Without the declaration every failure does, as it always has. */
+export function checkBlocksJudge(failures: readonly Pick<CheckFailure, 'code'>[], declared: boolean): boolean {
+  return failures.some((f) => !declared || (JUDGE_BLOCKING_CHECK_CODES as readonly string[]).includes(f.code))
+}
+
+/**
  * Which runs would have reached the judge originally: positive fixtures that completed
  * and passed the deterministic checks. Everything else is skipped with a reason.
  */
-export function skipReason(m: RunManifest, hasStdout: boolean): string | undefined {
+export function skipReason(m: RunManifest, hasStdout: boolean, declared = false): string | undefined {
   if (m.fixture.kind === 'negative') return 'negative fixture (never judged)'
   if (m.fixture.kind === 'heldout') return 'held-out fixture (not rejudged by this command)'
   if (m.status !== 'completed') return `status ${m.status}`
-  if (m.check_failures.length) return 'failed a deterministic check (never reached the judge)'
-  if (m.reasons.includes('answer_empty')) return 'empty final answer (never reached the judge)'
+  if (checkBlocksJudge(m.check_failures, declared)) return 'failed a deterministic check (never reached the judge)'
+  if (m.reasons.includes('answer_empty')) return 'empty answer (never reached the judge)'
   if (!hasStdout) return 'no stdout.jsonl retained'
   return undefined
 }

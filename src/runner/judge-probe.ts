@@ -4,7 +4,10 @@
  * recording proxy, no key anywhere), then one probe with the real judge
  * prompt for a method to check the strict-JSON contract is followable.
  *
- *   bun src/runner/judge-probe.ts [--method counterfactual] [--expectation <file>] [--task <file>] [--answers <file>] [model-id ...]
+ *   bun src/runner/judge-probe.ts [--method counterfactual] [--content-dir <repo-relative dir>] [--expectation <file>] [--task <file>] [--answers <file>] [model-id ...]
+ *
+ * `--content-dir` names the directory holding `rubric.md` and `redact.json` (default `evals/<method>`): the same directory a prereg's
+ * `content_dir` names, so a pilot's rubric can be probed before its prereg is committed.
  *
  * A rubric that declares `expectation: true` needs `--expectation`: a sidecar JSON written for the probe task. `--task` replaces the
  * canned counterfactual task with a fixture file, and `--answers` replaces the canned answers with a JSON object of name → text, so a
@@ -14,7 +17,7 @@
  * Output: one JSON object per model on stdout. Nothing secret exists to print.
  */
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 
 import { parseAuthPassthrough, readPassthroughAuth } from './auth'
 import { cliproxyAuth, fetchCliproxyKey, parseAuthCliproxy } from './cliproxy'
@@ -85,7 +88,7 @@ const summarize = (r: JudgeTransportResponse) => ({
 
 async function main() {
   const args = process.argv.slice(2)
-  const valueFlags = ['--method', '--expectation', '--task', '--answers']
+  const valueFlags = ['--method', '--content-dir', '--expectation', '--task', '--answers']
   const requested = args.filter((a, i) => !a.startsWith('--') && !valueFlags.includes(args[i - 1] ?? ''))
   const flagValue = (flag: string): string | undefined => {
     const at = args.indexOf(flag)
@@ -103,7 +106,9 @@ async function main() {
   const auth = cliproxyName ? cliproxyAuth(fetchCliproxyKey(cliproxyName)) : readPassthroughAuth(parseAuthPassthrough(undefined, process.env))
   const transport = opencodeTransport({}, auth)
   const repoRoot = join(import.meta.dir, '..', '..')
-  const spec = parseRubric(readFileSync(join(repoRoot, 'evals', method, 'rubric.md'), 'utf8'))
+  const contentDir = flagValue('--content-dir') ?? join('evals', method)
+  if (isAbsolute(contentDir) || relative(repoRoot, resolve(repoRoot, contentDir)).startsWith('..')) throw new Error(`--content-dir ${contentDir} must be a repo-relative directory inside the repository`)
+  const spec = parseRubric(readFileSync(join(repoRoot, contentDir, 'rubric.md'), 'utf8'))
   // A rubric that declares `expectation: true` cannot be probed without one; the canned task needs a sidecar written for it.
   const expectationFile = flagValue('--expectation')
   if (spec.declarations.expectation && !expectationFile) throw new Error(`${method} declares expectation: true; pass --expectation <file> (an expectation.json written for the probe task)`)
@@ -114,7 +119,7 @@ async function main() {
     const second = await transport({ model, system: PROBE_SYSTEM, user: PROBE_USER, timeoutMs: 120_000 })
     // The real judge on three canned answers to one task: a weak one (should fail), a strong one
     // (should pass), and a weak one carrying an injection (should still fail).
-    const judge = createJudge({ repoRoot, method, model, transport })
+    const judge = createJudge({ repoRoot, method, contentDir, model, transport })
     const judged: Record<string, unknown> = {}
     for (const [name, answer] of Object.entries(answers)) {
       const verdict = await judge.hook(probeJudgeInput(method, answer, expectation, task))

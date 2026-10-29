@@ -1,0 +1,3 @@
+{
+  "outcome": "The answer does not choose yamlparse, because its AGPL-3.0 licence conflicts with shipping a closed-source binary. It recommends strictyaml-lite, or treats yamlparse as blocked until legal review. Pass example: \"strictyaml-lite; AGPL rules yamlparse out whatever the vote.\" Fail example: \"yamlparse, majority wins.\""
+}

@@ -26,11 +26,15 @@ export const RUN_OUTCOME_TAXONOMY = [
   'non_isolated',
 ] as const
 
-/** Evaluator-only: what a good answer to a fixture looks like. Lives in `<id>.expectation.json` beside the fixture; the agent never sees it. */
+/**
+ * Evaluator-only: what a good answer to a fixture looks like. Lives in `<id>.expectation.json` beside the fixture; the agent never sees it.
+ * `outcome` is the one required field. A sidecar without `maxWords` has no word limit (the check is skipped, not defaulted), and one
+ * without `excludedTopics` excludes nothing; neither is filled in, so a sidecar's canonical form (and hash) is what the file says.
+ */
 export interface Expectation {
   outcome: string
-  excludedTopics: string[]
-  maxWords: number
+  excludedTopics?: string[]
+  maxWords?: number
 }
 
 export interface Prereg {
@@ -51,6 +55,12 @@ export interface Prereg {
    * Negative fixtures never carry one.
    */
   expectation_hashes?: { dev: Record<string, string>; heldout: Record<string, string> }
+  /**
+   * Opt-in. Repo-relative directory under `evals/<method>/` holding this prereg's rubric, fixtures, expectation sidecars and redact list.
+   * Absent: they live in `evals/<method>/` (every shipped prereg and the tether pilot). A pilot whose content must not share a directory
+   * with a shipped epoch's names its own, so its sidecars never read as `extra` against that epoch.
+   */
+  content_dir?: string
   rubric_hash: string
   /** N: runs per condition per fixture. */
   runs_per_condition: number
@@ -104,6 +114,20 @@ function checkHashSet(errors: string[], label: string, entries: unknown): void {
   }
 }
 
+/**
+ * Why `value` is not a legal `content_dir` for `method`, or `undefined` when it is: a normalized repo-relative path strictly inside
+ * `evals/<method>/`, with no `.`/`..`/empty segments, backslashes or leading slash, so it cannot name another method's content.
+ */
+function contentDirProblem(value: unknown, method: string): string | undefined {
+  if (typeof value !== 'string' || value.trim() === '') return 'must be a non-empty string when present'
+  const prefix = `evals/${method}/`
+  if (!method || !value.startsWith(prefix) || value === prefix) return `must be a directory inside ${prefix}`
+  if (value.includes('\\') || value.endsWith('/') || value.split('/').some((s) => s === '' || s === '.' || s === '..')) {
+    return 'must be a normalized repo-relative path (no \\, trailing /, empty, . or .. segments)'
+  }
+  return undefined
+}
+
 const TOP_LEVEL_KEYS = [
   'schema_version',
   'method',
@@ -111,6 +135,7 @@ const TOP_LEVEL_KEYS = [
   'salt',
   'fixture_hashes',
   'expectation_hashes',
+  'content_dir',
   'rubric_hash',
   'runs_per_condition',
   'red_bar',
@@ -171,6 +196,10 @@ export function parsePrereg(text: string): PreregParse {
       }
       for (const set of ['dev', 'heldout'] as const) checkHashSet(errors, `expectation_hashes.${set}`, sets[set])
     }
+  }
+  if (raw.content_dir !== undefined) {
+    const problem = contentDirProblem(raw.content_dir, typeof raw.method === 'string' ? raw.method : '')
+    if (problem) errors.push(`content_dir: ${problem}`)
   }
   need(typeof raw.rubric_hash === 'string' && HEX64.test(raw.rubric_hash), 'rubric_hash: must be a sha256 hex digest')
   need(isPositiveInt(raw.runs_per_condition), 'runs_per_condition: must be a positive integer')
@@ -307,7 +336,7 @@ export function compareFixtureSet(set: string, expected: Record<string, string>,
 }
 
 export interface PreregPaths {
-  /** `evals/<method>` under the repo. */
+  /** The prereg's content directory under the repo: `evals/<method>`, or its `content_dir` (`preregContentDirRel`). */
   evalDir: string
   /** Where held-out fixtures live (outside the repo). */
   heldoutDir: string
@@ -315,6 +344,9 @@ export interface PreregPaths {
 
 const EXPECTATION_SUFFIX = '.expectation.json'
 const EXPECTATION_FIELDS = ['outcome', 'excludedTopics', 'maxWords'] as const
+
+/** The directory a prereg's rubric, fixtures, sidecars and redact list live in: its `content_dir`, else `evals/<method>`. */
+export const preregContentDirRel = (prereg: Pick<Prereg, 'method' | 'content_dir'>): string => prereg.content_dir ?? `evals/${prereg.method}`
 
 /** Field-level shape errors, each prefixed by `where`; empty when `value` is an `Expectation`. */
 export function expectationShapeErrors(value: unknown, where: string): string[] {
@@ -324,10 +356,10 @@ export function expectationShapeErrors(value: unknown, where: string): string[] 
     if (!(EXPECTATION_FIELDS as readonly string[]).includes(key)) errors.push(`${where}: ${key}: unknown field`)
   }
   if (!isNonEmptyString(value.outcome)) errors.push(`${where}: outcome must be a non-empty string`)
-  if (!Array.isArray(value.excludedTopics) || !value.excludedTopics.every((t) => typeof t === 'string')) {
+  if (value.excludedTopics !== undefined && (!Array.isArray(value.excludedTopics) || !value.excludedTopics.every((t) => typeof t === 'string'))) {
     errors.push(`${where}: excludedTopics must be an array of strings`)
   }
-  if (!isPositiveInt(value.maxWords)) errors.push(`${where}: maxWords must be a positive integer`)
+  if (value.maxWords !== undefined && !isPositiveInt(value.maxWords)) errors.push(`${where}: maxWords must be a positive integer`)
   return errors
 }
 
@@ -524,7 +556,7 @@ export function enforcePrereg(input: EnforceInput): PreregVerification {
       )
     }
   }
-  const content = verifyPreregContent(prereg, { evalDir: join(repoRoot, 'evals', method), heldoutDir: input.heldoutDir }, { includeHeldout: mode === 'green' })
+  const content = verifyPreregContent(prereg, { evalDir: join(repoRoot, preregContentDirRel(prereg)), heldoutDir: input.heldoutDir }, { includeHeldout: mode === 'green' })
   const violations: Violation[] = content.invalid.map((message) => ({ code: 'prereg_invalid', message }))
   if (content.problems.length) {
     const lines = content.problems.map((p) => `${p.set}/${p.id} ${p.kind}`)

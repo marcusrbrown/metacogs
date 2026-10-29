@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { findStaleManifests, ManifestFormatError, MANIFEST_SCHEMA_VERSION, manifestPath, parseManifest, readManifest, type RunManifest, scanForLeaks, writeManifest } from './manifest'
+import { checkBlocksJudge, findStaleManifests, JUDGE_BLOCKING_CHECK_CODES, ManifestFormatError, MANIFEST_SCHEMA_VERSION, manifestPath, parseManifest, PILOT_ARMS, readManifest, type RunManifest, scanForLeaks, skipReason, writeManifest } from './manifest'
 
 const dirs: string[] = []
 function tmp(): string {
@@ -80,7 +80,38 @@ describe('manifest files', () => {
     expect(() => parseManifest(JSON.stringify({ ...manifest(), arm: 'bogus' }))).toThrow(/arm/)
     expect(() => parseManifest(JSON.stringify({ ...manifest(), arm: 7 }))).toThrow(ManifestFormatError)
     expect(parseManifest(JSON.stringify({ ...manifest(), arm: 'baseline' })).arm).toBe('baseline')
+    expect(parseManifest(JSON.stringify({ ...manifest(), arm: 'skill', condition: 'skill' })).arm).toBe('skill')
     expect(parseManifest(JSON.stringify(manifest())).arm).toBeUndefined()
+    expect([...PILOT_ARMS]).toEqual(['baseline', 'skill'])
+  })
+})
+
+describe('which check failures keep a run from the judge', () => {
+  const failures = (...codes: string[]) => codes.map((code) => ({ code: code as never, message: 'm' }))
+  const completed = (...codes: string[]) => manifest({ status: 'completed', check_failures: failures(...codes) })
+
+  test('without the declaration every failure blocks, as it always has', () => {
+    expect(checkBlocksJudge(failures('record_missing'), false)).toBe(true)
+    expect(checkBlocksJudge([], false)).toBe(false)
+    expect(skipReason(completed('record_missing'), true)).toContain('deterministic check')
+    expect(skipReason(completed(), true)).toBeUndefined()
+  })
+
+  test('under the declaration only an unreadable stream or a false fire blocks', () => {
+    for (const code of JUDGE_BLOCKING_CHECK_CODES) expect(checkBlocksJudge(failures(code), true)).toBe(true)
+    expect([...JUDGE_BLOCKING_CHECK_CODES]).toEqual(['unrecognized_events', 'false_fire_skill_call', 'false_fire_denied_skill_call', 'false_fire_direct_read', 'false_fire_helper', 'false_fire_record'])
+    for (const code of ['skill_not_loaded', 'record_without_load', 'record_missing', 'record_unexpected', 'record_invalid', 'record_filename_mismatch', 'record_method_mismatch', 'execution_mode_unexpected', 'helper_not_invoked', 'record_without_helper']) {
+      expect(checkBlocksJudge(failures(code), true)).toBe(false)
+    }
+    expect(checkBlocksJudge(failures('record_missing', 'unrecognized_events'), true)).toBe(true)
+    expect(skipReason(completed('skill_not_loaded', 'record_missing'), true, true)).toBeUndefined()
+    expect(skipReason(completed('record_missing', 'unrecognized_events'), true, true)).toContain('deterministic check')
+  })
+
+  test('status, fixture kind and answer_empty still skip, declared or not', () => {
+    expect(skipReason(manifest({ status: 'timeout' }), true, true)).toContain('status timeout')
+    expect(skipReason(completed(), false, true)).toContain('no stdout')
+    expect(skipReason(manifest({ status: 'completed', reasons: ['answer_empty'] }), true, true)).toContain('empty answer')
   })
 })
 

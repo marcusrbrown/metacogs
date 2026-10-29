@@ -5,7 +5,9 @@ import { join } from 'node:path'
 
 import { type JudgeEvidence, writeManifest } from './manifest'
 import {
+  conditionOfArm,
   isPilotArm,
+  parsePilotArms,
   PILOT_ARMS,
   type PilotTally,
   parsePilotTally,
@@ -15,7 +17,7 @@ import {
   tallyPilotCampaign,
   writePilotTally,
 } from './pilot'
-import { canonicalizeText, enforcePrereg, type Expectation, type LoadedFixture, type Prereg, saltedHash } from './prereg'
+import { canonicalizeText, enforcePrereg, type Expectation, expectationHash, type LoadedFixture, type Prereg, saltedHash } from './prereg'
 import { type Host, type HostRunRequest, type JudgeInput, runCampaign } from './run'
 import type { SpawnResult } from './opencode'
 import { scaffoldMethod, TEST_SALT, TestRepo } from './test-support'
@@ -40,7 +42,7 @@ describe('planPilot', () => {
   const dev = [fixture('d1', EXP), fixture('d2')]
 
   test('N rounds over the dev fixtures only; every run carries its arm; baseline runs under condition baseline', () => {
-    const plan = planPilot({ arm: 'baseline', fixtures: dev, runsPerCondition: 3 })
+    const plan = planPilot({ arms: ['baseline'], fixtures: dev, runsPerCondition: 3 })
     expect(plan).toHaveLength(6)
     expect(plan.map((p) => `${p.fixture.id}#${p.index}`)).toEqual(['d1#1', 'd2#1', 'd1#2', 'd2#2', 'd1#3', 'd2#3'])
     expect(new Set(plan.map((p) => p.arm))).toEqual(new Set(['baseline']))
@@ -49,22 +51,68 @@ describe('planPilot', () => {
   })
 
   test('the expectation rides the planned fixture; a fixture without one gains no key', () => {
-    const plan = planPilot({ arm: 'baseline', fixtures: dev, runsPerCondition: 1 })
+    const plan = planPilot({ arms: ['baseline'], fixtures: dev, runsPerCondition: 1 })
     expect(plan[0]!.fixture.expectation).toEqual(EXP)
     expect('expectation' in plan[1]!.fixture).toBe(false)
   })
 
   test('--fixture filter; an unknown id is an error', () => {
-    expect(planPilot({ arm: 'baseline', fixtures: dev, runsPerCondition: 2, onlyFixture: 'd2' })).toHaveLength(2)
-    expect(() => planPilot({ arm: 'baseline', fixtures: dev, runsPerCondition: 2, onlyFixture: 'nope' })).toThrow(/no fixture/)
+    expect(planPilot({ arms: ['baseline'], fixtures: dev, runsPerCondition: 2, onlyFixture: 'd2' })).toHaveLength(2)
+    expect(() => planPilot({ arms: ['baseline'], fixtures: dev, runsPerCondition: 2, onlyFixture: 'nope' })).toThrow(/no fixture/)
+  })
+})
+
+describe('planPilot with two arms', () => {
+  const six = ['d1', 'd2', 'd3', 'd4', 'd5', 'd6'].map((id) => fixture(id, { outcome: `outcome of ${id}` }))
+  const plan = planPilot({ arms: ['baseline', 'skill'], fixtures: six, runsPerCondition: 5 })
+
+  test('6 fixtures × 5 runs × 2 arms is 60 runs: five of each arm per fixture, each under its own condition', () => {
+    expect(plan).toHaveLength(60)
+    for (const f of six) {
+      for (const arm of ['baseline', 'skill'] as const) {
+        const runs = plan.filter((p) => p.fixture.id === f.id && p.arm === arm)
+        expect(runs.map((r) => r.index)).toEqual([1, 2, 3, 4, 5])
+        expect(new Set(runs.map((r) => r.condition))).toEqual(new Set([arm]))
+      }
+    }
+    expect(new Set(plan.map((p) => p.fixture.kind))).toEqual(new Set(['dev']))
+  })
+
+  test('the first arm alternates by round and fixture, and a fixture\'s two arms run back to back', () => {
+    const firsts = (round: number) => plan.filter((p) => p.index === round).filter((_, i) => i % 2 === 0).map((p) => p.arm)
+    expect(firsts(1)).toEqual(['skill', 'baseline', 'skill', 'baseline', 'skill', 'baseline'])
+    expect(firsts(2)).toEqual(['baseline', 'skill', 'baseline', 'skill', 'baseline', 'skill'])
+    for (let i = 0; i < plan.length; i += 2) expect(plan[i]!.fixture.id).toBe(plan[i + 1]!.fixture.id)
+    // Overall neither arm leads more than half the time.
+    const leads = plan.filter((_, i) => i % 2 === 0).filter((p) => p.arm === 'skill').length
+    expect(leads).toBe(15)
+  })
+
+  test('an empty arm list is an error; --fixture still filters', () => {
+    expect(() => planPilot({ arms: [], fixtures: six, runsPerCondition: 1 })).toThrow(/at least one arm/)
+    expect(planPilot({ arms: ['baseline', 'skill'], fixtures: six, runsPerCondition: 2, onlyFixture: 'd3' })).toHaveLength(4)
   })
 })
 
 describe('arms', () => {
-  test('baseline is the only arm; the retired instruction and skill arms are not known', () => {
-    expect([...PILOT_ARMS]).toEqual(['baseline'])
-    expect(isPilotArm('baseline')).toBe(true)
-    for (const arm of ['instruction', 'skill', 'bogus']) expect(isPilotArm(arm)).toBe(false)
+  test('baseline and skill are the pilot arms; the retired instruction arm and others are not known', () => {
+    expect([...PILOT_ARMS]).toEqual(['baseline', 'skill'])
+    for (const arm of ['baseline', 'skill']) expect(isPilotArm(arm)).toBe(true)
+    for (const arm of ['instruction', 'bogus', '']) expect(isPilotArm(arm)).toBe(false)
+  })
+
+  test('--arm is a comma list of known arms without repeats', () => {
+    expect(parsePilotArms('baseline')).toEqual({ ok: true, arms: ['baseline'] })
+    expect(parsePilotArms('baseline,skill')).toEqual({ ok: true, arms: ['baseline', 'skill'] })
+    expect(parsePilotArms('skill, baseline')).toEqual({ ok: true, arms: ['skill', 'baseline'] })
+    expect(parsePilotArms('baseline,instruction')).toEqual({ ok: false, bad: ['instruction'] })
+    expect(parsePilotArms('baseline,')).toEqual({ ok: false, bad: [''] })
+    expect(parsePilotArms('skill,skill')).toEqual({ ok: false, bad: ['skill'] })
+  })
+
+  test('the skill arm runs under condition skill', () => {
+    expect(conditionOfArm('skill')).toBe('skill')
+    expect(conditionOfArm('baseline')).toBe('baseline')
   })
 })
 
@@ -93,7 +141,7 @@ const skillLoad = JSON.stringify({
 })
 
 interface Plant {
-  arm?: 'baseline'
+  arm?: 'baseline' | 'skill'
   fixture: string
   status?: string
   reasons?: string[]
@@ -105,6 +153,8 @@ interface Plant {
   agent?: string
   /** `word_count` on the manifest: words in the final answer. */
   words?: number
+  /** Codes of the deterministic check failures the manifest records. */
+  checks?: string[]
 }
 
 const CAMPAIGN_ID = 'demo-pilot-2026-10-24T00-00-00-000Z'
@@ -124,10 +174,10 @@ function plantCampaign(plants: Plant[]): string {
       reasons: p.reasons ?? [],
       verdict_basis: 'judge',
       method: 'demo',
-      condition: 'baseline',
+      condition: p.arm ?? 'baseline',
       ...(p.arm ? { arm: p.arm } : {}),
       fixture: { id: p.fixture, kind: 'dev', hash: sha256(p.fixture) },
-      check_failures: [],
+      check_failures: (p.checks ?? []).map((code) => ({ code, message: 'm' })),
       records: [],
       artifacts: {},
       prereg: { content_hash: p.hash ?? 'a'.repeat(64), epoch: 1 },
@@ -238,6 +288,29 @@ describe('tallyPilotCampaign', () => {
     test('a run of a fixture the current prereg does not have is refused, naming the run dir', () => {
       const dir = plantCampaign([{ arm: 'baseline', fixture: 'gone', judge: evidence('pass', 'pass'), words: 5 }])
       expect(() => tallyPilotCampaign(dir, CTX)).toThrow(/001-dev-gone-baseline-r1.*gone/)
+    })
+  })
+
+  describe('under the declaration a non-blocking check failure still reached the judge', () => {
+    const skillRun = (checks: string[], hash?: string): Plant => ({ arm: 'skill', fixture: 'd1', judge: evidence('pass', 'pass'), checks, ...(hash ? { hash } : {}) })
+
+    test('a skill-arm run with no record and no skill load is counted in the skill arm, with its verdicts', () => {
+      const dir = plantCampaign([skillRun(['skill_not_loaded', 'helper_not_invoked', 'record_missing']), { arm: 'baseline', fixture: 'd1', judge: evidence('pass', 'fail') }])
+      const t = tallyPilotCampaign(dir, { ...CTX, declared: true })
+      expect(t.arms).toEqual(['baseline', 'skill'])
+      expect(t.tally.skill!.d1).toMatchObject({ runs: 1, criteria: { TE1: 1, TE2: 1 }, all_pass: 1 })
+      expect(t.tally.baseline!.d1).toMatchObject({ runs: 1, all_pass: 0 })
+    })
+
+    test('so its verdict is held to the contract: made under another prereg and unvouched, it is refused (undeclared, it never reached the judge)', () => {
+      const dir = plantCampaign([skillRun(['record_missing'], OLD)])
+      expect(() => tallyPilotCampaign(dir, { ...CTX, declared: true })).toThrow(/was run under prereg/)
+      expect(tallyPilotCampaign(dir, CTX).tally.skill!.d1!.runs).toBe(1)
+    })
+
+    test('a blocking code is still never-judged, declared or not', () => {
+      const dir = plantCampaign([skillRun(['unrecognized_events'], OLD)])
+      expect(tallyPilotCampaign(dir, { ...CTX, declared: true }).tally.skill!.d1!.runs).toBe(1)
     })
   })
 
@@ -536,7 +609,7 @@ function maskKeys(value: unknown): unknown {
 }
 
 /** Answers every run with `ANSWER_STDOUT`, showing the model exactly the skills the config allows. */
-function fakeHost(): Host {
+function fakeHost(stdout: string = ANSWER_STDOUT): Host {
   return {
     async debugConfig(req: { config: Record<string, unknown> }) {
       return { ...(maskKeys(req.config) as object), agent: {}, mode: {}, plugin: [], command: {}, username: 'unknown', compaction: { prune: false } }
@@ -546,7 +619,7 @@ function fakeHost(): Host {
       const names = Object.keys(skill).filter((k) => k !== '*' && skill[k] === 'allow')
       const block = names.length ? `<available_skills>\n${names.map((n) => `<skill><name>${n}</name></skill>`).join('\n')}\n</available_skills>` : 'You are an agent.'
       req.requests.push({ hasTools: true, round: 0, body: { messages: [{ role: 'system', content: block }, { role: 'user', content: 'x' }], tools: [{ function: { name: 'bash' } }] }, returnedModel: 'fake-model' })
-      return { stdout: ANSWER_STDOUT, stderr: '', exitCode: 0, timedOut: false, aborted: false, wallMs: 7, startedAtMs: Date.now() }
+      return { stdout, stderr: '', exitCode: 0, timedOut: false, aborted: false, wallMs: 7, startedAtMs: Date.now() }
     },
   }
 }
@@ -582,6 +655,41 @@ describe('baseline pilot, end to end (fake host)', () => {
     expect(() => enforcePrereg({ git: repo.git, repoRoot: repo.dir, method: 'demo', mode: 'dev', heldoutDir: heldout, preregPath: 'evals/demo/pilot/missing.json' })).toThrow(/pilot\/missing\.json does not exist/)
   })
 
+  test('an outcome-only expectation has no word limit: a 5,000-word answer is not answer_over_limit', async () => {
+    const { repo, heldout } = pilotRepo()
+    const outcomeOnly = { outcome: 'recommends keeping the current library' }
+    // Rebuild the pilot prereg with an outcome-only sidecar beside d1.
+    repo.write('evals/demo/fixtures/dev/d1.expectation.json', JSON.stringify(outcomeOnly))
+    const committed = JSON.parse(readFileSync(join(repo.dir, PILOT_PREREG), 'utf8')) as Prereg
+    repo.write(PILOT_PREREG, `${JSON.stringify({ ...committed, expectation_hashes: { ...committed.expectation_hashes, dev: { ...committed.expectation_hashes!.dev, d1: expectationHash(TEST_SALT, outcomeOnly) } } }, null, 2)}\n`)
+    const verification = enforcePrereg({ git: repo.git, repoRoot: repo.dir, method: 'demo', mode: 'dev', heldoutDir: heldout, preregPath: PILOT_PREREG })
+    const longAnswer = Array.from({ length: 5000 }, (_, i) => `w${i}`).join(' ')
+    const stdout = [
+      ev({ type: 'step_start', timestamp: 1, part: { type: 'step-start' } }),
+      ev({ type: 'text', timestamp: 2, part: { type: 'text', text: longAnswer } }),
+      ev({ type: 'step_finish', timestamp: 3, part: { type: 'step-finish', reason: 'stop', tokens: { total: 18, input: 11, output: 7, reasoning: 0, cache: { read: 0, write: 0 } }, cost: 0 } }),
+    ].join('\n')
+    const campaignDir = join(tmp('metacogs-pilot-camp-'), 'demo-pilot-2026-10-24T00-00-00-000Z')
+    const result = await runCampaign({
+      repoRoot: repo.dir,
+      method: 'demo',
+      mode: 'dev',
+      providerMode: 'scripted',
+      verification,
+      campaignId: 'demo-pilot-2026-10-24T00-00-00-000Z',
+      campaignDir,
+      runs: planPilot({ arms: ['baseline'], fixtures: verification.content.fixtures.dev.filter((f) => f.id === 'd1'), runsPerCondition: 1 }),
+      host: fakeHost(stdout),
+      judge: async () => ({ verdict: 'pass' as const, evidence: evidence('pass', 'pass') }),
+      declarations: { expectation: true },
+    })
+    expect(result.results.map((r) => [r.status, r.outcome, r.reasons])).toEqual([['completed', 'pass', []]])
+    const manifest = JSON.parse(readFileSync(join(campaignDir, result.results[0]!.runId, 'manifest.json'), 'utf8')) as { word_count?: number }
+    expect(manifest.word_count).toBeUndefined()
+    const tally = tallyPilotCampaign(campaignDir, { method: 'demo', prereg_content_hash: verification.contentHash, judge_model_id: 'judge/x', criteria: ['TE1', 'TE2'], fixtures: verification.content.fixtures.dev })
+    expect(tally.tally.baseline!.d1).toMatchObject({ runs: 1, all_pass: 1, over_limit: 0 })
+  })
+
   test('2 fixtures × 2 runs: pilot.json carries arms ["baseline"] and the counts; manifests carry the arm; tallies are keyed by arm', async () => {
     const { repo, heldout } = pilotRepo()
     const verification = enforcePrereg({ git: repo.git, repoRoot: repo.dir, method: 'demo', mode: 'dev', heldoutDir: heldout, preregPath: PILOT_PREREG })
@@ -591,7 +699,7 @@ describe('baseline pilot, end to end (fake host)', () => {
       return { verdict: input.fixture.id === 'd1' ? ('pass' as const) : ('fail' as const), evidence: evidence('pass', input.fixture.id === 'd1' ? 'pass' : 'fail') }
     }
     const campaignDir = join(tmp('metacogs-pilot-camp-'), 'demo-pilot-2026-10-24T00-00-00-000Z')
-    const plan = planPilot({ arm: 'baseline', fixtures: verification.content.fixtures.dev, runsPerCondition: verification.prereg.runs_per_condition })
+    const plan = planPilot({ arms: ['baseline'], fixtures: verification.content.fixtures.dev, runsPerCondition: verification.prereg.runs_per_condition })
     const result = await runCampaign({
       repoRoot: repo.dir,
       method: 'demo',
@@ -634,5 +742,96 @@ describe('baseline pilot, end to end (fake host)', () => {
 
     const manifest = JSON.parse(readFileSync(join(campaignDir, result.results[0]!.runId, 'manifest.json'), 'utf8')) as { arm: string; condition: string }
     expect(manifest).toMatchObject({ arm: 'baseline', condition: 'baseline' })
+  })
+})
+
+describe('two-arm pilot, end to end (fake host)', () => {
+  const D2_TEXT = 'Dev fixture two: choose a cache.\n'
+  const outcomeOnly: Expectation = { outcome: 'recommends keeping the current library' }
+  const PILOT_PREREG = 'evals/demo/pilot/prereg.json'
+  const CAMPAIGN = 'demo-pilot-2026-10-28T00-00-00-000Z'
+
+  function twoArmRepo() {
+    const repo = new TestRepo()
+    repos.push(repo)
+    const heldout = tmp('metacogs-pilot-held-')
+    const scaffold = scaffoldMethod(repo, 'demo', { heldoutDir: heldout, expectations: { dev: { d1: outcomeOnly, d2: outcomeOnly } } })
+    repo.write('evals/demo/fixtures/dev/d2.md', D2_TEXT)
+    // A skill the host can install; its helper is absent, so a skill-arm run can never leave a record.
+    repo.write('skills/demo/SKILL.md', '---\nname: demo\ndescription: test skill\n---\n\nbody\n')
+    const prereg: Prereg = {
+      ...scaffold.prereg,
+      runs_per_condition: 2,
+      fixture_hashes: { ...scaffold.prereg.fixture_hashes, dev: { ...scaffold.prereg.fixture_hashes.dev, d2: saltedHash(TEST_SALT, canonicalizeText(D2_TEXT)) } },
+    }
+    repo.write(PILOT_PREREG, `${JSON.stringify(prereg, null, 2)}\n`)
+    return { repo, heldout }
+  }
+
+  async function runTwoArms(host: Host) {
+    const { repo, heldout } = twoArmRepo()
+    const verification = enforcePrereg({ git: repo.git, repoRoot: repo.dir, method: 'demo', mode: 'dev', heldoutDir: heldout, preregPath: PILOT_PREREG })
+    const seen: JudgeInput[] = []
+    const campaignDir = join(tmp('metacogs-pilot-camp-'), CAMPAIGN)
+    const result = await runCampaign({
+      repoRoot: repo.dir,
+      method: 'demo',
+      mode: 'dev',
+      providerMode: 'scripted',
+      verification,
+      campaignId: CAMPAIGN,
+      campaignDir,
+      runs: planPilot({ arms: ['baseline', 'skill'], fixtures: verification.content.fixtures.dev, runsPerCondition: verification.prereg.runs_per_condition }),
+      host,
+      judge: async (input) => (seen.push(input), { verdict: 'pass' as const, evidence: evidence('pass', 'pass') }),
+      declarations: { expectation: true },
+    })
+    return { repo, verification, seen, campaignDir, result }
+  }
+
+  test('2 fixtures × 2 runs × 2 arms: every run is judged, the skill arm keeps its record_missing failure, and pilot.json carries both arms', async () => {
+    const { repo, verification, seen, campaignDir, result } = await runTwoArms(fakeHost())
+    expect(result.results).toHaveLength(8)
+    expect(seen).toHaveLength(8)
+    expect(Object.keys(result.tallies).sort()).toEqual(['dev/d1/baseline', 'dev/d1/skill', 'dev/d2/baseline', 'dev/d2/skill'])
+    expect(result.results.every((r) => r.status === 'completed' && r.outcome === 'pass')).toBe(true)
+
+    const skillRuns = result.results.filter((r) => r.arm === 'skill')
+    expect(skillRuns).toHaveLength(4)
+    for (const r of skillRuns) {
+      const m = JSON.parse(readFileSync(join(campaignDir, r.runId, 'manifest.json'), 'utf8')) as { condition: string; arm: string; verdict_basis: string; check_failures: { code: string }[]; skill: unknown; judge?: unknown }
+      expect(m).toMatchObject({ condition: 'skill', arm: 'skill', verdict_basis: 'judge' })
+      expect(m.skill).not.toBeNull()
+      expect(m.judge).toBeDefined()
+      // Intent to treat: the skill never loaded, no helper ran and no record exists, and the run is still a skill-arm observation.
+      expect(m.check_failures.map((f) => f.code)).toEqual(expect.arrayContaining(['skill_not_loaded', 'helper_not_invoked', 'record_missing']))
+    }
+
+    const tally = tallyPilotCampaign(campaignDir, { method: 'demo', prereg_content_hash: verification.contentHash, judge_model_id: verification.prereg.judge_model_id, criteria: ['TE1', 'TE2'], declared: true, fixtures: verification.content.fixtures.dev })
+    expect(tally.arms).toEqual(['baseline', 'skill'])
+    expect(tally.campaigns).toEqual({ baseline: CAMPAIGN, skill: CAMPAIGN })
+    for (const arm of ['baseline', 'skill'] as const) {
+      expect(tally.tally[arm]).toEqual({
+        d1: { runs: 2, criteria: { TE1: 2, TE2: 2 }, all_pass: 2, over_limit: 0, empty: 0, skill_loaded: 0 },
+        d2: { runs: 2, criteria: { TE1: 2, TE2: 2 }, all_pass: 2, over_limit: 0, empty: 0, skill_loaded: 0 },
+      })
+    }
+    const written = JSON.parse(readFileSync(writePilotTally(repo.dir, tally), 'utf8')) as PilotTally
+    expect(written.arms).toEqual(['baseline', 'skill'])
+    expect(parsePilotTally(written)).toEqual(written)
+  })
+
+  test('an unreadable event stream still keeps a skill-arm run from the judge', async () => {
+    const stdout = [ev({ type: 'step_start', timestamp: 1, part: { type: 'step-start' } }), ev({ type: 'surprise', timestamp: 2 }), ANSWER_STDOUT].join('\n')
+    const { seen, result } = await runTwoArms(fakeHost(stdout))
+    expect(seen).toHaveLength(0)
+    expect(result.results.every((r) => r.outcome === 'fail' && r.reasons.includes('unrecognized_events'))).toBe(true)
+  })
+
+  test('the committed tether schema-3 pilot.json still parses', () => {
+    const committed: unknown = JSON.parse(readFileSync(join(import.meta.dir, '..', '..', 'evals', 'tether', 'pilot', 'pilot.json'), 'utf8'))
+    const tally = parsePilotTally(committed)
+    expect(tally.schema_version).toBe(3)
+    expect(tally.arms).toEqual(['baseline'])
   })
 })

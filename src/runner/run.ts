@@ -18,6 +18,7 @@ import type { RubricDeclarations } from './judge'
 import { writeJudgeRecord } from './judge-record'
 import {
   type ArtifactRef,
+  checkBlocksJudge,
   CredentialLeakError,
   type FinalStatus,
   type JudgeEvidence,
@@ -672,14 +673,18 @@ async function runAttempt(c: CampaignInput, run: PlannedRun, state: AttemptState
         manifest.check_failures = checks.failures
         const reasons = checks.failures.map((f: CheckFailure) => f.code)
         const needsJudge = run.fixture.kind !== 'negative'
-        // Under `expectation: true` the judge reads every assistant text part, so a tangent developed before a tool call is graded; the
-        // final answer (the text after the last tool call) is the result excerpt, the word-limit segment, and the `answer_empty` test.
-        const replyEvents = c.declarations?.expectation ? parseEvents(spawn.stdout).events : undefined
+        const declared = c.declarations?.expectation === true
+        // Under `expectation: true` the judge reads every assistant text part (a tangent developed before a tool call is graded), and so do
+        // the sheet and `answer_empty`: all three look at the same text. The final answer (the text after the last tool call) is the
+        // result excerpt and the word-limit segment only.
+        const replyEvents = declared ? parseEvents(spawn.stdout).events : undefined
         const finalAnswer = replyEvents ? finalAnswerText(replyEvents) : events.assistantText
         const judgedAnswer = replyEvents ? allAssistantText(replyEvents) : events.assistantText
-        if (!checks.ok) {
+        // A failed check blocks the judge, except under the declaration, where only an unreadable stream or a false fire does (the other
+        // failures stay on the manifest as `check_failures`). A negative fixture is never judged, so any failure settles it.
+        if (!checks.ok && (!needsJudge || checkBlocksJudge(checks.failures, declared))) {
           final = settle('completed', 'fail', reasons)
-        } else if (needsJudge && c.declarations?.expectation && finalAnswer.trim() === '') {
+        } else if (needsJudge && declared && judgedAnswer.trim() === '') {
           manifest.word_count = 0
           final = settle('completed', 'fail', ['answer_empty'])
         } else if (needsJudge && c.judge) {

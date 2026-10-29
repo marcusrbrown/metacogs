@@ -10,6 +10,7 @@ import {
   expectationHash,
   parsePrereg,
   PreregRefusal,
+  preregContentDirRel,
   preregContentHash,
   saltedHash,
   type ViolationCode,
@@ -501,7 +502,8 @@ describe('expectation sidecars (verifyPreregContent)', () => {
       ['maxWords 0', { ...A, maxWords: 0 }, 'maxWords'],
       ['maxWords non-integer', { ...A, maxWords: 12.5 }, 'maxWords'],
       ['maxWords a string', { ...A, maxWords: '120' }, 'maxWords'],
-      ['maxWords missing', { outcome: A.outcome, excludedTopics: [] }, 'maxWords'],
+      ['maxWords null', { ...A, maxWords: null }, 'maxWords'],
+      ['excludedTopics null', { ...A, excludedTopics: null }, 'excludedTopics'],
       ['excludedTopics not an array', { ...A, excludedTopics: 'sharding' }, 'excludedTopics'],
       ['excludedTopics holds a non-string', { ...A, excludedTopics: ['ok', 3] }, 'excludedTopics'],
       ['empty outcome', { ...A, outcome: '' }, 'outcome'],
@@ -525,6 +527,19 @@ describe('expectation sidecars (verifyPreregContent)', () => {
         expect(r.violations[0]?.message).toContain(field)
       })
     }
+
+    test('outcome-only is a valid sidecar: it verifies clean, carries no defaults, and hashes as written', () => {
+      const only = { outcome: 'recommends keeping the current library' }
+      const { verify } = twoDev({ d1: only, d2: B })
+      const v = verify()
+      expect(v.invalid).toEqual([])
+      expect(v.problems).toEqual([])
+      const attached = v.fixtures.dev.find((f) => f.id === 'd1')?.expectation
+      expect(attached).toEqual(only)
+      expect(Object.keys(attached ?? {})).toEqual(['outcome'])
+      expect(expectationHash(TEST_SALT, only)).toBe(expectationHash(TEST_SALT, { outcome: only.outcome }))
+      expect(expectationHash(TEST_SALT, only)).not.toBe(expectationHash(TEST_SALT, { ...only, excludedTopics: [], maxWords: 250 }))
+    })
 
     test('invalid JSON names the id and is not also reported as missing', () => {
       const { repo, verify } = twoDev()
@@ -569,6 +584,227 @@ describe('expectation sidecars (verifyPreregContent)', () => {
       const { expectation_hashes: _drop, ...bare } = prereg
       expect(verify(bare, true).problems.map((p) => `${p.set}/${p.id} ${p.kind}`)).toContain('expectation.heldout/h1 extra')
     })
+  })
+})
+
+// ── content_dir ────────────────────────────────────────────────────────────
+
+describe('content_dir (opt-in content root)', () => {
+  const PILOT_DIR = 'evals/demo/pilot'
+  const PILOT = { outcome: 'recommends keeping the current library and names the runtime constraint' }
+  const preregOf = (r: ReturnType<typeof parsePrereg>) => {
+    if (!r.ok) throw new Error(r.errors.join('; '))
+    return r.prereg
+  }
+
+  function pilotDirRepo(extra: (repo: TestRepo) => void = () => undefined) {
+    const { repo, heldout } = setup()
+    const scaffold = scaffoldMethod(repo, 'demo', { heldoutDir: heldout, contentDir: PILOT_DIR, expectations: { dev: { d1: PILOT } } })
+    // A shipped epoch's content sits beside the pilot dir and must stay out of the pilot's verification.
+    repo.write('evals/demo/fixtures/dev/e1.md', 'Epoch fixture.\n')
+    repo.write('evals/demo/rubric.md', 'Epoch rubric.\n')
+    extra(repo)
+    writePrereg(repo, scaffold)
+    repo.commit('test: pilot prereg and content', [...scaffold.fixturePaths, scaffold.preregPath, 'evals/demo/fixtures/dev/e1.md', 'evals/demo/rubric.md'])
+    const enforce = () => enforcePrereg({ git: repo.git, repoRoot: repo.dir, method: 'demo', mode: 'dev', heldoutDir: heldout, preregPath: scaffold.preregPath })
+    return { repo, heldout, scaffold, enforce }
+  }
+
+  describe('parsePrereg', () => {
+    const { prereg } = (() => {
+      const { repo, heldout } = setup()
+      return scaffoldMethod(repo, 'demo', { heldoutDir: heldout })
+    })()
+    const errorsOf = (content_dir: unknown) => {
+      const r = parsePrereg(JSON.stringify({ ...prereg, content_dir }))
+      return r.ok ? [] : r.errors
+    }
+
+    test('absent is the default and parses unchanged', () => {
+      expect(preregOf(parsePrereg(JSON.stringify(prereg))).content_dir).toBeUndefined()
+    })
+
+    test('a directory inside evals/<method>/ parses', () => {
+      expect(preregOf(parsePrereg(JSON.stringify({ ...prereg, content_dir: 'evals/demo/pilot' }))).content_dir).toBe('evals/demo/pilot')
+      expect(errorsOf('evals/demo/pilot/deeper')).toEqual([])
+    })
+
+    test('anything that could leave evals/<method>/ is refused', () => {
+      for (const bad of ['', '   ', 'evals/demo', 'evals/demo/', '/evals/demo/pilot', 'evals/other/pilot', 'evals/demo/../other', 'evals/demo/./pilot', 'evals/demo//pilot', 'evals/demo/pilot/', 'evals/demo\\pilot', 'evals/demox/pilot', 7, null, ['evals/demo/pilot']]) {
+        expect(errorsOf(bad).join('\n')).toContain('content_dir:')
+      }
+    })
+  })
+
+  test('a prereg with the field verifies against that directory: rubric, fixtures and sidecars', () => {
+    const { enforce, scaffold } = pilotDirRepo()
+    const verified = enforce()
+    expect(verified.prereg.content_dir).toBe(PILOT_DIR)
+    expect(verified.content.problems).toEqual([])
+    expect(verified.content.invalid).toEqual([])
+    expect(verified.content.fixtures.dev.map((f) => [f.id, f.expectation])).toEqual([['d1', PILOT]])
+    expect(verified.content.fixtures.negative.map((f) => f.id)).toEqual(['n1'])
+    expect(scaffold.preregPath).toBe(`${PILOT_DIR}/prereg.json`)
+  })
+
+  test("the shipped epoch's files beside the pilot dir are neither read nor reported", () => {
+    const { enforce, repo } = pilotDirRepo()
+    expect(repo.git.isTracked('evals/demo/rubric.md')).toBe(true)
+    expect(enforce().content.problems).toEqual([])
+  })
+
+  test('a sidecar in the pilot dir with no prereg hash is extra', () => {
+    const { repo, scaffold, heldout } = pilotDirRepo()
+    repo.write(`${PILOT_DIR}/fixtures/dev/d1.expectation.json`, JSON.stringify(PILOT))
+    repo.write(`${PILOT_DIR}/fixtures/dev/d9.expectation.json`, JSON.stringify(PILOT))
+    repo.commit('test: stray sidecar', [`${PILOT_DIR}/fixtures/dev/d1.expectation.json`, `${PILOT_DIR}/fixtures/dev/d9.expectation.json`])
+    try {
+      enforcePrereg({ git: repo.git, repoRoot: repo.dir, method: 'demo', mode: 'dev', heldoutDir: heldout, preregPath: scaffold.preregPath })
+      throw new Error('expected a PreregRefusal')
+    } catch (e) {
+      if (!(e instanceof PreregRefusal)) throw e
+      expect(codes(e.violations)).toEqual(['content_hash_mismatch'])
+      expect(e.violations[0]?.message).toContain('expectation.dev/d9 extra')
+    }
+  })
+
+  test('without the field the same content dir is not consulted: evals/<method> is, and its absence is a missing rubric', () => {
+    const { repo, heldout, scaffold } = pilotDirRepo()
+    const { content_dir: _drop, ...bare } = scaffold.prereg
+    repo.write(scaffold.preregPath, `${JSON.stringify(bare, null, 2)}\n`)
+    repo.commit('test: drop content_dir', [scaffold.preregPath])
+    const v = verifyPreregContent(bare, { evalDir: join(repo.dir, 'evals', 'demo'), heldoutDir: heldout }, { includeHeldout: false })
+    expect(v.problems.map((p) => `${p.set}/${p.id} ${p.kind}`)).toContain('rubric/rubric.md mismatch')
+  })
+})
+
+// Regression: adding `content_dir` and optional sidecar fields must not move any committed contract. The content hash names a prereg in
+// every manifest and report, so a drift here would void the epoch-3 evidence and the tether pilot tally.
+describe('committed prereg content hashes are pinned', () => {
+  const repoRoot = resolve(import.meta.dir, '..', '..')
+  const PINNED: Record<string, string> = {
+    'evals/synthesis/prereg.json': '7cf14e1b617452de157593316cdc45a9bacf4a6828242024d90ee6faf2599b81',
+    'evals/counterfactual/prereg.json': '152c5889db5bc7a029c802a0365b19bc22c613def222512c31d62a377b8a6fa4',
+    'evals/tether/pilot/prereg.json': '88f56345e9adf8f49e814a832529c021efd72500607c87d5bab10627f51541b3',
+  }
+  for (const [rel, hash] of Object.entries(PINNED)) {
+    test(`${rel}`, () => {
+      const parsed = parsePrereg(readFileSync(join(repoRoot, rel), 'utf8'))
+      if (!parsed.ok) throw new Error(parsed.errors.join('; '))
+      expect(preregContentHash(parsed.prereg)).toBe(hash)
+      // None of them opts in: their content root is evals/<method>, as before.
+      expect(parsed.prereg.content_dir).toBeUndefined()
+      expect(preregContentDirRel(parsed.prereg)).toBe(`evals/${parsed.prereg.method}`)
+    })
+  }
+
+  test('the tether pilot prereg still verifies against evals/tether through enforcePrereg’s content root', () => {
+    const parsed = parsePrereg(readFileSync(join(repoRoot, 'evals/tether/pilot/prereg.json'), 'utf8'))
+    if (!parsed.ok) throw new Error(parsed.errors.join('; '))
+    const v = verifyPreregContent(parsed.prereg, { evalDir: join(repoRoot, preregContentDirRel(parsed.prereg)), heldoutDir: '/nonexistent' }, { includeHeldout: false })
+    expect(v.problems).toEqual([])
+    expect(v.invalid).toEqual([])
+  })
+})
+
+// The synthesis pilot: its own prereg and content directory (`evals/synthesis/pilot/`), six dev fixtures with one acceptance statement
+// each, no negatives, no held-out. The epoch-3 `evals/synthesis/prereg.json` and its files are a different contract and stay as they are.
+describe('synthesis pilot (committed)', () => {
+  const repoRoot = resolve(import.meta.dir, '..', '..')
+  const pilotDirPath = join(repoRoot, 'evals', 'synthesis', 'pilot')
+  const parsed = parsePrereg(readFileSync(join(pilotDirPath, 'prereg.json'), 'utf8'))
+  if (!parsed.ok) throw new Error(parsed.errors.join('; '))
+  const { prereg } = parsed
+  const epoch3 = parsePrereg(readFileSync(join(repoRoot, 'evals', 'synthesis', 'prereg.json'), 'utf8'))
+  if (!epoch3.ok) throw new Error(epoch3.errors.join('; '))
+  const IDS = Object.keys(epoch3.prereg.fixture_hashes.dev).sort()
+
+  test('parses: its own content directory, six dev fixtures and nothing else, five runs, the epoch-3 models', () => {
+    expect(prereg.method).toBe('synthesis')
+    expect(prereg.content_dir).toBe('evals/synthesis/pilot')
+    expect(preregContentDirRel(prereg)).toBe('evals/synthesis/pilot')
+    expect(Object.keys(prereg.fixture_hashes.dev).sort()).toEqual(IDS)
+    expect(IDS).toHaveLength(6)
+    expect(prereg.fixture_hashes.negative).toEqual({})
+    expect(prereg.fixture_hashes.heldout).toEqual({})
+    expect(Object.keys(prereg.expectation_hashes?.dev ?? {}).sort()).toEqual(IDS)
+    expect(prereg.expectation_hashes?.heldout).toEqual({})
+    expect(prereg.runs_per_condition).toBe(5)
+    expect(prereg.agent_model_id).toBe(epoch3.prereg.agent_model_id)
+    expect(prereg.judge_model_id).toBe(epoch3.prereg.judge_model_id)
+    expect(prereg.per_run_timeout_ms).toBe(epoch3.prereg.per_run_timeout_ms)
+    expect(prereg.budget).toEqual(epoch3.prereg.budget)
+    // A different salt, so no hash is shared with the epoch-3 contract.
+    expect(prereg.salt).not.toBe(epoch3.prereg.salt)
+  })
+
+  test('the rubric, fixtures and sidecars hash to the prereg, and every fixture carries its verified outcome-only statement', () => {
+    const { problems, invalid, fixtures } = verifyPreregContent(prereg, { evalDir: join(repoRoot, preregContentDirRel(prereg)), heldoutDir: '/nonexistent' }, { includeHeldout: false })
+    expect(problems).toEqual([])
+    expect(invalid).toEqual([])
+    expect(fixtures.dev.map((f) => f.id)).toEqual(IDS)
+    for (const f of fixtures.dev) {
+      expect(Object.keys(f.expectation ?? {})).toEqual(['outcome'])
+      expect(f.expectation?.outcome).toMatch(/Pass example: ".+" Fail example: ".+"$/)
+    }
+    expect(fixtures.negative).toEqual([])
+  })
+
+  test('the fixtures are byte-identical copies of the epoch-3 dev fixtures', () => {
+    for (const id of IDS) {
+      const copy = readFileSync(join(pilotDirPath, 'fixtures', 'dev', `${id}.md`))
+      const original = readFileSync(join(repoRoot, 'evals', 'synthesis', 'fixtures', 'dev', `${id}.md`))
+      expect(copy.equals(original)).toBe(true)
+    }
+  })
+
+  test('the rubric declares expectation: true and judges SA1 only, with no annex', () => {
+    const rubric = readFileSync(join(pilotDirPath, 'rubric.md'), 'utf8')
+    expect(parseDeclarations(rubric)).toEqual({ expectation: true })
+    const spec = parseRubric(rubric)
+    expect(spec.criteria.map((c) => c.id)).toEqual(['SA1'])
+    expect(spec.systemPrompt).toContain('EXPECTATION')
+    expect(spec.systemPrompt).not.toContain('RECORD')
+    expect(rubric).not.toMatch(/^## Fixture annex/m)
+    // The pass anchor names a passage that can be quoted from the ANSWER.
+    expect(spec.criteria[0]!.body).toContain('The pass quote is the sentence that states the recommendation')
+  })
+
+  test('the redact list is the epoch-3 list plus the skill\'s own failure wording, and no fixture or sidecar contains a token (the authoring lint)', () => {
+    const tokens = loadRedactTokens(join(pilotDirPath, 'redact.json'))
+    const base = loadRedactTokens(join(repoRoot, 'evals', 'synthesis', 'redact.json'))
+    expect([...tokens].sort()).toEqual([...base, 'unrecorded', 'no record was written'].sort())
+    for (const id of IDS) {
+      for (const ext of ['md', 'expectation.json'] as const) expect(survivingTokens(readFileSync(join(pilotDirPath, 'fixtures', 'dev', `${id}.${ext}`), 'utf8'), tokens)).toEqual([])
+    }
+  })
+
+  test('the notes carry the guide numbers, both reading rules, and who decides', () => {
+    const notes = prereg.metadata.notes ?? ''
+    for (const phrase of [
+      'The owner\'s marks are the primary score',
+      'The judge is the instrument under test',
+      'inform that decision and do not make it',
+      'at least 0.8',
+      'Wilson interval',
+      'At least 2 of 6 fixtures not at ceiling',
+      'the baseline arm on 4 of 5 or 5 of 5 runs',
+      'Owner pass counts per arm, pooled and per fixture; no inference',
+      'Preference wins, losses and ties, plus the net margin, pooled only',
+      'At least 4 of 5 answered runs per arm and fixture, with no top-up runs',
+      'separation is uninformative',
+      'compatible with a format or length effect',
+      'usefulness beyond the statement',
+    ]) {
+      expect(notes).toContain(phrase)
+    }
+  })
+
+  test('the epoch-3 files and the shipped redact list are not part of this contract', () => {
+    // The pilot prereg lives in its own directory, so the epoch-3 prereg still verifies against evals/synthesis/ alone.
+    const { problems, invalid } = verifyPreregContent(epoch3.prereg, { evalDir: join(repoRoot, 'evals', 'synthesis'), heldoutDir: '/nonexistent' }, { includeHeldout: false })
+    expect(problems).toEqual([])
+    expect(invalid).toEqual([])
   })
 })
 

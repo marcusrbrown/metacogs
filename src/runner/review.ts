@@ -286,6 +286,12 @@ export interface RejudgeInput {
   preregContentHash: string
   /** The judge model the rejudge pinned. */
   judgeModelId: string
+  /**
+   * Judge only the runs whose latest verdict is `judge_error`: the verdict a rejudge under this same contract (prereg content hash and
+   * judge model) recorded for them, else the manifest's. The other runs keep the row such a rejudge wrote, or are skipped, so the
+   * summary still vouches for every `judge.json` already on disk.
+   */
+  errorsOnly?: boolean
   log?: (line: string) => void
 }
 
@@ -299,18 +305,47 @@ export interface RejudgeRow {
 
 export { skipReason }
 
+const SUMMARY_FILE = 'rejudge-summary.json'
+
+/** The rows of an earlier `rejudge-summary.json`, but only when it was written under this contract and judge model; else none. */
+function priorRows(input: RejudgeInput): Map<string, RejudgeRow> {
+  const path = join(input.campaignDir, SUMMARY_FILE)
+  const rows = new Map<string, RejudgeRow>()
+  const text = readIfExists(path)
+  if (text === undefined) return rows
+  try {
+    const raw = JSON.parse(text) as { prereg_content_hash?: unknown; judge_model_id?: unknown; runs?: unknown }
+    if (raw.prereg_content_hash !== input.preregContentHash || raw.judge_model_id !== input.judgeModelId || !Array.isArray(raw.runs)) return rows
+    for (const r of raw.runs as RejudgeRow[]) if (typeof r?.run_id === 'string' && typeof r.verdict === 'string') rows.set(r.run_id, r)
+  } catch {
+    // an unreadable summary vouches for nothing
+  }
+  return rows
+}
+
 export async function rejudgeCampaign(input: RejudgeInput): Promise<RejudgeRow[]> {
   const rows: RejudgeRow[] = []
+  const declared = input.declarations?.expectation === true
+  const earlier = input.errorsOnly ? priorRows(input) : new Map<string, RejudgeRow>()
   for (const run of loadCampaignRuns(input.campaignDir)) {
     const { manifest } = run
     const prior = manifest.outcome ?? manifest.status
     const answer = judgedAnswerOf(run.dir, input.declarations)
-    // Under the declaration an empty final segment never reached the judge, whatever narration came before it.
-    const emptyFinal = input.declarations?.expectation === true && answer !== undefined && (finalAnswerOf(run.dir, input.declarations) ?? '').trim() === ''
-    const skip = emptyFinal ? 'empty final answer (never reached the judge)' : skipReason(manifest, answer !== undefined)
+    // Under the declaration the judge reads all assistant text, so only a run with none never reached it.
+    const emptyAnswer = declared && answer !== undefined && answer.trim() === ''
+    const skip = emptyAnswer ? 'empty answer (never reached the judge)' : skipReason(manifest, answer !== undefined, declared)
     if (skip) {
       rows.push({ run_id: manifest.run_id, prior_outcome: prior, verdict: 'skipped', reason: skip })
       continue
+    }
+    if (input.errorsOnly) {
+      const before = earlier.get(manifest.run_id)
+      const latest = before !== undefined && before.verdict !== 'skipped' ? before.verdict : manifest.reasons.includes('judge_error') ? 'judge_error' : (manifest.outcome ?? 'unjudged')
+      if (latest !== 'judge_error') {
+        // Keep the row that vouches for a judge.json an earlier rejudge wrote; otherwise there is nothing to carry.
+        rows.push(before !== undefined && before.verdict !== 'skipped' ? before : { run_id: manifest.run_id, prior_outcome: prior, verdict: 'skipped', reason: 'not a judge_error run (--errors-only)' })
+        continue
+      }
     }
     const fixture = (manifest.fixture.kind === 'dev' ? input.fixtures.dev : input.fixtures.negative).find((f) => f.id === manifest.fixture.id)
     if (!fixture || fixture.hash !== manifest.fixture.hash) {
@@ -338,6 +373,6 @@ export async function rejudgeCampaign(input: RejudgeInput): Promise<RejudgeRow[]
   }
   const summary = { judge_prompt_sha256: input.judgePromptSha256, prereg_content_hash: input.preregContentHash, judge_model_id: input.judgeModelId, runs: rows }
   const text = `${JSON.stringify(summary, null, 2)}\n`
-  writeFileSync(join(input.campaignDir, 'rejudge-summary.json'), text, { mode: 0o600 })
+  writeFileSync(join(input.campaignDir, SUMMARY_FILE), text, { mode: 0o600 })
   return rows
 }

@@ -1,0 +1,141 @@
+{
+  "schema_version": 3,
+  "method": "synthesis",
+  "prereg_content_hash": "6cbf69aa042dfd5ef019ebad7dc5404329c6f82fd27d1c0ee0eda60803adf54f",
+  "agent_model_id": "openai/gpt-6-luna",
+  "judge_model_id": "anthropic/claude-haiku-5-5",
+  "arms": [
+    "baseline",
+    "skill"
+  ],
+  "campaigns": {
+    "baseline": "synthesis-pilot-2026-10-29T04-41-53-318Z",
+    "skill": "synthesis-pilot-2026-10-29T04-41-53-318Z"
+  },
+  "tally": {
+    "baseline": {
+      "sy-d1-kafka-consensus": {
+        "runs": 5,
+        "criteria": {
+          "SA1": 5
+        },
+        "all_pass": 5,
+        "over_limit": 0,
+        "empty": 0,
+        "skill_loaded": 0
+      },
+      "sy-d2-stale-service-map": {
+        "runs": 5,
+        "criteria": {
+          "SA1": 5
+        },
+        "all_pass": 5,
+        "over_limit": 0,
+        "empty": 0,
+        "skill_loaded": 0
+      },
+      "sy-d3-cache-tenancy": {
+        "runs": 5,
+        "criteria": {
+          "SA1": 5
+        },
+        "all_pass": 5,
+        "over_limit": 0,
+        "empty": 0,
+        "skill_loaded": 0
+      },
+      "sy-d4-parser-vote": {
+        "runs": 5,
+        "criteria": {
+          "SA1": 5
+        },
+        "all_pass": 5,
+        "over_limit": 0,
+        "empty": 0,
+        "skill_loaded": 0
+      },
+      "sy-d5-sdk-migration": {
+        "runs": 5,
+        "criteria": {
+          "SA1": 5
+        },
+        "all_pass": 5,
+        "over_limit": 0,
+        "empty": 0,
+        "skill_loaded": 0
+      },
+      "sy-d6-log-redaction": {
+        "runs": 5,
+        "criteria": {
+          "SA1": 5
+        },
+        "all_pass": 5,
+        "over_limit": 0,
+        "empty": 0,
+        "skill_loaded": 0
+      }
+    },
+    "skill": {
+      "sy-d1-kafka-consensus": {
+        "runs": 5,
+        "criteria": {
+          "SA1": 5
+        },
+        "all_pass": 5,
+        "over_limit": 0,
+        "empty": 0,
+        "skill_loaded": 5
+      },
+      "sy-d2-stale-service-map": {
+        "runs": 5,
+        "criteria": {
+          "SA1": 5
+        },
+        "all_pass": 5,
+        "over_limit": 0,
+        "empty": 0,
+        "skill_loaded": 5
+      },
+      "sy-d3-cache-tenancy": {
+        "runs": 5,
+        "criteria": {
+          "SA1": 5
+        },
+        "all_pass": 5,
+        "over_limit": 0,
+        "empty": 0,
+        "skill_loaded": 5
+      },
+      "sy-d4-parser-vote": {
+        "runs": 5,
+        "criteria": {
+          "SA1": 5
+        },
+        "all_pass": 5,
+        "over_limit": 0,
+        "empty": 0,
+        "skill_loaded": 5
+      },
+      "sy-d5-sdk-migration": {
+        "runs": 5,
+        "criteria": {
+          "SA1": 5
+        },
+        "all_pass": 5,
+        "over_limit": 0,
+        "empty": 0,
+        "skill_loaded": 5
+      },
+      "sy-d6-log-redaction": {
+        "runs": 5,
+        "criteria": {
+          "SA1": 5
+        },
+        "all_pass": 5,
+        "over_limit": 0,
+        "empty": 0,
+        "skill_loaded": 5
+      }
+    }
+  }
+}

@@ -1,0 +1,3 @@
+{
+  "outcome": "The answer does not approve deleting rates-v1 this sprint, because the month-end cron job calls it. Pass example: \"Don't delete; month-end.yaml curls rates-v1 on the 1st.\" Fail example: \"Delete it, four of five say it's safe.\""
+}
