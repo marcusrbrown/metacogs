@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { createJudge, type JudgeTransport } from './judge'
-import { probeJudgeInput } from './judge-probe'
+import { parseAnswers, parseProbeArgs, probeJudgeInput, ProbeInputError, readJsonInput, readTextInput, UsageError } from './judge-probe'
 import type { Expectation } from './prereg'
 
 const scratch: string[] = []
@@ -78,5 +78,148 @@ describe('createJudge contentDir', () => {
 
   test('a contentDir with no rubric fails fast', () => {
     expect(() => createJudge({ repoRoot: declaredRepo(), method: 'declared', model: 'opencode/m', transport, contentDir: 'evals/declared/nowhere' })).toThrow()
+  })
+})
+
+describe('parseProbeArgs', () => {
+  test('no arguments parses to the run defaults', () => {
+    expect(parseProbeArgs([])).toEqual({ kind: 'run', method: 'counterfactual', models: [] })
+  })
+
+  test('every declared flag and the positional model ids parse', () => {
+    expect(
+      parseProbeArgs(['--method', 'tether', '--content-dir', 'evals/tether/pilot', '--expectation', 'e.json', '--task', 't.md', '--answers', 'a.json', 'opencode/a-free', 'opencode/b-free']),
+    ).toEqual({
+      kind: 'run',
+      method: 'tether',
+      contentDir: 'evals/tether/pilot',
+      expectationFile: 'e.json',
+      taskFile: 't.md',
+      answersFile: 'a.json',
+      models: ['opencode/a-free', 'opencode/b-free'],
+    })
+  })
+
+  test('--flag=value and flags after positionals parse', () => {
+    expect(parseProbeArgs(['opencode/a-free', '--method=synthesis'])).toMatchObject({ kind: 'run', method: 'synthesis', models: ['opencode/a-free'] })
+  })
+
+  test('--help (and -h) short-circuits to help', () => {
+    expect(parseProbeArgs(['--help'])).toEqual({ kind: 'help' })
+    expect(parseProbeArgs(['-h'])).toEqual({ kind: 'help' })
+  })
+
+  test('a typo\'d flag is a usage error, not a model id', () => {
+    expect(() => parseProbeArgs(['--mehtod', 'tether'])).toThrow(UsageError)
+    expect(() => parseProbeArgs(['--mehtod', 'tether'])).toThrow(/--mehtod/)
+  })
+
+  test('a trailing flag with no value is a usage error, not a silent fallback to the canned input', () => {
+    for (const flag of ['--task', '--answers', '--expectation', '--method', '--content-dir']) {
+      expect(() => parseProbeArgs(['opencode/a-free', flag])).toThrow(UsageError)
+    }
+  })
+
+  test('a flag followed by another flag does not swallow it as a value', () => {
+    expect(() => parseProbeArgs(['--task', '--answers', 'a.json'])).toThrow(UsageError)
+  })
+
+  test('an empty flag value is a usage error', () => {
+    expect(() => parseProbeArgs(['--task='])).toThrow(UsageError)
+  })
+
+  test('a short flag nobody declared is a usage error', () => {
+    expect(() => parseProbeArgs(['-x'])).toThrow(UsageError)
+  })
+})
+
+describe('probe input readers', () => {
+  const dir = () => {
+    const d = mkdtempSync(join(tmpdir(), 'metacogs-probe-read-'))
+    scratch.push(d)
+    return d
+  }
+
+  test('a missing file names the flag and the path', () => {
+    const path = join(dir(), 'nope.md')
+    expect(() => readTextInput('--task', path)).toThrow(ProbeInputError)
+    expect(() => readTextInput('--task', path)).toThrow(`--task ${path}`)
+  })
+
+  test('bad JSON names the flag and the path', () => {
+    const path = join(dir(), 'bad.json')
+    writeFileSync(path, '{not json')
+    expect(() => readJsonInput('--answers', path)).toThrow(ProbeInputError)
+    expect(() => readJsonInput('--answers', path)).toThrow(`--answers ${path}`)
+  })
+
+  test('good files read back', () => {
+    const d = dir()
+    writeFileSync(join(d, 't.md'), 'the task')
+    writeFileSync(join(d, 'a.json'), '{"a":"b"}')
+    expect(readTextInput('--task', join(d, 't.md'))).toBe('the task')
+    expect(readJsonInput('--answers', join(d, 'a.json'))).toEqual({ a: 'b' })
+  })
+})
+
+describe('parseAnswers', () => {
+  test('a plain object of non-empty strings passes through', () => {
+    expect(parseAnswers({ weak: 'x', strong: 'y' }, '--answers a.json')).toEqual({ weak: 'x', strong: 'y' })
+  })
+
+  test('a JSON string (which would yield one probe per character) is rejected', () => {
+    expect(() => parseAnswers('weak answer', '--answers a.json')).toThrow(ProbeInputError)
+    expect(() => parseAnswers('weak answer', '--answers a.json')).toThrow('--answers a.json')
+  })
+
+  test('arrays, null, numbers, empty objects, empty strings and non-string values are rejected', () => {
+    for (const bad of [['a'], null, 3, {}, { a: '' }, { a: '  ' }, { a: 1 }, { a: null }]) {
+      expect(() => parseAnswers(bad, '--answers a.json')).toThrow(ProbeInputError)
+    }
+  })
+})
+
+describe('judge-probe process', () => {
+  const run = (...args: string[]) => {
+    // No model id and no opencode on PATH-dependent work: every case below fails before any transport is built.
+    const result = Bun.spawnSync([process.execPath, join(import.meta.dir, 'judge-probe.ts'), ...args], {
+      env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '' },
+    })
+    return { code: result.exitCode, stdout: result.stdout.toString(), stderr: result.stderr.toString() }
+  }
+
+  test('--help prints usage and exits 0', () => {
+    const r = run('--help')
+    expect(r.code).toBe(0)
+    expect(r.stdout).toContain('Usage:')
+  })
+
+  test('an unknown flag exits 64 with a usage line and no stack trace', () => {
+    const r = run('--mehtod', 'x')
+    expect(r.code).toBe(64)
+    expect(r.stderr).toContain('Usage:')
+    expect(r.stderr).not.toMatch(/\n\s+at /)
+  })
+
+  test('a missing --task file exits 1 naming flag and path, with no stack trace', () => {
+    const r = run('--task', 'does/not/exist.md', 'opencode/a-free')
+    expect(r.code).toBe(1)
+    expect(r.stderr).toContain('--task does/not/exist.md')
+    expect(r.stderr).not.toMatch(/\n\s+at /)
+  })
+
+  test('--answers given as a JSON string exits 1 before any model is probed', () => {
+    const d = mkdtempSync(join(tmpdir(), 'metacogs-probe-proc-'))
+    scratch.push(d)
+    writeFileSync(join(d, 'a.json'), '"just a string"')
+    const r = run('--answers', join(d, 'a.json'), 'opencode/a-free')
+    expect(r.code).toBe(1)
+    expect(r.stderr).toContain('--answers')
+    expect(r.stdout).toBe('')
+  })
+
+  test('a --content-dir outside the repository exits 64', () => {
+    const r = run('--content-dir', '../elsewhere', 'opencode/a-free')
+    expect(r.code).toBe(64)
   })
 })

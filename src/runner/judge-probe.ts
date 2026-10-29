@@ -4,7 +4,7 @@
  * recording proxy, no key anywhere), then one probe with the real judge
  * prompt for a method to check the strict-JSON contract is followable.
  *
- *   bun src/runner/judge-probe.ts [--method counterfactual] [--content-dir <repo-relative dir>] [--expectation <file>] [--task <file>] [--answers <file>] [model-id ...]
+ *   bun src/runner/judge-probe.ts [--method counterfactual] [--content-dir <repo-relative dir>] [--expectation <file>] [--task <file>] [--answers <file>] [--help] [model-id ...]
  *
  * `--content-dir` names the directory holding `rubric.md` and `redact.json` (default `evals/<method>`): the same directory a prereg's
  * `content_dir` names, so a pilot's rubric can be probed before its prereg is committed.
@@ -15,9 +15,12 @@
  *
  * Without model ids the probe lists them with `opencode models opencode`.
  * Output: one JSON object per model on stdout. Nothing secret exists to print.
+ * Exit codes: 0 done (or `--help`), 64 usage (unknown flag, missing or empty flag value, bad `--content-dir`), 1 anything else (unreadable
+ * or malformed input file, failed probe). Failures print one `judge-probe: ...` line, never a stack trace.
  */
 import { readFileSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
+import { parseArgs } from 'node:util'
 
 import { parseAuthPassthrough, readPassthroughAuth } from './auth'
 import { cliproxyAuth, fetchCliproxyKey, parseAuthCliproxy } from './cliproxy'
@@ -55,11 +58,90 @@ export function probeJudgeInput(method: string, finalAnswer: string, expectation
   }
 }
 
+export const USAGE = `Usage: bun src/runner/judge-probe.ts [--method <name>] [--content-dir <repo-relative dir>] [--expectation <file>] [--task <file>] [--answers <file>] [--help] [model-id ...]`
+
+/** Bad command line (exit 64). */
+export class UsageError extends Error {}
+
+/** A probe input file that is unreadable, malformed or the wrong shape (exit 1). The message names the flag and the path. */
+export class ProbeInputError extends Error {}
+
+export type ProbeArgs =
+  | { kind: 'help' }
+  | { kind: 'run'; method: string; contentDir?: string; expectationFile?: string; taskFile?: string; answersFile?: string; models: string[] }
+
+/** Pure argv parse. Unknown flags, a flag with no value and an empty value throw `UsageError`; nothing touches the filesystem. */
+export function parseProbeArgs(argv: readonly string[]): ProbeArgs {
+  let parsed: ReturnType<typeof parse>
+  try {
+    parsed = parse(argv)
+  } catch (error) {
+    const code = (error as { code?: unknown }).code
+    if (typeof code === 'string' && code.startsWith('ERR_PARSE_ARGS_')) throw new UsageError((error as Error).message.split('\n')[0]!)
+    throw error
+  }
+  const { values, positionals } = parsed
+  if (values.help) return { kind: 'help' }
+  for (const [flag, value] of Object.entries(values)) if (value === '') throw new UsageError(`--${flag} needs a non-empty value`)
+  return {
+    kind: 'run',
+    method: values.method ?? 'counterfactual',
+    ...(values['content-dir'] !== undefined ? { contentDir: values['content-dir'] } : {}),
+    ...(values.expectation !== undefined ? { expectationFile: values.expectation } : {}),
+    ...(values.task !== undefined ? { taskFile: values.task } : {}),
+    ...(values.answers !== undefined ? { answersFile: values.answers } : {}),
+    models: positionals,
+  }
+}
+
+const parse = (args: readonly string[]) =>
+  parseArgs({
+    args: [...args],
+    options: {
+      method: { type: 'string' },
+      'content-dir': { type: 'string' },
+      expectation: { type: 'string' },
+      task: { type: 'string' },
+      answers: { type: 'string' },
+      help: { type: 'boolean', short: 'h' },
+    },
+    allowPositionals: true,
+    strict: true,
+  })
+
+/** The one place a probe input file is read; failures name the flag (or what the path stands for) and the path. */
+export function readTextInput(flag: string, path: string): string {
+  try {
+    return readFileSync(path, 'utf8')
+  } catch (error) {
+    throw new ProbeInputError(`${flag} ${path}: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+export function readJsonInput(flag: string, path: string): unknown {
+  const text = readTextInput(flag, path)
+  try {
+    return JSON.parse(text)
+  } catch (error) {
+    throw new ProbeInputError(`${flag} ${path}: not valid JSON (${error instanceof Error ? error.message : String(error)})`)
+  }
+}
+
+/** `--answers` must be a non-empty plain object of name → non-empty text; a JSON string would otherwise yield one probe per character. */
+export function parseAnswers(value: unknown, where: string): Record<string, string> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new ProbeInputError(`${where}: expected a JSON object of name → answer text`)
+  const entries = Object.entries(value)
+  if (!entries.length) throw new ProbeInputError(`${where}: expected at least one answer`)
+  for (const [name, text] of entries) if (typeof text !== 'string' || !text.trim()) throw new ProbeInputError(`${where}: answer "${name}" must be a non-empty string`)
+  return value as Record<string, string>
+}
+
 /** Reads and shape-checks an expectation sidecar given with `--expectation`. */
 function readExpectation(path: string): Expectation {
-  const value: unknown = JSON.parse(readFileSync(path, 'utf8'))
-  const errors = expectationShapeErrors(value, `--expectation ${path}`)
-  if (errors.length) throw new Error(errors.join('; '))
+  const where = `--expectation ${path}`
+  const value = readJsonInput('--expectation', path)
+  const errors = expectationShapeErrors(value, where)
+  if (errors.length) throw new ProbeInputError(errors.join('; '))
   return value as Expectation
 }
 
@@ -86,33 +168,29 @@ const summarize = (r: JudgeTransportResponse) => ({
   wall_ms: r.wallMs,
 })
 
-async function main() {
-  const args = process.argv.slice(2)
-  const valueFlags = ['--method', '--content-dir', '--expectation', '--task', '--answers']
-  const requested = args.filter((a, i) => !a.startsWith('--') && !valueFlags.includes(args[i - 1] ?? ''))
-  const flagValue = (flag: string): string | undefined => {
-    const at = args.indexOf(flag)
-    return at === -1 ? undefined : args[at + 1]
+async function main(argv: readonly string[]) {
+  const args = parseProbeArgs(argv)
+  if (args.kind === 'help') {
+    console.log(USAGE)
+    return
   }
-  const method = flagValue('--method') ?? 'counterfactual'
-  const taskFile = flagValue('--task')
-  const task = taskFile ? readFileSync(taskFile, 'utf8') : PROBE_TASK
-  const answersFile = flagValue('--answers')
-  const answers: Record<string, string> = answersFile ? (JSON.parse(readFileSync(answersFile, 'utf8')) as Record<string, string>) : PROBE_ANSWERS
-  const models = requested.length ? requested : await listFreeModels()
+  const { method } = args
+  const repoRoot = join(import.meta.dir, '..', '..')
+  const contentDir = args.contentDir ?? join('evals', method)
+  if (isAbsolute(contentDir) || relative(repoRoot, resolve(repoRoot, contentDir)).startsWith('..')) throw new UsageError(`--content-dir ${contentDir} must be a repo-relative directory inside the repository`)
+  // Every input is read and checked before anything is built or sent, so a bad path never costs a request.
+  const task = args.taskFile ? readTextInput('--task', args.taskFile) : PROBE_TASK
+  const answers: Record<string, string> = args.answersFile ? parseAnswers(readJsonInput('--answers', args.answersFile), `--answers ${args.answersFile}`) : PROBE_ANSWERS
+  const spec = parseRubric(readTextInput(args.contentDir ? '--content-dir' : '--method', join(repoRoot, contentDir, 'rubric.md')))
+  // A rubric that declares `expectation: true` cannot be probed without one; the canned task needs a sidecar written for it.
+  if (spec.declarations.expectation && !args.expectationFile) throw new UsageError(`${method} declares expectation: true; pass --expectation <file> (an expectation.json written for the probe task)`)
+  const expectation = args.expectationFile ? readExpectation(args.expectationFile) : undefined
   // METACOGS_AUTH_PASSTHROUGH=opencode-go opts in (Go is the preferred gateway; add opencode only for Zen, which bills credits); values are copied by the transport, never printed.
   // METACOGS_AUTH_CLIPROXY=<key-name> uses the owner's CLIProxyAPI key instead (fetched through the infra CLI, never printed).
   const cliproxyName = parseAuthCliproxy(undefined, process.env)
   const auth = cliproxyName ? cliproxyAuth(fetchCliproxyKey(cliproxyName)) : readPassthroughAuth(parseAuthPassthrough(undefined, process.env))
   const transport = opencodeTransport({}, auth)
-  const repoRoot = join(import.meta.dir, '..', '..')
-  const contentDir = flagValue('--content-dir') ?? join('evals', method)
-  if (isAbsolute(contentDir) || relative(repoRoot, resolve(repoRoot, contentDir)).startsWith('..')) throw new Error(`--content-dir ${contentDir} must be a repo-relative directory inside the repository`)
-  const spec = parseRubric(readFileSync(join(repoRoot, contentDir, 'rubric.md'), 'utf8'))
-  // A rubric that declares `expectation: true` cannot be probed without one; the canned task needs a sidecar written for it.
-  const expectationFile = flagValue('--expectation')
-  if (spec.declarations.expectation && !expectationFile) throw new Error(`${method} declares expectation: true; pass --expectation <file> (an expectation.json written for the probe task)`)
-  const expectation = expectationFile ? readExpectation(expectationFile) : undefined
+  const models = args.models.length ? args.models : await listFreeModels()
 
   for (const model of models) {
     const first = await transport({ model, system: PROBE_SYSTEM, user: PROBE_USER, timeoutMs: 120_000 })
@@ -144,4 +222,16 @@ async function main() {
   }
 }
 
-if (import.meta.main) await main()
+if (import.meta.main) {
+  try {
+    await main(process.argv.slice(2))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (error instanceof UsageError) {
+      console.error(`judge-probe: ${message}\n${USAGE}`)
+      process.exit(64)
+    }
+    console.error(`judge-probe: ${message}`)
+    process.exit(1)
+  }
+}
