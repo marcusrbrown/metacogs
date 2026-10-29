@@ -713,8 +713,10 @@ async function runAttempt(c: CampaignInput, run: PlannedRun, state: AttemptState
               manifest.judge = verdict.evidence
               manifest.artifacts['judge.json'] = writeJudgeRecord(runDir, verdict.evidence)
             }
-            // The word limit (TE3m) is mechanical and runs after the judge, so the TE verdicts are on the manifest either way.
-            const limit = run.fixture.expectation?.maxWords
+            // The word limit (TE3m) is mechanical and runs after the judge, so the TE verdicts are on the manifest either way. It belongs to
+            // the declaration: a rubric that does not declare `expectation: true` has no limit, whatever a sidecar carries. It counts the
+            // final segment only (`finalAnswer`); see evals/runner/README.md.
+            const limit = declared ? run.fixture.expectation?.maxWords : undefined
             let overLimit = false
             if (limit !== undefined) {
               const words = countWords(finalAnswer)
