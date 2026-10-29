@@ -17,8 +17,8 @@ It supplies no facts, adds no capability, and does not guarantee a better result
 
 ## Fields
 
-- `substance`: the handle. A specific, well-known compound, neurotransmitter or fictional substance whose usual associations you can spell out in `method`. Use × to combine two.
-- `method`: the change of approach, in task terms. What you will emphasize, what you will set aside, which assumptions you will stop leaning on. Name the tradeoff; every change of approach costs something.
+- `substance`: a specific real drug or neurotransmitter, such as caffeine or acetylcholine, used as a metaphorical handle. Not a person, character, school or method. In `method`, state the task-level change and its tradeoff. Use × to combine two.
+- `method`: the task-level change of approach. What you will emphasize, what you will set aside, which assumptions you will stop leaning on. Name the tradeoff; every change of approach costs something.
 - `displaces`: the approach this replaces. Name the previous handle, or "baseline" for your default. Naming it keeps to one change at a time unless you combine deliberately with ×.
 
 ## Arguments

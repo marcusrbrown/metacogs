@@ -6,7 +6,7 @@ import { GUIDANCE_TEXT } from './guidance'
 const read = (name: string): string => readFileSync(new URL(`../../plugin/skills/${name}/SKILL.md`, import.meta.url), 'utf8')
 
 /** Wording the skills and the guidance must not carry: global damping, forced progression and efficacy claims. */
-const BANNED = [/\brare\b/i, /routine coding/i, /\balways\b/i, /training data/i, /pharmacokinetic/i, /slip back/i, /previous mode of processing is unavailable/i, /jailbreak/i, /persona/i]
+const BANNED = [/\brare\b/i, /routine coding/i, /\balways\b/i, /training data/i, /pharmacokinetic/i, /slip back/i, /previous mode of processing is unavailable/i, /jailbreak/i, /persona/i, /fictional/i]
 
 describe.each([
   ['feel', 'feel', 'somewhere', 'Use the tool first on an unnamed stuck point.'],

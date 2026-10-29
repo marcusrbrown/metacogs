@@ -29,6 +29,8 @@ feel / drugs spike (upstream tools served as a local MCP against the same frames
 
 OpenCode plugin reads (`evals/spikes/feel-drugs/README.md#plugin-reads`; both statuses stay `hypothesis`): in read 1 no plugin run called a tool and skills were loaded in 6 of 30 runs, with the plan's rule met on three skill-loading cells; read 2 had no tool calls in 46 plugin runs and its owner read is pending; `/feel` and `/drugs` led to a tool call in 32 of 32 command runs. The guidance and the two skills were rewritten after these runs.
 
+Tool-description probe (`evals/spikes/feel-drugs/README.md#tool-description-activation-probe-2026-10-29`; not scored; status stays `hypothesis`): trigger clauses in the `feel` and `drugs` tool descriptions gave no measured change in unprompted use (0 calls in 4 continuations and 12 controls across both arms, Luna and Opus) and no overtrigger; no debug stuck point was reached, and the description text ships as a clarity and correctness fix.
+
 Upstream concepts probed or rejected (inanna-malick/metacog@3d89bb3; recorded 2026-10-27). A "probed" entry says what was observed, not a measured rate:
 
 - deconstruct (dropped) - hands-on probe on a startup task with three constraints (readiness time, peak memory, corrupt-index rejection), run on GPT-6 Luna and Claude Opus 5.5. Both found the working design from a plain "Continue."; the checklist added nothing over a plain reassess.

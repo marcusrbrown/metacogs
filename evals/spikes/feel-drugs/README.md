@@ -9,7 +9,9 @@ An experiment with a human read, not a method: no prereg, rubric, judge, tally o
 - **The guided harness.** `src/spike/feel-drugs/guided.ts` and `blind.ts`, with their own run records, expected-tool tables and diagnostic arms. `p1` is left out of the guided reads; `prompts.md` and its hash are unchanged.
 - **The tool rename.** The plugin's tools are named `feel` and `drugs`; earlier runs recorded them as `metacogs_feel` and `metacogs_drugs`, and the MCP spike keeps `metacog_feel` and `metacog_drugs`. The blind sheet counts all three names in past records.
 
-Results recorded under epoch 1 stay epoch 1 results. Plan: `docs/plans/2026-10-25-001-feat-feel-drugs-spike-plan.md`. Requirements: `docs/brainstorms/2026-10-25-feel-drugs-spike-requirements.md`.
+**Epoch 3 (declared 2026-10-29).** Adds the hands-on [tool-description activation probe](#tool-description-activation-probe-2026-10-29): the `feel` and `drugs` tool text on main `fdd49cf` against the text in `e5416f2`, in the owner's real stack. It changes no earlier epoch's prompts, hashes or recorded results.
+
+Results recorded under an earlier epoch stay that epoch's results. Plan: `docs/plans/2026-10-25-001-feat-feel-drugs-spike-plan.md`. Requirements: `docs/brainstorms/2026-10-25-feel-drugs-spike-requirements.md`.
 
 The question: do upstream's `feel` and `drugs` change what a model produces when it composes the fields in a tool call and reads the frame back, compared with reading the same frame as skill text and writing the fields in its reply, and does the model family matter? Upstream is pinned to `inanna-malick/metacog@3d89bb30cd26369fdcd242fd704f66641dca327c` (MIT). Both tools are stateless text templates there.
 
@@ -263,4 +265,15 @@ Facts from the runs against the packed plugin on OpenCode 1.19.4, through CLIPro
   - No turn that was not a `/feel` or `/drugs` invocation called `metacogs_feel` or `metacogs_drugs`. At each of four conflicts (a requirement against a test, or against a platform limit) both models loaded `counterfactual` first.
   - At the design conflict `/drugs` was followed by a different next step on both models: Luna worked out a conditional quota-partition design and changed no code; Opus wrote a simulation and reported a design that held in every simulated case (simulated, not proved). The plain reassess prompt gave a restated conclusion on Luna and a self-critique on Opus, with no new design.
   - At the policy-against-test conflict `/feel` was followed by evidence gathering before any change (a call-graph check on Luna, a review of its own diff on Opus). The plain reassess prompt gave reflection and a recommendation. `/feel` was slightly ahead.
+
+#### Tool-description activation probe (2026-10-29)
+
+Not scored. Two arms: the `feel` and `drugs` tool text on main (`fdd49cf`) against the text in `e5416f2`, guidance unchanged. Luna and Opus, run in the owner's real stack (Systematic, oh-my-opencode-slim, magic-context and aft loaded).
+
+- Neither model reached a debug stuck point. Both debug seeds, including the harder one, were solved unaided in one turn, so no debug continuation ran.
+- The second design seed gave one checkpoint per model: Luna after turn 4, Opus after turn 3 (cut short for budget). There were 4 continuations on "Continue." (2 per model, one per arm), and neither arm made a tool call in any of them.
+- 12 controls (a story, a coding task with a typo'd path, a go/no-go question; both arms, both models) made 0 `feel` or `drugs` calls. `counterfactual` loaded on the go/no-go control under both arms.
+- Cost: about $3.87 as reported by the host, about $6.2 by estimate.
+- Reading: the description wording produced no measured change in unprompted use and did not overtrigger. The text ships as a clarity and correctness fix. A user-turn reminder is the next probe.
+- Caveat: the raw events of the main-text (CURRENT) continuations were lost; only their summaries survive.
 
