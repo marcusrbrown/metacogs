@@ -31,6 +31,10 @@ OpenCode plugin reads (`evals/spikes/feel-drugs/README.md#plugin-reads`; both st
 
 Tool-description probe (`evals/spikes/feel-drugs/README.md#tool-description-activation-probe-2026-10-29`; not scored; status stays `hypothesis`): trigger clauses in the `feel` and `drugs` tool descriptions gave no measured change in unprompted use (0 calls in 4 continuations and 12 controls across both arms, Luna and Opus) and no overtrigger; no debug stuck point was reached, and the description text ships as a clarity and correctness fix.
 
+User-turn reminder probe (`evals/spikes/feel-drugs/README.md#user-turn-reminder-probe-2026-10-29`; not scored; status stays `hypothesis`): an opt-in reminder reached all 64 recorded ON requests and led to one `feel` call (Luna, design continuation) that did not change the next action; Opus ignored it, and 6 controls had 0 calls. The reminder does not ship.
+
+Activation work for `feel` and `drugs` is closed: unprompted use gave no measured benefit, and the tools stay user-invoked (`/feel`, `/drugs`, or naming the tool).
+
 Upstream concepts probed or rejected (inanna-malick/metacog@3d89bb3; recorded 2026-10-27). A "probed" entry says what was observed, not a measured rate:
 
 - deconstruct (dropped) - hands-on probe on a startup task with three constraints (readiness time, peak memory, corrupt-index rejection), run on GPT-6 Luna and Claude Opus 5.5. Both found the working design from a plain "Continue."; the checklist added nothing over a plain reassess.
