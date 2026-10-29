@@ -1,8 +1,9 @@
 /**
  * `eval pilot`: a dev-only, unreported campaign on the pilot prereg (`evals/<m>/pilot/prereg.json`).
  *
- * - `planPilot` plans the baseline arm over the dev fixtures only: no negatives, no held-out. Every planned run carries its `arm`,
- *   which lands on the manifest and marks the campaign as a pilot.
+ * - `planPilot` plans the named arms (`baseline`, `skill`) over the dev fixtures only: no negatives, no held-out. Arms are interleaved
+ *   and the first arm flips by round and fixture, so neither runs systematically earlier. Every planned run carries its `arm`, which
+ *   lands on the manifest and marks the campaign as a pilot.
  * - Reports refuse any manifest that carries an `arm`, so the only projection of a pilot is `pilot.json`, written by a fixed-key
  *   writer: counts, model ids, the prereg content hash, the arms present and their campaign ids. No stdout, stderr, env, quotes or
  *   transcript text.
@@ -17,34 +18,52 @@ import { loadCampaignRuns, PILOT_ARMS, type PilotArm, skipReason } from './manif
 import type { LoadedFixture } from './prereg'
 import type { PlannedRun } from './run'
 import { isOverLimit } from './word-limit'
-import { sha256 } from './workspace'
+import { type Condition, sha256 } from './workspace'
 
 export { PILOT_ARMS, type PilotArm }
 
 export const isPilotArm = (value: string): value is PilotArm => (PILOT_ARMS as readonly string[]).includes(value)
 
+/** The condition an arm runs under: `skill` installs the skill, `baseline` installs nothing. */
+export const conditionOfArm = (arm: PilotArm): Condition => (arm === 'skill' ? 'skill' : 'baseline')
+
+/** `--arm` as a comma list: known arms, no repeats. `bad` names every entry that is empty, unknown or repeated. */
+export function parsePilotArms(flag: string): { ok: true; arms: PilotArm[] } | { ok: false; bad: string[] } {
+  const parts = flag.split(',').map((p) => p.trim())
+  const bad = parts.filter((p, i) => !isPilotArm(p) || parts.indexOf(p) !== i)
+  return bad.length ? { ok: false, bad: [...new Set(bad)] } : { ok: true, arms: parts as PilotArm[] }
+}
+
 export interface PilotPlanInput {
-  arm: PilotArm
+  /** The arms to run, in the order they lead on an even round + fixture index; each fixture gets `runsPerCondition` runs of every arm. */
+  arms: readonly PilotArm[]
   /** The prereg's dev fixtures; a pilot never plans negatives or held-out fixtures. */
   fixtures: readonly LoadedFixture[]
   runsPerCondition: number
   onlyFixture?: string
 }
 
-/** Rounds over the dev fixtures: `runsPerCondition` runs of `arm` per fixture. */
+/**
+ * Rounds over the dev fixtures: `runsPerCondition` runs of each arm per fixture. Within a round each fixture's arms run back to back,
+ * and the arm order flips with the parity of round + fixture index (as `planRuns` does for conditions).
+ */
 export function planPilot(input: PilotPlanInput): PlannedRun[] {
+  if (input.arms.length === 0) throw new Error('a pilot plan needs at least one arm')
   const selected = input.onlyFixture ? input.fixtures.filter((f) => f.id === input.onlyFixture) : input.fixtures
   if (input.onlyFixture && selected.length === 0) throw new Error(`no fixture with id "${input.onlyFixture}" in the pilot plan`)
   const plan: PlannedRun[] = []
   for (let index = 1; index <= input.runsPerCondition; index += 1) {
-    for (const f of selected) {
-      plan.push({
-        fixture: { id: f.id, kind: 'dev', text: f.text, hash: f.hash, ...(f.expectation ? { expectation: f.expectation } : {}) },
-        condition: 'baseline',
-        arm: input.arm,
-        index,
-      })
-    }
+    selected.forEach((f, fi) => {
+      const ordered = (index + fi) % 2 === 0 ? input.arms : [...input.arms].reverse()
+      for (const arm of ordered) {
+        plan.push({
+          fixture: { id: f.id, kind: 'dev', text: f.text, hash: f.hash, ...(f.expectation ? { expectation: f.expectation } : {}) },
+          condition: conditionOfArm(arm),
+          arm,
+          index,
+        })
+      }
+    })
   }
   return plan
 }
@@ -119,6 +138,11 @@ export interface PilotContext {
 export interface TallyContext extends Omit<PilotContext, 'agent_model_id'> {
   /** The rubric's judge criterion ids (`parseRubric(...).criteria`), in rubric order. Each gets a pass count per cell. */
   criteria: readonly string[]
+  /**
+   * The rubric declares `expectation: true`, so a run with only non-blocking check failures (no record, the skill never loaded) still
+   * reached the judge and its verdicts are held to the contract. Default false: any check failure means the judge was never reached.
+   */
+  declared?: boolean
   /**
    * The verified dev fixtures of the current prereg, with their expectation sidecars. `over_limit` is recomputed against the current
    * `maxWords`, so a tally follows the committed contract whatever limit the run was graded under.
@@ -208,7 +232,7 @@ export function tallyPilotCampaign(campaignDir: string, ctx: TallyContext): Pilo
     const fixture = ctx.fixtures.find((f) => f.id === m.fixture.id)
     if (fixture === undefined) throw new Error(`${runDir} ran fixture ${m.fixture.id}, which the current prereg does not have`)
     let verdicts: readonly { id: string; verdict: string }[] = m.judge?.criteria ?? []
-    if (skipReason(m, true) === undefined) {
+    if (skipReason(m, true, ctx.declared === true) === undefined) {
       const rejudged = vouchedRejudge(summary, runDir, m.run_id, ctx.prereg_content_hash)
       if (rejudged.ok) {
         verdicts = rejudged.verdicts
@@ -241,7 +265,7 @@ export function tallyPilotCampaign(campaignDir: string, ctx: TallyContext): Pilo
   const campaigns: PilotTally['campaigns'] = {}
   const [campaignId] = campaignIds
   if (campaignId !== undefined) for (const arm of PILOT_ARMS) if (tally[arm] !== undefined) campaigns[arm] = campaignId
-  const { criteria: _criteria, fixtures: _fixtures, ...context } = ctx
+  const { criteria: _criteria, fixtures: _fixtures, declared: _declared, ...context } = ctx
   return projectPilot({ ...context, agent_model_id: agentModel, judge_model_id: judgeModel ?? ctx.judge_model_id, tally, campaigns })
 }
 

@@ -580,20 +580,27 @@ describe('pilot', () => {
     const t = io()
     expect(await main(['pilot'], t.io)).toBe(EXIT.USAGE)
     const usage = t.lines.err.join('\n')
-    expect(usage).toContain('--arm baseline')
+    expect(usage).toContain('--arm baseline[,skill]')
+    expect(usage).toContain('--errors-only')
     expect(usage).toContain('default: baseline')
     expect(usage).toContain('default: evals/<m>/pilot/prereg.json')
     expect(usage).toMatch(/rejudge --campaign <id\|dir> \[--auth-passthrough opencode-go\] \[--prereg <file>\]/)
     expect(usage).toContain('pilot --method <name> --provider live')
   })
 
-  test('any --arm but baseline is refused with the same generic message, before any repo work', async () => {
-    for (const arm of ['instruction', 'skill', 'bogus']) {
+  test('an unknown or repeated --arm is refused with the known arms, before any repo work; baseline and skill are accepted syntax', async () => {
+    for (const arm of ['instruction', 'bogus', 'baseline,instruction', 'baseline,', 'skill,skill']) {
       const t = io()
       expect(await main(['pilot', '--method', 'demo', '--arm', arm, '--repo', '/nonexistent'], t.io)).toBe(EXIT.REFUSED)
       const message = t.lines.err.join('\n')
-      expect(message).toContain('this runner supports the baseline arm only; see evals/demo/pilot/README.md')
+      expect(message).toContain('(known: baseline, skill); see evals/demo/pilot/README.md')
       expect(message).not.toContain('Unit')
+    }
+    // A known list gets past the arm check: the next refusal is the (nonexistent) repo, not the arm.
+    for (const arm of ['skill', 'baseline,skill', 'skill,baseline']) {
+      const t = io()
+      await main(['pilot', '--method', 'demo', '--arm', arm, '--repo', '/nonexistent'], t.io).catch(() => undefined)
+      expect(t.lines.err.join('\n')).not.toContain('pilot arm(s)')
     }
   })
 
@@ -1001,6 +1008,36 @@ describe('pilot', () => {
       const t = io()
       expect(await main(['review', '--campaign', CAMPAIGN, '--repo', repo.dir, '--tally-only'], t.io)).toBe(EXIT.USAGE)
       expect(t.lines.err.join('\n')).toContain('--tally-only')
+    })
+
+    test('--errors-only applies to rejudge only, and not with --tally-only', async () => {
+      const { repo } = await plantedPilot()
+      for (const argv of [
+        ['review', '--campaign', CAMPAIGN, '--repo', repo.dir, '--errors-only'],
+        ['rejudge', '--campaign', CAMPAIGN, '--repo', repo.dir, '--errors-only', '--tally-only'],
+      ]) {
+        const t = io()
+        expect(await main(argv, t.io)).toBe(EXIT.USAGE)
+        expect(t.lines.err.join('\n')).toContain('--errors-only')
+      }
+    })
+
+    test('rejudge --errors-only judges only the judge_error run, keeps the other run\'s vouched verdict, and rebuilds pilot.json', async () => {
+      const { repo, dir } = await plantedPilot({ manifestCurrent: true })
+      await plantSecondRun(dir, { run_id: '002-dev-d1-baseline-r1', outcome: 'fail', reasons: ['judge_error'], judge: { ...evidence('pass'), criteria: [], error_code: 'invalid_malformed_json' } })
+      const judged: string[] = []
+      const t = io()
+      t.io.createJudge = fakeJudge(async (input) => (judged.push((input as { fixture: { id: string } }).fixture.id), { verdict: 'pass', evidence: evidence('pass') }))
+      expect(await main([...rejudgeArgs(repo), '--errors-only'], t.io)).toBe(EXIT.OK)
+      expect(judged).toEqual(['d1'])
+      const summary = JSON.parse(readFileSync(join(repo.dir, 'evals', 'runs', CAMPAIGN, 'rejudge-summary.json'), 'utf8')) as { runs: { run_id: string; verdict: string; judge_json_sha256?: string }[] }
+      expect(summary.runs.map((r) => [r.run_id, r.verdict])).toEqual([
+        ['001-dev-d1-baseline-r1', 'pass'], // carried forward from the earlier rejudge, still vouching for its judge.json
+        ['002-dev-d1-baseline-r1', 'pass'],
+      ])
+      expect(summary.runs[0]!.judge_json_sha256).toBe(sha256(JUDGE_JSON))
+      const written = JSON.parse(readFileSync(pilotJson(repo), 'utf8')) as { tally: Record<string, Record<string, { runs: number; all_pass: number }>> }
+      expect(written.tally.baseline!.d1).toMatchObject({ runs: 2, all_pass: 2 })
     })
 
     test('a campaign that mixes armed and unarmed manifests is refused before any judge call (with or without --tally-only)', async () => {

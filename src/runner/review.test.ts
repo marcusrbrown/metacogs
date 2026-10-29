@@ -7,7 +7,7 @@ import { judgeRecordOf, quoteFragments } from './judge-record'
 import { type JudgeEvidence, type RunManifest, writeManifest } from './manifest'
 import { finalAnswerOf, judgedAnswerOf, legend, reconcileCampaign, rejudgeCampaign, renderReviewSheets, rubricAnchors, skipReason, writeReview } from './review'
 import { parseRubric } from './judge'
-import type { JudgeInput } from './run'
+import type { JudgeHook, JudgeInput, JudgeVerdict } from './run'
 import { sha256 } from './workspace'
 
 const scratch: string[] = []
@@ -430,15 +430,14 @@ describe('rejudgeCampaign (mocked judge)', () => {
       judgeModelId: 'judge/x',
     })
     expect('expectation' in seen[0]!.fixture).toBe(false)
-    expect(rows.map((r) => [r.verdict, r.reason])).toEqual([['pass', undefined], ['skipped', 'empty final answer (never reached the judge)']])
+    expect(rows.map((r) => [r.verdict, r.reason])).toEqual([['pass', undefined], ['skipped', 'empty answer (never reached the judge)']])
   })
 
-  test('a declared run whose final segment is empty is skipped even if the manifest lacks the reason', async () => {
+  test('a declared run with no assistant text at all is skipped even if the manifest lacks the reason', async () => {
     const campaign = tmp()
     const dir = plant(campaign, '001-dev-d1-baseline-r1', 'x')
-    const say = (text: string) => ev({ type: 'text', timestamp: 2, part: { type: 'text', text } })
     const call = ev({ type: 'tool_use', timestamp: 2, part: { type: 'tool', tool: 'read', callID: 'c', state: { status: 'completed', input: {}, output: 'x' } } })
-    writeFileSync(join(dir, 'stdout.jsonl'), [say('A long plan.'), call].join('\n'))
+    writeFileSync(join(dir, 'stdout.jsonl'), call)
     let calls = 0
     const rows = await rejudgeCampaign({
       campaignDir: campaign,
@@ -450,7 +449,103 @@ describe('rejudgeCampaign (mocked judge)', () => {
       judgeModelId: 'judge/x',
     })
     expect(calls).toBe(0)
-    expect(rows[0]).toMatchObject({ verdict: 'skipped', reason: 'empty final answer (never reached the judge)' })
+    expect(rows[0]).toMatchObject({ verdict: 'skipped', reason: 'empty answer (never reached the judge)' })
+  })
+
+  test('a declared run with an empty final segment but narration before the tool call is judged on the full text, not refused', async () => {
+    const campaign = tmp()
+    const dir = plant(campaign, '001-dev-d1-baseline-r1', 'x')
+    const say = (text: string) => ev({ type: 'text', timestamp: 2, part: { type: 'text', text } })
+    const call = ev({ type: 'tool_use', timestamp: 2, part: { type: 'tool', tool: 'read', callID: 'c', state: { status: 'completed', input: {}, output: 'x' } } })
+    writeFileSync(join(dir, 'stdout.jsonl'), [say('Keep the current library; the runtime pins node20.'), call].join('\n'))
+    const seen: JudgeInput[] = []
+    const rows = await rejudgeCampaign({
+      campaignDir: campaign,
+      judge: async (input) => (seen.push(input), { verdict: 'pass' as const }),
+      fixtures: { dev: [fixture], negative: [] },
+      declarations: { expectation: true },
+      judgePromptSha256: 'd'.repeat(64),
+      preregContentHash: 'c'.repeat(64),
+      judgeModelId: 'judge/x',
+    })
+    expect(rows[0]).toMatchObject({ verdict: 'pass' })
+    expect(seen.map((s) => s.finalAnswer)).toEqual(['Keep the current library; the runtime pins node20.'])
+  })
+
+  test('declared: a run whose only check failures are non-blocking (no record, skill never loaded) is judged; unrecognized_events still is not', async () => {
+    const campaign = tmp()
+    plant(campaign, '001-dev-d1-skill-r1', 'a', { condition: 'skill', check_failures: [{ code: 'record_missing', message: 'm' }, { code: 'skill_not_loaded', message: 'm' }] })
+    plant(campaign, '002-dev-d1-skill-r2', 'b', { condition: 'skill', check_failures: [{ code: 'record_missing', message: 'm' }, { code: 'unrecognized_events', message: 'm' }] })
+    plant(campaign, '003-dev-d1-skill-r3', 'c', { condition: 'skill', check_failures: [{ code: 'false_fire_helper', message: 'm' }] })
+    const run = async (declarations?: { expectation: boolean }) =>
+      (
+        await rejudgeCampaign({
+          campaignDir: campaign,
+          judge: async () => ({ verdict: 'pass' as const }),
+          fixtures: { dev: [fixture], negative: [] },
+          ...(declarations ? { declarations } : {}),
+          judgePromptSha256: 'd'.repeat(64),
+          preregContentHash: 'c'.repeat(64),
+          judgeModelId: 'judge/x',
+        })
+      ).map((r) => r.verdict)
+    expect(await run({ expectation: true })).toEqual(['pass', 'skipped', 'skipped'])
+    // Undeclared, any check failure keeps a run from the judge, as before.
+    expect(await run()).toEqual(['skipped', 'skipped', 'skipped'])
+  })
+
+  describe('errorsOnly', () => {
+    const verdictOf = (verdict: 'pass' | 'judge_error') => async (): Promise<JudgeVerdict> =>
+      verdict === 'pass' ? { verdict, evidence: evidence('pass') } : { verdict, detail: 'invalid_malformed_json', evidence: { ...evidence('fail'), criteria: [], error_code: 'invalid_malformed_json' } }
+    const base = (campaign: string, judge: JudgeHook) => ({
+      campaignDir: campaign,
+      judge,
+      fixtures: { dev: [fixture], negative: [] },
+      judgePromptSha256: 'd'.repeat(64),
+      preregContentHash: 'c'.repeat(64),
+      judgeModelId: 'judge/x',
+    })
+
+    test('touches only runs whose recorded verdict is judge_error; the rest are skipped and not sent to the judge', async () => {
+      const campaign = tmp()
+      plant(campaign, '001-dev-d1-baseline-r1', 'ok', { outcome: 'pass' })
+      plant(campaign, '002-dev-d1-baseline-r2', 'errored', { outcome: 'fail', reasons: ['judge_error'] })
+      plant(campaign, '003-dev-d1-baseline-r3', 'failed', { outcome: 'fail', reasons: ['judge_fail'] })
+      const seen: string[] = []
+      const rows = await rejudgeCampaign({ ...base(campaign, async (input) => (seen.push(input.finalAnswer), { verdict: 'pass' as const, evidence: evidence('pass') })), errorsOnly: true })
+      expect(seen).toEqual(['errored'])
+      expect(rows.map((r) => [r.run_id, r.verdict])).toEqual([
+        ['001-dev-d1-baseline-r1', 'skipped'],
+        ['002-dev-d1-baseline-r2', 'pass'],
+        ['003-dev-d1-baseline-r3', 'skipped'],
+      ])
+      expect(rows[0]!.reason).toContain('--errors-only')
+    })
+
+    test('a second pass keeps the earlier rejudge row (so its judge.json stays vouched for) and retries only what still errored', async () => {
+      const campaign = tmp()
+      plant(campaign, '001-dev-d1-baseline-r1', 'a', { outcome: 'fail', reasons: ['judge_error'] })
+      plant(campaign, '002-dev-d1-baseline-r2', 'b', { outcome: 'fail', reasons: ['judge_error'] })
+      let n = 0
+      const first = await rejudgeCampaign({ ...base(campaign, async () => (n += 1, n === 1 ? await verdictOf('pass')() : await verdictOf('judge_error')())), errorsOnly: true })
+      expect(first.map((r) => r.verdict)).toEqual(['pass', 'judge_error'])
+      const seen: string[] = []
+      const second = await rejudgeCampaign({ ...base(campaign, async (input) => (seen.push(input.finalAnswer), await verdictOf('pass')())), errorsOnly: true })
+      expect(seen).toEqual(['b'])
+      expect(second.map((r) => r.verdict)).toEqual(['pass', 'pass'])
+      expect(second[0]!.judge_json_sha256).toBe(first[0]!.judge_json_sha256)
+    })
+
+    test('a summary written under another contract carries nothing forward', async () => {
+      const campaign = tmp()
+      plant(campaign, '001-dev-d1-baseline-r1', 'a', { outcome: 'fail', reasons: ['judge_error'] })
+      await rejudgeCampaign({ ...base(campaign, verdictOf('pass')), errorsOnly: true })
+      const seen: string[] = []
+      const rows = await rejudgeCampaign({ ...base(campaign, async (input) => (seen.push(input.finalAnswer), await verdictOf('pass')())), preregContentHash: 'e'.repeat(64), errorsOnly: true })
+      // The manifest still says judge_error, and the earlier row belongs to another contract, so the run is judged again.
+      expect(seen).toEqual(['a'])
+      expect(rows[0]!.verdict).toBe('pass')
+    })
   })
 
   test('finalAnswerOf (the card excerpt) takes the final segment under the declaration; judgedAnswerOf is what the judge reads', () => {
