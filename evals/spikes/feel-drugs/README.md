@@ -9,7 +9,9 @@ An experiment with a human read, not a method: no prereg, rubric, judge, tally o
 - **The guided harness.** `src/spike/feel-drugs/guided.ts` and `blind.ts`, with their own run records, expected-tool tables and diagnostic arms. `p1` is left out of the guided reads; `prompts.md` and its hash are unchanged.
 - **The tool rename.** The plugin's tools are named `feel` and `drugs`; earlier runs recorded them as `metacogs_feel` and `metacogs_drugs`, and the MCP spike keeps `metacog_feel` and `metacog_drugs`. The blind sheet counts all three names in past records.
 
-Results recorded under epoch 1 stay epoch 1 results. Plan: `docs/plans/2026-10-25-001-feat-feel-drugs-spike-plan.md`. Requirements: `docs/brainstorms/2026-10-25-feel-drugs-spike-requirements.md`.
+**Epoch 3 (declared 2026-10-29).** Adds the hands-on [tool-description activation probe](#tool-description-activation-probe-2026-10-29): the `feel` and `drugs` tool text on main `fdd49cf` against the text in `e5416f2`, in the owner's real stack. It changes no earlier epoch's prompts, hashes or recorded results.
+
+Results recorded under an earlier epoch stay that epoch's results. Plan: `docs/plans/2026-10-25-001-feat-feel-drugs-spike-plan.md`. Requirements: `docs/brainstorms/2026-10-25-feel-drugs-spike-requirements.md`.
 
 The question: do upstream's `feel` and `drugs` change what a model produces when it composes the fields in a tool call and reads the frame back, compared with reading the same frame as skill text and writing the fields in its reply, and does the model family matter? Upstream is pinned to `inanna-malick/metacog@3d89bb30cd26369fdcd242fd704f66641dca327c` (MIT). Both tools are stateless text templates there.
 
