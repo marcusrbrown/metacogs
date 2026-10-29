@@ -707,6 +707,107 @@ describe('committed prereg content hashes are pinned', () => {
   })
 })
 
+// The synthesis pilot: its own prereg and content directory (`evals/synthesis/pilot/`), six dev fixtures with one acceptance statement
+// each, no negatives, no held-out. The epoch-3 `evals/synthesis/prereg.json` and its files are a different contract and stay as they are.
+describe('synthesis pilot (committed)', () => {
+  const repoRoot = resolve(import.meta.dir, '..', '..')
+  const pilotDirPath = join(repoRoot, 'evals', 'synthesis', 'pilot')
+  const parsed = parsePrereg(readFileSync(join(pilotDirPath, 'prereg.json'), 'utf8'))
+  if (!parsed.ok) throw new Error(parsed.errors.join('; '))
+  const { prereg } = parsed
+  const epoch3 = parsePrereg(readFileSync(join(repoRoot, 'evals', 'synthesis', 'prereg.json'), 'utf8'))
+  if (!epoch3.ok) throw new Error(epoch3.errors.join('; '))
+  const IDS = Object.keys(epoch3.prereg.fixture_hashes.dev).sort()
+
+  test('parses: its own content directory, six dev fixtures and nothing else, five runs, the epoch-3 models', () => {
+    expect(prereg.method).toBe('synthesis')
+    expect(prereg.content_dir).toBe('evals/synthesis/pilot')
+    expect(preregContentDirRel(prereg)).toBe('evals/synthesis/pilot')
+    expect(Object.keys(prereg.fixture_hashes.dev).sort()).toEqual(IDS)
+    expect(IDS).toHaveLength(6)
+    expect(prereg.fixture_hashes.negative).toEqual({})
+    expect(prereg.fixture_hashes.heldout).toEqual({})
+    expect(Object.keys(prereg.expectation_hashes?.dev ?? {}).sort()).toEqual(IDS)
+    expect(prereg.expectation_hashes?.heldout).toEqual({})
+    expect(prereg.runs_per_condition).toBe(5)
+    expect(prereg.agent_model_id).toBe(epoch3.prereg.agent_model_id)
+    expect(prereg.judge_model_id).toBe(epoch3.prereg.judge_model_id)
+    expect(prereg.per_run_timeout_ms).toBe(epoch3.prereg.per_run_timeout_ms)
+    expect(prereg.budget).toEqual(epoch3.prereg.budget)
+    // A different salt, so no hash is shared with the epoch-3 contract.
+    expect(prereg.salt).not.toBe(epoch3.prereg.salt)
+  })
+
+  test('the rubric, fixtures and sidecars hash to the prereg, and every fixture carries its verified outcome-only statement', () => {
+    const { problems, invalid, fixtures } = verifyPreregContent(prereg, { evalDir: join(repoRoot, preregContentDirRel(prereg)), heldoutDir: '/nonexistent' }, { includeHeldout: false })
+    expect(problems).toEqual([])
+    expect(invalid).toEqual([])
+    expect(fixtures.dev.map((f) => f.id)).toEqual(IDS)
+    for (const f of fixtures.dev) {
+      expect(Object.keys(f.expectation ?? {})).toEqual(['outcome'])
+      expect(f.expectation?.outcome).toMatch(/Pass example: ".+" Fail example: ".+"$/)
+    }
+    expect(fixtures.negative).toEqual([])
+  })
+
+  test('the fixtures are byte-identical copies of the epoch-3 dev fixtures', () => {
+    for (const id of IDS) {
+      const copy = readFileSync(join(pilotDirPath, 'fixtures', 'dev', `${id}.md`))
+      const original = readFileSync(join(repoRoot, 'evals', 'synthesis', 'fixtures', 'dev', `${id}.md`))
+      expect(copy.equals(original)).toBe(true)
+    }
+  })
+
+  test('the rubric declares expectation: true and judges SA1 only, with no annex', () => {
+    const rubric = readFileSync(join(pilotDirPath, 'rubric.md'), 'utf8')
+    expect(parseDeclarations(rubric)).toEqual({ expectation: true })
+    const spec = parseRubric(rubric)
+    expect(spec.criteria.map((c) => c.id)).toEqual(['SA1'])
+    expect(spec.systemPrompt).toContain('EXPECTATION')
+    expect(spec.systemPrompt).not.toContain('RECORD')
+    expect(rubric).not.toMatch(/^## Fixture annex/m)
+    // The pass anchor names a passage that can be quoted from the ANSWER.
+    expect(spec.criteria[0]!.body).toContain('The pass quote is the sentence that states the recommendation')
+  })
+
+  test('the redact list is the epoch-3 list plus the skill\'s own failure wording, and no fixture or sidecar contains a token (the authoring lint)', () => {
+    const tokens = loadRedactTokens(join(pilotDirPath, 'redact.json'))
+    const base = loadRedactTokens(join(repoRoot, 'evals', 'synthesis', 'redact.json'))
+    expect([...tokens].sort()).toEqual([...base, 'unrecorded', 'no record was written'].sort())
+    for (const id of IDS) {
+      for (const ext of ['md', 'expectation.json'] as const) expect(survivingTokens(readFileSync(join(pilotDirPath, 'fixtures', 'dev', `${id}.${ext}`), 'utf8'), tokens)).toEqual([])
+    }
+  })
+
+  test('the notes carry the guide numbers, both reading rules, and who decides', () => {
+    const notes = prereg.metadata.notes ?? ''
+    for (const phrase of [
+      'The owner\'s marks are the primary score',
+      'The judge is the instrument under test',
+      'inform that decision and do not make it',
+      'at least 0.8',
+      'Wilson interval',
+      'At least 2 of 6 fixtures not at ceiling',
+      'the baseline arm on 4 of 5 or 5 of 5 runs',
+      'Owner pass counts per arm, pooled and per fixture; no inference',
+      'Preference wins, losses and ties, plus the net margin, pooled only',
+      'At least 4 of 5 answered runs per arm and fixture, with no top-up runs',
+      'separation is uninformative',
+      'compatible with a format or length effect',
+      'usefulness beyond the statement',
+    ]) {
+      expect(notes).toContain(phrase)
+    }
+  })
+
+  test('the epoch-3 files and the shipped redact list are not part of this contract', () => {
+    // The pilot prereg lives in its own directory, so the epoch-3 prereg still verifies against evals/synthesis/ alone.
+    const { problems, invalid } = verifyPreregContent(epoch3.prereg, { evalDir: join(repoRoot, 'evals', 'synthesis'), heldoutDir: '/nonexistent' }, { includeHeldout: false })
+    expect(problems).toEqual([])
+    expect(invalid).toEqual([])
+  })
+})
+
 // The tether pilot: its own prereg (`evals/tether/pilot/prereg.json`), two dev fixtures with expectation sidecars, no negatives, no
 // held-out. The production `evals/tether/prereg.json` does not exist yet; the shipped-method loop above is unchanged.
 describe('tether pilot (committed)', () => {

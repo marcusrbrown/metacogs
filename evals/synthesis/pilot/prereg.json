@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "method": "synthesis",
+  "epoch": 1,
+  "salt": "7b09b854db220e2fa41eca9a5b01bff1",
+  "fixture_hashes": {
+    "dev": {
+      "sy-d1-kafka-consensus": "94213fcd18c2e90cc212f59d26f1064eaf81863c23ec2cf460dc8f5de447b102",
+      "sy-d2-stale-service-map": "21ea0788c2b5f7389c61d7d710f41d1dce30dfc4818af479c741833783f98693",
+      "sy-d3-cache-tenancy": "e65febb91ef8300ed8479f966e7c84574514d68591e16ad352aef7240e52ad94",
+      "sy-d4-parser-vote": "38b042c5bf7abfd58ce73cb13463604448f65250e77b92cf68413f0c3252e74a",
+      "sy-d5-sdk-migration": "174a623e1154cc7c352906e84f7e42a6d606e9ef101f7910682af6a0ae03cb0f",
+      "sy-d6-log-redaction": "6b1d6a641af2935fa1f74ea1b5c08c2b4fd6a4f98655eb10d56b122e97c36fd5"
+    },
+    "negative": {},
+    "heldout": {}
+  },
+  "expectation_hashes": {
+    "dev": {
+      "sy-d1-kafka-consensus": "bbfb117cd918a0c5872e29f17f1f152d950d883170a13cebbde81b5f0db5e667",
+      "sy-d2-stale-service-map": "9b6265b833aabd0ea57cf05f56f8103e648b2c119af704adec3bf6695b903288",
+      "sy-d3-cache-tenancy": "2b847e2e717f1a837059428617834171f77e7b87f016d1b98174247b287f3efd",
+      "sy-d4-parser-vote": "819c9574b9ae2b945fb83cf3e35aa5ebdf88587e7fec780a14187940209c97d1",
+      "sy-d5-sdk-migration": "e7283a45548c82811f53ce29070391b1d1af8fa831694727e6c621b09f4ef66c",
+      "sy-d6-log-redaction": "2a471dd3178dd16ce81d1d8119faa8fa7bb078a0fd0784dd537d52d2a086f89c"
+    },
+    "heldout": {}
+  },
+  "content_dir": "evals/synthesis/pilot",
+  "rubric_hash": "93d86b1a683b1df31d971c849daf0f5d7a31fb9e3e40c6dc4c40559f7ddd43b4",
+  "runs_per_condition": 5,
+  "red_bar": {
+    "min_baseline_fails_per_fixture": 4,
+    "min_fixtures": 2
+  },
+  "green_bar": {
+    "skill_pooled_pass_min": 17,
+    "skill_per_fixture_pass_min": 3,
+    "baseline_pooled_pass_max": 10
+  },
+  "false_fire_max": 0,
+  "per_run_timeout_ms": 180000,
+  "budget": {
+    "max_tool_calls": 20,
+    "max_total_tokens": 300000
+  },
+  "infra_error_definition": "A provider or host outage before the agent produces any answer: a non-zero host exit, a provider 4xx/5xx or network error, or a recording-proxy failure. Retried at most 2 times, reported separately, and excluded from the denominator. A timeout, a budget breach, a judge_error, or any host exit after the agent has started answering counts as a run and stays in the denominator.",
+  "run_outcome_taxonomy": [
+    "pass",
+    "fail",
+    "timeout->fail",
+    "budget->fail",
+    "judge_error->fail",
+    "infra_error",
+    "non_isolated"
+  ],
+  "agreement_floor": 0.8,
+  "agent_model_id": "openai/gpt-6-luna",
+  "judge_model_id": "anthropic/claude-haiku-5-5",
+  "accepted_error_rates": {
+    "false_red": 0.314,
+    "false_green": 0.225
+  },
+  "metadata": {
+    "source_url": "synthesized (no external source)",
+    "licence": "MIT",
+    "notes": "Pilot prereg for the one-outcome scoring contract on synthesis (docs/plans/2026-10-28-001-feat-synthesis-eval-pilot-plan.md; origin docs/brainstorms/2026-10-23-eval-scoring-redesign.md). It is read by `eval pilot` and `eval pairs` only; `report` refuses pilot campaigns, and it does not touch the epoch-3 contract in evals/synthesis/prereg.json, whose rubric, fixtures and reports stay byte-identical. `content_dir` names evals/synthesis/pilot/, so the rubric, the six dev fixtures (byte-identical copies of evals/synthesis/fixtures/dev/), the expectation sidecars and redact.json are read from there. Six dev fixtures, no negatives, no held-out. Each fixture has one acceptance statement, kept as the `outcome` of its evaluator-only sidecar; the statements were approved by the owner and were probed before this commit with a hand-written terse passing answer and a polished failing answer each (12 probes against the pinned judge, all as intended; probe answers are kept outside the repository). One campaign runs the baseline and skill arms, interleaved with the first arm flipping each round, five runs per fixture per arm (60 runs), on the epoch-3 models. Under the rubric declaration (`expectation: true`) record checks are tallied and do not block the judge; only an unreadable event stream or a false fire does, so a skill run that never loads the skill is judged and stays a skill-arm observation. No run is topped up. The owner then marks one blind pair sheet (baseline run i against skill run i per fixture, random side per pair): pass or fail for each answer against the statement, then which answer they would use. The owner and the judge read the same evidence: the prompt, the statement and the judged answer text. The owner's marks are the primary score. The judge is the instrument under test, not the measure. The guide numbers below are descriptive prompts for the owner's next-step decision: they inform that decision and do not make it, and none is a gate or a bar. (1) Judge-owner agreement of at least 0.8 over the answers that have a judge verdict, read with its Wilson interval: at about 50 judged answers the interval is roughly +/-0.10. (2) At least 2 of 6 fixtures not at ceiling, where ceiling means the owner passes the baseline arm on 4 of 5 or 5 of 5 runs. (3) Owner pass counts per arm, pooled and per fixture; no inference. (4) Preference wins, losses and ties, plus the net margin, pooled only. (5) At least 4 of 5 answered runs per arm and fixture, with no top-up runs; complete pairs can still fall to 3. Reading rules. If most fixtures sit at ceiling, separation is uninformative; it is not a pass for the instrument, and ceiling fixtures stay as regression coverage and are not rewritten to fail. A preference lean toward skill with no gate difference is compatible with a format or length effect, because the skill's labelled lines reveal its side, or with usefulness beyond the statement. The sheet is only partly blind for the same reason. There is one agent model and one judge model, so nothing here generalises across models. Bars are placeholders: red_bar, green_bar, false_fire_max and accepted_error_rates are copied from the tether pilot shape only so the file parses; the pilot uses none of them. Models: agent openai/gpt-6-luna and judge anthropic/claude-haiku-5-5 through the owner's CLIProxyAPI (key name fro-bot-marcusrbrown-metacogs), the epoch-3 pins of evals/synthesis/prereg.json. Per-run timeout 180000 ms and the 20-call / 300000-token budget are the epoch-3 values. Statement changes after this commit but before any run need a revised contract (no new epoch); after any run they are a separately labelled iteration and are never pooled. The pilot judge is unvalidated: no reviewer-judge agreement has been measured for SA1, so counts are an experiment outcome, not evidence for a matrix cell."
+  }
+}

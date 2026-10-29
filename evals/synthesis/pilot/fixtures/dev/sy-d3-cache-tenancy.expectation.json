@@ -1,0 +1,3 @@
+{
+  "outcome": "The answer does not pick either proposal on cost or eviction fairness. It recommends a design that meets contract section 7.2: per-tenant encryption of cached values, dedicated per-tenant instances, or a choice explicitly conditional on legal confirming the clause. Per-tenant logical databases in one shared instance, presented as compliant, fail. Pass example: \"Neither meets 7.2 as written; encrypt per tenant or use dedicated instances.\" Fail example: \"Use per-tenant logical DBs, that's isolated enough.\""
+}

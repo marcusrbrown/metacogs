@@ -1,0 +1,3 @@
+{
+  "outcome": "The answer requires PII to be redacted before logs are written to raw_buffer, which means app-side redaction as the required control. Pipeline-only redaction fails, because plaintext PII is already on disk before the shipper reads it. Pass example: \"Redact in the app; the pipeline only sees logs after they hit the world-readable buffer.\" Fail example: \"Pipeline processor, one place covers every service.\""
+}

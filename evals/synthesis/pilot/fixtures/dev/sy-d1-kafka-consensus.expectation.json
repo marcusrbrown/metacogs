@@ -1,0 +1,3 @@
+{
+  "outcome": "The answer does not recommend running a self-hosted Kafka cluster now, because the team runs one stateful service with two engineers who also do feature work, and nothing shows they can operate a cluster. Recommending a Postgres outbox or a managed queue passes, and so does making ops capacity the deciding check before committing. Pass example: \"Start with a Postgres outbox; all three reviews assume ops capacity you don't have.\" Fail example: \"Go with Kafka, all three agree.\""
+}
