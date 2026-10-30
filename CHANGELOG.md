@@ -1,5 +1,11 @@
 # metacogs
 
+## 0.4.0
+
+### Minor Changes
+
+- 2045618: The OpenCode plugin now loads on OpenCode v2 (2.2.0 and later) from the same package, with the same tools, skills, slash commands and guidance block; v1 (1.19.4 and later) is unchanged. The built plugin imports neither OpenCode package, and both are optional peers. The named `createServer` export was removed from the entry, which now has only a default export.
+
 ## 0.3.1
 
 ### Patch Changes
