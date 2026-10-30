@@ -60,7 +60,7 @@ const baseMatrix = (): Matrix => ({
   schema_version: 2,
   hosts: {
     opencode: { name: 'OpenCode', project_path: '.agents/skills/' },
-    'opencode-v2': { name: 'OpenCode v2', project_path: '.agents/skills/' },
+    'opencode-v2': { name: 'OpenCode (v2)', project_path: '.agents/skills/' },
     pi: { name: 'Pi', project_path: '.agents/skills/' },
     codex: { name: 'Codex', project_path: '.agents/skills/' },
     'claude-code': { name: 'Claude Code', project_path: '.claude/skills/' },
@@ -171,7 +171,7 @@ describe('checkMatrix: plugin entries', () => {
     host_version: '2.2.2',
     evidence_ref: 'docs/install.md#opencode-plugin',
     date: '2026-10-30',
-    note: 'Pending a hand check in a v2 TUI.',
+    note: 'The contract suite passes on the pinned CLI.',
   })
   const codexEntry = (): PluginEntry => ({ ...claudeEntry(), evidence_ref: 'docs/install.md#codex-plugin', experimental: true })
   const files = {
@@ -483,7 +483,7 @@ describe('the committed matrix: OpenCode v2', () => {
   const { matrix } = loadMatrix(REPO_ROOT)
 
   test('is its own host with unverified synthesis and counterfactual cells that say no v2 eval report exists', () => {
-    expect(matrix?.hosts['opencode-v2']).toEqual({ name: 'OpenCode v2', project_path: '.agents/skills/' })
+    expect(matrix?.hosts['opencode-v2']).toEqual({ name: 'OpenCode (v2)', project_path: '.agents/skills/' })
     for (const method of ['synthesis', 'counterfactual']) {
       const cell = matrix?.methods[method]?.['opencode-v2']
       expect(cell?.status).toBe('unverified')
@@ -497,7 +497,7 @@ describe('the committed matrix: OpenCode v2', () => {
     expect(plugin?.status).toBe('unverified')
     expect(plugin?.host_version).toBe('2.2.2')
     expect(plugin?.manual_run).toBeUndefined()
-    expect(plugin?.note).toContain('manual_run')
+    expect(plugin?.note).toContain('contract suite')
   })
 })
 

@@ -2,7 +2,7 @@
   "schema_version": 2,
   "hosts": {
     "opencode": { "name": "OpenCode", "project_path": ".agents/skills/" },
-    "opencode-v2": { "name": "OpenCode v2", "project_path": ".agents/skills/" },
+    "opencode-v2": { "name": "OpenCode (v2)", "project_path": ".agents/skills/" },
     "pi": { "name": "Pi", "project_path": ".agents/skills/" },
     "codex": { "name": "Codex", "project_path": ".agents/skills/" },
     "claude-code": { "name": "Claude Code", "project_path": ".claude/skills/" }
@@ -108,7 +108,7 @@
       "host_version": "2.2.2",
       "evidence_ref": "docs/install.md#opencode-plugin",
       "date": "2026-10-30",
-      "note": "The contract suite passes on the pinned OpenCode 2.2.2 CLI with the scripted provider. Pending a hand check in a v2 TUI, to be recorded as manual_run."
+      "note": "The contract suite passes on the pinned OpenCode 2.2.2 CLI with the scripted provider."
     },
     "claude-code": {
       "status": "verified",
