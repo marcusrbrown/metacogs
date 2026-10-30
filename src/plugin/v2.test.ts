@@ -15,7 +15,7 @@ import {
 } from '../frames/feel-drugs'
 import { REPO_ROOT } from './build'
 import { GUIDANCE_BLOCK, GUIDANCE_OPEN } from './guidance'
-import { createSetup } from './v2'
+import { createSetup, parseSkill } from './v2'
 
 // Drives the v2 `setup` with a fake host context that records every registration. A transform callback is kept, so a
 // test can run it against a fresh fake editor as many times as the host would replay it.
@@ -107,12 +107,23 @@ const load = async (options: Parameters<typeof fakeCtx>[0] = {}, dirs: [string, 
   return fake
 }
 
-const readSkill = (rel: string): { name: string; description: string; body: string } => {
+/** The four descriptions as shipped. Written out, so a parse that reads them wrongly cannot agree with itself. */
+const DESCRIPTIONS: Record<string, string> = {
+  feel:
+    "Use when a tension is unresolved and you cannot name it, before you choose the next move. Examples are the same failure persisting after materially different attempts, conflicting constraints blocking a commitment, or being about to repeat a hypothesis you already exhausted. Session length alone is not a reason.",
+  drugs:
+    "Use when the approach itself needs to change. Examples are requested creative or design exploration stalling on the same few alternatives, or materially different attempts failing the same way so that another attempt would repeat the last one. Session length alone is not a reason.",
+  synthesis:
+    "Required before answering a request to decide, approve, or choose between options when several analyses, reviews, votes, debaters, or proposals disagree or converge, because their agreement often rests on one shared source, premise, or constraint nobody checked, and a minority may cite evidence the majority lacks. Not for single-source questions, mechanical edits, wording changes, or routine fixes.",
+  counterfactual:
+    "Required before answering a go/no-go, approval, or migration or implementation-plan request for a consequential change (dependency swap, removal, adoption, merge), because such cases often rest on a claim the input only asserts, a result from a non-representative environment, a newly surfaced fact, or a hard constraint the preferred option may violate. Not for mechanical edits, renames, wording changes, or bug fixes whose expected result is given.",
+}
+
+const readSkill = (rel: string): { name: string; body: string } => {
   const text = readFileSync(join(REPO_ROOT, rel, 'SKILL.md'), 'utf8')
   const [, front = '', ...rest] = text.split('---\n')
   return {
     name: /^name: (.*)$/m.exec(front)?.[1] ?? '',
-    description: /^description: (.*)$/m.exec(front)?.[1] ?? '',
     body: rest.join('---\n').trim(),
   }
 }
@@ -156,12 +167,39 @@ describe('tools', () => {
     expect(drugs.input.$schema).toBeUndefined()
   })
 
+  test('execute accepts empty strings, as v1 does, and rejects a missing required field', async () => {
+    const [feel, drugs] = replay<ToolDef>(await load(), 'tool') as [ToolDef, ToolDef]
+    const empty = { somewhere: '', quality: '', sigil: '' }
+    expect(await feel.execute(empty)).toEqual({ content: feelText(empty) })
+    expect(await drugs.execute({ substance: '', method: '', displaces: '' })).toEqual({ content: drugsText({ substance: '', method: '', displaces: '' }) })
+    await expect(feel.execute({ somewhere: 'x' })).rejects.toThrow()
+  })
+
   test('execute returns exactly feelText and drugsText', async () => {
     const [feel, drugs] = replay<ToolDef>(await load(), 'tool') as [ToolDef, ToolDef]
     const feelArgs = { somewhere: 'in the gap', quality: 'warm, slow', sigil: '🌊', since_last: 'it eased' }
     const drugsArgs = { substance: 'caffeine', method: 'Amplifies vigilance.', displaces: 'baseline.' }
     expect(await feel.execute(feelArgs)).toEqual({ content: feelText(feelArgs) })
     expect(await drugs.execute(drugsArgs)).toEqual({ content: drugsText(drugsArgs) })
+  })
+})
+
+describe('parseSkill', () => {
+  const skill = (front: string) => `---\n${front}\n---\n\n# Body\n`
+
+  test('reads a single-line name and description and returns the body without frontmatter', () => {
+    expect(parseSkill(skill('name: x\ndescription: Use when y.'), '/d')).toEqual({ name: 'x', description: 'Use when y.', content: '# Body', path: '/d/x/SKILL.md' })
+  })
+
+  test.each([
+    ['no frontmatter', '# Body\n'],
+    ['no name', skill('description: Use when y.')],
+    ['no description', skill('name: x')],
+    ['an empty description', skill('name: x\ndescription:')],
+    ['a folded description', skill('name: x\ndescription: >\n  Use when y.')],
+    ['a literal description', skill('name: x\ndescription: |\n  Use when y.')],
+  ])('throws for %s', (_label, text) => {
+    expect(() => parseSkill(text, '/d')).toThrow()
   })
 })
 
@@ -174,8 +212,7 @@ describe('skills', () => {
       const source = readSkill(rel)
       expect(record.id).toBe(name)
       expect(record.name).toBe(source.name)
-      expect(record.description).toBe(source.description)
-      expect(record.description.length).toBeGreaterThan(0)
+      expect(record.description).toBe(DESCRIPTIONS[name]!)
       expect(record.content).toBe(source.body)
       expect(record.content.startsWith('---')).toBe(false)
       expect(record.content).not.toMatch(/^name: /m)
@@ -210,7 +247,7 @@ describe('commands', () => {
   test('one command per skill, with the skill name and description', async () => {
     const all = await commands()
     expect(all.map((c) => c.name)).toEqual(['feel', 'drugs', 'synthesis', 'counterfactual'])
-    for (const [name, rel] of SKILL_HOMES) expect(all.find((c) => c.name === name)?.description).toBe(readSkill(rel).description)
+    for (const [name] of SKILL_HOMES) expect(all.find((c) => c.name === name)?.description).toBe(DESCRIPTIONS[name]!)
   })
 
   test('execute with "caffeine" prompts with that text and the drugs skill attached', async () => {

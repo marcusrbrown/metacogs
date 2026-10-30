@@ -1,6 +1,6 @@
 /** Test support: runs the packed plugin on the pinned OpenCode v2 CLI against the scripted provider. */
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -33,7 +33,6 @@ const cliDir = join(tmpdir(), `metacogs-opencode-v2-${process.getuid?.() ?? 'u'}
 const cliBin = join(cliDir, 'node_modules', '.bin', 'opencode')
 
 const versionOf = (bin: string): string | undefined => {
-  if (!existsSync(bin)) return undefined
   const run = spawnSync(bin, ['--version'], { encoding: 'utf8', timeout: 60_000, env: { PATH: PARENT_PATH, HOME: cliDir, TMPDIR: tmpdir() } })
   return run.status === 0 ? run.stdout.trim() : undefined
 }
@@ -243,10 +242,12 @@ export class V2Lab {
 
   /** `opencode serve` on an OS-assigned port. The plugin loads lazily, so callers poll `GET /api/command`. */
   async serve(options: V2LabOptions = {}): Promise<V2Server> {
-    const provider = this.startProvider(options)
-    this.writeConfig(provider, options)
-    const proc = spawnChild([installedCli(), 'serve', '--hostname', '127.0.0.1', '--port', '0'], this.fixture.workspace, this.env())
+    let started: ScriptedProviderServer | undefined
+    let child: Child | undefined
     try {
+      const provider = (started = this.startProvider(options))
+      this.writeConfig(provider, options)
+      const proc = (child = spawnChild([installedCli(), 'serve', '--hostname', '127.0.0.1', '--port', '0'], this.fixture.workspace, this.env()))
       const deadline = Date.now() + 60_000
       let url: string | undefined
       let password: string | undefined
@@ -289,8 +290,8 @@ export class V2Lab {
         },
       }
     } catch (error) {
-      await proc.stop()
-      provider.stop()
+      await child?.stop()
+      started?.stop()
       throw error
     }
   }
@@ -312,7 +313,7 @@ export const bodyOf = (request: RecordedRequest): Body => (request.body ?? {}) a
 export const offeredNames = (request: RecordedRequest): string[] => (bodyOf(request).tools ?? []).map((t) => t.function.name)
 export const systemOf = (request: RecordedRequest): string => systemTexts(request.body as Record<string, unknown>).join('\n')
 
-const textOf = (content: unknown): string =>
+export const textOf = (content: unknown): string =>
   typeof content === 'string' ? content : Array.isArray(content) ? content.map((part) => (part && typeof part === 'object' && 'text' in part ? String((part as { text: unknown }).text) : '')).join('') : ''
 
 export const userTexts = (request: RecordedRequest): string[] => (bodyOf(request).messages ?? []).filter((m) => m.role === 'user').map((m) => textOf(m.content))

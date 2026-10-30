@@ -29,14 +29,16 @@ interface EmbeddedSkill {
   path: string
 }
 
-/** Splits `---` frontmatter off a skill file. Both fields are single-line scalars in every shipped skill. */
-function parseSkill(text: string, directory: string): EmbeddedSkill {
+/** Splits `---` frontmatter off a skill file. Name and description must be single-line scalars. */
+export function parseSkill(text: string, directory: string): EmbeddedSkill {
   const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text)
   if (!match) throw new Error('a skill has no frontmatter')
   const field = (key: string): string => new RegExp(`^${key}:[ \\t]*(.*)$`, 'm').exec(match[1] ?? '')?.[1]?.trim() ?? ''
   const name = field('name')
   if (name === '') throw new Error('a skill has no name')
-  return { name, description: field('description'), content: (match[2] ?? '').trim(), path: `${directory}/${name}/SKILL.md` }
+  const description = field('description')
+  if (description === '' || description.startsWith('>') || description.startsWith('|')) throw new Error('a skill has no single-line description')
+  return { name, description, content: (match[2] ?? '').trim(), path: `${directory}/${name}/SKILL.md` }
 }
 
 /** The four skills for given directories: `[skills/, plugin/skills/]`, as `skillsDirsFrom` returns them. */
@@ -44,24 +46,30 @@ function embeddedSkills([methods, plugin]: readonly [string, string]): EmbeddedS
   return SKILL_SOURCES.map(({ text, home }) => parseSkill(text, home === 'plugin' ? plugin : methods))
 }
 
+const FEEL_INPUT = object(FEEL_ARGS)
+const DRUGS_INPUT = object(DRUGS_ARGS)
+
 /** A tool's JSON Schema from the same zod fields v1 uses, without the `$schema` key. */
-function inputSchema(args: Parameters<typeof object>[0]) {
-  const { $schema: _dropped, ...schema } = toJSONSchema(object(args))
-  return schema
+function inputSchema(schema: typeof FEEL_INPUT | typeof DRUGS_INPUT) {
+  const { $schema: _dropped, ...rest } = toJSONSchema(schema)
+  return rest
 }
 
 /** One diagnostic line on stderr, the only channel a v2 plugin has. It names the part and never carries a value. */
 const report = (part: string): void => console.error(`metacogs: ${part} failed`)
 
-/** Runs `body`; a throw is reported and the call returns normally. Transforms and hooks return nothing to restore. */
-function guarded<Args extends unknown[]>(part: string, body: (...args: Args) => void): (...args: Args) => void {
-  return (...args) => {
-    try {
-      body(...args)
-    } catch {
-      report(part)
-    }
+/** Runs `body` now; a throw is reported and the call returns normally. */
+function safely(part: string, body: () => void): void {
+  try {
+    body()
+  } catch {
+    report(part)
   }
+}
+
+/** `safely` for a callback the host calls later. */
+function guarded<Args extends unknown[]>(part: string, body: (...args: Args) => void): (...args: Args) => void {
+  return (...args) => safely(part, () => body(...args))
 }
 
 /** Awaits one registration; a rejection is reported and the next registration still runs. */
@@ -90,13 +98,12 @@ export function createSetup(skillsDirs: readonly [string, string]): (ctx: unknow
     await register('tool', () =>
       ctx.tool.transform(
         guarded('tool transform', (editor) => {
-          // The host rejects a missing required field before `execute` runs and strips extra ones, so the input has the schema's shape.
-          guarded('tool feel', () =>
-            editor.add({ name: 'feel', description: FEEL_DESCRIPTION, input: inputSchema(FEEL_ARGS), options: { codemode: false }, execute: async (input) => ({ content: feelText(input as unknown as Parameters<typeof feelText>[0]) }) }),
-          )()
-          guarded('tool drugs', () =>
-            editor.add({ name: 'drugs', description: DRUGS_DESCRIPTION, input: inputSchema(DRUGS_ARGS), options: { codemode: false }, execute: async (input) => ({ content: drugsText(input as unknown as Parameters<typeof drugsText>[0]) }) }),
-          )()
+          safely('tool feel', () =>
+            editor.add({ name: 'feel', description: FEEL_DESCRIPTION, input: inputSchema(FEEL_INPUT), options: { codemode: false }, execute: async (input) => ({ content: feelText(FEEL_INPUT.parse(input)) }) }),
+          )
+          safely('tool drugs', () =>
+            editor.add({ name: 'drugs', description: DRUGS_DESCRIPTION, input: inputSchema(DRUGS_INPUT), options: { codemode: false }, execute: async (input) => ({ content: drugsText(DRUGS_INPUT.parse(input)) }) }),
+          )
         }),
       ),
     )
@@ -106,7 +113,7 @@ export function createSetup(skillsDirs: readonly [string, string]): (ctx: unknow
         guarded('skill transform', (editor) => {
           for (const skill of skills) {
             const { name, description, content, path } = skill
-            guarded(`skill ${name}`, () => editor.add({ id: name as Skill.ID, name: name as Skill.Name, description, path: path as Skill.Info['path'], content }))()
+            safely(`skill ${name}`, () => editor.add({ id: name as Skill.ID, name: name as Skill.Name, description, path: path as Skill.Info['path'], content }))
           }
         }),
       ),
@@ -117,7 +124,7 @@ export function createSetup(skillsDirs: readonly [string, string]): (ctx: unknow
       ctx.command.transform(
         guarded('command transform', (editor) => {
           for (const { name, description } of skills) {
-            guarded(`command ${name}`, () =>
+            safely(`command ${name}`, () =>
               editor.add({
                 name,
                 description,
@@ -135,7 +142,7 @@ export function createSetup(skillsDirs: readonly [string, string]): (ctx: unknow
                   })
                 },
               }),
-            )()
+            )
           }
         }),
       ),

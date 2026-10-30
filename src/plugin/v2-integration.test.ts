@@ -1,6 +1,7 @@
 /** The packed plugin on the pinned OpenCode v2 CLI (scripted provider). Gated by `METACOGS_HOST_V2=1`; asserts from recorded requests. */
 import { afterAll, describe, expect, test } from 'bun:test'
-import { existsSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import {
@@ -15,6 +16,7 @@ import {
   feelText,
 } from '../frames/feel-drugs'
 import type { RecordedRequest, ScriptRequest, ScriptedStep } from '../runner/scripted-provider'
+import { REPO_ROOT } from './build'
 import { disposeFixtures, packedPlugin } from './fixture'
 import { GUIDANCE_OPEN } from './guidance'
 import {
@@ -28,6 +30,7 @@ import {
   reapAll,
   survivingGroups,
   systemOf,
+  textOf,
   toolResults,
   until,
   userTexts,
@@ -39,6 +42,14 @@ import {
 
 const TIMEOUT = 300_000
 const SKILLS = ['feel', 'drugs', 'synthesis', 'counterfactual']
+const SKILL_DIRS: Record<string, string> = { feel: 'plugin/skills/feel', drugs: 'plugin/skills/drugs', synthesis: 'skills/synthesis', counterfactual: 'skills/counterfactual' }
+
+/** A skill's first heading, read from its own `SKILL.md`: one stable body line to find in what the host delivers. */
+const headingOf = (name: string): string => readFileSync(join(REPO_ROOT, SKILL_DIRS[name]!, 'SKILL.md'), 'utf8').split('\n').find((line) => line.startsWith('# ')) ?? ''
+const hasLine = (text: string | undefined, line: string): boolean => line !== '' && (text ?? '').split('\n').includes(line)
+const SUMMARY_MARKER = 'scripted-summary-marker'
+/** A summary in the host's template; without every heading the host asks again and then keeps the full history. */
+const SUMMARY = ['## Objective', `- Run the loop (${SUMMARY_MARKER}).`, '', '## Requirements', '- (none)', '', '## Decisions', '- (none)', '', '## Work State', '### Completed', '- (none)', '', '### Active', '- (none)', '', '### Blocked', '- (none)', '', '## Next Move', '1. (none)', '', '## Relevant Files', '(none)', '', '## Important Context', '- (none)'].join('\n')
 
 afterAll(async () => {
   await reapAll()
@@ -127,10 +138,16 @@ describe('request classification', () => {
 
 // ── the pinned host ────────────────────────────────────────────────────────
 
+describe('the pinned v2 host gate', () => {
+  test('is enabled when the suite requires it: a dropped METACOGS_HOST_V2 cannot leave the host tests skipped', () => {
+    if (process.env.METACOGS_REQUIRE_HOST_V2 === '1') expect(hostV2Enabled).toBe(true)
+  })
+})
+
 describe.skipIf(!hostV2Enabled)(`the packed plugin on the pinned OpenCode v2 CLI (scripted provider, $0)`, () => {
   test(`the CLI reports opencode v${V2_PIN}`, () => {
-    // `installedCli` throws unless the binary reports exactly `opencode v<pin>`.
-    expect(installedCli().endsWith('/node_modules/.bin/opencode')).toBe(true)
+    const run = spawnSync(installedCli(), ['--version'], { encoding: 'utf8', timeout: 60_000 })
+    expect(run.stdout.trim()).toBe(`opencode v${V2_PIN}`)
   }, TIMEOUT)
 
   withLab('load and schema: feel and drugs are offered with the v1 fields, descriptions and required set', async (lab, plugin) => {
@@ -169,9 +186,9 @@ describe.skipIf(!hostV2Enabled)(`the packed plugin on the pinned OpenCode v2 CLI
       return /ses_[A-Za-z0-9]+/.exec(JSON.stringify(tool?.content ?? ''))?.[0] ?? 'ses_missing'
     }
     const script = ({ messages, hasTools, turn, turnRound }: ScriptRequest): ScriptedStep | undefined => {
-      const users = (messages as { role: string; content: unknown }[]).filter((m) => m.role === 'user').map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)))
+      const users = (messages as { role: string; content: unknown }[]).filter((m) => m.role === 'user').map((m) => textOf(m.content))
       const last = users.at(-1) ?? ''
-      if (last.startsWith('You MUST summarize') || last.startsWith('The previous response did not fill')) return { text: 'Summary: the goal, what was done, and what comes next.' }
+      if (last.startsWith('You MUST summarize') || last.startsWith('The previous response did not fill')) return { text: SUMMARY }
       // A subagent's history holds the parent's prompt as its first user message, so it is told apart by that text.
       if (users.some((u) => u.includes(SUB))) return turnRound === 0 ? feelCall(`c${turn}`) : { text: 'child done' }
       if (!hasTools) return undefined
@@ -190,7 +207,8 @@ describe.skipIf(!hostV2Enabled)(`the packed plugin on the pinned OpenCode v2 CLI
       const session = await newSession(server)
       await server.call('POST', `/api/session/${session}/prompt`, { text: 'run the loop' })
       await idle(server, session)
-      await until('the parent to finish', () => (server.requests.some((r) => toolResults(r).some((t) => t.includes('child done'))) && agentRequests(server.requests).length >= 8 ? true : undefined))
+      // Both subagent results (the new child and its continuation) are in one request: the parent's last round has run.
+      await until('both subagent results', () => (server.requests.some((r) => toolResults(r).filter((t) => t.includes('child done')).length >= 2) ? true : undefined))
 
       expect((await server.call('POST', `/api/session/${session}/compact`, {})).status).toBe(200)
       await idle(server, session)
@@ -208,7 +226,10 @@ describe.skipIf(!hostV2Enabled)(`the packed plugin on the pinned OpenCode v2 CLI
       expect(title.length).toBeGreaterThan(0)
       const subagent = agent.filter((r) => userTexts(r).some((u) => u.includes(SUB)))
       expect(subagent.length).toBeGreaterThanOrEqual(4)
-      expect(agent.filter((r) => userTexts(r).includes('carry on')).length).toBeGreaterThan(0)
+      const carryOn = agent.filter((r) => userTexts(r).includes('carry on'))
+      expect(carryOn.length).toBeGreaterThan(0)
+      // Compaction completed: the scripted summary is in the history the next request carries.
+      expect(JSON.stringify(bodyOf(carryOn[0]!).messages)).toContain(SUMMARY_MARKER)
 
       for (const request of agent) expect(guidanceCount(request)).toBe(1)
       for (const request of [...title, ...compaction]) expect(guidanceCount(request)).toBe(0)
@@ -230,6 +251,8 @@ describe.skipIf(!hostV2Enabled)(`the packed plugin on the pinned OpenCode v2 CLI
     const { requests } = await lab.run('load it', { config: plugin(), steps: [call('s1', 'skill', { id: 'counterfactual' }), call('s2', 'skill', { id: 'feel' })] })
     const [counterfactual, feel] = toolResults(agentRequests(requests).at(-1)!)
     expect(counterfactual).toContain('<skill_content name="counterfactual">')
+    expect(hasLine(counterfactual, headingOf('counterfactual'))).toBe(true)
+    expect(hasLine(feel, headingOf('feel'))).toBe(true)
     const base = /Base directory for this skill: (.+)/.exec(counterfactual ?? '')?.[1]?.trim()
     expect(base).toBe(join(root, 'skills', 'counterfactual'))
     expect(base?.endsWith('skills/counterfactual')).toBe(true)
@@ -243,13 +266,14 @@ describe.skipIf(!hostV2Enabled)(`the packed plugin on the pinned OpenCode v2 CLI
     const server = await lab.serve({ config: plugin() })
     try {
       const commands = await commandsLoaded(server)
-      expect(commands.find((c) => c.name === 'drugs')?.description).toStartWith('Use when the approach itself needs to change.')
+      expect(commands.find((c) => c.name === 'drugs')?.description).toBeTruthy()
       const session = await newSession(server)
       expect((await server.call('POST', `/api/session/${session}/command`, { name: 'drugs', text: 'caffeine' })).status).toBe(204)
       await idle(server, session)
       const [text] = userTexts(agentRequests(server.requests)[0]!)
       expect(text?.startsWith('<skill_content name="drugs">')).toBe(true)
       expect(text).toContain('Base directory for this skill:')
+      expect(hasLine(text, headingOf('drugs'))).toBe(true)
       expect(text?.endsWith('caffeine')).toBe(true)
       // The server's password line is redacted in everything the harness can show.
       expect(server.output()).toContain('server password <redacted>')
@@ -261,7 +285,11 @@ describe.skipIf(!hostV2Enabled)(`the packed plugin on the pinned OpenCode v2 CLI
   withLab("commands: a user's own command.feel wins over the plugin's, and drugs stays the skill", async (lab, plugin) => {
     const server = await lab.serve({ config: { ...plugin(), command: { feel: { template: 'MY FEEL $ARGUMENTS', description: 'mine' } } } })
     try {
-      const commands = await commandsLoaded(server)
+      // The list can be read before the user's command has replaced the plugin's, so poll for the replacement.
+      const commands = await until("the user's command.feel", async () => {
+        const list = await commandsLoaded(server)
+        return list.find((c) => c.name === 'feel')?.description === 'mine' ? list : undefined
+      })
       expect(commands.find((c) => c.name === 'feel')?.description).toBe('mine')
       const session = await newSession(server)
       await server.call('POST', `/api/session/${session}/command`, { name: 'feel', text: 'chest' })
@@ -283,6 +311,7 @@ describe.skipIf(!hostV2Enabled)(`the packed plugin on the pinned OpenCode v2 CLI
       await idle(server, session)
       const request = agentRequests(server.requests)[0]!
       expect(userTexts(request)[0]?.startsWith('<skill_content name="drugs">')).toBe(true)
+      expect(hasLine(userTexts(request)[0], headingOf('drugs'))).toBe(true)
       expect(userTexts(request)[0]?.endsWith('caffeine')).toBe(true)
       // Hidden from the model's skill list, though the typed command delivered it.
       expect(skillNamesOf(request)).toEqual(expect.arrayContaining(['feel', 'synthesis', 'counterfactual']))
@@ -299,6 +328,7 @@ describe.skipIf(!hostV2Enabled)(`the packed plugin on the pinned OpenCode v2 CLI
     expect(offeredNames(agent[0]!)).not.toContain('feel')
     expect(offeredNames(agent[0]!)).toContain('drugs')
     expect(toolResults(agent.at(-1)!)[0]).toContain('<skill_content name="feel">')
+    expect(hasLine(toolResults(agent.at(-1)!)[0], headingOf('feel'))).toBe(true)
   })
 
   withLab('name separation: denying skill feel makes the skill tool refuse it, and tool feel stays offered', async (lab, plugin) => {

@@ -89,4 +89,5 @@ jobs:
         run: bun test src/plugin/v2-integration.test.ts
         env:
           METACOGS_HOST_V2: '1'
+          METACOGS_REQUIRE_HOST_V2: '1'
           METACOGS_OPENCODE_V2_BIN: ${{ steps.opencode.outputs.bin }}
