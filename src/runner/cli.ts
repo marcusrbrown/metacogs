@@ -32,13 +32,13 @@ export const EXIT = { OK: 0, ERROR: 1, USAGE: 64, REFUSED: 3, CREDENTIAL_LEAK: 4
 
 const USAGE = `usage: bun run eval <red|green> --method <name> [options]
        bun run eval pilot --method <name> --provider live [--arm baseline[,skill]] [--prereg <repo-relative file>]
-                                                                    dev-only comparison of arms on evals/<m>/pilot/prereg.json; writes evals/<m>/pilot/pilot.json.
+                                                                    dev-only comparison of arms on evals/<m>/pilot/prereg.json; writes pilot.json beside the prereg.
                                                                     Never reported: report and review refuse its campaigns. Arms: baseline, skill; two arms interleave
        bun run eval pairs --campaign <id|dir> --build [--prereg <file>]
                                                                     pilot campaigns only: write the blind pair sheet (sheet.md) and its key (key.json) under the state root. Refuses to overwrite a key
-       bun run eval pairs --campaign <id|dir> --reconcile [--sheet <file>]
+       bun run eval pairs --campaign <id|dir> --reconcile [--sheet <file>] [--prereg <file>]
                                                                     read the marked sheet against the key (strictly): owner pass counts, judge vs owner, preference; writes
-                                                                    evals/<m>/pilot/pair-summary.json
+                                                                    pair-summary.json beside the prereg (default: evals/<m>/pilot/)
        bun run eval report --method <name> [--campaign <dir>]
        bun run eval review --campaign <id|dir>                     write the blind review.md (fixture prompt, expected-answer notes, answer, record, an unmarked
                                                                    scoring table) and review-key.md (judge verdicts and quotes) into the campaign dir
@@ -55,7 +55,8 @@ const USAGE = `usage: bun run eval <red|green> --method <name> [options]
   --build                 pairs only: build the sheet and key for the campaign
   --sheet <file>          pairs --reconcile only: the marked sheet (default: the sheet.md beside the key)
   --errors-only           rejudge only: judge just the runs whose latest verdict is judge_error; every other run keeps its verdict
-  --prereg <file>         pilot, and rejudge of a pilot campaign: the repo-relative prereg to enforce (default: evals/<m>/pilot/prereg.json)
+  --prereg <file>         pilot, rejudge of a pilot campaign, pairs: the repo-relative prereg to enforce (default: evals/<m>/pilot/prereg.json);
+                          pilot.json and pair-summary.json are written in the directory that holds it
   --fixture <id>          only this fixture (single-run debugging; marks the campaign as deviating from prereg)
   --rehearsal             green only: scripted dry run of the skill condition on dev + negative fixtures. Never loads held-out fixtures,
                           never claims the read marker, never feeds a report
@@ -432,7 +433,8 @@ export async function main(argv: readonly string[], io: Partial<MainIO> = {}): P
         ...pilotRubric(repoRoot, prereg),
         fixtures: verification.content.fixtures.dev,
       })
-      out(`wrote ${writePilotTally(repoRoot, pilotTally, out).slice(repoRoot.length + 1)} (arms: ${pilotTally.arms.join(', ')})`)
+      // `pilotPreregPath` is defined here: an out-of-repo prereg was refused above.
+      out(`wrote ${writePilotTally(repoRoot, pilotPreregPath!, pilotTally, out).slice(repoRoot.length + 1)} (arms: ${pilotTally.arms.join(', ')})`)
     } catch (e) {
       // The campaign is intact on disk; only the projection failed. Say how to redo it instead of crashing with a stack.
       err(`REFUSED: ${(e as Error).message}\npilot.json was not written; the campaign is intact at ${campaignDir}. Fix the cause, then: bun run eval rejudge --campaign ${campaignId} --tally-only`)
@@ -607,7 +609,8 @@ async function campaignToolMain(a: CampaignToolArgs): Promise<number> {
         a.err(`REFUSED: ${(e as Error).message}`)
         return EXIT.REFUSED
       }
-      a.out(`wrote ${writePilotTally(repoRoot, tally, a.out).slice(repoRoot.length + 1)} (arms: ${tally.arms.join(', ')})`)
+      // A pilot campaign (the only kind that gets here) always has a resolved prereg path.
+      a.out(`wrote ${writePilotTally(repoRoot, preregPath!, tally, a.out).slice(repoRoot.length + 1)} (arms: ${tally.arms.join(', ')})`)
       return EXIT.OK
     }
     if (a.tallyOnly) return writePilotFromDisk()
@@ -680,7 +683,7 @@ interface PairsArgs {
 
 /**
  * `pairs --build`: the blind pair sheet and key for a finished two-arm pilot campaign, under the state root. `pairs --reconcile`: the
- * owner's marks against the key, and `evals/<m>/pilot/pair-summary.json`. The pilot prereg must be committed and clean for a build,
+ * owner's marks against the key, and `pair-summary.json` beside the pilot prereg. The pilot prereg must be committed and clean for a build,
  * so the statements on the sheet are the ones the prereg hashed.
  */
 function pairsMain(a: PairsArgs): number {
@@ -690,10 +693,6 @@ function pairsMain(a: PairsArgs): number {
   }
   if (a.sheet !== undefined && !a.reconcile) {
     a.err(`--sheet applies to pairs --reconcile only\n${USAGE}`)
-    return EXIT.USAGE
-  }
-  if (a.preregFlag !== undefined && !a.build) {
-    a.err(`--prereg applies to pairs --build only\n${USAGE}`)
     return EXIT.USAGE
   }
   const repoRoot = new Git(a.repo ?? a.cwd).toplevel()
@@ -723,19 +722,21 @@ function pairsMain(a: PairsArgs): number {
   const dir = pairsDir(a.env, campaignId)
 
   try {
+    // The pilot prereg, as `eval pilot` resolves it. `--reconcile` writes beside it, so it must name a file in the repository.
+    const preregPath = pilotPreregRel(repoRoot, method, a.preregFlag)
+    if (preregPath === undefined) throw new PairRefusal(`--prereg ${a.preregFlag} is outside the repository`)
     if (a.reconcile) {
+      if (!existsSync(join(repoRoot, preregPath))) throw new PairRefusal(`${preregPath} does not exist; the summary is written beside the pilot prereg (--prereg <repo-relative file>)`)
       const key = readPairKey(dir)
       if (key.campaign_id !== campaignId) throw new PairRefusal(`the key at ${dir} is for campaign ${key.campaign_id}, not ${campaignId}`)
       const sheetPath = a.sheet ? resolve(a.cwd, a.sheet) : join(dir, 'sheet.md')
       if (!existsSync(sheetPath)) throw new PairRefusal(`no sheet at ${sheetPath}`)
       const reconciled = reconcilePairs(key, readFileSync(sheetPath, 'utf8'), { campaignDir })
       for (const line of summarizePairs(reconciled)) a.out(line)
-      a.out(`wrote ${writePairSummary(repoRoot, reconciled.summary).slice(repoRoot.length + 1)}`)
+      a.out(`wrote ${writePairSummary(repoRoot, preregPath, reconciled.summary).slice(repoRoot.length + 1)}`)
       return EXIT.OK
     }
 
-    const preregPath = pilotPreregRel(repoRoot, method, a.preregFlag)
-    if (preregPath === undefined) throw new PairRefusal(`--prereg ${a.preregFlag} is outside the repository`)
     const uncommitted = preregCommitViolation(new Git(repoRoot), repoRoot, preregPath)
     if (uncommitted) throw new PairRefusal(uncommitted.message)
     const verification = enforcePrereg({ git: new Git(repoRoot), repoRoot, method, mode: 'dev', heldoutDir: heldoutDir(method, a.env, undefined, repoRoot), preregPath })

@@ -11,6 +11,8 @@ import {
   PILOT_ARMS,
   type PilotTally,
   parsePilotTally,
+  pilotDir,
+  pilotPreregRel,
   pilotTallyPath,
   planPilot,
   projectPilot,
@@ -22,6 +24,9 @@ import { type Host, type HostRunRequest, type JudgeInput, runCampaign } from './
 import type { SpawnResult } from './opencode'
 import { scaffoldMethod, TEST_SALT, TestRepo } from './test-support'
 import { sha256 } from './workspace'
+
+/** The default pilot prereg of the scaffolded `demo` method; the tally is written beside it. */
+const PREREG = 'evals/demo/pilot/prereg.json'
 
 const scratch: string[] = []
 const repos: TestRepo[] = []
@@ -492,18 +497,18 @@ describe('writePilotTally (fixed-key projection)', () => {
       tally: { baseline: { d1: { ...CELL, runs }, d2: { ...CELL, runs } } },
       campaigns: { baseline: `campaign-${runs}` },
     })
-  const read = (repo: string): PilotTally => JSON.parse(readFileSync(pilotTallyPath(repo, 'demo'), 'utf8')) as PilotTally
+  const read = (repo: string): PilotTally => JSON.parse(readFileSync(pilotTallyPath(repo, PREREG), 'utf8')) as PilotTally
   const plant = (repo: string, text: string): string => {
     mkdirSync(join(repo, 'evals', 'demo', 'pilot'), { recursive: true })
-    writeFileSync(pilotTallyPath(repo, 'demo'), text)
+    writeFileSync(pilotTallyPath(repo, PREREG), text)
     return text
   }
 
   test('only the allowlisted keys are written, even if the cell carried more', () => {
     const repo = tmp('metacogs-pilotwrite-')
     const dirty = { ...CELL, stdout: 'SECRET', env: { K: 'V' } }
-    const path = writePilotTally(repo, projectPilot({ ...CTX, tally: { baseline: { d1: dirty } }, campaigns: { baseline: 'c1' } }))
-    expect(path).toBe(pilotTallyPath(repo, 'demo'))
+    const path = writePilotTally(repo, PREREG, projectPilot({ ...CTX, tally: { baseline: { d1: dirty } }, campaigns: { baseline: 'c1' } }))
+    expect(path).toBe(pilotTallyPath(repo, PREREG))
     const written = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
     expect(Object.keys(written)).toEqual(['schema_version', 'method', 'prereg_content_hash', 'agent_model_id', 'judge_model_id', 'arms', 'campaigns', 'tally'])
     expect(written.campaigns).toEqual({ baseline: 'c1' })
@@ -521,9 +526,9 @@ describe('writePilotTally (fixed-key projection)', () => {
   test('a rerun of the arm replaces its tally and says which campaign it replaced; the first write says nothing', () => {
     const repo = tmp('metacogs-pilotwrite-')
     const lines: string[] = []
-    writePilotTally(repo, tally(3), (l) => lines.push(l))
+    writePilotTally(repo, PREREG, tally(3), (l) => lines.push(l))
     expect(lines).toEqual([])
-    writePilotTally(repo, tally(5), (l) => lines.push(l))
+    writePilotTally(repo, PREREG, tally(5), (l) => lines.push(l))
     const written = read(repo)
     expect(written.tally.baseline!.d1!.runs).toBe(5)
     expect(written.campaigns).toEqual({ baseline: 'campaign-5' })
@@ -533,8 +538,8 @@ describe('writePilotTally (fixed-key projection)', () => {
   test('a different prereg content hash starts the file over', () => {
     const repo = tmp('metacogs-pilotwrite-')
     const lines: string[] = []
-    writePilotTally(repo, tally(3))
-    writePilotTally(repo, tally(1, 'b'.repeat(64)), (l) => lines.push(l))
+    writePilotTally(repo, PREREG, tally(3))
+    writePilotTally(repo, PREREG, tally(1, 'b'.repeat(64)), (l) => lines.push(l))
     expect(read(repo).prereg_content_hash).toBe('b'.repeat(64))
     expect(lines).toEqual([])
   })
@@ -542,8 +547,8 @@ describe('writePilotTally (fixed-key projection)', () => {
   test('a corrupt existing file is refused, naming its path; the file is not touched', () => {
     const repo = tmp('metacogs-pilotwrite-')
     const before = plant(repo, '{nope')
-    expect(() => writePilotTally(repo, tally(1))).toThrow(/evals.demo.pilot.pilot\.json/)
-    expect(readFileSync(pilotTallyPath(repo, 'demo'), 'utf8')).toBe(before)
+    expect(() => writePilotTally(repo, PREREG, tally(1))).toThrow(/evals.demo.pilot.pilot\.json/)
+    expect(readFileSync(pilotTallyPath(repo, PREREG), 'utf8')).toBe(before)
   })
 
   describe('an existing pilot.json that does not validate is refused and left byte-identical', () => {
@@ -578,8 +583,8 @@ describe('writePilotTally (fixed-key projection)', () => {
       test(name, () => {
         const repo = tmp('metacogs-pilotwrite-')
         plant(repo, text)
-        expect(() => writePilotTally(repo, tally(9))).toThrow(/pilot\.json/)
-        expect(readFileSync(pilotTallyPath(repo, 'demo'), 'utf8')).toBe(text)
+        expect(() => writePilotTally(repo, PREREG, tally(9))).toThrow(/pilot\.json/)
+        expect(readFileSync(pilotTallyPath(repo, PREREG), 'utf8')).toBe(text)
       })
     }
 
@@ -587,9 +592,59 @@ describe('writePilotTally (fixed-key projection)', () => {
       expect(parsePilotTally(good())).toEqual(tally(3))
       const repo = tmp('metacogs-pilotwrite-')
       plant(repo, `${JSON.stringify(good(), null, 2)}\n`)
-      writePilotTally(repo, tally(9))
+      writePilotTally(repo, PREREG, tally(9))
       expect(read(repo).tally.baseline!.d1!.runs).toBe(9)
     })
+  })
+})
+
+describe('the pilot output directory is the directory of the prereg the run used', () => {
+  const CELL = { runs: 1, criteria: { TE1: 0, TE2: 0 }, all_pass: 0, over_limit: 0, empty: 0, skill_loaded: 0 }
+  const tally = (hash: string): PilotTally => projectPilot({ ...CTX, prereg_content_hash: hash, tally: { baseline: { d1: CELL } }, campaigns: { baseline: 'c1' } })
+  const OTHER = 'evals/demo/pilot-2/prereg.json'
+
+  test('the default prereg keeps the tally where it always was: evals/<m>/pilot/', () => {
+    const repo = '/r'
+    expect(pilotPreregRel(repo, 'tether')).toBe('evals/tether/pilot/prereg.json')
+    expect(pilotDir(repo, 'evals/tether/pilot/prereg.json')).toBe(join(repo, 'evals', 'tether', 'pilot'))
+    expect(pilotTallyPath(repo, pilotPreregRel(repo, 'tether')!)).toBe(join(repo, 'evals', 'tether', 'pilot', 'pilot.json'))
+    expect(pilotTallyPath(repo, pilotPreregRel(repo, 'synthesis')!)).toBe(join(repo, 'evals', 'synthesis', 'pilot', 'pilot.json'))
+  })
+
+  test('a prereg in another directory puts the tally beside it, whatever the method', () => {
+    const repo = '/r'
+    expect(pilotTallyPath(repo, 'evals/synthesis/pilot-2/prereg.json')).toBe(join(repo, 'evals', 'synthesis', 'pilot-2', 'pilot.json'))
+    expect(pilotTallyPath(repo, OTHER)).toBe(join(repo, 'evals', 'demo', 'pilot-2', 'pilot.json'))
+    expect(pilotDir(repo, 'evals/demo/deep/er/prereg.json')).toBe(join(repo, 'evals', 'demo', 'deep', 'er'))
+  })
+
+  test('the --prereg flag resolves to a normalised repo-relative path; outside the repo is undefined', () => {
+    expect(pilotPreregRel('/r', 'demo', './evals/demo/pilot-2/../pilot-2/prereg.json')).toBe(OTHER)
+    expect(pilotPreregRel('/r', 'demo', '../elsewhere/prereg.json')).toBeUndefined()
+    expect(pilotPreregRel('/r', 'demo', '/elsewhere/prereg.json')).toBeUndefined()
+  })
+
+  test('regression: writing under a non-default prereg creates its directory and leaves the default pilot.json byte-identical', () => {
+    const repo = tmp('metacogs-pilotwrite-')
+    const epoch1 = `${JSON.stringify(tally('a'.repeat(64)), null, 2)}\n`
+    const dir = join(repo, 'evals', 'demo', 'pilot')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'pilot.json'), epoch1)
+
+    const path = writePilotTally(repo, OTHER, tally('b'.repeat(64)))
+
+    expect(path).toBe(join(repo, 'evals', 'demo', 'pilot-2', 'pilot.json'))
+    expect((JSON.parse(readFileSync(path, 'utf8')) as PilotTally).prereg_content_hash).toBe('b'.repeat(64))
+    expect(readFileSync(join(dir, 'pilot.json'), 'utf8')).toBe(epoch1)
+  })
+
+  test('a rerun under the other prereg replaces only that directory\'s tally, and the log names the campaign it replaced there', () => {
+    const repo = tmp('metacogs-pilotwrite-')
+    const lines: string[] = []
+    writePilotTally(repo, OTHER, tally('b'.repeat(64)))
+    writePilotTally(repo, OTHER, tally('b'.repeat(64)), (l) => lines.push(l))
+    expect(lines).toEqual(['replaced baseline tally from c1'])
+    expect(existsSync(pilotTallyPath(repo, PREREG))).toBe(false)
   })
 })
 
@@ -730,7 +785,7 @@ describe('baseline pilot, end to end (fake host)', () => {
       // 'three word answer' is 3 words against maxWords 2, and the judge failed TE2.
       d2: { runs: 2, criteria: { TE1: 2, TE2: 0 }, all_pass: 0, over_limit: 2, empty: 0, skill_loaded: 0 },
     })
-    const path = writePilotTally(repo.dir, tally)
+    const path = writePilotTally(repo.dir, PREREG, tally)
     const written = JSON.parse(readFileSync(path, 'utf8')) as PilotTally
     expect(written).toMatchObject({ arms: ['baseline'], method: 'demo', prereg_content_hash: verification.contentHash, agent_model_id: tally.agent_model_id, judge_model_id: tally.judge_model_id })
     // Likewise the judge: the evidence the manifests recorded (the test judge's), not the prereg's pin.
@@ -816,7 +871,7 @@ describe('two-arm pilot, end to end (fake host)', () => {
         d2: { runs: 2, criteria: { TE1: 2, TE2: 2 }, all_pass: 2, over_limit: 0, empty: 0, skill_loaded: 0 },
       })
     }
-    const written = JSON.parse(readFileSync(writePilotTally(repo.dir, tally), 'utf8')) as PilotTally
+    const written = JSON.parse(readFileSync(writePilotTally(repo.dir, PREREG, tally), 'utf8')) as PilotTally
     expect(written.arms).toEqual(['baseline', 'skill'])
     expect(parsePilotTally(written)).toEqual(written)
   })

@@ -731,11 +731,12 @@ describe('pilot', () => {
     const fakeJudge = (hook: (input: unknown) => Promise<unknown>) =>
       (() => ({ hook, spec: { systemPrompt: 'S', declarations: { expectation: true }, criteria: [], overclaimPatterns: [] }, systemPromptSha256: REAL_PROMPT, rubricSha256: 'e'.repeat(64) })) as never
 
-    async function plantedPilot(opts: { prereg?: boolean; summary?: boolean; maxWords?: number; words?: number; manifestCurrent?: boolean } = {}) {
+    async function plantedPilot(opts: { prereg?: boolean; preregAt?: string; summary?: boolean; maxWords?: number; words?: number; manifestCurrent?: boolean } = {}) {
       const { repo, scaffold } = chainRepo(JUDGED_RUBRIC_TEXT, opts.maxWords === undefined ? undefined : { dev: { d1: { outcome: 'o', excludedTopics: [], maxWords: opts.maxWords } } })
       if (opts.prereg !== false) {
-        repo.write(PILOT_PREREG, `${JSON.stringify(scaffold.prereg, null, 2)}\n`)
-        repo.commit('test: pilot prereg', [PILOT_PREREG])
+        const at = opts.preregAt ?? PILOT_PREREG
+        repo.write(at, `${JSON.stringify(scaffold.prereg, null, 2)}\n`)
+        repo.commit('test: pilot prereg', [at])
       }
       const { writeManifest } = await import('./manifest')
       const dir = join(repo.dir, 'evals', 'runs', CAMPAIGN, '001-dev-d1-baseline-r1')
@@ -817,6 +818,41 @@ describe('pilot', () => {
       expect(written.tally.baseline!.d1).toMatchObject({ runs: 1, criteria: { TE1: 1, TE2: 1 }, all_pass: 1 })
       expect(readFileSync(join(dir, 'manifest.json'), 'utf8')).toBe(before)
       expect(readFileSync(join(repo.dir, 'evals', 'runs', CAMPAIGN, 'rejudge-summary.json'), 'utf8')).toContain('"prereg_content_hash"') // read, never rewritten
+    })
+
+    describe('the tally is written beside the prereg the run used, never over another pilot\'s', () => {
+      const OTHER = 'evals/demo/pilot-2/prereg.json'
+      const EPOCH1 = '{"epoch": 1}\n'
+      const runs: [string, (repo: TestRepo, t: ReturnType<typeof io>) => Promise<number>][] = [
+        ['rejudge --tally-only', (repo, t) => main([...tallyOnlyArgs(repo), '--prereg', OTHER], t.io)],
+        [
+          'rejudge (judge calls)',
+          (repo, t) => {
+            t.io.createJudge = fakeJudge(async () => ({ verdict: 'pass', evidence: evidence('pass') }))
+            return main([...rejudgeArgs(repo), '--prereg', OTHER], t.io)
+          },
+        ],
+      ]
+      for (const [name, run] of runs) {
+        test(`${name} --prereg ${OTHER} writes evals/demo/pilot-2/pilot.json and leaves evals/demo/pilot/pilot.json byte-identical`, async () => {
+          const { repo, scaffold } = await plantedPilot({ preregAt: OTHER })
+          repo.write('evals/demo/pilot/pilot.json', EPOCH1)
+          const t = io()
+          expect(await run(repo, t)).toBe(EXIT.OK)
+          expect(t.lines.out.join('\n')).toContain('wrote evals/demo/pilot-2/pilot.json')
+          const written = JSON.parse(readFileSync(join(repo.dir, 'evals', 'demo', 'pilot-2', 'pilot.json'), 'utf8')) as { prereg_content_hash: string }
+          expect(written.prereg_content_hash).toBe(preregContentHash(scaffold.prereg))
+          expect(readFileSync(pilotJson(repo), 'utf8')).toBe(EPOCH1)
+        })
+      }
+
+      test('without --prereg the tally still lands in evals/<m>/pilot/', async () => {
+        const { repo } = await plantedPilot()
+        const t = io()
+        expect(await main(tallyOnlyArgs(repo), t.io)).toBe(EXIT.OK)
+        expect(t.lines.out.join('\n')).toContain('wrote evals/demo/pilot/pilot.json')
+        expect(existsSync(join(repo.dir, 'evals', 'demo', 'pilot-2'))).toBe(false)
+      })
     })
 
     test('review and review --reconcile refuse a pilot campaign with the message report uses, and write nothing', async () => {

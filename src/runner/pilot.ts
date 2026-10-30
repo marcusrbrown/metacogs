@@ -10,7 +10,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
 import { isSkillContentLoad, parseEvents, toolUses } from './events'
 import { readJudgeRecord } from './judge-record'
@@ -370,8 +370,13 @@ export function pilotPreregRel(repoRoot: string, method: string, flag?: string):
   return rel.startsWith('..') || isAbsolute(rel) ? undefined : rel
 }
 
-export const pilotDir = (repoRoot: string, method: string): string => join(repoRoot, 'evals', method, 'pilot')
-export const pilotTallyPath = (repoRoot: string, method: string): string => join(pilotDir(repoRoot, method), 'pilot.json')
+/**
+ * Where a pilot's projections (`pilot.json`, `pair-summary.json`) live: the directory that holds the prereg the run was made under,
+ * so two pilots of one method (`evals/<m>/pilot/`, `evals/<m>/pilot-2/`) never write over each other. `preregRel` is what
+ * `pilotPreregRel` returned, already known to be inside the repository, so the directory cannot leave it.
+ */
+export const pilotDir = (repoRoot: string, preregRel: string): string => join(repoRoot, dirname(preregRel))
+export const pilotTallyPath = (repoRoot: string, preregRel: string): string => join(pilotDir(repoRoot, preregRel), 'pilot.json')
 
 /** A missing file is the only "no existing tally". One that cannot be read or does not validate stops the write: it holds other arms' numbers. */
 function readExisting(path: string): PilotTally | undefined {
@@ -384,12 +389,12 @@ function readExisting(path: string): PilotTally | undefined {
 }
 
 /**
- * Writes `evals/<method>/pilot/pilot.json`. A rerun of an arm under the same prereg content replaces its tally, and `log` hears which
+ * Writes `pilot.json` beside the prereg the run used (`evals/<method>/pilot/` for the default prereg). A rerun of an arm under the same prereg content replaces its tally, and `log` hears which
  * campaign it replaced; a different prereg content hash starts the file over without a word, since nothing of the old file carries
  * over. An existing file that does not validate is an error and is left as it is.
  */
-export function writePilotTally(repoRoot: string, incoming: PilotTally, log?: (line: string) => void): string {
-  const path = pilotTallyPath(repoRoot, incoming.method)
+export function writePilotTally(repoRoot: string, preregRel: string, incoming: PilotTally, log?: (line: string) => void): string {
+  const path = pilotTallyPath(repoRoot, preregRel)
   const existing = readExisting(path)
   if (existing !== undefined && existing.prereg_content_hash === incoming.prereg_content_hash) {
     for (const arm of incoming.arms) {
@@ -398,7 +403,7 @@ export function writePilotTally(repoRoot: string, incoming: PilotTally, log?: (l
     }
   }
   const projected = projectPilot(incoming)
-  mkdirSync(pilotDir(repoRoot, incoming.method), { recursive: true })
+  mkdirSync(pilotDir(repoRoot, preregRel), { recursive: true })
   const tmp = `${path}.tmp`
   writeFileSync(tmp, `${JSON.stringify(projected, null, 2)}\n`)
   renameSync(tmp, path)
