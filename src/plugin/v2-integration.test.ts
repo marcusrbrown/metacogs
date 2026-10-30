@@ -1,7 +1,8 @@
 /** The packed plugin on the pinned OpenCode v2 CLI (scripted provider). Gated by `METACOGS_HOST_V2=1`; asserts from recorded requests. */
 import { afterAll, describe, expect, test } from 'bun:test'
-import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { spawn, spawnSync } from 'node:child_process'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
@@ -21,12 +22,14 @@ import { disposeFixtures, packedPlugin } from './fixture'
 import { GUIDANCE_OPEN } from './guidance'
 import {
   bodyOf,
+  GENERATE_PROMPT_PREFIX,
   guidanceCount,
   hostV2Enabled,
   installedCli,
   kindOf,
   ofKind,
   offeredNames,
+  groupAlive,
   reapAll,
   survivingGroups,
   systemOf,
@@ -125,6 +128,10 @@ describe('request classification', () => {
     expect(kindOf(req([SYSTEM, summarize, { role: 'user', content: 'The previous response did not fill in the required summary template.' }], ['feel']))).toBe('compaction')
   })
 
+  test('a generate request is told by its prompt, though it offers the same tools as the agent loop', () => {
+    expect(kindOf(req([SYSTEM, { role: 'user', content: 'hi' }, { role: 'user', content: `${GENERATE_PROMPT_PREFIX} name it` }], ['feel']))).toBe('generate')
+  })
+
   test('a request that offers tools and is neither is an agent-loop request, and one that offers none is "other"', () => {
     expect(kindOf(req([SYSTEM, { role: 'user', content: 'hi' }], ['feel']))).toBe('agent')
     expect(kindOf(req([SYSTEM, { role: 'user', content: 'hi' }]))).toBe('other')
@@ -218,12 +225,17 @@ describe.skipIf(!hostV2Enabled)(`the packed plugin on the pinned OpenCode v2 CLI
       await idle(server, session)
       await until('the request after compaction', () => (server.requests.some((r) => userTexts(r).includes('carry on')) ? true : undefined))
 
+      expect((await server.call('POST', `/api/session/${session}/generate`, { prompt: `${GENERATE_PROMPT_PREFIX} name this session` })).status).toBe(200)
+      await until('the generate request', () => (ofKind(server.requests, 'generate').length > 0 ? true : undefined))
+
       // The occurrences are asserted before the absences, so a classifier that matched nothing cannot pass.
       const compaction = ofKind(server.requests, 'compaction')
       const title = ofKind(server.requests, 'title')
+      const generate = ofKind(server.requests, 'generate')
       const agent = agentRequests(server.requests)
       expect(compaction.length).toBeGreaterThan(0)
       expect(title.length).toBeGreaterThan(0)
+      expect(generate.length).toBeGreaterThan(0)
       const subagent = agent.filter((r) => userTexts(r).some((u) => u.includes(SUB)))
       expect(subagent.length).toBeGreaterThanOrEqual(4)
       const carryOn = agent.filter((r) => userTexts(r).includes('carry on'))
@@ -232,7 +244,9 @@ describe.skipIf(!hostV2Enabled)(`the packed plugin on the pinned OpenCode v2 CLI
       expect(JSON.stringify(bodyOf(carryOn[0]!).messages)).toContain(SUMMARY_MARKER)
 
       for (const request of agent) expect(guidanceCount(request)).toBe(1)
-      for (const request of [...title, ...compaction]) expect(guidanceCount(request)).toBe(0)
+      // Every request that is not the agent loop carries no block: title, compaction, generate, and anything unclassified.
+      const others = server.requests.filter((r) => kindOf(r) !== 'agent')
+      for (const request of others) expect(guidanceCount(request)).toBe(0)
     } finally {
       await server.stop()
     }
@@ -340,6 +354,46 @@ describe.skipIf(!hostV2Enabled)(`the packed plugin on the pinned OpenCode v2 CLI
     expect(refused).toContain('permission.rejected')
     expect(refused).not.toContain('<skill_content')
   })
+
+  test('SIGTERM to a process holding a server kills the server group, and the signal still ends it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'metacogs-v2-signal-'))
+    const script = join(dir, 'hold.ts')
+    writeFileSync(
+      script,
+      [`import { V2Lab } from ${JSON.stringify(join(REPO_ROOT, 'src', 'plugin', 'v2-host'))}`, 'const lab = new V2Lab()', 'const server = await lab.serve({})', 'console.log(`READY ${server.pid} ${lab.fixture.root}`)', 'await new Promise(() => {})'].join('\n'),
+    )
+    const holder = spawn('bun', ['run', script], { cwd: REPO_ROOT, stdio: ['ignore', 'pipe', 'inherit'] })
+    let pgid: number | undefined
+    let fixtureRoot: string | undefined
+    try {
+      let out = ''
+      holder.stdout.on('data', (chunk: Buffer) => void (out += chunk.toString()))
+      await until('the holder to serve', () => {
+        const match = /READY (\d+) (\S+)/.exec(out)
+        if (match) {
+          pgid = Number(match[1])
+          fixtureRoot = match[2]
+        }
+        return match ? true : undefined
+      })
+      const exited = new Promise<NodeJS.Signals | null>((resolve) => holder.once('exit', (_code, signal) => resolve(signal)))
+      expect(groupAlive(pgid!)).toBe(true)
+      holder.kill('SIGTERM')
+      expect(await exited).toBe('SIGTERM')
+      await until('the server group to end', () => (groupAlive(pgid!) ? undefined : true), 15_000)
+    } finally {
+      holder.kill('SIGKILL')
+      if (pgid !== undefined) {
+        try {
+          process.kill(-pgid, 'SIGKILL')
+        } catch {
+          // already gone
+        }
+      }
+      if (fixtureRoot) rmSync(fixtureRoot, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }, TIMEOUT)
 
   test('no host process survives the suite', async () => {
     // Every lab stopped its own children; nothing is reaped here, so a leak shows.

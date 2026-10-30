@@ -69,7 +69,7 @@ export function installedCli(): string {
 
 const spawnedGroups = new Set<number>()
 
-function groupAlive(pgid: number): boolean {
+export function groupAlive(pgid: number): boolean {
   try {
     process.kill(-pgid, 0)
     return true
@@ -101,6 +101,27 @@ export async function reapAll(): Promise<void> {
   await Promise.all([...spawnedGroups].map(reapGroup))
 }
 
+let signalsHandled = false
+
+/** SIGINT or SIGTERM kills every tracked group with SIGKILL, then re-raises the signal: a children's group outlives its parent. */
+function killGroupsOnSignal(): void {
+  if (signalsHandled) return
+  signalsHandled = true
+  const handler = (signal: NodeJS.Signals) => () => {
+    for (const pgid of spawnedGroups) {
+      try {
+        process.kill(-pgid, 'SIGKILL')
+      } catch {
+        // already gone
+      }
+    }
+    for (const [name, listener] of listeners) process.off(name, listener)
+    process.kill(process.pid, signal)
+  }
+  const listeners = (['SIGINT', 'SIGTERM'] as const).map((name) => [name, handler(name)] as const)
+  for (const [name, listener] of listeners) process.on(name, listener)
+}
+
 const REDACT = /(server password )\S+/g
 const redact = (text: string): string => text.replace(REDACT, '$1<redacted>')
 
@@ -123,6 +144,7 @@ function spawnChild(argv: readonly string[], cwd: string, env: Record<string, st
   const pid = child.pid
   if (pid === undefined) throw new Error('the child has no pid')
   spawnedGroups.add(pid)
+  killGroupsOnSignal()
   let buffer = ''
   child.stdout?.on('data', (chunk: Buffer) => void (buffer += chunk.toString()))
   child.stderr?.on('data', (chunk: Buffer) => void (buffer += chunk.toString()))
@@ -324,17 +346,21 @@ export const toolResults = (request: RecordedRequest): string[] => (bodyOf(reque
 /** How many times the guidance block opens anywhere in the request. */
 export const guidanceCount = (request: RecordedRequest): number => JSON.stringify(request.body ?? {}).split(GUIDANCE_OPEN).length - 1
 
-export type RequestKind = 'title' | 'compaction' | 'agent'
+export type RequestKind = 'title' | 'compaction' | 'generate' | 'agent'
+
+/** A `POST /api/session/{id}/generate` prompt starts with this, so its request can be told from the agent loop: it carries the session's tools and agent prompt too. */
+export const GENERATE_PROMPT_PREFIX = 'GENERATE-REQUEST:'
 
 /** The last user message of a compaction request, and of the retry the host sends when the summary misses its template. */
 const COMPACTION_INSTRUCTIONS = ['You MUST summarize the conversation above', 'The previous response did not fill in the required summary template']
 
-/** Title by system text, compaction by its last user message (its system text is the agent prompt), else agent-loop if tools are offered. */
+/** Title by system text, compaction and generate by their last user message (their system text is the agent prompt), else agent-loop if tools are offered. */
 export function kindOf(request: RecordedRequest): RequestKind | 'other' {
   if (systemTexts((request.body ?? {}) as Record<string, unknown>).some((text) => text.includes('You name conversations'))) return 'title'
   const messages = bodyOf(request).messages ?? []
   const lastUser = textOf([...messages].reverse().find((m) => m.role === 'user')?.content)
   if (COMPACTION_INSTRUCTIONS.some((instruction) => lastUser.startsWith(instruction))) return 'compaction'
+  if (lastUser.startsWith(GENERATE_PROMPT_PREFIX)) return 'generate'
   return offeredNames(request).length > 0 ? 'agent' : 'other'
 }
 
