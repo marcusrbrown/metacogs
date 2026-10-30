@@ -1,5 +1,5 @@
 import type { Plugin, Skill } from '@opencode/plugin'
-import { object, toJSONSchema } from 'zod'
+import { toJSONSchema } from 'zod'
 
 import COUNTERFACTUAL_MD from '../../skills/counterfactual/SKILL.md'
 import SYNTHESIS_MD from '../../skills/synthesis/SKILL.md'
@@ -8,7 +8,7 @@ import FEEL_MD from '../../plugin/skills/feel/SKILL.md'
 import { DRUGS_DESCRIPTION, drugsText, FEEL_DESCRIPTION, feelText } from '../frames/feel-drugs'
 import { GUIDANCE_BLOCK, GUIDANCE_OPEN } from './guidance'
 import { parseOptions } from './options'
-import { DRUGS_ARGS, FEEL_ARGS } from './v1'
+import { DRUGS_INPUT, FEEL_INPUT } from './v1'
 
 // OpenCode v2 adapter. A throwing transform disables the whole plugin, so every transform and hook runs through `guarded`.
 
@@ -45,9 +45,6 @@ export function parseSkill(text: string, directory: string): EmbeddedSkill {
 function embeddedSkills([methods, plugin]: readonly [string, string]): EmbeddedSkill[] {
   return SKILL_SOURCES.map(({ text, home }) => parseSkill(text, home === 'plugin' ? plugin : methods))
 }
-
-const FEEL_INPUT = object(FEEL_ARGS)
-const DRUGS_INPUT = object(DRUGS_ARGS)
 
 /** A tool's JSON Schema from the same zod fields v1 uses, without the `$schema` key. */
 function inputSchema(schema: typeof FEEL_INPUT | typeof DRUGS_INPUT) {

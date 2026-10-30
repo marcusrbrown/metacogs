@@ -1,5 +1,5 @@
-import type { Hooks, Plugin, PluginInput } from '@opencode-ai/plugin'
-import { string } from 'zod'
+import type { Hooks, Plugin, PluginInput, ToolDefinition } from '@opencode-ai/plugin'
+import { object, string } from 'zod'
 
 import {
   DRUGS_DESCRIPTION,
@@ -14,35 +14,41 @@ import { withGuidance } from './guidance'
 import { parseOptions, type Warn } from './options'
 
 // Bundled zod supplies the field schemas, so the built plugin imports nothing from the host.
-/** The `feel` fields. The v2 adapter builds its JSON Schema from these same definitions. */
-export const FEEL_ARGS = {
+/** The `feel` fields. */
+const FEEL_ARGS = {
   somewhere: string().describe(FEEL_FIELD_DESCRIPTIONS.somewhere),
   quality: string().describe(FEEL_FIELD_DESCRIPTIONS.quality),
   sigil: string().describe(FEEL_FIELD_DESCRIPTIONS.sigil),
   since_last: string().optional().describe(FEEL_FIELD_DESCRIPTIONS.since_last),
 }
 
-/** The `drugs` fields, shared with the v2 adapter. */
-export const DRUGS_ARGS = {
+/** The `drugs` fields. */
+const DRUGS_ARGS = {
   substance: string().describe(DRUGS_FIELD_DESCRIPTIONS.substance),
   method: string().describe(DRUGS_FIELD_DESCRIPTIONS.method),
   displaces: string().describe(DRUGS_FIELD_DESCRIPTIONS.displaces),
 }
 
-const metacogsFeel = {
+/** The fields as zod objects, shared with the v2 adapter. */
+export const FEEL_INPUT = object(FEEL_ARGS)
+export const DRUGS_INPUT = object(DRUGS_ARGS)
+
+// Type-only cast of the zod shapes: the host types `args` against its own zod version.
+const hostArgs = (args: object) => args as unknown as ToolDefinition['args']
+
+const metacogsFeel: ToolDefinition = {
   description: FEEL_DESCRIPTION,
-  args: FEEL_ARGS,
-  execute: async (args: Parameters<typeof feelText>[0]) => feelText(args),
+  args: hostArgs(FEEL_ARGS),
+  execute: async (args) => feelText(FEEL_INPUT.parse(args)),
 }
 
-const metacogsDrugs = {
+const metacogsDrugs: ToolDefinition = {
   description: DRUGS_DESCRIPTION,
-  args: DRUGS_ARGS,
-  execute: async (args: Parameters<typeof drugsText>[0]) => drugsText(args),
+  args: hostArgs(DRUGS_ARGS),
+  execute: async (args) => drugsText(DRUGS_INPUT.parse(args)),
 }
 
-// Type-only cast: the host types its tool schemas against its own zod version.
-const tools = { feel: metacogsFeel, drugs: metacogsDrugs } as unknown as NonNullable<Hooks['tool']>
+const tools: NonNullable<Hooks['tool']> = { feel: metacogsFeel, drugs: metacogsDrugs }
 
 /** A logger that writes each `key` once through the host client, and never throws or carries argument values. */
 function createWarn(input: PluginInput, level: 'info' | 'warn'): Warn {
