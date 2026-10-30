@@ -46,7 +46,7 @@ Add a `record` tool to the shipped MCP server, so the write happens in the serve
 
 3. **Parse arguments strictly.** `recordInputSchema` is a `z.strictObject` (`src/mcp/record-tool.ts:21`), so an extra argument is an error, not silently dropped. `src/mcp/record.test.ts:237-240` sends `path`, `helper_version` and an invented field and expects rejection.
 
-4. **Share one core with the CLI.** `runRecord` (`src/record/run.ts:43-62`) validates, stamps `helper_version`, resolves the root and writes. The CLI and `recordTool` (`src/mcp/record-tool.ts:55-60`) both call it, so the same input gives the same filename and bytes. `src/mcp/record.test.ts:321-329` compares the two paths.
+4. **Share one core with the CLI.** `runRecord` (`src/record/run.ts:43-62`) validates, stamps `helper_version`, resolves the root and writes. The CLI and `recordTool` (`src/mcp/record-tool.ts:55-60`) both call it, so the same input gives the same filename and the same bytes apart from `helper_version`, which each entry point stamps with its own version. `src/mcp/record.test.ts:323-337` checks both.
 
 5. **Keep payload limits in the contract, not the transport.** `LIMITS` (`src/record/contract.ts:34-41`) is enforced by `validateRecord` (`src/record/validate.ts:45-52`, `86-89`, `111-113`), so the CLI and the tool agree:
 
