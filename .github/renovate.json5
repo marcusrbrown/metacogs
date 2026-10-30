@@ -5,7 +5,25 @@
   ignorePaths: ['**/node_modules/**', '**/bower_components/**', 'evals/**'],
   // The changeset commit-back is authored by the reusable workflow's bot identity; ignoring it keeps Renovate rebasing.
   gitIgnoredAuthors: ['118100583+bfra-me[bot]@users.noreply.github.com', '137683033+mrbro-bot[bot]@users.noreply.github.com'],
+  customManagers: [
+    {
+      // package.json testedWith["opencode-v2"] is the single home of the v2 CLI pin: the test helper, the CI job and
+      // pin.test.ts read it. The pattern anchors on its own quoted key, so it cannot match "opencode" (the v1 pin).
+      description: ['Track the OpenCode v2 CLI pin (@opencode/cli) in package.json testedWith'],
+      customType: 'regex',
+      managerFilePatterns: ['/^package\\.json$/'],
+      matchStrings: ['"opencode-v2"\\s*:\\s*"(?<currentValue>\\d+\\.\\d+\\.\\d+)"'],
+      depNameTemplate: '@opencode/cli',
+      datasourceTemplate: 'npm',
+    },
+  ],
   packageRules: [
+    {
+      // The CLI pin and the `@opencode/plugin` devDependency bump in one PR; pin.test.ts holds them equal.
+      matchPackageNames: ['@opencode/cli', '@opencode/plugin'],
+      groupName: 'OpenCode v2',
+      semanticCommitType: 'build',
+    },
     {
       // RENOVATE_BINARY_SOURCE=install makes the built-in bun artifact step call install-tool, which fails there; postUpgradeTasks regenerates bun.lock.
       matchManagers: ['bun', 'npm'],

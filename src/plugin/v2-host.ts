@@ -40,19 +40,30 @@ const PARENT_PATH = process.env.PATH ?? '/usr/bin:/bin:/usr/sbin:/sbin'
 const cliDir = join(tmpdir(), `metacogs-opencode-v2-${process.getuid?.() ?? 'u'}-${V2_PIN}`)
 const cliBin = join(cliDir, 'node_modules', '.bin', 'opencode')
 
-const cliVersion = (): string | undefined => {
-  if (!existsSync(cliBin)) return undefined
-  const run = spawnSync(cliBin, ['--version'], { encoding: 'utf8', timeout: 60_000, env: { PATH: PARENT_PATH, HOME: cliDir, TMPDIR: tmpdir() } })
+const versionOf = (bin: string): string | undefined => {
+  if (!existsSync(bin)) return undefined
+  const run = spawnSync(bin, ['--version'], { encoding: 'utf8', timeout: 60_000, env: { PATH: PARENT_PATH, HOME: cliDir, TMPDIR: tmpdir() } })
   return run.status === 0 ? run.stdout.trim() : undefined
 }
 
 let installed: string | undefined
 
-/** The pinned CLI binary, installed once per machine into a shared npm prefix. Throws unless it reports `opencode v<pin>`. */
+/**
+ * The pinned CLI binary. `METACOGS_OPENCODE_V2_BIN` points at one already installed (CI installs it as its own step, so a
+ * broken install fails before any test); it must report the pin or this throws. Otherwise the CLI is installed once per
+ * machine into a shared npm prefix, and a cold runner pays for that install on the first call.
+ */
 export function installedCli(): string {
   if (installed !== undefined) return installed
   const expected = `opencode v${V2_PIN}`
-  if (cliVersion() !== expected) {
+  const override = process.env.METACOGS_OPENCODE_V2_BIN
+  if (override) {
+    const reported = versionOf(override)
+    if (reported !== expected) throw new Error(`METACOGS_OPENCODE_V2_BIN: expected "${expected}", the CLI reported "${reported ?? '(nothing)'}"`)
+    installed = override
+    return override
+  }
+  if (versionOf(cliBin) !== expected) {
     rmSync(cliDir, { recursive: true, force: true })
     mkdirSync(cliDir, { recursive: true })
     const npmMajor = Number.parseInt(spawnSync('npm', ['--version'], { encoding: 'utf8' }).stdout.trim().split('.')[0] ?? '0', 10)
@@ -60,7 +71,7 @@ export function installedCli(): string {
     const args = ['install', '--prefix', cliDir, `@opencode/cli@${V2_PIN}`, '--no-audit', '--no-fund', ...(npmMajor >= 12 ? ['--dangerously-allow-all-scripts'] : [])]
     const install = spawnSync('npm', args, { encoding: 'utf8', timeout: 300_000 })
     if (install.status !== 0) throw new Error(`npm install @opencode/cli@${V2_PIN} failed (status ${install.status}): ${install.stderr.slice(0, 400)}`)
-    const reported = cliVersion()
+    const reported = versionOf(cliBin)
     if (reported !== expected) throw new Error(`expected "${expected}", the installed CLI reported "${reported ?? '(nothing)'}"`)
   }
   installed = cliBin
