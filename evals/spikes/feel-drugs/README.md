@@ -276,7 +276,7 @@ Not scored. Two arms: the `feel` and `drugs` tool text on main (`fdd49cf`) again
 - The second design seed gave one checkpoint per model: Luna after turn 4, Opus after turn 3 (cut short for budget). There were 4 continuations on "Continue." (2 per model, one per arm), and neither arm made a tool call in any of them.
 - 12 controls (a story, a coding task with a typo'd path, a go/no-go question; both arms, both models) made 0 `feel` or `drugs` calls. `counterfactual` loaded on the go/no-go control under both arms.
 - Cost: about $3.87 as reported by the host, about $6.2 by estimate.
-- Reading: the description wording produced no measured change in unprompted use and did not overtrigger. The text ships as a clarity and correctness fix. A user-turn reminder is the next probe.
+- Reading: the description wording produced no measured change in unprompted use and did not overtrigger. The text ships as a clarity and correctness fix. The user-turn reminder probe below followed.
 - Caveat: the raw events of the main-text (CURRENT) continuations were lost; only their summaries survive.
 
 #### User-turn reminder probe (2026-10-29)

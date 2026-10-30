@@ -1,6 +1,7 @@
 ---
 title: "Injecting a per-request reminder from an OpenCode plugin: use `experimental.chat.messages.transform`, not `chat.message`"
 date: 2026-10-29
+last_updated: 2026-10-29
 category: integration-issues
 module: plugin
 problem_type: integration_issue
@@ -11,6 +12,7 @@ related_components: [development_workflow]
 applies_when:
   - "A plugin must put text in front of the model on every main request, tool-loop steps included"
   - "A reminder must not be persisted in the session or reach the compaction request"
+  - "Considering a reminder, nudge or description rewrite to make a model call `feel` or `drugs` unprompted"
 ---
 
 # Injecting a per-request reminder from an OpenCode plugin: use `experimental.chat.messages.transform`, not `chat.message`
@@ -89,9 +91,26 @@ const compacting = new Set<string>()
 
 ## Outcome
 
-The reminder reached both OpenAI Responses and Anthropic Messages request formats. It did not make `feel` or `drugs` useful when nobody asked for them, and neither did the tool-description wording. The reminder was not shipped. See `evals/spikes/feel-drugs/README.md` (the user-turn reminder probe and the tool-description activation probe).
+The reminder reached both OpenAI Responses and Anthropic Messages request formats. It was not shipped. Neither it nor the tool-description wording produced useful unprompted calls, so `feel` and `drugs` stay user-invoked (`/feel`, `/drugs`, or naming the tool). Activation work is closed (`HYPOTHESES.md:38`).
+
+The probes ran on Luna and Opus in a real daily stack, with single-run cells and no scoring:
+
+| Change | Result |
+| --- | --- |
+| "Use when…" trigger clauses in `FEEL_DESCRIPTION` and `DRUGS_DESCRIPTION` (`src/frames/feel-drugs.ts:37`, `src/frames/feel-drugs.ts:59`), PR #54 | 4 design-checkpoint continuations and 12 controls: 0 calls in either arm, and no overtrigger. Shipped as a clarity fix only (`evals/spikes/feel-drugs/README.md:271-280`). |
+| This reminder, ON against OFF, PR #56 | It reached all 64 recorded ON requests. Luna made one `feel` call, and its next action matched the OFF answer. Opus made 0 calls. 6 ON controls made 0 calls (`evals/spikes/feel-drugs/README.md:282-292`). |
+| An unconditional user-turn nudge, `NUDGE` (`src/spike/feel-drugs/driver.ts:46`) | Arm B calls rose from 2/8, 0/8, 0/8 and 0/8 unprompted to 8/8, 7/8, 6/8 and 1/8 (Luna, Sol, Opus, Haiku). It also fired on a story prompt with no stuck point, which got 0 calls unprompted, so the nudge overtriggers (`evals/spikes/feel-drugs/README.md:96-113`, `evals/spikes/feel-drugs/README.md:141-165`). |
+
+Points for any future activation attempt:
+
+- **Calls are not recovery.** A call counts only if the next action improves. The single reminder-driven call above changed nothing.
+- **The stuck point must be real.** Across three probes, every engineered debug stuck point was solved without help (`evals/spikes/feel-drugs/README.md:275`, `evals/spikes/feel-drugs/README.md:288`, `evals/spikes/feel-drugs/README.md:292`). Without a stuck point the model cannot solve on its own, a null result is uninformative.
+- **Invoked use does change the next step.** `/feel` and `/drugs` called the tool in 32 of 32 command runs (`evals/spikes/feel-drugs/README.md:264`). At the real-stack conflicts, invoking them changed the next step, and a plain "reassess" did not (`evals/spikes/feel-drugs/README.md:266-269`).
+- **No damping wording.** Tool text and guidance must not damp use, for example "rare turn" or "do not use for routine coding". `NO_DAMPING_OR_FORCING` pins this (`src/plugin/frames-text.test.ts:32-34`). It is a project rule. These probes did not measure it.
 
 ## Related
 
 - `evals/spikes/feel-drugs/README.md`
+- `HYPOTHESES.md`
+- PRs #54 and #56
 - `src/plugin/guidance.ts` (`INTERNAL_SIGNATURES`)

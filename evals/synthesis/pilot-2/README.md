@@ -50,7 +50,7 @@ All 24 verdicts matched their intent on the first attempt, with no judge errors.
 
 Stage 1, baseline arm only. Campaign `synthesis-pilot-2026-10-29T23-55-21-942Z`, run on 2026-10-29 under prereg content hash `fefd5dc5c6a043ee69c0ea5386e68b6f3710e506cb533471f138bfa0fbad5d94`. Runner code as of `4d791ea`. Agent `openai/gpt-6-luna` and judge `anthropic/claude-haiku-5-5`, both served by the CLIProxyAPI gateway (`https://cliproxy.fro.bot/v1`, provider ids `openai` and `anthropic`). `pilot.json` is the committed tally.
 
-`eval pilot` writes its tally to `evals/synthesis/pilot/pilot.json`, the epoch-1 path, whatever the prereg's `content_dir`. The file the runner wrote was copied here as `pilot.json`, and the epoch-1 file was restored from git, byte-identical. A later arm run under this prereg writes to the epoch-1 path again.
+At this runner commit, `eval pilot` wrote its tally to `evals/synthesis/pilot/pilot.json`, the epoch-1 path, whatever the prereg's `content_dir`. The file the runner wrote was copied here as `pilot.json`, and the epoch-1 file was restored from git, byte-identical. PR #60 fixed this: tallies and pair summaries are now written beside the prereg the run used.
 
 ### Denominators
 
