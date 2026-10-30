@@ -40,9 +40,11 @@ The output directory is now the directory that holds the prereg the run used. `p
 // before (introduced in d4de6e4, replaced in 2a25ae6)
 export const pilotDir = (repoRoot: string, method: string): string => join(repoRoot, 'evals', method, 'pilot')
 
-// after (src/runner/pilot.ts:378)
+// after the output-path fix (src/runner/pilot.ts:378)
 export const pilotDir = (repoRoot: string, preregRel: string): string => join(repoRoot, dirname(preregRel))
 ```
+
+The current signature uses `preregRel: PreregRel` instead of `string`. `PreregRel` is a branded string produced by `pilotPreregRel`; `pilotDir`, `pilotTallyPath`, `pairSummaryPath` and their writers require it. The path derivation above is unchanged.
 
 - `writePilotTally` (`src/runner/pilot.ts:396`) and `writePairSummary` (`src/runner/pairs.ts:843`) now take `preregRel` after `repoRoot`. The old `writePairSummary` read `summary.method`, so it had no way to know about a second prereg.
 - All three callers pass the prereg path they already resolved: `eval pilot` (`src/runner/cli.ts:437`), `rejudge` and `rejudge --tally-only` (`src/runner/cli.ts:613`), and `pairs --reconcile` (`src/runner/cli.ts:736`).
@@ -51,7 +53,7 @@ export const pilotDir = (repoRoot: string, preregRel: string): string => join(re
 
 ## Why This Works
 
-A run is enforced against its prereg, and the prereg's location is the one input that already tells two pilots apart. `--prereg` already carried that location to every command that writes output. `pilotPreregRel` rejects paths outside the repo (`src/runner/pilot.ts:368-371`), so a directory derived from its result stays inside the repo. Callers must pass that result: `pilotDir` and the writers take a plain `string` (`src/runner/pilot.ts:378-396`), which does not enforce it.
+A run is enforced against its prereg, and the prereg's location is the one input that already tells two pilots apart. `--prereg` already carried that location to every command that writes output. `pilotPreregRel` rejects paths outside the repo (`src/runner/pilot.ts:368-371`), so a directory derived from its result stays inside the repo. The original output-path fix accepted a plain `string` (`src/runner/pilot.ts:378-396` at that revision); the current branded `PreregRel` makes ordinary typed callers pass the validated result. The brand is a compile-time guard, not an additional runtime path check.
 
 The defect is older than the symptom. The hardcoded `pilotDir` and the `--prereg` flag arrived together with the first pilot (#22). From then on, the flag could name another prereg while the writer ignored it. Nothing exercised that until a second pilot prereg existed (#59). `content_dir` came later (#53) and also left the output path alone.
 
