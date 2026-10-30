@@ -30,7 +30,7 @@ import { canonicalizeText, enforcePrereg, type Expectation, type LoadedFixture, 
 import { redactOrThrow } from './redact'
 import type { SpawnResult } from './opencode'
 import { type Host, type HostRunRequest, runCampaign } from './run'
-import { JUDGED_RUBRIC_TEXT, scaffoldMethod, TEST_SALT, TestRepo } from './test-support'
+import { JUDGED_RUBRIC_TEXT, scaffoldMethod, TEST_SALT, TestRepo, testPreregRel } from './test-support'
 import { redactJudgeInput } from './judge'
 import { sha256 } from './workspace'
 
@@ -918,7 +918,7 @@ describe('reconcile', () => {
 })
 
 /** The default pilot prereg of the scaffolded `demo` method; the summary is written beside it. */
-const PREREG = 'evals/demo/pilot/prereg.json'
+const PREREG = testPreregRel('evals/demo/pilot/prereg.json')
 
 describe('the summary is an allowlist projection', () => {
   const TOP = ['schema_version', 'method', 'campaign_id', 'prereg_content_hash', 'pairs', 'owner', 'judge_vs_owner', 'preference', 'review', 'campaign']
@@ -938,9 +938,9 @@ describe('the summary is an allowlist projection', () => {
   })
 
   test('the summary is written beside the prereg the pilot ran under; the default prereg keeps evals/<m>/pilot/, another leaves it alone', () => {
-    const OTHER = 'evals/demo/pilot-2/prereg.json'
+    const OTHER = testPreregRel('evals/demo/pilot-2/prereg.json')
     expect(pairSummaryPath('/r', PREREG)).toBe(join('/r', 'evals', 'demo', 'pilot', 'pair-summary.json'))
-    expect(pairSummaryPath('/r', 'evals/tether/pilot/prereg.json')).toBe(join('/r', 'evals', 'tether', 'pilot', 'pair-summary.json'))
+    expect(pairSummaryPath('/r', testPreregRel('evals/tether/pilot/prereg.json'))).toBe(join('/r', 'evals', 'tether', 'pilot', 'pair-summary.json'))
     expect(pairSummaryPath('/r', OTHER)).toBe(join('/r', 'evals', 'demo', 'pilot-2', 'pair-summary.json'))
 
     const campaign = plantCampaign(fullPlants())
@@ -1150,7 +1150,7 @@ describe('eval pairs (CLI)', () => {
   })
 
   describe('the summary is written beside the prereg the pilot ran under (--prereg, default evals/<m>/pilot/prereg.json)', () => {
-    const OTHER = 'evals/demo/pilot-2/prereg.json'
+    const OTHER = testPreregRel('evals/demo/pilot-2/prereg.json')
     const EPOCH1 = '{"epoch": 1}\n'
     /** A second committed copy of the prereg (same content, same hash) in another directory, and a planted default-directory summary to protect. */
     async function withSecondPrereg() {

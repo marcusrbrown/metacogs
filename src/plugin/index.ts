@@ -84,4 +84,4 @@ export function createServer(skillsDirs: readonly string[]): Plugin {
 
 const server: Plugin = createServer(skillsDirsFrom(import.meta.url))
 
-export default { id: 'metacogs', server } satisfies PluginModule
+export default { id: 'metacogs', server } satisfies PluginModule & { id: string }
