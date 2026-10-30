@@ -1,0 +1,77 @@
+{
+  "schema_version": 3,
+  "method": "synthesis",
+  "prereg_content_hash": "fefd5dc5c6a043ee69c0ea5386e68b6f3710e506cb533471f138bfa0fbad5d94",
+  "agent_model_id": "openai/gpt-6-luna",
+  "judge_model_id": "anthropic/claude-haiku-5-5",
+  "arms": [
+    "baseline"
+  ],
+  "campaigns": {
+    "baseline": "synthesis-pilot-2026-10-29T23-55-21-942Z"
+  },
+  "tally": {
+    "baseline": {
+      "sy-p2-d1-upgrade-window": {
+        "runs": 5,
+        "criteria": {
+          "SA1": 5
+        },
+        "all_pass": 5,
+        "over_limit": 0,
+        "empty": 0,
+        "skill_loaded": 0
+      },
+      "sy-p2-d2-drop-legacy-column": {
+        "runs": 5,
+        "criteria": {
+          "SA1": 5
+        },
+        "all_pass": 5,
+        "over_limit": 0,
+        "empty": 0,
+        "skill_loaded": 0
+      },
+      "sy-p2-d3-leaked-deploy-key": {
+        "runs": 5,
+        "criteria": {
+          "SA1": 2
+        },
+        "all_pass": 2,
+        "over_limit": 0,
+        "empty": 0,
+        "skill_loaded": 0
+      },
+      "sy-p2-d4-additive-field": {
+        "runs": 5,
+        "criteria": {
+          "SA1": 5
+        },
+        "all_pass": 5,
+        "over_limit": 0,
+        "empty": 0,
+        "skill_loaded": 0
+      },
+      "sy-p2-d5-erasure-flow": {
+        "runs": 5,
+        "criteria": {
+          "SA1": 5
+        },
+        "all_pass": 5,
+        "over_limit": 0,
+        "empty": 0,
+        "skill_loaded": 0
+      },
+      "sy-p2-d6-pricing-cache": {
+        "runs": 5,
+        "criteria": {
+          "SA1": 5
+        },
+        "all_pass": 5,
+        "over_limit": 0,
+        "empty": 0,
+        "skill_loaded": 0
+      }
+    }
+  }
+}

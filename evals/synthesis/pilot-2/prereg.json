@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "method": "synthesis",
+  "epoch": 2,
+  "salt": "479b53784b5ea439d43554c810305bfc",
+  "fixture_hashes": {
+    "dev": {
+      "sy-p2-d1-upgrade-window": "87df4084f28f5be32c8a63c22770d97e146c370c370e6eb8cbae440f21a03d3e",
+      "sy-p2-d2-drop-legacy-column": "b84b6b0f06bd7dbb511f97e4f8ee6593d991b55581a46ae8c3a7ba16f11cb5bf",
+      "sy-p2-d3-leaked-deploy-key": "5e4b4784addce67349ab7d3cc8d9539e77a519aae08adb48b0e0240f302b245a",
+      "sy-p2-d4-additive-field": "22dc9c6ddb4d34ff188189615e95a91d8f1da147fdec6cd2e7d319165445815d",
+      "sy-p2-d5-erasure-flow": "0eaea20918eaece4c50804c2e0be49ec32431bf4fe90064f3bb2fb42e396f286",
+      "sy-p2-d6-pricing-cache": "6ff50eab3d3f56f5a6aa2bedff99aea41ff186e67e16297e045dd0d931e9b181"
+    },
+    "negative": {},
+    "heldout": {}
+  },
+  "expectation_hashes": {
+    "dev": {
+      "sy-p2-d1-upgrade-window": "f82efc8c0a62ee3721fc4179686acc322b0bc31b66bd2cc157aa509f7e98142c",
+      "sy-p2-d2-drop-legacy-column": "ea6387ec74d92f78f61583dab85d2d49cdffc6eca3c4d7d3b34101fdb9c81e32",
+      "sy-p2-d3-leaked-deploy-key": "d7796ba881f5bddd1eade64f424a90da505f284d8b916ae94160405842d4b0ec",
+      "sy-p2-d4-additive-field": "0c0571da9b88a5c562b4dab898b92ecb750cf82f8bb9beaf88f25910815593bb",
+      "sy-p2-d5-erasure-flow": "7867848f29f5da3c017d5c785b0d1577b42648717ea20f9921c94bb863875be8",
+      "sy-p2-d6-pricing-cache": "8faa0c05ab913bb86a8eedea1dfc9c0b050438bee2ce02b2b46d9900e1beda3a"
+    },
+    "heldout": {}
+  },
+  "content_dir": "evals/synthesis/pilot-2",
+  "rubric_hash": "c22aa4dac9491734f78a50f63f25f7dd1179c8285415d8ed43ce19e279f369d5",
+  "runs_per_condition": 5,
+  "red_bar": {
+    "min_baseline_fails_per_fixture": 4,
+    "min_fixtures": 2
+  },
+  "green_bar": {
+    "skill_pooled_pass_min": 17,
+    "skill_per_fixture_pass_min": 3,
+    "baseline_pooled_pass_max": 10
+  },
+  "false_fire_max": 0,
+  "per_run_timeout_ms": 180000,
+  "budget": {
+    "max_tool_calls": 20,
+    "max_total_tokens": 300000
+  },
+  "infra_error_definition": "A provider or host outage before the agent produces any answer: a non-zero host exit, a provider 4xx/5xx or network error, or a recording-proxy failure. Retried at most 2 times, reported separately, and excluded from the denominator. A timeout, a budget breach, a judge_error, or any host exit after the agent has started answering counts as a run and stays in the denominator.",
+  "run_outcome_taxonomy": [
+    "pass",
+    "fail",
+    "timeout->fail",
+    "budget->fail",
+    "judge_error->fail",
+    "infra_error",
+    "non_isolated"
+  ],
+  "agreement_floor": 0.8,
+  "agent_model_id": "openai/gpt-6-luna",
+  "judge_model_id": "anthropic/claude-haiku-5-5",
+  "accepted_error_rates": {
+    "false_red": 0.314,
+    "false_green": 0.225
+  },
+  "metadata": {
+    "source_url": "synthesized (no external source)",
+    "licence": "MIT",
+    "notes": "Pilot prereg for the one-outcome scoring contract on synthesis, epoch 2: fixtures whose deciding fact is inferred by joining two or more clues and is not stated outright (epoch 1, evals/synthesis/pilot/, ended at ceiling because each prompt stated its deciding fact). It follows epoch 1's contract (docs/plans/2026-10-28-001-feat-synthesis-eval-pilot-plan.md; origin docs/brainstorms/2026-10-23-eval-scoring-redesign.md) and is read by `eval pilot` and `eval pairs` only; `report` refuses pilot campaigns, and it does not touch the epoch-3 contract in evals/synthesis/prereg.json or the epoch-1 pilot in evals/synthesis/pilot/, whose files stay byte-identical. `content_dir` names evals/synthesis/pilot-2/, so the rubric, the six new dev fixtures (sy-p2-d1 to sy-p2-d6), the expectation sidecars and redact.json are read from there. Six dev fixtures, no negatives, no held-out. Each fixture has one acceptance statement, kept as the `outcome` of its evaluator-only sidecar; the statements were approved by the owner and were probed before this commit with four hand-written answers each: a terse correct answer, a polished confident answer that follows the reviewers, a generic cautious hold that does not name the inferred fact, and a correct answer worded differently from the statement. The intended verdicts were pass, fail, fail, pass; all 24 probes against the pinned judge matched, with no judge errors (probe answers and raw outputs are kept outside the repository). The campaign is staged. Stage 1 runs the baseline arm only, five runs per fixture (30 runs), on the epoch-3 agent model. Screen rule: the skill arm runs only if at least 2 of 6 fixtures have baseline judge passes at or below 3 of 5; otherwise the campaign stops there and the result is recorded, and the skill arm is not run. If the skill arm runs, it is five runs per fixture on the same models, and the staged arms run at different times, so a provider or model change between stages can move one arm without the skill; the run dates are reported and any difference is read with that in mind. No run is topped up. Under the rubric declaration (`expectation: true`) record checks are tallied and do not block the judge; only an unreadable event stream or a false fire does, so a skill run that never loads the skill is judged and stays a skill-arm observation. The owner marks the answers against the statements (for paired arms, a blind pair sheet: baseline run i against skill run i per fixture, random side per pair, then which answer they would use). The owner and the judge read the same evidence: the prompt, the statement and the judged answer text. The owner's marks are the primary score. The judge is the instrument under test, not the measure. The guide numbers below are descriptive prompts for the owner's next-step decision: they inform that decision and do not make it, and none is a gate or a bar. (1) Judge-owner agreement of at least 0.8 over the answers that have a judge verdict, read with its Wilson interval. (2) At least 2 of 6 fixtures not at ceiling, where ceiling means the owner passes the baseline arm on 4 of 5 or 5 of 5 runs; the screen rule above uses the judge's passes, and the owner's marks decide the reading. (3) Owner pass counts per arm, pooled and per fixture; no inference. (4) Preference wins, losses and ties, plus the net margin, pooled only, if both arms ran. (5) At least 4 of 5 answered runs per arm and fixture, with no top-up runs. Reading rules. If most fixtures sit at ceiling, separation is uninformative; it is not a pass for the instrument, and ceiling fixtures stay as regression coverage and are not rewritten to fail. A preference lean toward skill with no gate difference is compatible with a format or length effect, because the skill's labelled lines reveal its side, or with usefulness beyond the statement. The sheet is only partly blind for the same reason. There is one agent model and one judge model, so nothing here generalises across models. Infra errors are handled as in epoch 1 (infra_error_definition below). Bars are placeholders: red_bar, green_bar, false_fire_max and accepted_error_rates are copied from the tether pilot shape only so the file parses; the pilot uses none of them. Models: agent openai/gpt-6-luna and judge anthropic/claude-haiku-5-5 through the owner's CLIProxyAPI (key name fro-bot-marcusrbrown-metacogs), the epoch-3 pins of evals/synthesis/prereg.json. Per-run timeout 180000 ms and the 20-call / 300000-token budget are the epoch-3 values. Statement changes after this commit but before any run need a revised contract (no new epoch); after any run they are a separately labelled iteration and are never pooled. The pilot judge is unvalidated: no reviewer-judge agreement has been measured for SA1, so counts are an experiment outcome, not evidence for a matrix cell."
+  }
+}
