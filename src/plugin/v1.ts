@@ -13,8 +13,7 @@ import { applyConfig, type HostConfig } from './config'
 import { withGuidance } from './guidance'
 import { parseOptions, type Warn } from './options'
 
-// The host reads `{description, args, execute}` and builds its JSON Schema from `args`. The bundled zod supplies the
-// field schemas, so the built plugin imports nothing from the host at run time.
+// Bundled zod supplies the field schemas, so the built plugin imports nothing from the host.
 /** The `feel` fields. The v2 adapter builds its JSON Schema from these same definitions. */
 export const FEEL_ARGS = {
   somewhere: string().describe(FEEL_FIELD_DESCRIPTIONS.somewhere),
@@ -42,8 +41,7 @@ const metacogsDrugs = {
   execute: async (args: Parameters<typeof drugsText>[0]) => drugsText(args),
 }
 
-// The cast bridges a type-only gap: the host's `ToolDefinition` is typed against its own zod patch version, and the
-// schemas here come from the bundled one. The shapes are identical and AE1 (integration.test.ts) proves the host reads them.
+// Type-only cast: the host types its tool schemas against its own zod version.
 const tools = { feel: metacogsFeel, drugs: metacogsDrugs } as unknown as NonNullable<Hooks['tool']>
 
 /** A logger that writes each `key` once through the host client, and never throws or carries argument values. */

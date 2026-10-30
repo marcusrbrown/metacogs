@@ -65,11 +65,7 @@ export interface ScriptRequest {
 }
 
 export interface ScriptedProviderOptions {
-  /**
-   * Chooses the reply for a request, ahead of `turns` and `steps`; `undefined` falls through to them. The stub counts
-   * rounds per user turn, so a subagent's request (its own history, one user message) would otherwise consume the
-   * parent's script. A turn-aware script tells them apart by the request's content.
-   */
+  /** Chooses the reply ahead of `turns` and `steps`; `undefined` falls through to them. */
   script?: (request: ScriptRequest) => ScriptedStep | undefined
   /** Tool-capable turns, by round. Past the end the stub answers `finalText`. Used when `turns` is absent. */
   steps: readonly ScriptedStep[]
