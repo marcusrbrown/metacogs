@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { buildPlugin, PLUGIN_EXTERNALS, packPlugin, REPO_ROOT, writePlugin } from './build'
+import { buildPlugin, DIST_FILE, PLUGIN_EXTERNALS, packPlugin, REPO_ROOT, writePlugin } from './build'
 
 /** Every module specifier a bundle imports: static, dynamic, re-export and `require`. */
 function importSpecifiers(text: string): string[] {
@@ -58,11 +59,16 @@ describe('the built bundle', () => {
     expect(await buildPlugin()).toBe(bundle)
   })
 
-  test('imports only @opencode-ai/plugin: no fs, child_process, net, http, https or dgram, and no other external', () => {
+  test('imports nothing: neither OpenCode package nor fs, child_process, net, http, https or dgram, and no other external', () => {
     const specifiers = importSpecifiers(bundle)
-    expect(specifiers).toEqual(['@opencode-ai/plugin'])
+    expect(PLUGIN_EXTERNALS).toEqual([])
+    expect(specifiers).toEqual([])
     expect(specifiers.filter(forbidden)).toEqual([])
     expect(notAllowed(specifiers)).toEqual([])
+  })
+
+  test('has exactly one export, the default: a named export would be read by the host as a plugin factory', async () => {
+    expect(Object.keys(await import(DIST_FILE))).toEqual(['default'])
   })
 
   test('uses no process, network or dynamic-code global', () => {
@@ -91,6 +97,14 @@ describe('package.json', () => {
     expect(pkg.scripts.build).toBe('bun src/plugin/build.ts')
     expect(pkg.scripts.prepublishOnly).toBe('bun run build && bun test')
   })
+
+  test('has no runtime dependencies, and both OpenCode packages are optional peers and dev dependencies', () => {
+    const full = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8')) as Record<string, Record<string, unknown> | undefined>
+    expect(full.dependencies).toBeUndefined()
+    expect(full.peerDependencies).toEqual({ '@opencode-ai/plugin': '>=1.19.4 <2', '@opencode/plugin': '>=2.2.0 <3' })
+    expect(full.peerDependenciesMeta).toEqual({ '@opencode-ai/plugin': { optional: true }, '@opencode/plugin': { optional: true } })
+    expect(Object.keys(full.devDependencies ?? {})).toEqual(expect.arrayContaining(['@opencode-ai/plugin', '@opencode/plugin']))
+  })
 })
 
 describe('the packed package', () => {
@@ -117,5 +131,20 @@ describe('the packed package', () => {
     for (const file of files) {
       expect(Buffer.compare(readFileSync(join(packedSkills, file)), readFileSync(join(sourceSkills, file)))).toBe(0)
     }
+  })
+
+  test('installs from the tarball with no dev or peer dependencies, and a bare node import of the entry works', () => {
+    const { tarball } = packPlugin({ dest: scratch })
+    const project = join(scratch, 'isolated')
+    mkdirSync(project)
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'isolated', private: true, type: 'module' }))
+    const install = spawnSync('npm', ['install', tarball, '--omit=dev', '--omit=peer', '--ignore-scripts', '--offline', '--no-audit', '--no-fund'], { cwd: project, encoding: 'utf8' })
+    expect(install.status, install.stderr).toBe(0)
+    expect(existsSync(join(project, 'node_modules', '@opencode-ai'))).toBe(false)
+    expect(existsSync(join(project, 'node_modules', '@opencode'))).toBe(false)
+    const script = "const m = await import('metacogs'); console.log(JSON.stringify({ exports: Object.keys(m), keys: Object.keys(m.default).sort(), id: m.default.id, server: typeof m.default.server, setup: typeof m.default.setup }))"
+    const run = spawnSync('node', ['--input-type=module', '-e', script], { cwd: project, encoding: 'utf8' })
+    expect(run.status, run.stderr).toBe(0)
+    expect(JSON.parse(run.stdout)).toEqual({ exports: ['default'], keys: ['id', 'server', 'setup'], id: 'metacogs', server: 'function', setup: 'function' })
   })
 })

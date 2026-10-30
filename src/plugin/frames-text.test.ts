@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
-import plugin, { createServer } from './index'
+import plugin from './index'
+import { createServer } from './v1'
 
 // Literal pins for the `feel` and `drugs` text the plugin offers. They are written out here, not imported, so a change
 // to src/frames/feel-drugs.ts cannot move them silently. The text is adapted from upstream (see ATTRIBUTIONS.md); the
