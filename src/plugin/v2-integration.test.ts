@@ -1,11 +1,4 @@
-/**
- * The built, packed and extracted plugin loaded by the pinned OpenCode v2 CLI (scripted provider, $0). Every assertion
- * reads what the provider recorded. The exit code is never evidence: a plugin the host skips still exits 0, so each test
- * first asserts that the plugin registered.
- *
- * Gated by `METACOGS_HOST_V2=1`: `check` and `prepublishOnly` have no v2 CLI. When the gate is set, a CLI that cannot be
- * installed fails the suite instead of skipping it.
- */
+/** The packed plugin on the pinned OpenCode v2 CLI (scripted provider). Gated by `METACOGS_HOST_V2=1`; asserts from recorded requests. */
 import { afterAll, describe, expect, test } from 'bun:test'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'

@@ -1,12 +1,4 @@
-/**
- * Test support for running the packed plugin on the pinned OpenCode v2 CLI against the scripted provider ($0). Not
- * imported by production code.
- *
- * The CLI is installed into an npm prefix, not through bunx: v2 ships as `@opencode/cli`. Every child runs with an
- * explicit environment (nothing inherited but PATH) in its own process group. The group is killed on every exit path,
- * and `survivingGroups()` lets a suite assert that nothing outlived it. A `serve` child prints a Basic-auth password;
- * it is parsed from the raw stream and never echoed: `output()` redacts it.
- */
+/** Test support: runs the packed plugin on the pinned OpenCode v2 CLI against the scripted provider. */
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -48,11 +40,7 @@ const versionOf = (bin: string): string | undefined => {
 
 let installed: string | undefined
 
-/**
- * The pinned CLI binary. `METACOGS_OPENCODE_V2_BIN` points at one already installed (CI installs it as its own step, so a
- * broken install fails before any test); it must report the pin or this throws. Otherwise the CLI is installed once per
- * machine into a shared npm prefix, and a cold runner pays for that install on the first call.
- */
+/** The pinned CLI: `METACOGS_OPENCODE_V2_BIN` if set, else a per-machine npm prefix. Throws unless it reports the pin. */
 export function installedCli(): string {
   if (installed !== undefined) return installed
   const expected = `opencode v${V2_PIN}`
@@ -67,7 +55,7 @@ export function installedCli(): string {
     rmSync(cliDir, { recursive: true, force: true })
     mkdirSync(cliDir, { recursive: true })
     const npmMajor = Number.parseInt(spawnSync('npm', ['--version'], { encoding: 'utf8' }).stdout.trim().split('.')[0] ?? '0', 10)
-    // npm 12 skips install scripts unless told otherwise, and the CLI's launcher needs its postinstall.
+    // npm 12 skips install scripts unless told otherwise.
     const args = ['install', '--prefix', cliDir, `@opencode/cli@${V2_PIN}`, '--no-audit', '--no-fund', ...(npmMajor >= 12 ? ['--dangerously-allow-all-scripts'] : [])]
     const install = spawnSync('npm', args, { encoding: 'utf8', timeout: 300_000 })
     if (install.status !== 0) throw new Error(`npm install @opencode/cli@${V2_PIN} failed (status ${install.status}): ${install.stderr.slice(0, 400)}`)
@@ -340,12 +328,7 @@ export type RequestKind = 'title' | 'compaction' | 'agent'
 /** The last user message of a compaction request, and of the retry the host sends when the summary misses its template. */
 const COMPACTION_INSTRUCTIONS = ['You MUST summarize the conversation above', 'The previous response did not fill in the required summary template']
 
-/**
- * What a request is for. A title request says so in its system text. A compaction request ends on the summarize
- * instruction; its system text is the agent prompt, so the prompt cannot tell the two apart. Its tool list depends on
- * the history: empty for a plain chat, the full set once the chat holds tool calls. Anything else that offers tools is
- * an agent-loop request (a subagent's included).
- */
+/** Title by system text, compaction by its last user message (its system text is the agent prompt), else agent-loop if tools are offered. */
 export function kindOf(request: RecordedRequest): RequestKind | 'other' {
   if (systemTexts((request.body ?? {}) as Record<string, unknown>).some((text) => text.includes('You name conversations'))) return 'title'
   const messages = bodyOf(request).messages ?? []

@@ -7,8 +7,7 @@
   gitIgnoredAuthors: ['118100583+bfra-me[bot]@users.noreply.github.com', '137683033+mrbro-bot[bot]@users.noreply.github.com'],
   customManagers: [
     {
-      // package.json testedWith["opencode-v2"] is the single home of the v2 CLI pin: the test helper, the CI job and
-      // pin.test.ts read it. The pattern anchors on its own quoted key, so it cannot match "opencode" (the v1 pin).
+      // The v2 CLI pin lives in package.json testedWith["opencode-v2"].
       description: ['Track the OpenCode v2 CLI pin (@opencode/cli) in package.json testedWith'],
       customType: 'regex',
       managerFilePatterns: ['/^package\\.json$/'],
@@ -19,7 +18,7 @@
   ],
   packageRules: [
     {
-      // The CLI pin and the `@opencode/plugin` devDependency bump in one PR; pin.test.ts holds them equal.
+      // The CLI pin and the @opencode/plugin devDependency move together.
       matchPackageNames: ['@opencode/cli', '@opencode/plugin'],
       groupName: 'OpenCode v2',
       semanticCommitType: 'build',

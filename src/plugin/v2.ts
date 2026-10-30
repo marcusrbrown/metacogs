@@ -10,12 +10,7 @@ import { GUIDANCE_BLOCK, GUIDANCE_OPEN } from './guidance'
 import { parseOptions } from './options'
 import { DRUGS_ARGS, FEEL_ARGS } from './v1'
 
-// OpenCode v2 adapter. `@opencode/plugin` is imported for types only, so the built plugin loads with neither host
-// package installed.
-//
-// A throwing transform disables the whole plugin on the host, and the host replays transforms long after `setup` has
-// returned. So every transform body and every hook callback runs through `guarded`, which logs one line without any
-// argument value and carries on. A failure in one registration costs only that registration.
+// OpenCode v2 adapter. A throwing transform disables the whole plugin, so every transform and hook runs through `guarded`.
 
 /** The skills the plugin ships, in registration order. `plugin` skills sit under `plugin/skills/`, the rest under `skills/`. */
 const SKILL_SOURCES = [
@@ -117,8 +112,7 @@ export function createSetup(skillsDirs: readonly [string, string]): (ctx: unknow
       ),
     )
 
-    // A user's own command with the same name wins on the host. None of the four names is a v2 built-in (`init`,
-    // `review`, `goal`, ...). There is no deny gate: a denied skill typed as a command is delivered, as on v1.
+    // A user's same-named command wins on the host. No deny gate: a denied skill typed as a command is delivered, as on v1.
     await register('command', () =>
       ctx.command.transform(
         guarded('command transform', (editor) => {
@@ -147,8 +141,7 @@ export function createSetup(skillsDirs: readonly [string, string]): (ctx: unknow
       ),
     )
 
-    // Guidance rides on the `context` hook, which fires for agent-loop requests only: never title, compaction or
-    // generate. Nothing is persisted, so the option takes effect when the plugin next initializes.
+    // The `context` hook fires for agent-loop requests only, never title, compaction or generate.
     const settings = parseOptions(ctx.options, (_key, message) => console.error(`metacogs: ${message}`))
     if (settings.guidance) {
       await register('guidance', () =>
