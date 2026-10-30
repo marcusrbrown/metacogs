@@ -29,12 +29,14 @@ cp -R <metacogs-clone>/skills/counterfactual .agents/skills/counterfactual
 metacogs is also an [OpenCode](https://opencode.ai) plugin. It adds:
 
 - **Two tools**, `feel` and `drugs`. Their descriptions and return text are adapted from upstream. `feel` pauses on a tension that has no name yet. `drugs` states a deliberate change of approach for the next attempt. Neither supplies facts, checks anything, or guarantees a result.
-- **Four skills**: `feel`, `drugs`, `synthesis` and `counterfactual`. OpenCode lists every skill as a slash command, so `/feel` and `/drugs` run the first two, with or without arguments (`/drugs caffeine`). The `feel` and `drugs` skills have the same names as the tools but are separate: a skill is instructions the model loads, and a tool is what it calls. The skills say when to call each tool and how to fill its fields, and `/feel` loads the skill, which then has the model call the tool. `synthesis` and `counterfactual` are the methods described below; the plugin loads them from the package, so no copy under `.agents/skills/` is needed.
+- **Four skills**: `feel`, `drugs`, `synthesis` and `counterfactual`. Typed `/feel` and `/drugs` run the first two, with or without arguments (`/drugs caffeine`). On OpenCode v2 all four skills are slash commands. The `feel` and `drugs` skills have the same names as the tools but are separate: a skill is instructions the model loads, and a tool is what it calls. The skills say when to call each tool and how to fill its fields, and `/feel` loads the skill, which then has the model call the tool. `synthesis` and `counterfactual` are the methods described below; the plugin loads them from the package, so no copy under `.agents/skills/` is needed.
 - **A guidance block** of a few lines in the system prompt of normal requests (not the host's title and summary calls). It names the tools and skills and the situations each one fits, and does not require their use. To keep the tools and skills and drop the block:
 
 ```json
 { "plugin": [["metacogs", { "guidance": false }]] }
 ```
+
+On OpenCode v2 the same option is `{ "plugins": [{ "package": "metacogs", "options": { "guidance": false } }] }`.
 
 ### Plugin install
 
@@ -44,7 +46,15 @@ Add the package to `plugin` in `opencode.json` (project) or `~/.config/opencode/
 { "plugin": ["metacogs"] }
 ```
 
-OpenCode installs the package on the next start. It is tested on OpenCode 1.19.4.
+OpenCode v2 reads a `plugins` key instead:
+
+```json
+{ "plugins": [{ "package": "metacogs" }] }
+```
+
+OpenCode installs the package on the next start. The supported versions are OpenCode 1.19.4 and later 1.x, and 2.2.0 and later 2.x; older versions are unsupported. It is tested on OpenCode 1.19.4 and OpenCode v2 2.2.2.
+
+On OpenCode v1, typed `/feel` and `/drugs` run the skills, but the TUI `/` popup lists only commands that are not skills. On v2, multi-word arguments arrive as typed, unquoted. A skill denied by permissions is still delivered when typed as a slash command; the `permissions` array form is in [docs/install.md](docs/install.md#opencode-plugin).
 
 If you copied `synthesis` or `counterfactual` into `.agents/skills/` or another scanned path, remove those copies. The plugin provides the same skill names, and OpenCode does not guarantee which of two same-named skills wins. The method skills still write their records as described under Install above.
 
@@ -121,6 +131,7 @@ The other nine upstream concepts are listed in [HYPOTHESES.md](HYPOTHESES.md) wi
 | Host | Project skills path | synthesis | counterfactual |
 | --- | --- | --- | --- |
 | [OpenCode](docs/install.md#opencode) | `.agents/skills/` | `verified`<br>OpenCode 1.19.4 · model `openai/gpt-6-luna` · judge `anthropic/claude-haiku-5-5` · 2026-10-23 · [evidence](evals/reports/synthesis/green.json)<br>Human review: 39/39 held-out judgments reviewed; SY1 above the 0.8 agreement floor; SY2–SY5 below floor and demoted to advisory; recomputed verdict green. | `verified`<br>OpenCode 1.19.4 · model `openai/gpt-6-luna` · judge `anthropic/claude-haiku-5-5` · 2026-10-23 · [evidence](evals/reports/counterfactual/green.json)<br>Human review: 38/38 held-out judgments reviewed; CF2–CF4 above the 0.8 agreement floor; CF1 and CF5 below floor and demoted to advisory; recomputed verdict green. |
+| [OpenCode v2](docs/install.md#opencode-v2) | `.agents/skills/` | `unverified`<br>2026-10-30<br>No v2 eval report exists. | `unverified`<br>2026-10-30<br>No v2 eval report exists. |
 | [Pi](docs/install.md#pi) | `.agents/skills/` | `content-compatible-untested`<br>Pi 1.3.0 · 2026-10-23 · [evidence](docs/install.md#pi)<br>Listing smoke only. Project skills load after trusting the project (`--approve`). | `content-compatible-untested`<br>Pi 1.3.0 · 2026-10-23 · [evidence](docs/install.md#pi)<br>Listing smoke ran on synthesis only; counterfactual was not listed on this host. Project skills load after trusting the project (`--approve`). |
 | [Codex](docs/install.md#codex) | `.agents/skills/` | `content-compatible-untested`<br>Codex 0.162.1 · 2026-10-23 · [evidence](docs/install.md#codex)<br>Listing smoke only. | `content-compatible-untested`<br>Codex 0.162.1 · 2026-10-23 · [evidence](docs/install.md#codex)<br>Listing smoke ran on synthesis only; counterfactual was not listed on this host. |
 | [Claude Code](docs/install.md#claude-code) | `.claude/skills/` | `content-compatible-untested`<br>Claude Code 2.1.270 · 2026-10-23 · [evidence](docs/install.md#claude-code)<br>Listing smoke only. Reads `.claude/skills/`, not `.agents/skills/`. | `content-compatible-untested`<br>Claude Code 2.1.270 · 2026-10-23 · [evidence](docs/install.md#claude-code)<br>Listing smoke ran on synthesis only; counterfactual was not listed on this host. Reads `.claude/skills/`, not `.agents/skills/`. |
@@ -128,6 +139,7 @@ The other nine upstream concepts are listed in [HYPOTHESES.md](HYPOTHESES.md) wi
 | Host | Plugin package |
 | --- | --- |
 | OpenCode | `verified`<br>OpenCode 1.19.4 · 2026-10-26 · [evidence](evals/spikes/feel-drugs/README.md#plugin-reads)<br>Tested on the pinned OpenCode release with the packed package: scripted-provider integration suite, host probes and guided reads. |
+| OpenCode v2 | `unverified`<br>OpenCode v2 2.2.2 · 2026-10-30 · [evidence](docs/install.md#opencode-plugin)<br>The contract suite passes on the pinned OpenCode 2.2.2 CLI with the scripted provider. Pending a hand check in a v2 TUI, to be recorded as manual_run. |
 | Claude Code | `verified`<br>Claude Code 2.1.312 · 2026-10-28 · [evidence](docs/install.md#claude-code-plugin)<br>Manual run: Checked by hand on 2026-10-28 in an interactive Claude Code 2.1.312 session (Sonnet 5.5) with metacogs 0.3.0 installed from the marketplace. Checked: install, `/mcp` showing the server connected, the session note quoted in full, the `guidance` option turning the note off, `/metacogs:feel` and `/metacogs:drugs caffeine` calling the tools with the right arguments, `/metacogs:counterfactual` writing a record through the `record` tool with no Bash prompt, and uninstall leaving the records in place.<br>Also checked in scripted headless runs (`claude -p`, Claude Code 2.1.312), and `claude plugin validate --strict` passes on the marketplace and the plugin. The `synthesis` and `counterfactual` renders are host-adapted, not the text that was evaluated. |
 | Codex | `verified` (experimental)<br>Codex 0.165.0 · 2026-10-28 · [evidence](docs/install.md#codex-plugin)<br>Manual run: Checked by hand on 2026-10-28 in the Codex 0.165.0 TUI (GPT-6-Astra) with metacogs 0.3.0. Checked: `codex plugin marketplace add` and `codex plugin add`, the four skills in the `$metacogs:` picker, `/mcp` showing the metacogs server connected with three tools, `$metacogs:feel` and `$metacogs:drugs caffeine`, no session note as expected, `$metacogs:counterfactual` writing a record through the `record` tool with no prompt, and `codex plugin remove` leaving the records in place.<br>Also checked in scripted `codex exec` runs (Codex 0.162.1). The manifests validate against the agent-plugins.org 1.0.0 schemas; Codex has no CLI validator. The `synthesis` and `counterfactual` renders are host-adapted, not the text that was evaluated. |
 <!-- matrix:end -->
