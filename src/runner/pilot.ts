@@ -361,13 +361,16 @@ export function parsePilotTally(value: unknown): PilotTally {
   return value as unknown as PilotTally
 }
 
+/** A repo-relative prereg path that `pilotPreregRel` checked is inside the repository. Only `pilotPreregRel` makes one. */
+export type PreregRel = string & { readonly __brand: 'PreregRel' }
+
 /**
  * The repo-relative pilot prereg: `flag` (as given to `--prereg`) or `evals/<method>/pilot/prereg.json`. `undefined` when it points
  * outside the repository, because a path that leaves the repo is not a committed contract.
  */
-export function pilotPreregRel(repoRoot: string, method: string, flag?: string): string | undefined {
+export function pilotPreregRel(repoRoot: string, method: string, flag?: string): PreregRel | undefined {
   const rel = relative(repoRoot, resolve(repoRoot, flag ?? join('evals', method, 'pilot', 'prereg.json')))
-  return rel.startsWith('..') || isAbsolute(rel) ? undefined : rel
+  return rel.startsWith('..') || isAbsolute(rel) ? undefined : (rel as PreregRel)
 }
 
 /**
@@ -375,8 +378,8 @@ export function pilotPreregRel(repoRoot: string, method: string, flag?: string):
  * so two pilots of one method (`evals/<m>/pilot/`, `evals/<m>/pilot-2/`) never write over each other. `preregRel` is what
  * `pilotPreregRel` returned, already known to be inside the repository, so the directory cannot leave it.
  */
-export const pilotDir = (repoRoot: string, preregRel: string): string => join(repoRoot, dirname(preregRel))
-export const pilotTallyPath = (repoRoot: string, preregRel: string): string => join(pilotDir(repoRoot, preregRel), 'pilot.json')
+export const pilotDir = (repoRoot: string, preregRel: PreregRel): string => join(repoRoot, dirname(preregRel))
+export const pilotTallyPath = (repoRoot: string, preregRel: PreregRel): string => join(pilotDir(repoRoot, preregRel), 'pilot.json')
 
 /** A missing file is the only "no existing tally". One that cannot be read or does not validate stops the write: it holds other arms' numbers. */
 function readExisting(path: string): PilotTally | undefined {
@@ -393,7 +396,7 @@ function readExisting(path: string): PilotTally | undefined {
  * campaign it replaced; a different prereg content hash starts the file over without a word, since nothing of the old file carries
  * over. An existing file that does not validate is an error and is left as it is.
  */
-export function writePilotTally(repoRoot: string, preregRel: string, incoming: PilotTally, log?: (line: string) => void): string {
+export function writePilotTally(repoRoot: string, preregRel: PreregRel, incoming: PilotTally, log?: (line: string) => void): string {
   const path = pilotTallyPath(repoRoot, preregRel)
   const existing = readExisting(path)
   if (existing !== undefined && existing.prereg_content_hash === incoming.prereg_content_hash) {

@@ -22,11 +22,11 @@ import {
 import { canonicalizeText, enforcePrereg, type Expectation, expectationHash, type LoadedFixture, type Prereg, saltedHash } from './prereg'
 import { type Host, type HostRunRequest, type JudgeInput, runCampaign } from './run'
 import type { SpawnResult } from './opencode'
-import { scaffoldMethod, TEST_SALT, TestRepo } from './test-support'
+import { scaffoldMethod, TEST_SALT, TestRepo, testPreregRel } from './test-support'
 import { sha256 } from './workspace'
 
 /** The default pilot prereg of the scaffolded `demo` method; the tally is written beside it. */
-const PREREG = 'evals/demo/pilot/prereg.json'
+const PREREG = testPreregRel('evals/demo/pilot/prereg.json')
 
 const scratch: string[] = []
 const repos: TestRepo[] = []
@@ -601,21 +601,21 @@ describe('writePilotTally (fixed-key projection)', () => {
 describe('the pilot output directory is the directory of the prereg the run used', () => {
   const CELL = { runs: 1, criteria: { TE1: 0, TE2: 0 }, all_pass: 0, over_limit: 0, empty: 0, skill_loaded: 0 }
   const tally = (hash: string): PilotTally => projectPilot({ ...CTX, prereg_content_hash: hash, tally: { baseline: { d1: CELL } }, campaigns: { baseline: 'c1' } })
-  const OTHER = 'evals/demo/pilot-2/prereg.json'
+  const OTHER = testPreregRel('evals/demo/pilot-2/prereg.json')
 
   test('the default prereg keeps the tally where it always was: evals/<m>/pilot/', () => {
     const repo = '/r'
-    expect(pilotPreregRel(repo, 'tether')).toBe('evals/tether/pilot/prereg.json')
-    expect(pilotDir(repo, 'evals/tether/pilot/prereg.json')).toBe(join(repo, 'evals', 'tether', 'pilot'))
+    expect<string | undefined>(pilotPreregRel(repo, 'tether')).toBe('evals/tether/pilot/prereg.json')
+    expect(pilotDir(repo, testPreregRel('evals/tether/pilot/prereg.json'))).toBe(join(repo, 'evals', 'tether', 'pilot'))
     expect(pilotTallyPath(repo, pilotPreregRel(repo, 'tether')!)).toBe(join(repo, 'evals', 'tether', 'pilot', 'pilot.json'))
     expect(pilotTallyPath(repo, pilotPreregRel(repo, 'synthesis')!)).toBe(join(repo, 'evals', 'synthesis', 'pilot', 'pilot.json'))
   })
 
   test('a prereg in another directory puts the tally beside it, whatever the method', () => {
     const repo = '/r'
-    expect(pilotTallyPath(repo, 'evals/synthesis/pilot-2/prereg.json')).toBe(join(repo, 'evals', 'synthesis', 'pilot-2', 'pilot.json'))
+    expect(pilotTallyPath(repo, testPreregRel('evals/synthesis/pilot-2/prereg.json'))).toBe(join(repo, 'evals', 'synthesis', 'pilot-2', 'pilot.json'))
     expect(pilotTallyPath(repo, OTHER)).toBe(join(repo, 'evals', 'demo', 'pilot-2', 'pilot.json'))
-    expect(pilotDir(repo, 'evals/demo/deep/er/prereg.json')).toBe(join(repo, 'evals', 'demo', 'deep', 'er'))
+    expect(pilotDir(repo, testPreregRel('evals/demo/deep/er/prereg.json'))).toBe(join(repo, 'evals', 'demo', 'deep', 'er'))
   })
 
   test('the --prereg flag resolves to a normalised repo-relative path; outside the repo is undefined', () => {

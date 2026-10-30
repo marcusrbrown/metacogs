@@ -8,9 +8,13 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 import { Git } from './git'
+import { pilotPreregRel } from './pilot'
 import { canonicalizeText, expectationHash, type Prereg, RUN_OUTCOME_TAXONOMY, saltedHash } from './prereg'
 
 export const TEST_SALT = 'test-salt-0123'
+
+/** A branded prereg path for a test: a repo-relative `rel` goes through `pilotPreregRel`, the one place that makes one. */
+export const testPreregRel = (rel: string) => pilotPreregRel('/', 'demo', rel)!
 
 /** HOME and XDG_CONFIG_HOME point at an empty dir so a developer's global git attributes (e.g. `* text=auto eol=lf`) cannot change hash-object results. */
 const EMPTY_HOME = mkdtempSync(join(tmpdir(), 'metacogs-empty-home-'))

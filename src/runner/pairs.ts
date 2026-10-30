@@ -30,7 +30,7 @@ import { join } from 'node:path'
 import { readJudgeRecord } from './judge-record'
 import { redactJudgeInput } from './judge'
 import { type CampaignRun, JUDGE_BLOCKING_CHECK_CODES, loadCampaignRuns, PILOT_ARMS, type PilotArm } from './manifest'
-import { pilotDir, readRejudgeSummary, type RejudgeSummary, vouchedRejudge, verdictUnderContract } from './pilot'
+import { pilotDir, type PreregRel, readRejudgeSummary, type RejudgeSummary, vouchedRejudge, verdictUnderContract } from './pilot'
 import type { LoadedFixture } from './prereg'
 import { wilson95 } from './report'
 import { judgedAnswerOf } from './review'
@@ -837,10 +837,10 @@ export function readPairKey(dir: string): PairKey {
   return key
 }
 
-export const pairSummaryPath = (repoRoot: string, preregRel: string): string => join(pilotDir(repoRoot, preregRel), PAIR_SUMMARY_FILE)
+export const pairSummaryPath = (repoRoot: string, preregRel: PreregRel): string => join(pilotDir(repoRoot, preregRel), PAIR_SUMMARY_FILE)
 
 /** Writes `pair-summary.json` beside the prereg the pilot ran under (`evals/<method>/pilot/` for the default one). It holds counts and ids only. */
-export function writePairSummary(repoRoot: string, preregRel: string, summary: PairSummary): string {
+export function writePairSummary(repoRoot: string, preregRel: PreregRel, summary: PairSummary): string {
   const path = pairSummaryPath(repoRoot, preregRel)
   mkdirSync(pilotDir(repoRoot, preregRel), { recursive: true })
   const tmp = `${path}.tmp`
