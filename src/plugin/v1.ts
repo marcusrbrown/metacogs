@@ -15,24 +15,30 @@ import { parseOptions, type Warn } from './options'
 
 // The host reads `{description, args, execute}` and builds its JSON Schema from `args`. The bundled zod supplies the
 // field schemas, so the built plugin imports nothing from the host at run time.
+/** The `feel` fields. The v2 adapter builds its JSON Schema from these same definitions. */
+export const FEEL_ARGS = {
+  somewhere: string().describe(FEEL_FIELD_DESCRIPTIONS.somewhere),
+  quality: string().describe(FEEL_FIELD_DESCRIPTIONS.quality),
+  sigil: string().describe(FEEL_FIELD_DESCRIPTIONS.sigil),
+  since_last: string().optional().describe(FEEL_FIELD_DESCRIPTIONS.since_last),
+}
+
+/** The `drugs` fields, shared with the v2 adapter. */
+export const DRUGS_ARGS = {
+  substance: string().describe(DRUGS_FIELD_DESCRIPTIONS.substance),
+  method: string().describe(DRUGS_FIELD_DESCRIPTIONS.method),
+  displaces: string().describe(DRUGS_FIELD_DESCRIPTIONS.displaces),
+}
+
 const metacogsFeel = {
   description: FEEL_DESCRIPTION,
-  args: {
-    somewhere: string().describe(FEEL_FIELD_DESCRIPTIONS.somewhere),
-    quality: string().describe(FEEL_FIELD_DESCRIPTIONS.quality),
-    sigil: string().describe(FEEL_FIELD_DESCRIPTIONS.sigil),
-    since_last: string().optional().describe(FEEL_FIELD_DESCRIPTIONS.since_last),
-  },
+  args: FEEL_ARGS,
   execute: async (args: Parameters<typeof feelText>[0]) => feelText(args),
 }
 
 const metacogsDrugs = {
   description: DRUGS_DESCRIPTION,
-  args: {
-    substance: string().describe(DRUGS_FIELD_DESCRIPTIONS.substance),
-    method: string().describe(DRUGS_FIELD_DESCRIPTIONS.method),
-    displaces: string().describe(DRUGS_FIELD_DESCRIPTIONS.displaces),
-  },
+  args: DRUGS_ARGS,
   execute: async (args: Parameters<typeof drugsText>[0]) => drugsText(args),
 }
 

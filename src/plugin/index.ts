@@ -1,5 +1,6 @@
 import { skillsDirsFrom } from './config'
 import { createServer } from './v1'
+import { createSetup } from './v2'
 
 /**
  * The plugin entry: a plain object with no host import, so the built file loads on OpenCode v1 and v2 with neither
@@ -13,12 +14,8 @@ interface MetacogsPlugin {
   setup: (ctx: unknown) => Promise<void>
 }
 
-/** v2 entry. Registers nothing yet; the adapter lands in a later unit. */
-async function setup(ctx: unknown): Promise<void> {
-  const host = ctx as { location?: unknown; session?: unknown } | null | undefined
-  if (!host?.location || !host?.session) return
-}
+const skillsDirs = skillsDirsFrom(import.meta.url)
 
-const plugin: MetacogsPlugin = { id: 'metacogs', server: createServer(skillsDirsFrom(import.meta.url)), setup }
+const plugin: MetacogsPlugin = { id: 'metacogs', server: createServer(skillsDirs), setup: createSetup(skillsDirs) }
 
 export default plugin
