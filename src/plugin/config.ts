@@ -12,7 +12,7 @@ const pathFrom = (moduleUrl: string, relative: string): string => {
  * The package's skill directories, beside the directory that holds the module (`dist/index.js` → `skills/` for the
  * methods, `plugin/skills/` for `feel` and `drugs`).
  */
-export function skillsDirsFrom(moduleUrl: string): string[] {
+export function skillsDirsFrom(moduleUrl: string): [methods: string, plugin: string] {
   return [pathFrom(moduleUrl, '../skills'), pathFrom(moduleUrl, '../plugin/skills')]
 }
 

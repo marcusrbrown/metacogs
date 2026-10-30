@@ -2,7 +2,7 @@
  * Test fixtures for running the pinned OpenCode host against a plugin: an isolated lab (workspace, HOME, XDG dirs, a
  * scripted provider) and the packed metacogs package, built, packed once and extracted. Not imported by production code.
  */
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -19,7 +19,7 @@ import {
   startScriptedProvider,
 } from '../runner/scripted-provider'
 import { buildConfig, gitInit, sha256 } from '../runner/workspace'
-import { packPlugin, REPO_ROOT, writePlugin } from './build'
+import { packPlugin, writePlugin } from './build'
 
 export const HOST_MODEL = `${SPIKE_PROVIDER_ID}/${SPIKE_MODEL_ID}`
 
@@ -173,12 +173,6 @@ let packed: Promise<PackedPlugin> | undefined
 
 const specFor = (root: string) => `file://${root}/dist/index.js`
 
-/** Links the runtime dependency the way an installed package would find it. */
-function linkRuntimeDependency(root: string): void {
-  mkdirSync(join(root, 'node_modules', '@opencode-ai'), { recursive: true })
-  symlinkSync(realpathSync(join(REPO_ROOT, 'node_modules', '@opencode-ai', 'plugin')), join(root, 'node_modules', '@opencode-ai', 'plugin'))
-}
-
 /** Builds, packs and extracts the package once per process. */
 export function packedPlugin(): Promise<PackedPlugin> {
   packed ??= (async () => {
@@ -190,7 +184,6 @@ export function packedPlugin(): Promise<PackedPlugin> {
     const tar = Bun.spawnSync(['tar', '-xzf', tarball, '-C', unpacked])
     if (tar.exitCode !== 0) throw new Error(`tar failed: ${tar.stderr.toString().slice(0, 300)}`)
     const root = realpathSync(join(unpacked, 'package'))
-    linkRuntimeDependency(root)
     return { root, spec: specFor(root), skillsDir: join(root, 'skills'), pluginSkillsDir: join(root, 'plugin', 'skills'), tarballSha256: sha256(readFileSync(tarball)) }
   })()
   return packed

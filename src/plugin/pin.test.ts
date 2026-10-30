@@ -9,10 +9,17 @@ const read = (rel: string) => readFileSync(join(REPO_ROOT, rel), 'utf8')
 
 describe('the tested OpenCode version', () => {
   test('package.json testedWith, the matrix OpenCode plugin entry and the runner pin are one version', () => {
-    const pkg = JSON.parse(read('package.json')) as { testedWith?: { opencode?: string } }
+    const pkg = JSON.parse(read('package.json')) as { testedWith?: Record<string, string> }
     const { matrix } = loadMatrix(REPO_ROOT)
-    expect(pkg.testedWith).toEqual({ opencode: OPENCODE_PIN })
+    expect(pkg.testedWith?.opencode).toBe(OPENCODE_PIN)
     expect(matrix?.plugins?.opencode?.host_version).toBe(OPENCODE_PIN)
+  })
+
+  test('the OpenCode v2 pin is testedWith["opencode-v2"], the one source, and equals the @opencode/plugin devDependency', () => {
+    const pkg = JSON.parse(read('package.json')) as { testedWith?: Record<string, string>; devDependencies?: Record<string, string> }
+    expect(Object.keys(pkg.testedWith ?? {}).sort()).toEqual(['opencode', 'opencode-v2'])
+    expect(pkg.testedWith?.['opencode-v2']).toMatch(/^\d+\.\d+\.\d+$/)
+    expect(pkg.testedWith?.['opencode-v2']).toBe(pkg.devDependencies?.['@opencode/plugin'])
   })
 })
 

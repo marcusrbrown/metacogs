@@ -13,7 +13,8 @@ import {
   feelText,
 } from '../frames/feel-drugs'
 import { GUIDANCE_BLOCK, GUIDANCE_OPEN } from './guidance'
-import plugin, { createServer } from './index'
+import plugin from './index'
+import { createServer } from './v1'
 
 interface LogCall {
   level: string
@@ -47,10 +48,15 @@ const run = async (hooks: Awaited<ReturnType<typeof plugin.server>>, system: str
 const blocks = (system: string[]) => system.join('\n').split(GUIDANCE_OPEN).length - 1
 
 describe('the default export', () => {
-  test('is a plugin module with the id "metacogs" and a server function', () => {
+  test('is a plugin module with the id "metacogs", a server function and a setup function', () => {
     expect(plugin.id).toBe('metacogs')
     expect(typeof plugin.server).toBe('function')
-    expect(Object.keys(plugin).sort()).toEqual(['id', 'server'])
+    expect(typeof plugin.setup).toBe('function')
+    expect(Object.keys(plugin).sort()).toEqual(['id', 'server', 'setup'])
+  })
+
+  test('setup returns without registering anything when the host context has no location or session', async () => {
+    for (const ctx of [undefined, null, {}, { location: {} }, { session: {} }]) expect(await plugin.setup(ctx)).toBeUndefined()
   })
 })
 

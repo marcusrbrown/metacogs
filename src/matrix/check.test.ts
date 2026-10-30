@@ -60,6 +60,7 @@ const baseMatrix = (): Matrix => ({
   schema_version: 2,
   hosts: {
     opencode: { name: 'OpenCode', project_path: '.agents/skills/' },
+    'opencode-v2': { name: 'OpenCode (v2)', project_path: '.agents/skills/' },
     pi: { name: 'Pi', project_path: '.agents/skills/' },
     codex: { name: 'Codex', project_path: '.agents/skills/' },
     'claude-code': { name: 'Claude Code', project_path: '.claude/skills/' },
@@ -76,6 +77,7 @@ const baseMatrix = (): Matrix => ({
         judge_model: 'judge/model-b',
         history: [],
       },
+      'opencode-v2': { status: 'unverified', evidence_ref: null, date: '2026-10-30', note: 'No v2 eval report exists.', history: [] },
       pi: { status: 'content-compatible-untested', evidence_ref: 'docs/install.md#pi', date: '2026-10-23', host_version: '1.3.0', history: [] },
       codex: { status: 'content-compatible-untested', evidence_ref: 'docs/install.md#codex', date: '2026-10-23', host_version: '0.162.1', history: [] },
       'claude-code': {
@@ -164,12 +166,19 @@ describe('checkMatrix: plugin entries', () => {
     date: '2026-10-27',
     note: 'Not installed on a real Claude Code.',
   })
+  const opencodeV2Entry = (): PluginEntry => ({
+    status: 'unverified',
+    host_version: '2.2.2',
+    evidence_ref: 'docs/install.md#opencode-plugin',
+    date: '2026-10-30',
+    note: 'The contract suite passes on the pinned CLI.',
+  })
   const codexEntry = (): PluginEntry => ({ ...claudeEntry(), evidence_ref: 'docs/install.md#codex-plugin', experimental: true })
   const files = {
     [SPIKE]: '# Spike\n\n## Plugin reads\n\nFacts.\n',
-    'docs/install.md': `${INSTALL_DOC}\n## Claude Code plugin\nDocs: https://code.claude.com/docs/en/plugins\n\n## Codex plugin\nDocs: https://developers.openai.com/codex/plugins/build\n`,
+    'docs/install.md': `${INSTALL_DOC}\n## OpenCode plugin\nDocs: https://opencode.ai/docs/plugins/\n\n## Claude Code plugin\nDocs: https://code.claude.com/docs/en/plugins\n\n## Codex plugin\nDocs: https://developers.openai.com/codex/plugins/build\n`,
   }
-  const all = (): Record<string, PluginEntry> => ({ opencode: opencodeEntry(), 'claude-code': claudeEntry(), codex: codexEntry() })
+  const all = (): Record<string, PluginEntry> => ({ opencode: opencodeEntry(), 'opencode-v2': opencodeV2Entry(), 'claude-code': claudeEntry(), codex: codexEntry() })
   const withPlugins = (mutate: (plugins: Record<string, PluginEntry>) => void = () => {}, spec: RepoSpec = { files }) =>
     problemsFor(m => {
       const plugins = all()
@@ -207,6 +216,21 @@ describe('checkMatrix: plugin entries', () => {
     expect(out).toContain('plugins.codex: a verified plugin needs host_version')
     expect(out).toContain('plugins.codex: verified requires a manual_run note')
     expect(withPlugins(p => void (p['claude-code'] = { ...p['claude-code']!, status: 'verified', host_version: '1', manual_run: ' ' })).join('\n')).toContain('manual_run must be a non-empty string')
+  })
+
+  test('a verified OpenCode v2 entry needs a manual_run note, unlike OpenCode', () => {
+    const verified = (p: Record<string, PluginEntry>) => void (p['opencode-v2'] = { ...p['opencode-v2']!, status: 'verified' })
+    expect(withPlugins(verified)).toEqual(['plugins.opencode-v2: verified requires a manual_run note saying what was installed and invoked by hand on a real install'])
+    expect(
+      withPlugins(p => {
+        verified(p)
+        p['opencode-v2']!.manual_run = 'Installed metacogs on OpenCode v2 2.2.2 and ran /feel.'
+      }),
+    ).toEqual([])
+  })
+
+  test('an unverified OpenCode v2 entry cannot carry a manual_run note', () => {
+    expect(withPlugins(p => void (p['opencode-v2']!.manual_run = 'Ran it.'))).toEqual(['plugins.opencode-v2: manual_run is only valid on verified entries'])
   })
 
   test('the OpenCode entry stays verified without a manual_run note', () => {
@@ -425,6 +449,55 @@ describe('checkMatrix: unverified and unsupported cells', () => {
       m.methods.synthesis!['claude-code']!.pending_verification = true
     })
     expect(problems.some(p => p.includes('only valid on content-compatible-untested'))).toBe(true)
+  })
+})
+
+describe('checkMatrix: the OpenCode v2 host', () => {
+  test('its unverified method cell needs a reason', () => {
+    const problems = problemsFor(m => void delete m.methods.synthesis!['opencode-v2']!.note)
+    expect(problems.some(p => p.startsWith('methods.synthesis.opencode-v2:') && p.includes('requires a note'))).toBe(true)
+  })
+
+  test('a verified method cell is refused: only OpenCode has a live eval runner, so no v2 report can back it', () => {
+    const problems = problemsFor(m => {
+      m.methods.synthesis!['opencode-v2'] = {
+        status: 'verified',
+        evidence_ref: 'evals/reports/synthesis/green.json',
+        date: '2026-10-30',
+        host_version: '1.19.4',
+        model: 'agent/model-a',
+        judge_model: 'judge/model-b',
+        history: [],
+      }
+    })
+    expect(problems).toContain('methods.synthesis.opencode-v2: only OpenCode has a live eval runner; other hosts cannot cite a green report')
+  })
+
+  test('a host without its method cell fails', () => {
+    const problems = problemsFor(m => void delete m.methods.synthesis!['opencode-v2'])
+    expect(problems).toContain('methods.synthesis: missing cell for host "opencode-v2"')
+  })
+})
+
+describe('the committed matrix: OpenCode v2', () => {
+  const { matrix } = loadMatrix(REPO_ROOT)
+
+  test('is its own host with unverified synthesis and counterfactual cells that say no v2 eval report exists', () => {
+    expect(matrix?.hosts['opencode-v2']).toEqual({ name: 'OpenCode (v2)', project_path: '.agents/skills/' })
+    for (const method of ['synthesis', 'counterfactual']) {
+      const cell = matrix?.methods[method]?.['opencode-v2']
+      expect(cell?.status).toBe('unverified')
+      expect(cell?.evidence_ref).toBeNull()
+      expect(cell?.note).toContain('No v2 eval report exists')
+    }
+  })
+
+  test('has an unverified plugin entry for 2.2.2 that waits for the owner\'s hand check', () => {
+    const plugin = matrix?.plugins?.['opencode-v2']
+    expect(plugin?.status).toBe('unverified')
+    expect(plugin?.host_version).toBe('2.2.2')
+    expect(plugin?.manual_run).toBeUndefined()
+    expect(plugin?.note).toContain('contract suite')
   })
 })
 

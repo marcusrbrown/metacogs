@@ -2,6 +2,7 @@
   "schema_version": 2,
   "hosts": {
     "opencode": { "name": "OpenCode", "project_path": ".agents/skills/" },
+    "opencode-v2": { "name": "OpenCode (v2)", "project_path": ".agents/skills/" },
     "pi": { "name": "Pi", "project_path": ".agents/skills/" },
     "codex": { "name": "Codex", "project_path": ".agents/skills/" },
     "claude-code": { "name": "Claude Code", "project_path": ".claude/skills/" }
@@ -16,6 +17,13 @@
         "model": "openai/gpt-6-luna",
         "judge_model": "anthropic/claude-haiku-5-5",
         "note": "Human review: 39/39 held-out judgments reviewed; SY1 above the 0.8 agreement floor; SY2–SY5 below floor and demoted to advisory; recomputed verdict green.",
+        "history": []
+      },
+      "opencode-v2": {
+        "status": "unverified",
+        "evidence_ref": null,
+        "date": "2026-10-30",
+        "note": "No v2 eval report exists.",
         "history": []
       },
       "pi": {
@@ -54,6 +62,13 @@
         "note": "Human review: 38/38 held-out judgments reviewed; CF2–CF4 above the 0.8 agreement floor; CF1 and CF5 below floor and demoted to advisory; recomputed verdict green.",
         "history": []
       },
+      "opencode-v2": {
+        "status": "unverified",
+        "evidence_ref": null,
+        "date": "2026-10-30",
+        "note": "No v2 eval report exists.",
+        "history": []
+      },
       "pi": {
         "status": "content-compatible-untested",
         "evidence_ref": "docs/install.md#pi",
@@ -87,6 +102,13 @@
       "evidence_ref": "evals/spikes/feel-drugs/README.md#plugin-reads",
       "date": "2026-10-26",
       "note": "Tested on the pinned OpenCode release with the packed package: scripted-provider integration suite, host probes and guided reads."
+    },
+    "opencode-v2": {
+      "status": "unverified",
+      "host_version": "2.2.2",
+      "evidence_ref": "docs/install.md#opencode-plugin",
+      "date": "2026-10-30",
+      "note": "The contract suite passes on the pinned OpenCode 2.2.2 CLI with the scripted provider."
     },
     "claude-code": {
       "status": "verified",
