@@ -18,7 +18,7 @@
  * skill's labelled lines) can still reveal its side.
  *
  * `reconcilePairs` reads the marked sheet against the key with a strict parser and returns the summary that becomes
- * `evals/<method>/pilot/pair-summary.json`: counts and verdict letters only, never an answer, a quote or a note.
+ * `pair-summary.json` beside the pilot prereg (`evals/<method>/pilot/` by default): counts and verdict letters only, never an answer, a quote or a note.
  *
  * `cryptoRng`, `Side`, the strict-marks reader and the refuse-overwrite key follow `src/spike/feel-drugs/blind.ts` and are copied,
  * not imported: this is their second use.
@@ -837,12 +837,12 @@ export function readPairKey(dir: string): PairKey {
   return key
 }
 
-export const pairSummaryPath = (repoRoot: string, method: string): string => join(pilotDir(repoRoot, method), PAIR_SUMMARY_FILE)
+export const pairSummaryPath = (repoRoot: string, preregRel: string): string => join(pilotDir(repoRoot, preregRel), PAIR_SUMMARY_FILE)
 
-/** Writes `evals/<method>/pilot/pair-summary.json`, which holds counts and ids only. */
-export function writePairSummary(repoRoot: string, summary: PairSummary): string {
-  const path = pairSummaryPath(repoRoot, summary.method)
-  mkdirSync(pilotDir(repoRoot, summary.method), { recursive: true })
+/** Writes `pair-summary.json` beside the prereg the pilot ran under (`evals/<method>/pilot/` for the default one). It holds counts and ids only. */
+export function writePairSummary(repoRoot: string, preregRel: string, summary: PairSummary): string {
+  const path = pairSummaryPath(repoRoot, preregRel)
+  mkdirSync(pilotDir(repoRoot, preregRel), { recursive: true })
   const tmp = `${path}.tmp`
   writeFileSync(tmp, `${JSON.stringify(summary, null, 2)}\n`)
   renameSync(tmp, path)

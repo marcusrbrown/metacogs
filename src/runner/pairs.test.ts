@@ -16,6 +16,7 @@ import {
   type PairSummary,
   PairSheetError,
   pairsDir,
+  pairSummaryPath,
   parseSheet,
   readMarks,
   readPairKey,
@@ -916,6 +917,9 @@ describe('reconcile', () => {
   })
 })
 
+/** The default pilot prereg of the scaffolded `demo` method; the summary is written beside it. */
+const PREREG = 'evals/demo/pilot/prereg.json'
+
 describe('the summary is an allowlist projection', () => {
   const TOP = ['schema_version', 'method', 'campaign_id', 'prereg_content_hash', 'pairs', 'owner', 'judge_vs_owner', 'preference', 'review', 'campaign']
   test('fixed top-level keys, no answer text, quote, run id or note, and the file round-trips', () => {
@@ -927,10 +931,29 @@ describe('the summary is an allowlist projection', () => {
     for (const forbidden of ['Plain d', 'Labelled', 'JUDGE-QUOTE-MARKER', 'a note with', 'stdout']) expect(text).not.toContain(forbidden)
     for (const c of key.cards) expect(text).not.toContain(c.sides.X.run_id)
     const repo = tmp('metacogs-pairs-repo-')
-    const path = writePairSummary(repo, summary)
+    const path = writePairSummary(repo, PREREG, summary)
     expect(path).toBe(join(repo, 'evals', 'demo', 'pilot', 'pair-summary.json'))
     expect(JSON.parse(readFileSync(path, 'utf8')) as PairSummary).toEqual(summary)
     expect(existsSync(`${path}.tmp`)).toBe(false)
+  })
+
+  test('the summary is written beside the prereg the pilot ran under; the default prereg keeps evals/<m>/pilot/, another leaves it alone', () => {
+    const OTHER = 'evals/demo/pilot-2/prereg.json'
+    expect(pairSummaryPath('/r', PREREG)).toBe(join('/r', 'evals', 'demo', 'pilot', 'pair-summary.json'))
+    expect(pairSummaryPath('/r', 'evals/tether/pilot/prereg.json')).toBe(join('/r', 'evals', 'tether', 'pilot', 'pair-summary.json'))
+    expect(pairSummaryPath('/r', OTHER)).toBe(join('/r', 'evals', 'demo', 'pilot-2', 'pair-summary.json'))
+
+    const campaign = plantCampaign(fullPlants())
+    const { sheet, key } = build(campaign)
+    const { summary } = reconcilePairs(key, markSheet(sheet, key))
+    const repo = tmp('metacogs-pairs-repo-')
+    mkdirSync(join(repo, 'evals', 'demo', 'pilot'), { recursive: true })
+    const epoch1 = '{"epoch": 1}\n'
+    writeFileSync(join(repo, 'evals', 'demo', 'pilot', 'pair-summary.json'), epoch1)
+    const path = writePairSummary(repo, OTHER, summary)
+    expect(path).toBe(join(repo, 'evals', 'demo', 'pilot-2', 'pair-summary.json'))
+    expect(JSON.parse(readFileSync(path, 'utf8')) as PairSummary).toEqual(summary)
+    expect(readFileSync(join(repo, 'evals', 'demo', 'pilot', 'pair-summary.json'), 'utf8')).toBe(epoch1)
   })
 })
 
@@ -1040,7 +1063,7 @@ describe('two-arm campaign, build, mark, reconcile', () => {
     const text = JSON.stringify(reconciled.summary)
     expect(text).not.toContain(ANSWER)
     expect(text).not.toContain('read twice')
-    const out = writePairSummary(repo.dir, reconciled.summary)
+    const out = writePairSummary(repo.dir, PREREG, reconciled.summary)
     expect(JSON.parse(readFileSync(out, 'utf8')).judge_vs_owner.table.judge_pass_owner_pass).toBe(8)
   })
 })
@@ -1090,9 +1113,9 @@ describe('eval pairs (CLI)', () => {
 
   const args = (repo: TestRepo, ...rest: string[]) => ['pairs', '--campaign', CAMPAIGN, '--repo', repo.dir, ...rest]
 
-  test('usage: exactly one of --build and --reconcile, --sheet only with --reconcile, --prereg only with --build', async () => {
+  test('usage: exactly one of --build and --reconcile, --sheet only with --reconcile', async () => {
     const { repo } = await pilotWithCampaign()
-    for (const argv of [['pairs'], ['pairs', '--build'], args(repo), args(repo, '--build', '--reconcile'), args(repo, '--build', '--sheet', 'x.md'), args(repo, '--reconcile', '--prereg', PILOT_PREREG)]) {
+    for (const argv of [['pairs'], ['pairs', '--build'], args(repo), args(repo, '--build', '--reconcile'), args(repo, '--build', '--sheet', 'x.md')]) {
       const t = cliIo()
       expect(await main(argv, t.io)).toBe(EXIT.USAGE)
     }
@@ -1124,6 +1147,59 @@ describe('eval pairs (CLI)', () => {
     const summary = JSON.parse(readFileSync(join(repo.dir, 'evals', 'demo', 'pilot', 'pair-summary.json'), 'utf8')) as PairSummary
     expect(summary.campaign_id).toBe(CAMPAIGN)
     expect(summary.judge_vs_owner).toMatchObject({ n: 6, agree: 5 })
+  })
+
+  describe('the summary is written beside the prereg the pilot ran under (--prereg, default evals/<m>/pilot/prereg.json)', () => {
+    const OTHER = 'evals/demo/pilot-2/prereg.json'
+    const EPOCH1 = '{"epoch": 1}\n'
+    /** A second committed copy of the prereg (same content, same hash) in another directory, and a planted default-directory summary to protect. */
+    async function withSecondPrereg() {
+      const ctx = await pilotWithCampaign()
+      ctx.repo.write(OTHER, readFileSync(join(ctx.repo.dir, PILOT_PREREG), 'utf8'))
+      ctx.repo.commit('test: second pilot prereg', [OTHER])
+      ctx.repo.write('evals/demo/pilot/pair-summary.json', EPOCH1)
+      return ctx
+    }
+    async function builtAndMarked(repo: TestRepo, ...flags: string[]) {
+      const t = cliIo()
+      expect(await main(args(repo, '--build', ...flags), t.io)).toBe(EXIT.OK)
+      const dir = pairsDir(t.io.env, CAMPAIGN)
+      const key = JSON.parse(readFileSync(join(dir, 'key.json'), 'utf8')) as PairKey
+      writeFileSync(join(dir, 'sheet.md'), markSheet(readFileSync(join(dir, 'sheet.md'), 'utf8'), key, { use: (x) => (x === 'skill' ? 'X' : 'Y') }))
+      const r = cliIo()
+      r.io.env.XDG_STATE_HOME = t.stateHome
+      return r
+    }
+
+    test('--reconcile --prereg <other dir> writes pair-summary.json there and leaves evals/<m>/pilot/ byte-identical', async () => {
+      const { repo } = await withSecondPrereg()
+      const r = await builtAndMarked(repo, '--prereg', OTHER)
+      expect(await main(args(repo, '--reconcile', '--prereg', OTHER), r.io)).toBe(EXIT.OK)
+      expect(r.lines.out.join('\n')).toContain('wrote evals/demo/pilot-2/pair-summary.json')
+      expect((JSON.parse(readFileSync(join(repo.dir, 'evals', 'demo', 'pilot-2', 'pair-summary.json'), 'utf8')) as PairSummary).campaign_id).toBe(CAMPAIGN)
+      expect(readFileSync(join(repo.dir, 'evals', 'demo', 'pilot', 'pair-summary.json'), 'utf8')).toBe(EPOCH1)
+    })
+
+    test('--reconcile without --prereg still writes evals/<m>/pilot/pair-summary.json', async () => {
+      const { repo } = await withSecondPrereg()
+      const r = await builtAndMarked(repo)
+      expect(await main(args(repo, '--reconcile'), r.io)).toBe(EXIT.OK)
+      expect((JSON.parse(readFileSync(join(repo.dir, 'evals', 'demo', 'pilot', 'pair-summary.json'), 'utf8')) as PairSummary).campaign_id).toBe(CAMPAIGN)
+      expect(existsSync(join(repo.dir, 'evals', 'demo', 'pilot-2', 'pair-summary.json'))).toBe(false)
+    })
+
+    test('--reconcile --prereg outside the repository, or naming no file, is refused and writes nothing', async () => {
+      const { repo } = await withSecondPrereg()
+      const marked = await builtAndMarked(repo)
+      for (const [flag, message] of [['../elsewhere/prereg.json', 'outside the repository'], ['evals/demo/pilot-3/prereg.json', 'evals/demo/pilot-3/prereg.json does not exist']] as const) {
+        const r = cliIo()
+        r.io.env.XDG_STATE_HOME = marked.io.env.XDG_STATE_HOME as string
+        expect(await main(args(repo, '--reconcile', '--prereg', flag), r.io)).toBe(EXIT.REFUSED)
+        expect(r.lines.err.join('\n')).toContain(message)
+      }
+      expect(existsSync(join(repo.dir, 'evals', 'demo', 'pilot-3'))).toBe(false)
+      expect(readFileSync(join(repo.dir, 'evals', 'demo', 'pilot', 'pair-summary.json'), 'utf8')).toBe(EPOCH1)
+    })
   })
 
   test('a second --build refuses and leaves the key as it was', async () => {
