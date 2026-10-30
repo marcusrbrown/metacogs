@@ -22,6 +22,8 @@ Epoch 5 (counterfactual, same models and gateway): epoch 4 was superseded becaus
 
 Synthesis one-outcome scoring pilot (`evals/synthesis/pilot/`, 2026-10-29; same models and gateway as epoch 3; status stays `green`): one acceptance statement per dev fixture, 5 runs per arm. The baseline hit ceiling at 30/30 on all 6 dev fixtures (skill also 30/30; judge-only, the human read was skipped), so separation is uninformative, not a skill result. The next test needs fixtures whose deciding premise must be inferred rather than stated.
 
+Synthesis pilot epoch 2 (`evals/synthesis/pilot-2/`, 2026-10-29; same models and gateway; status stays `green`): six fixtures whose deciding fact follows only from joining two or more clues. The baseline screen scored 27 of 30. `sy-p2-d3-leaked-deploy-key` scored 2 of 5 and the other five fixtures 5 of 5. The preregistered screen needed at least 2 of 6 fixtures at or below 3 of 5, so the skill arm did not run. Separation is uninformative and says nothing for or against the skill. The count is judge-only, because the owner did not mark the answers.
+
 feel / drugs spike (upstream tools served as a local MCP against the same frames as a skill; four models; unprompted and told to use them; `evals/spikes/feel-drugs/`). Owner read, recorded verbatim; both statuses stay `hypothesis`:
 
 - feel - all: yes, mostly; tool vs skill: tool
