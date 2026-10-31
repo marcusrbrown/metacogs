@@ -40,6 +40,7 @@ import {
   V2_PIN,
   V2Lab,
   type V2LabOptions,
+  type V2Run,
   type V2Server,
 } from './v2-host'
 
@@ -100,12 +101,26 @@ async function commandsLoaded(server: V2Server): Promise<{ name: string; descrip
   })
 }
 
+/** Asserts a serve-driven call got a 2xx and returns it. */
+async function ok(response: Promise<{ status: number; body: unknown }>): Promise<{ status: number; body: unknown }> {
+  const result = await response
+  expect(result.status).toBeGreaterThanOrEqual(200)
+  expect(result.status).toBeLessThan(300)
+  return result
+}
+
+/** Asserts `opencode run` exited 0 and returns the run. */
+function exitedZero(run: V2Run): V2Run {
+  expect(run.exitCode).toBe(0)
+  return run
+}
+
 async function newSession(server: V2Server): Promise<string> {
-  const { body } = await server.call('POST', '/api/session', {})
+  const { body } = await ok(server.call('POST', '/api/session', {}))
   return (body as { data: { id: string } }).data.id
 }
 
-const idle = (server: V2Server, session: string) => server.call('POST', `/api/experimental/session/${session}/wait`, {})
+const idle = (server: V2Server, session: string) => ok(server.call('POST', `/api/experimental/session/${session}/wait`, {}))
 
 // ── always on: the classifier the host tests rely on ────────────────────────
 
@@ -158,7 +173,7 @@ describe.skipIf(!hostV2Enabled)(`the packed plugin on the pinned OpenCode v2 CLI
   }, TIMEOUT)
 
   withLab('load and schema: feel and drugs are offered with the v1 fields, descriptions and required set', async (lab, plugin) => {
-    const { requests } = await lab.run('hello', { config: plugin() })
+    const { requests } = exitedZero(await lab.run('hello', { config: plugin() }))
     const main = agentRequests(requests)[0]!
     const tools = bodyOf(main).tools ?? []
     const feel = tools.find((t) => t.function.name === 'feel')?.function
@@ -176,10 +191,12 @@ describe.skipIf(!hostV2Enabled)(`the packed plugin on the pinned OpenCode v2 CLI
   })
 
   withLab('tool call: scripted feel and drugs calls return feelText and drugsText', async (lab, plugin) => {
-    const { requests } = await lab.run('use them', {
-      config: plugin(),
-      steps: [call('f1', 'feel', FEEL_ARGS), call('d1', 'drugs', DRUGS_ARGS)],
-    })
+    const { requests } = exitedZero(
+      await lab.run('use them', {
+        config: plugin(),
+        steps: [call('f1', 'feel', FEEL_ARGS), call('d1', 'drugs', DRUGS_ARGS)],
+      }),
+    )
     const results = toolResults(agentRequests(requests).at(-1)!)
     expect(results).toEqual([feelText(FEEL_ARGS), drugsText(DRUGS_ARGS)])
   })
@@ -212,20 +229,20 @@ describe.skipIf(!hostV2Enabled)(`the packed plugin on the pinned OpenCode v2 CLI
     try {
       await commandsLoaded(server)
       const session = await newSession(server)
-      await server.call('POST', `/api/session/${session}/prompt`, { text: 'run the loop' })
+      await ok(server.call('POST', `/api/session/${session}/prompt`, { text: 'run the loop' }))
       await idle(server, session)
       // Both subagent results (the new child and its continuation) are in one request: the parent's last round has run.
       await until('both subagent results', () => (server.requests.some((r) => toolResults(r).filter((t) => t.includes('child done')).length >= 2) ? true : undefined))
 
-      expect((await server.call('POST', `/api/session/${session}/compact`, {})).status).toBe(200)
+      expect((await ok(server.call('POST', `/api/session/${session}/compact`, {}))).status).toBe(200)
       await idle(server, session)
       await until('the compaction request', () => (ofKind(server.requests, 'compaction').length > 0 ? true : undefined))
 
-      await server.call('POST', `/api/session/${session}/prompt`, { text: 'carry on' })
+      await ok(server.call('POST', `/api/session/${session}/prompt`, { text: 'carry on' }))
       await idle(server, session)
       await until('the request after compaction', () => (server.requests.some((r) => userTexts(r).includes('carry on')) ? true : undefined))
 
-      expect((await server.call('POST', `/api/session/${session}/generate`, { prompt: `${GENERATE_PROMPT_PREFIX} name this session` })).status).toBe(200)
+      expect((await ok(server.call('POST', `/api/session/${session}/generate`, { prompt: `${GENERATE_PROMPT_PREFIX} name this session` }))).status).toBe(200)
       await until('the generate request', () => (ofKind(server.requests, 'generate').length > 0 ? true : undefined))
 
       // The occurrences are asserted before the absences, so a classifier that matched nothing cannot pass.
@@ -253,7 +270,7 @@ describe.skipIf(!hostV2Enabled)(`the packed plugin on the pinned OpenCode v2 CLI
   })
 
   withLab('guidance: false offers the tools and skills and puts no block on any request', async (lab, plugin) => {
-    const { requests } = await lab.run('use it', { config: plugin({ guidance: false }), steps: [call('f1', 'feel', FEEL_ARGS)] })
+    const { requests } = exitedZero(await lab.run('use it', { config: plugin({ guidance: false }), steps: [call('f1', 'feel', FEEL_ARGS)] }))
     const agent = agentRequests(requests)
     expect(agent.length).toBeGreaterThanOrEqual(2)
     expect(offeredNames(agent[0]!)).toEqual(expect.arrayContaining(['feel', 'drugs']))
@@ -262,7 +279,7 @@ describe.skipIf(!hostV2Enabled)(`the packed plugin on the pinned OpenCode v2 CLI
   })
 
   withLab('skills: the skill tool loads counterfactual and prints a base directory that holds scripts/record.mjs', async (lab, plugin, root) => {
-    const { requests } = await lab.run('load it', { config: plugin(), steps: [call('s1', 'skill', { id: 'counterfactual' }), call('s2', 'skill', { id: 'feel' })] })
+    const { requests } = exitedZero(await lab.run('load it', { config: plugin(), steps: [call('s1', 'skill', { id: 'counterfactual' }), call('s2', 'skill', { id: 'feel' })] }))
     const [counterfactual, feel] = toolResults(agentRequests(requests).at(-1)!)
     expect(counterfactual).toContain('<skill_content name="counterfactual">')
     expect(hasLine(counterfactual, headingOf('counterfactual'))).toBe(true)
@@ -282,7 +299,7 @@ describe.skipIf(!hostV2Enabled)(`the packed plugin on the pinned OpenCode v2 CLI
       const commands = await commandsLoaded(server)
       expect(commands.find((c) => c.name === 'drugs')?.description).toBeTruthy()
       const session = await newSession(server)
-      expect((await server.call('POST', `/api/session/${session}/command`, { name: 'drugs', text: 'caffeine' })).status).toBe(204)
+      expect((await ok(server.call('POST', `/api/session/${session}/command`, { name: 'drugs', text: 'caffeine' }))).status).toBe(204)
       await idle(server, session)
       const [text] = userTexts(agentRequests(server.requests)[0]!)
       expect(text?.startsWith('<skill_content name="drugs">')).toBe(true)
@@ -306,7 +323,7 @@ describe.skipIf(!hostV2Enabled)(`the packed plugin on the pinned OpenCode v2 CLI
       })
       expect(commands.find((c) => c.name === 'feel')?.description).toBe('mine')
       const session = await newSession(server)
-      await server.call('POST', `/api/session/${session}/command`, { name: 'feel', text: 'chest' })
+      await ok(server.call('POST', `/api/session/${session}/command`, { name: 'feel', text: 'chest' }))
       await idle(server, session)
       expect(userTexts(agentRequests(server.requests)[0]!)).toEqual(['MY FEEL chest'])
       expect(commands.find((c) => c.name === 'drugs')?.description).not.toBe('mine')
@@ -321,7 +338,7 @@ describe.skipIf(!hostV2Enabled)(`the packed plugin on the pinned OpenCode v2 CLI
     try {
       await commandsLoaded(server)
       const session = await newSession(server)
-      await server.call('POST', `/api/session/${session}/command`, { name: 'drugs', text: 'caffeine' })
+      await ok(server.call('POST', `/api/session/${session}/command`, { name: 'drugs', text: 'caffeine' }))
       await idle(server, session)
       const request = agentRequests(server.requests)[0]!
       expect(userTexts(request)[0]?.startsWith('<skill_content name="drugs">')).toBe(true)
@@ -337,7 +354,7 @@ describe.skipIf(!hostV2Enabled)(`the packed plugin on the pinned OpenCode v2 CLI
 
   withLab('name separation: denying tool feel leaves skill feel loadable', async (lab, plugin) => {
     const config: V2LabOptions['config'] = { ...plugin(), permissions: [{ action: 'feel', resource: '*', effect: 'deny' }] }
-    const { requests } = await lab.run('load it', { config, steps: [call('s1', 'skill', { id: 'feel' })] })
+    const { requests } = exitedZero(await lab.run('load it', { config, steps: [call('s1', 'skill', { id: 'feel' })] }))
     const agent = agentRequests(requests)
     expect(offeredNames(agent[0]!)).not.toContain('feel')
     expect(offeredNames(agent[0]!)).toContain('drugs')
@@ -347,7 +364,7 @@ describe.skipIf(!hostV2Enabled)(`the packed plugin on the pinned OpenCode v2 CLI
 
   withLab('name separation: denying skill feel makes the skill tool refuse it, and tool feel stays offered', async (lab, plugin) => {
     const config: V2LabOptions['config'] = { ...plugin(), permissions: [{ action: 'skill', resource: 'feel', effect: 'deny' }] }
-    const { requests } = await lab.run('load it', { config, steps: [call('s1', 'skill', { id: 'feel' })] })
+    const { requests } = exitedZero(await lab.run('load it', { config, steps: [call('s1', 'skill', { id: 'feel' })] }))
     const agent = agentRequests(requests)
     expect(offeredNames(agent[0]!)).toContain('feel')
     const [refused] = toolResults(agent.at(-1)!)
