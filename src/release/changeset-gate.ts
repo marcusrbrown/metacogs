@@ -14,8 +14,8 @@ export const PACKAGE_NAME = 'metacogs'
 /** Branch of the Changesets version PR. */
 export const VERSION_PR_BRANCH = 'changeset-release/main'
 
-/** Paths whose change needs a changeset: the owned generated roots plus the sources that produce them. */
-export const GATED_PREFIXES = [...OWNED_ROOTS, 'src/generate/', 'src/hosts/', 'src/mcp/'] as const
+/** Paths whose change needs a changeset: the owned generated roots, the sources that produce them, and the plugin sources. */
+export const GATED_PREFIXES = [...OWNED_ROOTS, 'src/generate/', 'src/hosts/', 'src/mcp/', 'src/plugin/', 'src/frames/', 'plugin/'] as const
 
 export interface Change {
   /** `git diff --name-status` letter: A, M, D, T. Renames are disabled, so they arrive as a D and an A. */
