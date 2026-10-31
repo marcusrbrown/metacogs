@@ -17,6 +17,7 @@ import {
   parseGateEnv,
   parseNameStatus,
   runGate,
+  TEST_SUPPORT_FILES,
   VERSION_PR_BRANCH,
 } from './changeset-gate'
 
@@ -184,7 +185,7 @@ describe('runGate', () => {
   })
 
   test('passes changes outside the gated paths', () => {
-    const h = harness([M('README.md'), M('src/plugin/index.ts'), M('src/generated-lookalike.ts'), M('hosts/readme.md'), M('skills/synthesis/scripts/record.mjs'), M('docs/plans/x.md')])
+    const h = harness([M('README.md'), M('src/release/changeset-gate.ts'), M('src/generated-lookalike.ts'), M('hosts/readme.md'), M('skills/synthesis/scripts/record.mjs'), M('docs/plans/x.md')])
     expect(runGate(h.deps)).toBe(0)
     expect(h.logs.join('\n')).toContain('no generated host output')
   })
@@ -227,6 +228,27 @@ describe('path rules', () => {
     expect(isGatedPath('src/hosts/rules.ts')).toBe(true)
     expect(runGate(harness([M('src/hosts/foo.test.ts')]).deps)).toBe(0)
     expect(runGate(harness([M('src/hosts/foo.test.ts'), M('src/hosts/rules.ts')]).deps)).toBe(1)
+  })
+
+  test.each(['src/plugin/index.ts', 'src/frames/feel-drugs.ts', 'plugin/guidance.md', 'plugin/skills/feel/SKILL.md'])('a non-test change to %s needs a changeset', path => {
+    expect(isGatedPath(path)).toBe(true)
+    expect(runGate(harness([M(path)]).deps)).toBe(1)
+    expect(runGate(harness([M(path), A('.changeset/x.md')]).deps)).toBe(0)
+  })
+
+  test.each(['src/plugin/v2.test.ts', 'src/frames/feel-drugs.test.ts'])('a test-only change to %s needs no changeset', path => {
+    expect(isGatedPath(path)).toBe(false)
+    expect(runGate(harness([M(path)]).deps)).toBe(0)
+  })
+
+  test.each([...TEST_SUPPORT_FILES])('a change to the test harness %s needs no changeset', path => {
+    expect(isGatedPath(path)).toBe(false)
+    expect(runGate(harness([M(path)]).deps)).toBe(0)
+  })
+
+  test('the plugin prefixes are directories: src/plugins and pluginx are not gated', () => {
+    expect(isGatedPath('src/plugins/x.ts')).toBe(false)
+    expect(isGatedPath('pluginx/guidance.md')).toBe(false)
   })
 
   test('parseChangesetFrontmatter reads the block between the leading --- lines', () => {

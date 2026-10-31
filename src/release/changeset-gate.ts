@@ -14,8 +14,8 @@ export const PACKAGE_NAME = 'metacogs'
 /** Branch of the Changesets version PR. */
 export const VERSION_PR_BRANCH = 'changeset-release/main'
 
-/** Paths whose change needs a changeset: the owned generated roots plus the sources that produce them. */
-export const GATED_PREFIXES = [...OWNED_ROOTS, 'src/generate/', 'src/hosts/', 'src/mcp/'] as const
+/** Paths whose change needs a changeset: the owned generated roots, the sources that produce them, and the plugin sources. */
+export const GATED_PREFIXES = [...OWNED_ROOTS, 'src/generate/', 'src/hosts/', 'src/mcp/', 'src/plugin/', 'src/frames/', 'plugin/'] as const
 
 export interface Change {
   /** `git diff --name-status` letter: A, M, D, T. Renames are disabled, so they arrive as a D and an A. */
@@ -53,9 +53,16 @@ export function parseGateEnv(env: Readonly<Record<string, string | undefined>>):
   }
 }
 
-/** A change needs a changeset when it is under a gated prefix. Test files there do not ship, so they do not count. */
+/** Test harness files under gated prefixes; they do not ship. */
+export const TEST_SUPPORT_FILES = ['src/plugin/fixture.ts', 'src/plugin/v2-host.ts', 'src/hosts/test-support.ts', 'src/mcp/test-support.ts'] as const
+
+/** A change needs a changeset when it is under a gated prefix. Tests and test harness files do not ship, so they do not count. */
 export function isGatedPath(path: string): boolean {
-  return GATED_PREFIXES.some(prefix => path.startsWith(prefix)) && !path.endsWith('.test.ts')
+  return (
+    GATED_PREFIXES.some(prefix => path.startsWith(prefix)) &&
+    !path.endsWith('.test.ts') &&
+    !(TEST_SUPPORT_FILES as readonly string[]).includes(path)
+  )
 }
 
 /** A new changeset: `.changeset/<name>.md` added directly under the directory, other than its README. */

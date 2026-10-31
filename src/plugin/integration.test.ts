@@ -192,6 +192,22 @@ describe.skipIf(!available)('the packed plugin on the pinned host (scripted prov
     expect(feelText).toContain(body('feel'))
     expect(feelText?.endsWith('\n\n"the chest"')).toBe(true)
   })
+
+  withLab('/drugs with several words arrives JSON-quoted, and /feel with no arguments arrives with no argument text', async (lab, spec, root) => {
+    const body = (name: string) => readFileSync(join(root, 'plugin', 'skills', name, 'SKILL.md'), 'utf8').replace(/^---\n[\s\S]*?\n---\n/, '').trim()
+    const permission = { ...BASE_PERMISSION, skill: 'allow' }
+    const drugs = await lab.run({ args: ['--command', 'drugs', 'strong black coffee'], config: { plugin: [spec] }, permission })
+    expect(drugs.result.exitCode).toBe(0)
+    expect(userTexts(mainRequest(drugs.requests))[0]?.endsWith('\n\n"strong black coffee"')).toBe(true)
+
+    const feel = await lab.run({ args: ['--command', 'feel'], config: { plugin: [spec] }, permission })
+    expect(feel.result.exitCode).toBe(0)
+    const [feelText] = userTexts(mainRequest(feel.requests))
+    expect(feelText).toContain(body('feel'))
+    expect(feelText?.trimEnd().endsWith('are relative to this base directory.')).toBe(true)
+    expect(feelText).not.toContain('""')
+    expect(feelText).not.toContain('undefined')
+  })
   withLab('the system text is byte-identical across two main requests', async (lab, spec) => {
     const { requests } = await lab.run({
       args: ['use it'],
