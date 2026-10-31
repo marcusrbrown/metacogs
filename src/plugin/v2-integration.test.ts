@@ -313,6 +313,40 @@ describe.skipIf(!hostV2Enabled)(`the packed plugin on the pinned OpenCode v2 CLI
     }
   })
 
+  withLab('commands: multi-word args reach the model raw and unquoted after the drugs skill', async (lab, plugin) => {
+    const server = await lab.serve({ config: plugin() })
+    try {
+      await commandsLoaded(server)
+      const session = await newSession(server)
+      await ok(server.call('POST', `/api/session/${session}/command`, { name: 'drugs', text: 'strong black coffee' }))
+      await idle(server, session)
+      const [text] = userTexts(agentRequests(server.requests)[0]!)
+      expect(text?.startsWith('<skill_content name="drugs">')).toBe(true)
+      expect(hasLine(text, headingOf('drugs'))).toBe(true)
+      expect(text?.endsWith('strong black coffee')).toBe(true)
+      expect(text).not.toContain('"strong black coffee"')
+    } finally {
+      await server.stop()
+    }
+  })
+
+  withLab('commands: empty args deliver the feel skill with no trailing argument text and no undefined', async (lab, plugin) => {
+    const server = await lab.serve({ config: plugin() })
+    try {
+      await commandsLoaded(server)
+      const session = await newSession(server)
+      await ok(server.call('POST', `/api/session/${session}/command`, { name: 'feel', text: '' }))
+      await idle(server, session)
+      const [text] = userTexts(agentRequests(server.requests)[0]!)
+      expect(text?.startsWith('<skill_content name="feel">')).toBe(true)
+      expect(hasLine(text, headingOf('feel'))).toBe(true)
+      expect(text?.endsWith('</skill_content>')).toBe(true)
+      expect(text).not.toContain('undefined')
+    } finally {
+      await server.stop()
+    }
+  })
+
   withLab("commands: a user's own command.feel wins over the plugin's, and drugs stays the skill", async (lab, plugin) => {
     const server = await lab.serve({ config: { ...plugin(), command: { feel: { template: 'MY FEEL $ARGUMENTS', description: 'mine' } } } })
     try {
