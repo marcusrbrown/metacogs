@@ -53,7 +53,20 @@ export interface ScriptedProviderServer {
   stop(): void
 }
 
+/** What the stub knows about one request when it chooses a reply. */
+export interface ScriptRequest {
+  messages: readonly unknown[]
+  hasTools: boolean
+  /** The system text names OpenCode as the agent (see `isMainSystemText`). */
+  main: boolean
+  turn: number
+  turnRound: number
+  round: number
+}
+
 export interface ScriptedProviderOptions {
+  /** Chooses the reply ahead of `turns` and `steps`; `undefined` falls through to them. */
+  script?: (request: ScriptRequest) => ScriptedStep | undefined
   /** Tool-capable turns, by round. Past the end the stub answers `finalText`. Used when `turns` is absent. */
   steps: readonly ScriptedStep[]
   /**
@@ -214,8 +227,12 @@ export function startScriptedProvider(
       const turnRound = countToolRounds(Array.isArray(record.messages) ? record.messages.slice(lastUserIndex(record.messages) + 1) : [])
       requests.push({ hasTools, round, turn, turnRound, body, returnedModel: SPIKE_MODEL_ID })
 
+      const messages: readonly unknown[] = Array.isArray(record.messages) ? record.messages : []
       let step: ScriptedStep
-      if (!hasTools && !main) {
+      const scripted = options.script?.({ messages, hasTools, main, turn, turnRound, round })
+      if (scripted) {
+        step = scripted
+      } else if (!hasTools && !main) {
         // Background title-generation turn: no tools offered and not the host's agent prompt.
         step = { text: 'spike title' }
       } else if (options.turns) {
@@ -274,6 +291,35 @@ export function scriptedProviderConfig(baseUrl: string, modelId: string = SPIKE_
       },
       options: { apiKey: PLACEHOLDER_API_KEY, baseURL: baseUrl },
     },
+  }
+}
+
+/** The environment variable the v2 scripted provider takes its key from. The value is `PLACEHOLDER_API_KEY`, set at run time. */
+export const V2_PROVIDER_KEY_ENV = 'METACOGS_SCRIPTED_PROVIDER_KEY'
+
+/** The v2 host's OpenAI-compatible provider package. */
+export const V2_OPENAI_COMPATIBLE_PACKAGE = '@opencode/ai/providers/openai-compatible'
+
+/**
+ * The `providers` and `model` keys of a v2 `opencode.json` for the scripted stub. v2 takes the key from the environment
+ * variable named in `env`, so no key string is written to the file. `limit` is the model's context and output window.
+ */
+export function scriptedProviderConfigV2(
+  baseUrl: string,
+  options: { modelId?: string; limit?: { context: number; output: number } } = {},
+): { providers: Record<string, unknown>; model: string } {
+  const modelId = options.modelId ?? SPIKE_MODEL_ID
+  return {
+    providers: {
+      [SPIKE_PROVIDER_ID]: {
+        name: 'Metacogs Spike Provider',
+        package: V2_OPENAI_COMPATIBLE_PACKAGE,
+        env: [V2_PROVIDER_KEY_ENV],
+        settings: { baseURL: baseUrl },
+        models: { [modelId]: { name: 'Metacogs Spike Model', ...(options.limit ? { limit: options.limit } : {}) } },
+      },
+    },
+    model: `${SPIKE_PROVIDER_ID}/${modelId}`,
   }
 }
 

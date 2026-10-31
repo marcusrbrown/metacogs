@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 
 import { isMainRequest } from './isolation'
-import { SPIKE_MODEL_ID, SPIKE_PROVIDER_ID, scriptedProviderConfig, startScriptedProvider, type ScriptedProviderServer, type ScriptedStep } from './scripted-provider'
+import { PLACEHOLDER_API_KEY, SPIKE_MODEL_ID, SPIKE_PROVIDER_ID, scriptedProviderConfig, scriptedProviderConfigV2, startScriptedProvider, V2_OPENAI_COMPATIBLE_PACKAGE, V2_PROVIDER_KEY_ENV, type ScriptedProviderServer, type ScriptedStep } from './scripted-provider'
 
 const servers: ScriptedProviderServer[] = []
 afterEach(() => {
@@ -160,5 +160,49 @@ describe('scriptedProviderConfig', () => {
     const entry = models(scriptedProviderConfig('http://x/v1', 'gpt-scripted'))
     expect(Object.keys(entry)).toEqual(['gpt-scripted'])
     expect(entry['gpt-scripted']?.id).toBe('gpt-scripted')
+  })
+})
+
+describe('scriptedProviderConfigV2', () => {
+  const provider = (config: ReturnType<typeof scriptedProviderConfigV2>) =>
+    config.providers[SPIKE_PROVIDER_ID] as { package: string; env: string[]; settings: { baseURL: string }; models: Record<string, { name: string; limit?: unknown }> }
+
+  test('emits providers, package, settings.baseURL, env and a top-level model', () => {
+    const config = scriptedProviderConfigV2('http://127.0.0.1:1/v1')
+    expect(config.model).toBe(`${SPIKE_PROVIDER_ID}/${SPIKE_MODEL_ID}`)
+    expect(provider(config).package).toBe(V2_OPENAI_COMPATIBLE_PACKAGE)
+    expect(provider(config).settings).toEqual({ baseURL: 'http://127.0.0.1:1/v1' })
+    expect(provider(config).env).toEqual([V2_PROVIDER_KEY_ENV])
+    expect(Object.keys(provider(config).models)).toEqual([SPIKE_MODEL_ID])
+  })
+
+  test('writes no key into the config: the provider reads its key from the named variable', () => {
+    expect(JSON.stringify(scriptedProviderConfigV2('http://x/v1'))).not.toContain(PLACEHOLDER_API_KEY)
+  })
+
+  test('a model id and a limit land on the model entry and in the top-level model', () => {
+    const config = scriptedProviderConfigV2('http://x/v1', { modelId: 'gpt-scripted', limit: { context: 4000, output: 500 } })
+    expect(config.model).toBe(`${SPIKE_PROVIDER_ID}/gpt-scripted`)
+    expect(provider(config).models['gpt-scripted']?.limit).toEqual({ context: 4000, output: 500 })
+  })
+})
+
+describe('a script function', () => {
+  const system: Message = { role: 'system', content: MAIN_PROMPT }
+
+  test('answers ahead of the turns and steps, and undefined falls through to them', async () => {
+    const server = start({
+      steps: [call('from_steps')],
+      script: ({ messages }) => (JSON.stringify(messages).includes('CHILD') ? call('from_script') : undefined),
+    })
+    expect((await ask(server, [system, user('CHILD task')], { tools: true })).calls).toEqual(['from_script'])
+    expect((await ask(server, [system, user('parent task')], { tools: true })).calls).toEqual(['from_steps'])
+  })
+
+  test('sees whether the request is main, offers tools, and its turn, turn round and round', async () => {
+    const seen: unknown[] = []
+    const server = start({ steps: [], script: ({ messages: _messages, ...rest }) => (seen.push(rest), undefined) })
+    await ask(server, [system, user('one'), ...toolRound('a'), answer, user('two')], { tools: true })
+    expect(seen).toEqual([{ hasTools: true, main: true, turn: 1, turnRound: 0, round: 1 }])
   })
 })

@@ -1,5 +1,5 @@
 // Bundles src/plugin/index.ts into the gitignored dist/index.js, with guidance.md embedded as raw
-// text. The host SDK stays external; everything else is inlined. Also bundles the stdio MCP server
+// text. Nothing stays external: the plugin imports neither OpenCode package at run time. Also bundles the stdio MCP server
 // (src/mcp/server.ts) that the Claude Code and Codex packages ship, and wraps `npm pack` for the package tests.
 import { spawnSync } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
@@ -12,8 +12,8 @@ export const PLUGIN_ENTRY = join(REPO_ROOT, 'src', 'plugin', 'index.ts')
 export const MCP_ENTRY = join(REPO_ROOT, 'src', 'mcp', 'server.ts')
 export const DIST_FILE = join(REPO_ROOT, 'dist', 'index.js')
 
-/** The only module the built plugin may import at run time. */
-export const PLUGIN_EXTERNALS = ['@opencode-ai/plugin'] as const
+/** Modules the built plugin may import at run time: none. The OpenCode packages are optional peers, used for types only. */
+export const PLUGIN_EXTERNALS = [] as const
 
 /** Bundle the plugin to an ESM string. Deterministic for fixed inputs. */
 export async function buildPlugin(): Promise<string> {

@@ -36,6 +36,7 @@ rulesets:
           do_not_enforce_on_create: false
           required_status_checks:
             - {context: check, integration_id: 15368}
+            - {context: opencode-v2, integration_id: 15368}
             - {context: Fro Bot, integration_id: 15368}
     bypass_actors: []
 

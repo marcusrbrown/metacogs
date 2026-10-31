@@ -58,9 +58,9 @@ If the helper or the `record` tool cannot run, the skill does not retry blindly 
 
 The plugin is the `metacogs` npm package. It registers two tools (`feel`, `drugs`) and four skills (`feel`, `drugs`, `synthesis`, `counterfactual`; `/feel` and `/drugs` run the two skills of those names, which are separate from the tools) and a short guidance block. What each one does is in [OpenCode plugin](../README.md#opencode-plugin).
 
-Requirements: OpenCode 1.19.4 (the tested version). Node 22 or newer is still needed for the method skills' record helper, as above. The tools need nothing else.
+Requirements: OpenCode 1.19.4 or later 1.x, or OpenCode v2 2.2.0 or later 2.x; older versions are unsupported. The tested versions are OpenCode 1.19.4 and OpenCode v2 2.2.2. Node 22 or newer is still needed for the method skills' record helper, as above. The tools need nothing else.
 
-1. Remove any copy of `synthesis` or `counterfactual` from `.agents/skills/` or another scanned path. The plugin provides skills with the same names, and OpenCode does not guarantee which of two same-named skills wins.
+1. Remove any copy of `synthesis` or `counterfactual` from `.agents/skills/` or another scanned path. The plugin provides skills with the same names. On v1, OpenCode does not guarantee which of two same-named skills wins. On v2, an on-disk `.agents/skills/<name>` copy shadows the plugin's skill of the same name.
 2. Add the package to `opencode.json` in the project, or to `~/.config/opencode/opencode.json` for all projects:
 
    ```json
@@ -68,8 +68,23 @@ Requirements: OpenCode 1.19.4 (the tested version). Node 22 or newer is still ne
    ```
 
    To pin a version, use `"metacogs@0.2.0"`. To keep the tools and skills but drop the guidance block, use `["metacogs", { "guidance": false }]` as the entry.
+
+   OpenCode v2 reads `plugins` instead, with an object per plugin:
+
+   ```json
+   { "plugins": [{ "package": "metacogs", "options": { "guidance": false } }] }
+   ```
+
+   Omit `options` to keep the guidance block.
 3. Start OpenCode. OpenCode installs the package on first load.
-4. Verify without a model request: `opencode debug skill` lists `feel`, `drugs`, `synthesis` and `counterfactual`, and `opencode debug config` shows the package's `skills/` and `plugin/skills/` directories under `skills.paths` and the package under `plugin_origins`. In a session, the tools are offered as `feel` and `drugs`.
+4. Verify without a model request: `opencode debug skill` lists `feel`, `drugs`, `synthesis` and `counterfactual`, and `opencode debug config` shows the package's `skills/` and `plugin/skills/` directories under `skills.paths` and the package under `plugin_origins`. In a session, the tools are offered as `feel` and `drugs`. On v2, `GET /api/command` on a running server lists `feel`, `drugs`, `synthesis` and `counterfactual`.
+
+Slash commands:
+
+- **v1.** Typed `/feel` and `/drugs` run the skills. The TUI `/` popup lists only commands that are not skills, so they do not appear there.
+- **v2.** All four skills are slash commands. Arguments arrive raw: `/drugs two words` passes `two words` unquoted.
+
+Permissions on v2 are an array in `opencode.json`, for example `{ "permissions": [{ "action": "skill", "resource": "drugs", "effect": "deny" }] }`. A denied skill is hidden from the model and refused by the `skill` tool. A typed slash command still delivers it, as on v1. Denying the tool `feel` and denying the skill `feel` are separate rules.
 
 To uninstall, remove the entry. The tools, skills and guidance block go away on the next start. Start a new session afterwards: a resumed session can still hold calls to tools that are no longer offered. The records directory is user data and stays.
 
@@ -242,6 +257,12 @@ Evidence:
 - Method: the Unit 1 instrument in `src/runner/spike/isolation.ts`. It runs OpenCode in a throwaway home with a local scripted provider that replies without a model, copies `skills/synthesis/` to `<project>/.agents/skills/synthesis/`, and reads the `<available_skills>` block from the request the provider received.
 - Observed: `<available_skills>` was exactly `["synthesis"]` with the allow rule above. `opencode debug skill` listed `customize-opencode` (built-in) and `synthesis` (project). Control without the copy: `<available_skills>` absent, only the built-in listed.
 - Eval evidence: [`evals/reports/synthesis/green.json`](../evals/reports/synthesis/green.json): OpenCode 1.19.4, agent `openai/gpt-6-luna`, judge `anthropic/claude-haiku-5-5`, held-out 19/20 against a baseline of 3/20.
+
+## OpenCode v2
+
+Install: the plugin; see [OpenCode plugin](#opencode-plugin). A copy at `.agents/skills/<method>/` also loads and shadows the plugin's skill of the same name.
+
+Status: `unverified`. No v2 eval report exists. The plugin's contract suite passes on OpenCode v2 2.2.2 with a scripted provider.
 
 ## Pi
 

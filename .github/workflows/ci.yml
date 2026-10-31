@@ -48,3 +48,46 @@ jobs:
         env:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+
+  # Required check: runs the packed plugin on the pinned OpenCode v2 CLI against the scripted provider.
+  opencode-v2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      # npm 12 blocks install scripts unless told otherwise; older npm does not know the flag.
+      - name: Install the pinned OpenCode v2 CLI
+        id: opencode
+        run: |
+          pin="$(node -p "require('./package.json').testedWith['opencode-v2']")"
+          prefix="$RUNNER_TEMP/opencode-v2"
+          flags=(--no-audit --no-fund)
+          if (( $(npm --version | cut -d. -f1) >= 12 )); then
+            flags+=(--dangerously-allow-all-scripts)
+          fi
+          echo "npm $(npm --version), installing @opencode/cli@${pin} into $prefix"
+          npm install --prefix "$prefix" "@opencode/cli@${pin}" "${flags[@]}"
+          bin="$prefix/node_modules/.bin/opencode"
+          if ! reported="$("$bin" --version 2>&1)"; then
+            echo "::error::$bin --version failed: $reported"
+            exit 1
+          fi
+          echo "$bin --version: $reported"
+          if [[ "$reported" != "opencode v${pin}" ]]; then
+            echo "::error::Expected 'opencode v${pin}' but the installed CLI reported '$reported'"
+            exit 1
+          fi
+          echo "bin=$bin" >> "$GITHUB_OUTPUT"
+      - name: Run the OpenCode v2 contract suite
+        run: bun test src/plugin/v2-integration.test.ts
+        env:
+          METACOGS_HOST_V2: '1'
+          METACOGS_REQUIRE_HOST_V2: '1'
+          METACOGS_OPENCODE_V2_BIN: ${{ steps.opencode.outputs.bin }}
