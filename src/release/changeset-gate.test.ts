@@ -17,6 +17,7 @@ import {
   parseGateEnv,
   parseNameStatus,
   runGate,
+  TEST_SUPPORT_FILES,
   VERSION_PR_BRANCH,
 } from './changeset-gate'
 
@@ -236,6 +237,11 @@ describe('path rules', () => {
   })
 
   test.each(['src/plugin/v2.test.ts', 'src/frames/feel-drugs.test.ts'])('a test-only change to %s needs no changeset', path => {
+    expect(isGatedPath(path)).toBe(false)
+    expect(runGate(harness([M(path)]).deps)).toBe(0)
+  })
+
+  test.each([...TEST_SUPPORT_FILES])('a change to the test harness %s needs no changeset', path => {
     expect(isGatedPath(path)).toBe(false)
     expect(runGate(harness([M(path)]).deps)).toBe(0)
   })
