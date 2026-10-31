@@ -29,12 +29,12 @@ Every object plugin the host loads from a path or `file://` needs an explicit `i
 ```ts
 const server: Plugin = createServer(skillsDirsFrom(import.meta.url))
 
-export default { id: 'metacogs', server } satisfies PluginModule
+export default { id: 'metacogs', server } satisfies PluginModule & { id: string }
 ```
 
 `createServer` (`src/plugin/index.ts:53`) builds `server` (`src/plugin/index.ts:85`). The export has exactly two keys, `id` and `server`.
 
-The compiler does not catch a missing `id`: `PluginModule` in `@opencode-ai/plugin` 1.19.4 declares `id` as optional, so `satisfies PluginModule` passes without it. The guards are the unit test and the gated host probe below.
+`PluginModule` in `@opencode-ai/plugin` 1.19.4 declares `id` as optional, so `satisfies PluginModule` alone passes without it. The current export intersects it with `{ id: string }`, making a missing `id` a compile-time error. The unit test and the gated host probe below retain the runtime and host-behaviour guards.
 
 ## Why This Matters
 
