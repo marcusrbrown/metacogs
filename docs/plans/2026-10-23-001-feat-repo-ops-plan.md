@@ -416,6 +416,6 @@ flowchart LR
 
 ## Sources & References
 
-- Origin: [docs/brainstorms/2026-10-23-repo-ops-requirements.md](docs/brainstorms/2026-10-23-repo-ops-requirements.md)
+- Origin: [docs/brainstorms/2026-10-23-repo-ops-requirements.md](../brainstorms/2026-10-23-repo-ops-requirements.md)
 - Related code: `src/generate/bundle-helpers.ts`, `src/runner/workspace.ts`, `src/scan/secrets.ts`, `src/matrix/check.ts`, `.github/workflows/ci.yml`
 - Fleet: marcusrbrown/systematic, marcusrbrown/infra, marcusrbrown/dev-like, bfra-me/.github v4.43.0, fro-bot/agent v0.125.3, marcusrbrown/renovate-config 5.2.16
