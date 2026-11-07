@@ -358,6 +358,8 @@ export interface CompleteRequest {
   model: string
   system: string
   user: string
+  /** Sent as `x-opencode-session`; opencode-go models are not routable without it. One per pair, reused on the retry. */
+  sessionId: string
   signal?: AbortSignal | undefined
 }
 export interface CompleteResponse {
@@ -375,6 +377,15 @@ export interface JudgeTransport {
 const usageSchema = z.looseObject({ prompt_tokens: z.number().optional(), completion_tokens: z.number().optional() })
 const chatSchema = z.looseObject({ model: z.string().optional(), choices: z.array(z.looseObject({ message: z.looseObject({ content: z.string().nullable().optional() }) })).min(1), usage: usageSchema.optional() })
 const modelsSchema = z.looseObject({ data: z.array(z.looseObject({ id: z.string() })) })
+
+/** The headers OpenCode sends to its own `opencode*` providers (read from the 1.19.5 harness binary), minus the optional project id and user agent. */
+export const opencodeHeaders = (sessionId: string): Record<string, string> => ({
+  'content-type': 'application/json',
+  'x-opencode-session': sessionId,
+  'x-opencode-session-id': sessionId,
+  'x-opencode-request': crypto.randomUUID(),
+  'x-opencode-client': 'cli',
+})
 
 export interface CliproxyTransportOptions {
   /** Secret. Never logged. */
@@ -413,7 +424,7 @@ export function cliproxyTransport(options: CliproxyTransportOptions): JudgeTrans
     },
     async complete(request) {
       const body = JSON.stringify({ model: request.model, stream: false, messages: [{ role: 'system', content: request.system }, { role: 'user', content: request.user }] })
-      const parsed = chatSchema.safeParse(await call('/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json' }, body }, request.signal))
+      const parsed = chatSchema.safeParse(await call('/chat/completions', { method: 'POST', headers: opencodeHeaders(request.sessionId), body }, request.signal))
       if (!parsed.success) throw new TransportError('chat completion: unexpected response shape')
       const text = parsed.data.choices[0]!.message.content
       if (!text) throw new TransportError('chat completion: empty answer')
@@ -577,6 +588,8 @@ export interface JudgeDeps {
   transport: JudgeTransport
   needles?: readonly Needle[]
   nonce?: () => string
+  /** Test seam: the session id of a pair. Default: a random uuid. */
+  sessionId?: () => string
   log?: (line: string) => void
   signal?: AbortSignal
 }
@@ -596,6 +609,7 @@ async function judgePair(pair: JudgePair, reference: Reference, ctx: { options: 
   const input_sha256 = inputHash(reference, pair.arms)
   let spent = 0
   let attempts = 0
+  const sessionId = (deps.sessionId ?? (() => crypto.randomUUID()))()
   let returned: string | null = null
   let failure: { code: string; detail: string; excerpt: string; transport: boolean } = { code: 'invalid_json', detail: '', excerpt: '', transport: false }
 
@@ -609,7 +623,7 @@ async function judgePair(pair: JudgePair, reference: Reference, ctx: { options: 
     attempts = attempt
     let response: CompleteResponse
     try {
-      response = await deps.transport.complete({ model, system: JUDGE_SYSTEM_PROMPT, user, signal: deps.signal })
+      response = await deps.transport.complete({ model, system: JUDGE_SYSTEM_PROMPT, user, sessionId, signal: deps.signal })
     } catch (e) {
       if (e instanceof CredentialLeakError) throw e
       failure = { code: 'transport', detail: e instanceof Error ? clip(e.message, 200) : 'unknown transport failure', excerpt: '', transport: true }

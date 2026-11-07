@@ -399,6 +399,25 @@ describe('validation', () => {
 
 // ── the judge model ────────────────────────────────────────────────────────
 
+describe('session id', () => {
+  test('a pair sends one session id on both attempts; the next pair gets another', async () => {
+    const l = lab()
+    await runSyntheticCampaign(l, { fixtures: FIXTURES, models: [REPLAY_MODELS[0]] })
+    const f = fake((user, n) => (n === 1 ? 'not json' : JSON.stringify(verdict(user))))
+    let n = 0
+    await judgeCampaign(options(), { store: l.store, transport: f.transport, sessionId: () => `sess-${++n}` })
+    expect(f.calls.map((c) => c.sessionId)).toEqual(['sess-1', 'sess-1', 'sess-2'])
+  })
+
+  test('the default session id is a uuid', async () => {
+    const l = lab()
+    await runSyntheticCampaign(l, { fixtures: [FIXTURES[0]!], models: [REPLAY_MODELS[0]] })
+    const f = fake(ok())
+    await full(l, f)
+    expect(f.calls[0]!.sessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+  })
+})
+
 describe('judge model', () => {
   test('the default is the exact GLM-5.3 id CLIProxy lists', () => {
     expect(selectJudgeModel(['gpt-5.6-luna', GLM, 'glm-5.2'])).toBe(GLM)
@@ -778,7 +797,7 @@ describe('secrets', () => {
     }) as unknown as typeof fetch
     const t = cliproxyTransport({ key: KEY, baseUrl: 'https://proxy.test/v1', fetch: fetcher })
     expect(await t.listModels()).toEqual([GLM, 'gpt-x'])
-    const err = await t.complete({ model: GLM, system: 's', user: 'u' }).catch((e: Error) => e)
+    const err = await t.complete({ model: GLM, system: 's', user: 'u', sessionId: 'sess-1' }).catch((e: Error) => e)
     expect(err).toBeInstanceOf(TransportError)
     expect((err as Error).message).toContain('HTTP 401')
     expect((err as Error).message).not.toContain(KEY)
@@ -788,10 +807,24 @@ describe('secrets', () => {
     expect(seen[1]!.body).not.toContain(KEY)
   })
 
+  test('the CLIProxy transport sends the OpenCode session headers on chat completions', async () => {
+    const sent: Record<string, string>[] = []
+    const fetcher = (async (url: string, init: RequestInit) => {
+      if (url.endsWith('/chat/completions')) sent.push(init.headers as Record<string, string>)
+      return new Response(JSON.stringify({ choices: [{ message: { content: '{}' } }] }), { status: 200 })
+    }) as unknown as typeof fetch
+    const t = cliproxyTransport({ key: KEY, fetch: fetcher })
+    await t.complete({ model: GLM, system: 's', user: 'u', sessionId: 'sess-abc' })
+    await t.complete({ model: GLM, system: 's', user: 'u', sessionId: 'sess-abc' })
+    expect(sent).toHaveLength(2)
+    for (const h of sent) expect(h).toMatchObject({ 'x-opencode-session': 'sess-abc', 'x-opencode-session-id': 'sess-abc', 'x-opencode-client': 'cli', 'content-type': 'application/json', authorization: `Bearer ${KEY}` })
+    expect(sent[0]!['x-opencode-request']).not.toBe(sent[1]!['x-opencode-request'])
+  })
+
   test('the CLIProxy transport reads the answer and token counts', async () => {
     const fetcher = (async () => new Response(JSON.stringify({ model: 'glm-5.3', choices: [{ message: { content: '{"a":1}' } }], usage: { prompt_tokens: 10, completion_tokens: 5 } }), { status: 200 })) as unknown as typeof fetch
     const t = cliproxyTransport({ key: KEY, fetch: fetcher })
-    expect(await t.complete({ model: GLM, system: 's', user: 'u' })).toEqual({ text: '{"a":1}', returnedModel: 'glm-5.3', inputTokens: 10, outputTokens: 5 })
+    expect(await t.complete({ model: GLM, system: 's', user: 'u', sessionId: 'sess-1' })).toEqual({ text: '{"a":1}', returnedModel: 'glm-5.3', inputTokens: 10, outputTokens: 5 })
   })
 })
 
