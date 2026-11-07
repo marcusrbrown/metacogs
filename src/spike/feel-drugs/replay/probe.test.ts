@@ -12,6 +12,7 @@ import { buildChildEnv, createFixture, destroyFixture, type Fixture } from '../.
 import { systemTexts } from '../../../runner/isolation'
 import { PLACEHOLDER_API_KEY, type RecordedRequest, type ScriptRequest, type ScriptedStep, startScriptedProvider } from '../../../runner/scripted-provider'
 import { buildConfig, gitInit } from '../../../runner/workspace'
+import { userTextsAnyWire } from './wire'
 
 const HARNESS = process.env.METACOGS_HARNESS_BIN ?? join(homedir(), '.local/share/mise/installs/npm-fro-bot-harness/1.19.5-harness.bf7f7dfe/bin/opencode')
 const HOST_VERSION = '1.19.5+harness.bf7f7dfe'
@@ -182,19 +183,6 @@ function skillList(r: RecordedRequest): string[] {
   const text = systemOf(r)
   const open = text.indexOf('<available_skills>')
   return [...text.slice(open).matchAll(/<name>([^<]+)<\/name>/g)].map((m) => m[1] ?? '').sort()
-}
-
-/** User-role text per message on any of the three wires; non-text blocks (tool results) are skipped. Responses and Anthropic shapes are unverified against a capture. */
-export function userTextsAnyWire(body: Record<string, unknown>): string[] {
-  const items = Array.isArray(body.messages) ? body.messages : Array.isArray(body.input) ? body.input : []
-  const out: string[] = []
-  for (const item of items as Record<string, unknown>[]) {
-    if (item.role !== 'user') continue
-    const c = item.content
-    if (typeof c === 'string') out.push(c)
-    else if (Array.isArray(c)) out.push((c as Record<string, unknown>[]).filter((b) => (b.type === 'text' || b.type === 'input_text') && typeof b.text === 'string').map((b) => b.text as string).join(''))
-  }
-  return out
 }
 
 const stripTag = (s: string): string => s.replace(/^§\d+§ /, '')

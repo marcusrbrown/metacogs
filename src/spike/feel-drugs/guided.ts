@@ -10,7 +10,7 @@
  * runner's workspace, isolation and event primitives and the spike driver's status and freeze helpers; the spike's own
  * `Arm`, `RunStatus` and `RunRecord` stay closed. `--provider scripted` (the default) costs nothing.
  */
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs as parseNodeArgs } from 'node:util'
@@ -21,10 +21,11 @@ import { CLIPROXY_UPSTREAM, type ResolvedCliproxy, resolveCliproxy as defaultRes
 import { destroyFixture } from '../../runner/env'
 import { allAssistantText, analyzeEvents, finalAnswerText, isSkillContentLoad, parseEvents, type Usage } from '../../runner/events'
 import { checkDebugConfig, checkIsolation, type ExpectedConfig, isMainRequest, offeredTools } from '../../runner/isolation'
-import { CredentialLeakError, type Needle, scanForLeaks } from '../../runner/manifest'
+import { CredentialLeakError, type Needle } from '../../runner/manifest'
 import { debugConfig, opencodeArgv, runArgv, sleepUnlessAborted, spawnCapture } from '../../runner/opencode'
 import { SPIKE_PROVIDER_ID, type RecordedRequest, type ScriptedStep, startRecordingProxy, startScriptedProvider } from '../../runner/scripted-provider'
 import { createRunWorkspace, sha256, stateRoot } from '../../runner/workspace'
+import { writeEvidence } from './artifacts'
 import {
   assertInside,
   assertPromptId,
@@ -647,12 +648,7 @@ async function runOnce(c: RunContext): Promise<GuidedRecord> {
     }
     // Nothing reaches the disk before the credential scan has seen all of it.
     const needles = [...(deps.needles ?? []), ...(c.cliproxy?.needles ?? [])]
-    const findings = scanForLeaks({ needles, manifestJson: JSON.stringify(record), artifacts, dirs: [ws.fixture.workspace] })
-    if (findings.length > 0) throw new CredentialLeakError(`${arm}-${prompt.id}-${c.index}`, [...new Set(findings.map((f) => f.label))])
-
-    mkdirSync(c.runDir, { recursive: true, mode: 0o700 })
-    for (const [file, text] of Object.entries(artifacts)) writeFileSync(join(c.runDir, file), text, { mode: 0o600 })
-    writeFileSync(join(c.runDir, 'run.json'), `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 })
+    writeEvidence({ dir: c.runDir, runId: `${arm}-${prompt.id}-${c.index}`, artifacts, manifestFile: 'run.json', manifest: `${JSON.stringify(record, null, 2)}\n`, needles, scanDirs: [ws.fixture.workspace] })
     return record
   } catch (e) {
     rmSync(c.runDir, { recursive: true, force: true })

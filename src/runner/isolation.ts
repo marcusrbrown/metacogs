@@ -332,3 +332,83 @@ export function checkIsolation(input: IsolationInput): IsolationEvidence {
 export function failedChecks(evidence: IsolationEvidence): IsolationCheck[] {
   return evidence.checks.filter((c) => !c.passed)
 }
+
+// ── the daily stack ────────────────────────────────────────────────────────
+
+export type DailyStackCheckName = 'plugins_loaded' | 'no_auth_plugins' | 'default_agent' | 'mcp_empty' | 'generated_kept' | 'skills_paths' | 'tools_offered' | 'skills_listed'
+
+export interface DailyStackCheck {
+  name: DailyStackCheckName
+  passed: boolean
+  detail: string
+}
+
+export interface DailyStackInput {
+  /** Output of `opencode debug config`. */
+  effective: unknown
+  generated: Record<string, unknown>
+  /** Plugin specs `plugin_origins` must list, in order. */
+  plugins: readonly string[]
+  /** The generated config file every origin must come from. */
+  configPath?: string
+  defaultAgent: string
+  /** Skill directories that must appear among `skills.paths`. */
+  skillsPaths?: readonly string[]
+  /** Generated keys the effective config must keep exactly (the stack adds agents, commands and more around them). A plugin may add `deny` rules to `permission` and nothing else to these. */
+  keepKeys?: readonly string[]
+  /** A main request: when given, the tools and skills it offers must include `feel` and `drugs`. */
+  offered?: RecordedRequest
+}
+
+export interface DailyStackVerdict {
+  passed: boolean
+  checks: DailyStackCheck[]
+}
+
+/** A generated value survives: equal, or for an object, every generated entry equal and any entry a plugin added only a `deny` (when `denyExtras`) or nothing. */
+function keptKey(effective: unknown, generated: unknown, denyExtras: boolean): boolean {
+  if (!isRecord(generated) || !isRecord(effective)) return equalsMasked(effective, generated)
+  if (!Object.keys(generated).every((k) => k in effective && equalsMasked(effective[k], generated[k]))) return false
+  return Object.keys(effective).filter((k) => !(k in generated)).every((k) => denyExtras && effective[k] === 'deny')
+}
+
+/**
+ * The owner's plugin stack is a different isolation profile from `checkDebugConfig`: the effective config is the
+ * generated one plus whatever the plugins add, so extra agents, commands and skills pass. What must hold is that the
+ * expected plugins loaded from the generated file, no auth plugin did, the default agent and an empty `mcp` stand, the
+ * security-critical generated keys survive untouched, and `feel` and `drugs` are offered as tools and skills.
+ */
+export function checkDailyStack(input: DailyStackInput): DailyStackVerdict {
+  const checks: DailyStackCheck[] = []
+  const eff = isRecord(input.effective) ? input.effective : undefined
+  const add = (name: DailyStackCheckName, passed: boolean, detail: string) => checks.push({ name, passed, detail })
+  if (!eff) {
+    add('plugins_loaded', false, '`debug config` did not return a JSON object')
+    return { passed: false, checks }
+  }
+
+  const origins = Array.isArray(eff.plugin_origins) ? eff.plugin_origins.filter(isRecord) : []
+  const specs = origins.map((o) => (typeof o.spec === 'string' ? o.spec : ''))
+  const sameOrder = specs.length === input.plugins.length && specs.every((s, i) => s === input.plugins[i])
+  const stray = input.configPath === undefined ? 0 : origins.filter((o) => o.source !== input.configPath).length
+  add('plugins_loaded', sameOrder && stray === 0, sameOrder ? (stray ? `${stray} plugin origins come from outside the generated config` : `${specs.length} plugins from the generated config`) : `plugin_origins lists ${specs.length} plugins, expected ${input.plugins.length}, or in another order`)
+  add('no_auth_plugins', !/(anthropic|openai|opencode)-auth/.test(JSON.stringify(eff.plugin ?? [])), 'no auth plugin in the effective plugin list')
+  add('default_agent', eff.default_agent === input.defaultAgent, `default agent is ${String(eff.default_agent)}, expected ${input.defaultAgent}`)
+  add('mcp_empty', isRecord(eff.mcp) && Object.keys(eff.mcp).length === 0, `mcp has ${isRecord(eff.mcp) ? Object.keys(eff.mcp).length : 'no'} entries`)
+  const drift = (input.keepKeys ?? []).filter((k) => !keptKey(eff[k], input.generated[k], k === 'permission'))
+  add('generated_kept', drift.length === 0, drift.length ? `changed from the generated config: ${drift.join(', ')}` : 'generated keys kept')
+  if (input.skillsPaths) {
+    const paths = isRecord(eff.skills) && Array.isArray(eff.skills.paths) ? eff.skills.paths : []
+    const missing = input.skillsPaths.filter((p) => !paths.includes(p))
+    add('skills_paths', missing.length === 0, missing.length ? `${missing.length} skill directories missing` : 'plugin skill directories present')
+  }
+  if (input.offered) {
+    const tools = offeredTools([input.offered])
+    const missingTools = ['feel', 'drugs'].filter((t) => !tools.includes(t))
+    add('tools_offered', missingTools.length === 0, missingTools.length ? `not offered: ${missingTools.join(', ')}` : 'feel and drugs offered')
+    const skills = availableSkillsIn(input.offered) ?? []
+    const missingSkills = ['feel', 'drugs'].filter((s) => !skills.includes(s))
+    add('skills_listed', missingSkills.length === 0, missingSkills.length ? `not listed: ${missingSkills.join(', ')}` : 'feel and drugs listed')
+  }
+  return { passed: checks.every((c) => c.passed), checks }
+}

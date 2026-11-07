@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 
+import { type CampaignCliDeps, CampaignUsageError, campaignCommand, statusCommand } from './campaign'
 import { extractSession } from './extract'
 import { approveFixture, assertOutsideRepo, buildFixture, freezeFixture, listFixtures, openStore, saveRaw, type StoreOptions } from './store'
 
@@ -12,14 +13,39 @@ export interface CliIo {
   env?: Record<string, string | undefined>
   repoRoot?: string
   now?: () => Date
+  /** Test seams for `campaign`. */
+  campaign?: CampaignCliDeps
 }
 
 const USAGE = [
   'usage: bun run replay extract --db <path> --session <id> --cutoff <msgid> [--window N] --out <raw-name>',
   '       bun run replay build <spec.json> | freeze <id> | approve <id> | list',
+  '       bun run replay campaign --name <n> --models <list> --arms <list|all> --fixtures <list|all> --cap <usd>',
+  '                              [--provider scripted|cliproxy] [--auth-cliproxy <keyname>] [--attempt-estimate <usd>]',
+  '                              [--timeout-ms N] [--again] [--expect-host-version <v>]',
+  '       bun run replay status <campaign>',
 ].join('\n')
 
 class UsageError extends Error {}
+
+/** Exit 0 done, 1 refused or failed, 2 usage, 3 a campaign left cells unrun, 4 a credential leak. Runs `campaign` too, which is async. */
+export async function mainAsync(argv: readonly string[], io: Partial<CliIo> = {}): Promise<number> {
+  if (argv[0] !== 'campaign') return main(argv, io)
+  const out = io.out ?? ((line: string) => console.log(line))
+  const err = io.err ?? ((line: string) => console.error(line))
+  try {
+    const parsed = parse(argv)
+    const storeOptions: StoreOptions = { ...(io.env ? { env: io.env } : {}), ...(io.repoRoot ? { repoRoot: io.repoRoot } : {}), ...(io.now ? { now: io.now } : {}) }
+    return await campaignCommand(parsed.values, { store: openStore(storeOptions), out, env: io.env ?? process.env, ...(io.campaign ? { deps: io.campaign } : {}) })
+  } catch (e) {
+    if (e instanceof CampaignUsageError || (e instanceof TypeError && 'code' in e)) {
+      err(`${e.message}\n${USAGE}`)
+      return 2
+    }
+    err(e instanceof Error ? `${e.name}: ${e.message}` : 'unexpected error')
+    return 1
+  }
+}
 
 /** Exit 0 done, 1 refused or failed, 2 usage. */
 export function main(argv: readonly string[], io: Partial<CliIo> = {}): number {
@@ -28,7 +54,7 @@ export function main(argv: readonly string[], io: Partial<CliIo> = {}): number {
   try {
     return run(argv, { out, err }, io)
   } catch (e) {
-    if (e instanceof UsageError) {
+    if (e instanceof UsageError || e instanceof CampaignUsageError) {
       err(`${e.message}\n${USAGE}`)
       return 2
     }
@@ -95,6 +121,10 @@ function run(argv: readonly string[], log: Pick<CliIo, 'out' | 'err'>, io: Parti
       for (const f of listFixtures(openStore(storeOptions))) log.out(`${f.id}\t${f.kind ?? '?'}\t${f.status}\t${f.approved ? 'approved' : 'unapproved'}`)
       return 0
     }
+    case 'status':
+      return statusCommand(arg, { store: openStore(storeOptions), out: log.out })
+    case 'campaign':
+      return fail('campaign runs through mainAsync')
     default:
       return fail(command ? `unknown command ${command}` : 'no command given')
   }
@@ -114,8 +144,19 @@ function parse(argv: readonly string[]) {
       cutoff: { type: 'string' },
       window: { type: 'string' },
       out: { type: 'string' },
+      name: { type: 'string' },
+      models: { type: 'string' },
+      arms: { type: 'string' },
+      fixtures: { type: 'string' },
+      cap: { type: 'string' },
+      provider: { type: 'string' },
+      'auth-cliproxy': { type: 'string' },
+      'attempt-estimate': { type: 'string' },
+      'timeout-ms': { type: 'string' },
+      'expect-host-version': { type: 'string' },
+      again: { type: 'boolean' },
     },
   })
 }
 
-if (import.meta.main) process.exitCode = main(process.argv.slice(2))
+if (import.meta.main) process.exitCode = await mainAsync(process.argv.slice(2))

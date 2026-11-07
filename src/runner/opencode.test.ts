@@ -1,4 +1,7 @@
-import { describe, expect, test } from 'bun:test'
+import { afterAll, describe, expect, test } from 'bun:test'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { opencodeArgv, OPENCODE_PIN, runArgv, spawnCapture } from './opencode'
 
@@ -60,5 +63,36 @@ describe('argv', () => {
     expect(opencodeArgv('--version')).toEqual(['bunx', `opencode-ai@${OPENCODE_PIN}`, '--version'])
     expect(runArgv('p/m', 'do it')).toEqual(['bunx', `opencode-ai@${OPENCODE_PIN}`, 'run', '--format', 'json', '--model', 'p/m', 'do it'])
     expect(runArgv('p/m', 'x')).not.toContain('--auto')
+  })
+})
+
+describe('spawnCapture with output files', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'spawn-files-'))
+  afterAll(() => rmSync(dir, { recursive: true, force: true }))
+
+  test('stdout and stderr land in the files and in the result; output past a pipe limit is whole', async () => {
+    const stdoutPath = join(dir, 'a.out')
+    const stderrPath = join(dir, 'a.err')
+    const r = await spawnCapture(['sh', '-c', 'head -c 1500000 /dev/zero | tr "\\0" x; echo err >&2'], { cwd: '/', env, timeoutMs: 20_000, stdoutPath, stderrPath })
+    expect(r.exitCode).toBe(0)
+    expect(r.stdout.length).toBe(1_500_000)
+    expect(readFileSync(stdoutPath, 'utf8')).toBe(r.stdout)
+    expect(readFileSync(stderrPath, 'utf8')).toBe('err\n')
+    expect(r.stderr).toBe('err\n')
+  })
+
+  test('a timeout kills the group and keeps what was written so far', async () => {
+    const stdoutPath = join(dir, 'b.out')
+    const r = await spawnCapture(['sh', '-c', 'echo partial; sleep 300 & echo $! >&2; wait'], { cwd: '/', env, timeoutMs: 600, killGraceMs: 500, stdoutPath, stderrPath: join(dir, 'b.err') })
+    expect(r.timedOut).toBe(true)
+    expect(r.stdout).toBe('partial\n')
+    await Bun.sleep(100)
+    expect(alive(Number(r.stderr.trim()))).toBe(false)
+  })
+
+  test('a spawn error still reaches the stderr text', async () => {
+    const r = await spawnCapture(['definitely-not-a-binary-xyz'], { cwd: '/', env, timeoutMs: 5_000, stdoutPath: join(dir, 'c.out'), stderrPath: join(dir, 'c.err') })
+    expect(r.exitCode).toBe(-1)
+    expect(r.stderr).toContain('definitely-not-a-binary-xyz')
   })
 })
