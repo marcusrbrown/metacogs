@@ -6,6 +6,7 @@ import { parseArgs } from 'node:util'
 import type { Rng } from '../blind'
 import { type CampaignCliDeps, CampaignUsageError, campaignCommand, statusCommand } from './campaign'
 import { extractSession } from './extract'
+import { type JudgeCliDeps, judgeMain } from './judge'
 import { revealCampaign } from './reveal'
 import { buildSheet } from './sheet'
 import { approveFixture, assertOutsideRepo, buildFixture, freezeFixture, listFixtures, openStore, saveRaw, type StoreOptions } from './store'
@@ -18,6 +19,8 @@ export interface CliIo {
   now?: () => Date
   /** Test seams for `campaign`. */
   campaign?: CampaignCliDeps
+  /** Test seams for `judge`. */
+  judge?: JudgeCliDeps
   /** Test seams for `sheet`: the shuffle source and the build id. */
   sheet?: { rng?: Rng; buildId?: string }
 }
@@ -31,12 +34,15 @@ const USAGE = [
   '       bun run replay status <campaign>',
   '       bun run replay sheet <campaign> [--models <list>]',
   '       bun run replay reveal <campaign> [--partial]',
+  '       bun run replay judge <campaign> [--models <list>] [--fixtures <list>] [--judge-model <id>] [--auth-cliproxy <keyname>]',
+  '                              [--cap <usd>] [--provider scripted|cliproxy] [--again] [--seed <n>]',
 ].join('\n')
 
 class UsageError extends Error {}
 
 /** Exit 0 done, 1 refused or failed, 2 usage, 3 a campaign left cells unrun, 4 a credential leak. Runs `campaign` too, which is async. */
 export async function mainAsync(argv: readonly string[], io: Partial<CliIo> = {}): Promise<number> {
+  if (argv[0] === 'judge') return judgeMain(argv, io)
   if (argv[0] !== 'campaign') return main(argv, io)
   const out = io.out ?? ((line: string) => console.log(line))
   const err = io.err ?? ((line: string) => console.error(line))
