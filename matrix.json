@@ -108,7 +108,7 @@
       "host_version": "2.2.2",
       "evidence_ref": "docs/install.md#opencode-plugin",
       "date": "2026-10-30",
-      "note": "The contract suite passes on the pinned OpenCode 2.2.2 CLI with the scripted provider."
+      "note": "The contract suite passed on OpenCode v2 2.2.2 with the scripted provider on this date; CI keeps running it on the current pin."
     },
     "claude-code": {
       "status": "verified",

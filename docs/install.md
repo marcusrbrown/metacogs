@@ -58,7 +58,7 @@ If the helper or the `record` tool cannot run, the skill does not retry blindly 
 
 The plugin is the `metacogs` npm package. It registers two tools (`feel`, `drugs`) and four skills (`feel`, `drugs`, `synthesis`, `counterfactual`; `/feel` and `/drugs` run the two skills of those names, which are separate from the tools) and a short guidance block. What each one does is in [OpenCode plugin](../README.md#opencode-plugin).
 
-Requirements: OpenCode 1.19.4 or later 1.x, or OpenCode v2 2.2.0 or later 2.x; older versions are unsupported. The tested versions are OpenCode 1.19.4 and OpenCode v2 2.2.2. Node 22 or newer is still needed for the method skills' record helper, as above. The tools need nothing else.
+Requirements: OpenCode 1.19.4 or later 1.x, or OpenCode v2 2.2.0 or later 2.x; older versions are unsupported. The tested versions are OpenCode 1.19.4, and the OpenCode v2 CLI pinned in `package.json` (`testedWith`), which CI runs the contract suite on. Node 22 or newer is still needed for the method skills' record helper, as above. The tools need nothing else.
 
 1. Remove any copy of `synthesis` or `counterfactual` from `.agents/skills/` or another scanned path. The plugin provides skills with the same names. On v1, OpenCode does not guarantee which of two same-named skills wins. On v2, an on-disk `.agents/skills/<name>` copy shadows the plugin's skill of the same name.
 2. Add the package to `opencode.json` in the project, or to `~/.config/opencode/opencode.json` for all projects:
@@ -262,7 +262,7 @@ Evidence:
 
 Install: the plugin; see [OpenCode plugin](#opencode-plugin). A copy at `.agents/skills/<method>/` also loads and shadows the plugin's skill of the same name.
 
-Status: `unverified`. No v2 eval report exists. The plugin's contract suite passes on OpenCode v2 2.2.2 with a scripted provider.
+Status: `unverified`. No v2 eval report exists. The plugin's contract suite passed on OpenCode v2 2.2.2 with a scripted provider, and CI keeps running it on the CLI pinned in `package.json` (`testedWith`).
 
 ## Pi
 

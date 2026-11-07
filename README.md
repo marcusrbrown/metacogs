@@ -52,7 +52,7 @@ OpenCode v2 reads a `plugins` key instead:
 { "plugins": [{ "package": "metacogs" }] }
 ```
 
-OpenCode installs the package on the next start. The supported versions are OpenCode 1.19.4 and later 1.x, and 2.2.0 and later 2.x; older versions are unsupported. It is tested on OpenCode 1.19.4 and OpenCode v2 2.2.2.
+OpenCode installs the package on the next start. The supported versions are OpenCode 1.19.4 and later 1.x, and 2.2.0 and later 2.x; older versions are unsupported. It is tested on OpenCode 1.19.4, and CI runs the contract suite on the OpenCode v2 CLI pinned in `package.json` (`testedWith`).
 
 On OpenCode v1, typed `/feel` and `/drugs` run the skills, but the TUI `/` popup lists only commands that are not skills. On v2, multi-word arguments arrive as typed, unquoted. A skill denied by permissions is still delivered when typed as a slash command; the `permissions` array form is in [docs/install.md](docs/install.md#opencode-plugin).
 
@@ -123,7 +123,7 @@ Without the skill, a model fails the preregistered rubric on 5 of 6 dev fixtures
 
 The dev bar changed from a per-fixture 4 of 5 to a pooled 24 of 30 in epoch 5, after the dev results of epochs 2 to 4 were seen. It is declared in the epoch-5 prereg before any epoch-5 run, but it was chosen with that data in view. The epoch-5 held-out set is burned; any edit to the skill voids the read.
 
-The other nine upstream concepts are listed in [HYPOTHESES.md](HYPOTHESES.md) with one-line interpretations. None has fixtures or a skill.
+The other nine upstream concepts are listed in [HYPOTHESES.md](HYPOTHESES.md) with one-line interpretations. None of them has an evaluated method skill. `feel` and `drugs` ship as plugin tools and skills (see [OpenCode plugin](#opencode-plugin)) without eval fixtures, and a spike skill for them lives under `evals/spikes/feel-drugs/`. `tether` has two dev fixtures from a pilot that closed as not-reproduced, and no skill. The remaining six (`become`, `name`, `ritual`, `deconstruct`, `fork`, `measure`) were dropped, rejected or excluded, and have neither.
 
 ## Host matrix
 
@@ -139,7 +139,7 @@ The other nine upstream concepts are listed in [HYPOTHESES.md](HYPOTHESES.md) wi
 | Host | Plugin package |
 | --- | --- |
 | OpenCode | `verified`<br>OpenCode 1.19.4 · 2026-10-26 · [evidence](evals/spikes/feel-drugs/README.md#plugin-reads)<br>Tested on the pinned OpenCode release with the packed package: scripted-provider integration suite, host probes and guided reads. |
-| OpenCode (v2) | `unverified`<br>OpenCode (v2) 2.2.2 · 2026-10-30 · [evidence](docs/install.md#opencode-plugin)<br>The contract suite passes on the pinned OpenCode 2.2.2 CLI with the scripted provider. |
+| OpenCode (v2) | `unverified`<br>OpenCode (v2) 2.2.2 · 2026-10-30 · [evidence](docs/install.md#opencode-plugin)<br>The contract suite passed on OpenCode v2 2.2.2 with the scripted provider on this date; CI keeps running it on the current pin. |
 | Claude Code | `verified`<br>Claude Code 2.1.312 · 2026-10-28 · [evidence](docs/install.md#claude-code-plugin)<br>Manual run: Checked by hand on 2026-10-28 in an interactive Claude Code 2.1.312 session (Sonnet 5.5) with metacogs 0.3.0 installed from the marketplace. Checked: install, `/mcp` showing the server connected, the session note quoted in full, the `guidance` option turning the note off, `/metacogs:feel` and `/metacogs:drugs caffeine` calling the tools with the right arguments, `/metacogs:counterfactual` writing a record through the `record` tool with no Bash prompt, and uninstall leaving the records in place.<br>Also checked in scripted headless runs (`claude -p`, Claude Code 2.1.312), and `claude plugin validate --strict` passes on the marketplace and the plugin. The `synthesis` and `counterfactual` renders are host-adapted, not the text that was evaluated. |
 | Codex | `verified` (experimental)<br>Codex 0.165.0 · 2026-10-28 · [evidence](docs/install.md#codex-plugin)<br>Manual run: Checked by hand on 2026-10-28 in the Codex 0.165.0 TUI (GPT-6-Astra) with metacogs 0.3.0. Checked: `codex plugin marketplace add` and `codex plugin add`, the four skills in the `$metacogs:` picker, `/mcp` showing the metacogs server connected with three tools, `$metacogs:feel` and `$metacogs:drugs caffeine`, no session note as expected, `$metacogs:counterfactual` writing a record through the `record` tool with no prompt, and `codex plugin remove` leaving the records in place.<br>Also checked in scripted `codex exec` runs (Codex 0.162.1). The manifests validate against the agent-plugins.org 1.0.0 schemas; Codex has no CLI validator. The `synthesis` and `counterfactual` renders are host-adapted, not the text that was evaluated. |
 <!-- matrix:end -->
