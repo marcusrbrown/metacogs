@@ -3,8 +3,11 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 
+import type { Rng } from '../blind'
 import { type CampaignCliDeps, CampaignUsageError, campaignCommand, statusCommand } from './campaign'
 import { extractSession } from './extract'
+import { revealCampaign } from './reveal'
+import { buildSheet } from './sheet'
 import { approveFixture, assertOutsideRepo, buildFixture, freezeFixture, listFixtures, openStore, saveRaw, type StoreOptions } from './store'
 
 export interface CliIo {
@@ -15,6 +18,8 @@ export interface CliIo {
   now?: () => Date
   /** Test seams for `campaign`. */
   campaign?: CampaignCliDeps
+  /** Test seams for `sheet`: the shuffle source and the build id. */
+  sheet?: { rng?: Rng; buildId?: string }
 }
 
 const USAGE = [
@@ -24,6 +29,8 @@ const USAGE = [
   '                              [--provider scripted|cliproxy] [--auth-cliproxy <keyname>] [--attempt-estimate <usd>]',
   '                              [--timeout-ms N] [--again] [--expect-host-version <v>]',
   '       bun run replay status <campaign>',
+  '       bun run replay sheet <campaign> [--models <list>]',
+  '       bun run replay reveal <campaign> [--partial]',
 ].join('\n')
 
 class UsageError extends Error {}
@@ -123,6 +130,24 @@ function run(argv: readonly string[], log: Pick<CliIo, 'out' | 'err'>, io: Parti
     }
     case 'status':
       return statusCommand(arg, { store: openStore(storeOptions), out: log.out })
+    case 'sheet': {
+      const campaign = arg ?? fail('sheet needs a campaign name')
+      const models = values.models?.split(',').map((m) => m.trim()).filter(Boolean)
+      if (values.models !== undefined && !models?.length) fail('--models takes a comma-separated list')
+      const built = buildSheet(openStore(storeOptions), { campaign, ...(models ? { models } : {}), ...(io.sheet?.rng ? { rng: io.sheet.rng } : {}), ...(io.sheet?.buildId ? { buildId: io.sheet.buildId } : {}) })
+      const { key } = built
+      log.out(`built sheet ${campaign} build=${key.build_id} scenarios=${key.fixtures.length} answers=${key.answers.length} appendix=${key.appendix.length}`)
+      log.out(`sheet ${built.sheetPath}`)
+      log.out(`key   ${built.keyPath}`)
+      return 0
+    }
+    case 'reveal': {
+      const campaign = arg ?? fail('reveal needs a campaign name')
+      const revealed = revealCampaign(openStore(storeOptions), { campaign, partial: values.partial === true })
+      for (const line of revealed.lines) log.out(line)
+      log.out(`summary ${revealed.summaryPath}`)
+      return 0
+    }
     case 'campaign':
       return fail('campaign runs through mainAsync')
     default:
@@ -155,6 +180,7 @@ function parse(argv: readonly string[]) {
       'timeout-ms': { type: 'string' },
       'expect-host-version': { type: 'string' },
       again: { type: 'boolean' },
+      partial: { type: 'boolean' },
     },
   })
 }
