@@ -668,6 +668,109 @@ describe('reruns', () => {
   })
 })
 
+// ── the reference version and reuse ────────────────────────────────────────
+
+/** Turns a synthetic campaign into a real-world one: attempts record the world spec's hash and a `world` block. */
+function asWorld(l: SheetLab, campaign: string, id: string, specText: string): void {
+  mkdirSync(join(l.store.root, 'world', id), { recursive: true })
+  writeFileSync(join(l.store.root, 'world', id, 'spec.json'), specText)
+  for (const file of walk(campaignDir(l.store, campaign)).filter((f) => f.endsWith('attempt.json'))) {
+    const record = JSON.parse(readFileSync(file, 'utf8'))
+    record.world = { repo: 'synthetic' }
+    record.fixture.spec_sha256 = sha256(specText)
+    writeFileSync(file, `${JSON.stringify(record)}\n`)
+  }
+}
+
+const specPath = (l: SheetLab, id = 'moment-one') => join(l.store.root, 'fixtures', id, 'spec.json')
+
+describe('reference version', () => {
+  test('a spec rebuilt after the attempts is refused, with the reason, and nothing is judged', async () => {
+    const l = lab()
+    await runSyntheticCampaign(l, { fixtures: [FIXTURES[0]!], models: [REPLAY_MODELS[0]] })
+    writeFileSync(specPath(l), `${readFileSync(specPath(l), 'utf8')} `)
+    const f = fake(ok())
+    const summary = await full(l, f)
+    expect(f.calls).toHaveLength(0)
+    expect(summary.unjudged).toHaveLength(1)
+    expect(summary.unjudged[0]!.reason).toMatch(/^spec_changed: .*rebuilt/)
+    expect(judgements(l)).toEqual([])
+  })
+
+  test('an untouched spec is judged', async () => {
+    const l = lab()
+    await runSyntheticCampaign(l, { fixtures: [FIXTURES[0]!], models: [REPLAY_MODELS[0]] })
+    const f = fake(ok())
+    expect(await full(l, f)).toMatchObject({ judged: 1, unjudged: [] })
+  })
+
+  test('a real-world pair is checked against the world spec', async () => {
+    const l = lab()
+    await runSyntheticCampaign(l, { name: 'world1', fixtures: [FIXTURES[0]!], models: [REPLAY_MODELS[0]], arms: SIX })
+    asWorld(l, 'world1', 'moment-one', '{"id":"moment-one"}\n')
+    const f = fake(ok())
+    expect(await full(l, f, { campaign: 'world1' })).toMatchObject({ judged: 1 })
+    writeFileSync(join(l.store.root, 'world', 'moment-one', 'spec.json'), '{"id":"moment-one","changed":true}\n')
+    const refused = await full(l, fake(ok()), { campaign: 'world1', again: true })
+    expect(refused.unjudged[0]!.reason).toMatch(/^spec_changed/)
+  })
+})
+
+describe('reuse of an earlier judgement', () => {
+  const edit = (l: SheetLab, change: (j: Judgement) => void): void => {
+    const dir = judgementDir(l.store, 'phase1')
+    for (const name of readdirSync(dir).filter((n) => n.endsWith('.json'))) {
+      const j = JSON.parse(readFileSync(join(dir, name), 'utf8')) as Judgement
+      change(j)
+      writeFileSync(join(dir, name), `${JSON.stringify(j, null, 2)}\n`)
+    }
+  }
+  const prepared = async () => {
+    const l = lab()
+    await runSyntheticCampaign(l, { fixtures: [FIXTURES[0]!], models: [REPLAY_MODELS[0]] })
+    return l
+  }
+
+  test('a scripted dry run does not suppress a live run', async () => {
+    const l = await prepared()
+    await full(l, fake(ok()), { provider: 'scripted' })
+    const live = fake(ok())
+    const summary = await full(l, live, { provider: 'cliproxy', capUsd: 5 })
+    expect(live.calls).toHaveLength(1)
+    expect(summary).toMatchObject({ judged: 1, already_judged: 0 })
+    expect(judgements(l).map((j) => j.judge.provider)).toEqual(['scripted', 'cliproxy'])
+  })
+
+  test('the summary of a live run does not include canned verdicts when the live judge failed', async () => {
+    const l = await prepared()
+    await full(l, fake(ok()), { provider: 'scripted' })
+    const summary = await full(l, fake(() => new TransportError('HTTP 503')), { provider: 'cliproxy', capUsd: 5 })
+    expect(summary.unjudged).toHaveLength(1)
+    expect(readFileSync(summary.summaryPath, 'utf8')).not.toContain('Runs the checks.')
+  })
+
+  test('the same provider, judge model, prompt and input are reused', async () => {
+    const l = await prepared()
+    await full(l, fake(ok()))
+    const again = fake(ok())
+    expect(await full(l, again)).toMatchObject({ already_judged: 1, judged: 0 })
+    expect(again.calls).toHaveLength(0)
+  })
+
+  test.each([
+    ['judge model', (j: Judgement) => void (j.judge.model = 'other-model')],
+    ['prompt sha', (j: Judgement) => void (j.judge.prompt_sha256 = 'old-prompt')],
+    ['input sha', (j: Judgement) => void (j.judge.input_sha256 = 'old-input')],
+  ])('a different %s is judged again', async (_name, change) => {
+    const l = await prepared()
+    await full(l, fake(ok()))
+    edit(l, change)
+    const again = fake(ok())
+    expect(await full(l, again)).toMatchObject({ already_judged: 0, judged: 1 })
+    expect(again.calls).toHaveLength(1)
+  })
+})
+
 // ── the cap ────────────────────────────────────────────────────────────────
 
 describe('cap', () => {

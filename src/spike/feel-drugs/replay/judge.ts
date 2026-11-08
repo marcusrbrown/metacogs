@@ -72,6 +72,10 @@ export interface CollectedArm {
   /** Attempt directory, relative to the campaign directory. */
   attempt: string
   attempt_sha256: string
+  /** The `fixture.spec_sha256` the attempt recorded: the version of the spec it ran from. */
+  spec_sha256: string
+  /** The attempt ran in real-world mode, so its spec is the world spec. */
+  world: boolean
   /** The answer text exactly as the judge sees it. */
   text: string
   environment_errors: number
@@ -225,6 +229,8 @@ export function collectJudgeable(store: Store, campaign: string, options: Collec
       message: describeMessage(record.message),
       attempt: `${row.fixture}/${modelSlug(row.model)}/${row.arm}/${row.counted.id}`,
       attempt_sha256: sha256(bytes),
+      spec_sha256: record.fixture.spec_sha256,
+      world: record.world !== undefined,
       text: rendered.text,
       environment_errors: rendered.environment_errors,
       other_errors: rendered.other_errors,
@@ -261,6 +267,27 @@ export function loadReference(store: Store, fixture: string): Reference {
   if (!parsed.success) throw new Error(`fixture ${fixture}: spec.json is unreadable (${parsed.error.issues.map((i) => i.path.join('.')).join(', ')})`)
   const spec = parsed.data
   return { kind: spec.kind, expected_outcome_ref: spec.expected_outcome_ref, author_next_turn_ref: spec.author_next_turn_ref ?? null, brief: renderBrief({ turns: spec.turns as unknown as Turn[] }) }
+}
+
+/** The spec file an attempt ran from: the world spec of a real-world attempt, the fixture spec otherwise. */
+const specFileOf = (store: Store, fixture: string, world: boolean): string => join(store.root, world ? 'world' : 'fixtures', fixture, 'spec.json')
+
+/**
+ * Null when every arm ran from the spec that is in the store now. Otherwise the reason to refuse the pair: a spec rebuilt after
+ * the attempts would hand the judge a reference that belongs to a different scenario. Snapshots are out of scope; refusing is enough.
+ */
+export function specVersionProblem(store: Store, pair: JudgePair): string | null {
+  const recorded = new Set(pair.arms.map((a) => `${a.world}:${a.spec_sha256}`))
+  if (recorded.size > 1) return `spec_changed: the arms of ${pair.fixture} ran from different versions of its spec`
+  for (const arm of pair.arms) {
+    const file = specFileOf(store, pair.fixture, arm.world)
+    if (!existsSync(file)) {
+      if (arm.world) return `spec_changed: the ${pair.fixture} world spec is no longer in the store`
+      continue // loadReference reports a missing fixture spec
+    }
+    if (sha256(readFileSync(file, 'utf8')) !== arm.spec_sha256) return `spec_changed: the ${pair.fixture} spec was rebuilt after these attempts ran; rerun the cells or restore the spec`
+  }
+  return null
 }
 
 // ── the request ────────────────────────────────────────────────────────────
@@ -930,20 +957,31 @@ export async function judgeCampaign(options: JudgeOptions, deps: JudgeDeps): Pro
 
   for (const pair of collected.pairs) {
     const mark = (reason: string): void => void unjudged.push({ fixture: pair.fixture, model: pair.model, reason })
-    if (!options.again && existing.some((j) => j.fixture === pair.fixture && j.model === pair.model && j.status === 'judged')) {
-      already += 1
-      continue
-    }
     if (!pair.arms.some((a) => a.kind === 'baseline') || !pair.arms.some((a) => a.kind !== 'baseline')) {
       mark(pair.arms.some((a) => a.kind === 'baseline') ? 'no_arm_to_judge' : 'no_continue_run')
       continue
+    }
+    const problem = specVersionProblem(store, pair)
+    if (problem) {
+      mark(problem)
+      continue
+    }
+    const reference = loadReference(store, pair.fixture)
+    // A judged file is reused only when the same judge looked at the same input: provider, model, prompt and input all match.
+    const sameInputs = (j: Judgement): boolean =>
+      j.fixture === pair.fixture && j.model === pair.model && j.status === 'judged' && j.judge.provider === options.provider && j.judge.prompt_sha256 === JUDGE_PROMPT_SHA256 && j.judge.input_sha256 === inputHash(reference, pair.arms)
+    if (!options.again && existing.some(sameInputs)) {
+      judgeModel ??= options.judgeModel ?? selectJudgeModel(await deps.transport.listModels())
+      if (existing.some((j) => sameInputs(j) && j.judge.model === judgeModel)) {
+        already += 1
+        continue
+      }
     }
     if (stopped) {
       mark('budget')
       continue
     }
     if (judgeModel === null) judgeModel = options.judgeModel ?? selectJudgeModel(await deps.transport.listModels())
-    const reference = loadReference(store, pair.fixture)
     const outcome = await judgePair(pair, reference, { options, deps, model: judgeModel, dir, existing, spentSoFar: prior + spent })
     spent += outcome.spent
     if (outcome.kind === 'budget') {
@@ -960,7 +998,8 @@ export async function judgeCampaign(options: JudgeOptions, deps: JudgeDeps): Pro
     log(`${pair.fixture} ${pair.model}: ${outcome.kind === 'written' ? outcome.status : outcome.kind === 'budget' ? 'stopped before the next call: it could pass the cap' : 'unjudged'}`)
   }
 
-  const files = readJudgements(dir)
+  // A run's summary reads its own provider's files: canned verdicts never stand in for a live judge, or the other way round.
+  const files = readJudgements(dir).filter((j) => j.judge.provider === options.provider)
   const summary = renderSummary({ campaign: options.campaign, files, skipped: collected.skipped, seed: options.seed ?? defaultSeed(options.campaign, files) })
   assertNoNeedles(summary, deps.needles ?? [], 'summary')
   const summaryPath = join(dir, 'summary.md')
