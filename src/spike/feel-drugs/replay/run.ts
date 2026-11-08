@@ -504,7 +504,7 @@ export async function runCampaign(options: CampaignOptions, deps: CampaignDeps):
           fixture: loaded,
           executor: deps.executor,
           provider: options.provider,
-          ...(deps.cliproxy || deps.needles ? { needles: [...realWorldNeedles(deps.cliproxy?.needles ?? [], deps.loadFixture !== undefined), ...(deps.needles ?? [])] } : {}),
+          ...(deps.cliproxy || deps.needles ? { needles: [...realWorldNeedles(deps.cliproxy?.needles ?? [], options.world === true), ...(deps.needles ?? [])] } : {}),
           ...(options.expectedHostVersion ? { expectedHostVersion: options.expectedHostVersion } : {}),
           ...(deps.skillsDir ? { skillsDir: deps.skillsDir } : {}),
           ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),

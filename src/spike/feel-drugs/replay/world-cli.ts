@@ -19,7 +19,13 @@ export interface WorldValues {
 
 export const defaultDb = (home = homedir()): string => join(home, '.local', 'share', 'opencode', 'opencode.db')
 
-const ids = (spec: string | undefined, fallback: readonly string[]): string[] => (spec === undefined || spec === 'all' ? [...fallback] : spec.split(',').map((s) => s.trim()).filter(Boolean))
+/** The named scenarios, or all of them when `--fixtures` is absent or `all`. An explicit but empty selection is an error, not a no-op. */
+function ids(spec: string | undefined, fallback: readonly string[]): string[] {
+  if (spec === undefined || spec === 'all') return [...fallback]
+  const named = spec.split(',').map((s) => s.trim()).filter(Boolean)
+  if (named.length === 0) throw new WorldUsageError('--fixtures takes a comma-separated list of scenario ids, or all')
+  return named
+}
 
 /** Where the scenario would land today: clones into a temp directory of its own, reads the commit and rule, and deletes it. */
 export function resolveScenarioWorld(store: Store, id: string, ctx: { home?: string } = {}): WorldRecord {

@@ -499,3 +499,25 @@ describe('real-world seed turns', () => {
     expect(jobs).toHaveLength(0)
   })
 })
+
+describe('scan policy follows the world flag, not the loader', () => {
+  const prefixOnly = (): ReturnType<typeof fakeExecutor> => fakeExecutor({ tweak: (_j, r) => ({ ...r, stdout: stdoutOf(textEvent('a log line mentions sk-test- by itself'), stepFinish()) }) })
+
+  test('a custom loader without the world flag still scans for the key prefix', async () => {
+    const l = lab()
+    approvedFixture(l.store)
+    const { loadFrozen } = await import('./store')
+    const { executor } = prefixOnly()
+    await expect(runCampaign(options({ arms: ['continue-a'], provider: 'cliproxy', attemptEstimateUsd: 1 }), { store: l.store, executor, cliproxy: fakeCliproxy, loadFixture: (id) => loadFrozen(l.store, id) })).rejects.toBeInstanceOf(CredentialLeakError)
+  })
+
+  test('the world flag drops the prefix with the default loader, and the full key is still caught', async () => {
+    const l = lab()
+    approvedFixture(l.store)
+    const { executor } = prefixOnly()
+    const summary = await runCampaign(options({ arms: ['continue-a'], provider: 'cliproxy', attemptEstimateUsd: 1, world: true }), { store: l.store, executor, cliproxy: fakeCliproxy })
+    expect(summary.counted).toEqual({ completed: 1 })
+    const leaking = fakeExecutor({ tweak: (_j, r) => ({ ...r, stdout: stdoutOf(textEvent(`key ${KEY}`), stepFinish()) }) })
+    await expect(runCampaign(options({ name: 'camp-2', arms: ['continue-a'], provider: 'cliproxy', attemptEstimateUsd: 1, world: true }), { store: l.store, executor: leaking.executor, cliproxy: fakeCliproxy })).rejects.toBeInstanceOf(CredentialLeakError)
+  })
+})

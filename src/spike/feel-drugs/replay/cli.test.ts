@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { main } from './cli'
+import { main, mainAsync } from './cli'
 import type { FixtureSpec } from './store'
 
 const cleanup: (() => void)[] = []
@@ -146,5 +146,22 @@ describe('replay cli', () => {
     expect(h.run('extract', '--db', 'x', '--session', 's', '--cutoff', 'c', '--out', 'o', '--window', 'many')).toBe(2)
     expect(h.run('freeze')).toBe(2)
     expect(h.run('build')).toBe(2)
+  })
+
+  test('surplus positional arguments are usage errors that point to --fixtures', () => {
+    const h = harness()
+    expect(h.run('world', 'build', 'fixture-a')).toBe(2)
+    expect(h.err.join('\n')).toMatch(/unexpected argument "fixture-a".*--fixtures/s)
+    expect(h.run('world', 'list', 'x')).toBe(2)
+    expect(h.run('freeze', 'a', 'b')).toBe(2)
+    expect(h.run('list', 'a')).toBe(2)
+    expect(h.run('status', 'camp', 'x')).toBe(2)
+  })
+
+  test('a campaign command with a surplus positional is a usage error too', async () => {
+    const h = harness()
+    const code = await mainAsync(['campaign', 'fixture-a', '--name', 'n'], { out: () => {}, err: (l) => h.err.push(l), env: { XDG_STATE_HOME: h.state }, repoRoot: h.repoRoot })
+    expect(code).toBe(2)
+    expect(h.err.join('\n')).toMatch(/unexpected argument "fixture-a".*--fixtures/s)
   })
 })

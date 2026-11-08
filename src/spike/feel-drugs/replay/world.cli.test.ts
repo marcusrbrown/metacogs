@@ -103,6 +103,17 @@ describe('replay world specs | build | list', () => {
     expect(h.run('world', 'frobnicate')).toBe(2)
     expect(h.run('world')).toBe(2)
   })
+
+  test("an explicitly empty --fixtures is a usage error, not a successful no-op", () => {
+    const h = harness()
+    for (const sub of ['specs', 'build']) {
+      expect(h.run('world', sub, '--db', h.db, '--fixtures', '')).toBe(2)
+      expect(h.run('world', sub, '--db', h.db, '--fixtures', ',')).toBe(2)
+      expect(h.run('world', sub, '--db', h.db, '--fixtures', ' , ')).toBe(2)
+    }
+    expect(h.err.join('\n')).toContain('--fixtures')
+    expect(h.out).toEqual([])
+  })
 })
 
 describe('campaign --world real', () => {

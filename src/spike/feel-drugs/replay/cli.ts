@@ -50,6 +50,8 @@ export async function mainAsync(argv: readonly string[], io: Partial<CliIo> = {}
   const err = io.err ?? ((line: string) => console.error(line))
   try {
     const parsed = parse(argv)
+    const surplus = surplusArgument(parsed.positionals)
+    if (surplus) throw new CampaignUsageError(surplus)
     const storeOptions: StoreOptions = { ...(io.env ? { env: io.env } : {}), ...(io.repoRoot ? { repoRoot: io.repoRoot } : {}), ...(io.now ? { now: io.now } : {}) }
     return await campaignCommand(parsed.values, { store: openStore(storeOptions), out, env: io.env ?? process.env, ...(io.campaign ? { deps: io.campaign } : {}) })
   } catch (e) {
@@ -86,6 +88,8 @@ function run(argv: readonly string[], log: Pick<CliIo, 'out' | 'err'>, io: Parti
   } catch (e) {
     throw new UsageError(e instanceof Error ? e.message : 'bad arguments')
   }
+  const surplus = surplusArgument(parsed.positionals)
+  if (surplus) fail(surplus)
   const [command, arg] = parsed.positionals
   const { values } = parsed
   const storeOptions: StoreOptions = { ...(io.env ? { env: io.env } : {}), ...(io.repoRoot ? { repoRoot: io.repoRoot } : {}), ...(io.now ? { now: io.now } : {}) }
@@ -163,6 +167,15 @@ function run(argv: readonly string[], log: Pick<CliIo, 'out' | 'err'>, io: Parti
     default:
       return fail(command ? `unknown command ${command}` : 'no command given')
   }
+}
+
+/** How many positionals each command takes, the command itself included. Anything past that was meant as a selection and would be silently ignored. */
+const POSITIONALS: Readonly<Record<string, number>> = { extract: 1, build: 2, freeze: 2, approve: 2, list: 1, status: 2, world: 2, campaign: 1 }
+
+function surplusArgument(positionals: readonly string[]): string | undefined {
+  const max = POSITIONALS[positionals[0] ?? '']
+  if (max === undefined || positionals.length <= max) return undefined
+  return `unexpected argument ${JSON.stringify(positionals[max])} for ${positionals.slice(0, max).join(' ')}; to select scenarios or fixtures use --fixtures <list>`
 }
 
 const fail = (message: string): never => {
