@@ -184,4 +184,40 @@ describe('building and loading a scenario', () => {
     writeFileSync(file, JSON.stringify(doc))
     expect(() => loadWorldFixture(l.store, 'moment-a', { noCheckout: true })).toThrow(/cutoff assistant message/)
   })
+
+  describe('metadata is validated at run time', () => {
+    const tamper = (change: (meta: Record<string, unknown>) => void) => {
+      const { l, db } = built()
+      buildWorldScenario(l.store, 'moment-a', { db })
+      const file = join(worldDir(l.store, 'moment-a'), 'meta.json')
+      const meta = JSON.parse(readFileSync(file, 'utf8'))
+      change(meta)
+      writeFileSync(file, JSON.stringify(meta))
+      return l
+    }
+
+    test.each([
+      ['missing', (m: Record<string, unknown>) => void delete m.seed_user_turns],
+      ['empty', (m: Record<string, unknown>) => void (m.seed_user_turns = [])],
+      ['blank entries', (m: Record<string, unknown>) => void (m.seed_user_turns = ['ok', ' '])],
+      ['not a list', (m: Record<string, unknown>) => void (m.seed_user_turns = 'please fix the build')],
+    ])('seed_user_turns %s is rejected, naming the field and not the value', (_name, change) => {
+      const l = tamper(change)
+      let message = ''
+      try {
+        loadWorldFixture(l.store, 'moment-a', { noCheckout: true })
+      } catch (e) {
+        expect(e).toBeInstanceOf(SpecError)
+        message = (e as Error).message
+      }
+      expect(message).toMatch(/seed_user_turns/)
+      expect(message).not.toContain('please fix the build')
+    })
+
+    test('other missing or mistyped fields are rejected too', () => {
+      expect(() => loadWorldFixture(tamper((m) => void delete m.cutoff).store, 'moment-a', { noCheckout: true })).toThrow(/cutoff/)
+      expect(() => loadWorldFixture(tamper((m) => void (m.branch_hints = 'main')).store, 'moment-a', { noCheckout: true })).toThrow(/branch_hints/)
+      expect(() => loadWorldFixture(tamper((m) => void (m.schema_version = 2)).store, 'moment-a', { noCheckout: true })).toThrow(/schema_version/)
+    })
+  })
 })

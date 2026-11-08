@@ -185,7 +185,7 @@ export function evaluateGates(input: GateInput): GateResult {
     checks.push(check('model', bad.length === 0 && hostWrong === 0, `${bad.length} of ${mains.length} main requests and ${hostWrong} host messages differ from ${model}`, 'model_mismatch'))
 
     const first = mains[0]!
-    checks.push(check('seed_history', seedPresent(bodyOf(first), input.seedUserTurns), `${input.seedUserTurns.length} fixture user turns`, 'seed_history_missing'))
+    checks.push(check('seed_history', input.seedUserTurns.length > 0 && seedPresent(bodyOf(first), input.seedUserTurns), `${input.seedUserTurns.length} fixture user turns`, 'seed_history_missing'))
 
     const lastParts = userMessageParts(bodyOf(mains.at(-1)!)).at(-1) ?? []
     const council = lastParts.some((p) => p.includes('## Council Mode'))

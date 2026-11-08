@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { buildWorldScenario, generateWorldSpecs, listWorldScenarios, readWorldSpec, type ScenarioMeta, WORLD_SCENARIOS, worldDir } from './scenario'
+import { buildWorldScenario, generateWorldSpecs, listWorldScenarios, parseScenarioMeta, readWorldSpec, type ScenarioMeta, WORLD_SCENARIOS, worldDir } from './scenario'
 import type { Store } from './store'
 import { checkoutOf, cloneWorld, type WorldRecord } from './world'
 
@@ -34,7 +34,7 @@ export function resolveScenarioWorld(store: Store, id: string, ctx: { home?: str
   }
 }
 
-const buildMetaOf = (store: Store, id: string): ScenarioMeta => JSON.parse(readFileSync(join(worldDir(store, id), 'meta.json'), 'utf8')) as ScenarioMeta
+const buildMetaOf = (store: Store, id: string): ScenarioMeta => parseScenarioMeta(JSON.parse(readFileSync(join(worldDir(store, id), 'meta.json'), 'utf8')), id)
 
 /** Exit 0 done. Throws `WorldUsageError` for a bad invocation. */
 export function worldCommand(sub: string | undefined, values: WorldValues, ctx: { store: Store; out: (line: string) => void; home?: string }): number {

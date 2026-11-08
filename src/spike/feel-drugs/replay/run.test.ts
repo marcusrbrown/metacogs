@@ -450,3 +450,52 @@ describe('accounting', () => {
     expect(summary.unrun.map((u) => u.arm)).toEqual(['feel'])
   })
 })
+
+describe('an unfinished debug preflight', () => {
+  const unsent = (over: Record<string, unknown>) =>
+    fakeExecutor({ tweak: (_j, r) => ({ ...r, ran: false, stack: null, stackSummary: null, stdout: '', exitCode: -1, assistants: null, partTypes: null, ...over }) })
+
+  test.each([
+    ['times out', { timedOut: true }, 'preflight_timeout'],
+    ['is aborted', { aborted: true }, 'preflight_aborted'],
+    ['exits without a config', {}, 'preflight_no_config'],
+  ])('a preflight that %s is a retryable host_error, never isolation_failed or a terminal timeout', async (_name, over, reason) => {
+    const l = lab()
+    approvedFixture(l.store)
+    const { executor } = unsent(over)
+    const summary = await runCampaign(options({ arms: ['continue-a'], maxAttempts: 2 }), { store: l.store, executor })
+    const records = [readRecord(attemptFile(l, 'continue-a', 'a001')), ...(existsSync(attemptFile(l, 'continue-a', 'a002')) ? [readRecord(attemptFile(l, 'continue-a', 'a002'))] : [])]
+    for (const r of records) expect(r).toMatchObject({ status: 'host_error', terminal: false, reasons: [reason], gates: null })
+    expect(campaignCells(l.store, 'camp')[0]!.counted).toBeUndefined()
+    expect(summary.counted).toEqual({})
+    // The cell is open: the next invocation tries it again.
+    const retry = await runCampaign(options({ arms: ['continue-a'], maxAttempts: 1 }), { store: l.store, executor: fakeExecutor().executor })
+    expect(retry.counted).toEqual({ completed: 1 })
+  })
+
+  test('an aborted preflight stops the campaign instead of trying the cell again', async () => {
+    const l = lab()
+    approvedFixture(l.store)
+    const { executor, jobs } = unsent({ aborted: true })
+    const summary = await runCampaign(options({ arms: ['continue-a', 'continue-b'], maxAttempts: 3 }), { store: l.store, executor })
+    expect(jobs).toHaveLength(1)
+    expect(summary.stoppedBy).toBe('aborted')
+  })
+})
+
+describe('real-world seed turns', () => {
+  test('a world fixture without seed turns is not run: no spec-turn fallback', async () => {
+    const l = lab()
+    const id = approvedFixture(l.store)
+    const { loadFrozen } = await import('./store')
+    const frozen = loadFrozen(l.store, id)
+    const world = { source: '/x', githubRepo: 'o/r', cutoffMs: 1, hints: [] }
+    const { executor, jobs } = fakeExecutor()
+    for (const seedUserTurns of [undefined, []]) {
+      const fixture = { ...frozen, world, ...(seedUserTurns ? { seedUserTurns } : {}) }
+      const r = await runAttempt({ store: l.store, key: { campaign: 'camp', fixture: id, model: MODEL, arm: 'continue-a' }, fixture, executor, provider: 'scripted' })
+      expect(r).toMatchObject({ status: 'error', terminal: false, reasons: ['seed_turns_missing'] })
+    }
+    expect(jobs).toHaveLength(0)
+  })
+})

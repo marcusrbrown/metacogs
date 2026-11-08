@@ -1,6 +1,7 @@
 /** Real-world scenarios: the minimal spec, the built history beside it, and the loader a campaign runs from. All of it is private, under the store root. */
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { z } from 'zod'
 
 import { sha256 } from '../../../runner/workspace'
 import { extractSession, nextHumanTurn } from './extract'
@@ -118,18 +119,40 @@ export function generateWorldSpecs(store: Store, options: GenerateOptions): Gene
   })
 }
 
-export interface ScenarioMeta {
-  schema_version: 1
-  id: string
-  built_at: string
-  cutoff: { message: string; time_ms: number }
-  window: HistoryWindow
-  dropped: DroppedParts
-  part_types: Record<string, number>
-  seed_user_turns: string[]
+const nonEmpty = z.string().refine((v) => v.trim() !== '')
+const count = z.record(z.string(), z.number())
+
+/** `meta.json` beside a built scenario. The history gate reads `seed_user_turns`, so a missing or empty list is refused instead of passing vacuously. */
+const scenarioMetaSchema = z.strictObject({
+  schema_version: z.literal(1),
+  id: nonEmpty,
+  built_at: z.string(),
+  cutoff: z.strictObject({ message: nonEmpty, time_ms: z.number() }),
+  window: z.strictObject({
+    rule: z.enum(['all', 'compaction', 'compaction_over_budget', 'last_n']),
+    messages: z.number(),
+    first_message: z.string(),
+    total_messages: z.number(),
+    token_estimate: z.number(),
+    budget: z.number(),
+    over_budget: z.boolean(),
+    compaction_message: z.string().nullable(),
+  }),
+  dropped: z.strictObject({ total: z.number(), by_type: count }),
+  part_types: count,
+  seed_user_turns: z.array(nonEmpty).min(1),
   /** Branches the session named, most recent first. */
-  branch_hints: string[]
-  original_directory: string
+  branch_hints: z.array(z.string()),
+  original_directory: z.string(),
+})
+export type ScenarioMeta = z.infer<typeof scenarioMetaSchema>
+
+/** Parse, don't validate. The error names the field, never its value: the file is private. */
+export function parseScenarioMeta(input: unknown, id: string): ScenarioMeta {
+  const parsed = scenarioMetaSchema.safeParse(input)
+  if (parsed.success) return parsed.data
+  const fields = [...new Set(parsed.error.issues.map((i) => (i.path.length > 0 ? i.path.join('.') : 'meta')))]
+  throw new SpecError(`scenario ${id}: meta.json is unusable (${fields.join(', ')}); rebuild it with \`replay world build\``)
 }
 
 export const readWorldSpec = (store: Store, id: string): WorldSpec => {
@@ -199,7 +222,7 @@ export function loadWorldFixture(store: Store, id: string, ctx: LoadContext = {}
   const spec = parseWorldSpec(JSON.parse(specText))
   const exportText = readFileSync(exportFile, 'utf8')
   const seed = JSON.parse(exportText) as ReplaySeed
-  const meta = JSON.parse(readFileSync(metaFile, 'utf8')) as ScenarioMeta
+  const meta = parseScenarioMeta(JSON.parse(readFileSync(metaFile, 'utf8')), id)
   assertEndsAtCutoff(seed, spec.cutoff_message)
   if (meta.cutoff.message !== spec.cutoff_message) throw new SpecError(`scenario ${id}: the built history is for another cutoff; rebuild it`)
   const checkout = ctx.noCheckout ? { github: '', path: '' } : checkoutOf(spec.project, ctx)

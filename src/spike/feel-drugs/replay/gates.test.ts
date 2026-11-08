@@ -149,6 +149,8 @@ describe('the gate matrix', () => {
   test('the replayed history must hold the fixture turns in order', () => {
     expect(run('continue-a', { seedUserTurns: [...SEED_USER].reverse() }).reasons).toEqual(['seed_history_missing'])
     expect(run('continue-a', { requests: [chatRequest({ last: ['Continue.'], history: [SEED_USER[0]!] })] }).reasons).toEqual(['seed_history_missing'])
+    // no seed turns to look for is a failed gate, never a pass
+    expect(run('continue-a', { seedUserTurns: [] }).reasons).toEqual(['seed_history_missing'])
     expect(run('continue-a', { requests: [chatRequest({ last: ['Continue.'], history: [`§1§ ${SEED_USER[0]}`, `${SEED_USER[1]}<system-reminder>r</system-reminder>`] })] }).passed).toBe(true)
     expect(run('continue-a', { requests: [chatRequest({ last: ['Continue.'], history: [`${SEED_USER[0]}\n${SEED_USER[1]}`] })] }).passed).toBe(true)
   })

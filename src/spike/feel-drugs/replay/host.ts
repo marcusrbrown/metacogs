@@ -104,7 +104,7 @@ export interface HostResult {
   exitCode: number
   timedOut: boolean
   aborted: boolean
-  /** `false` when the stack check failed and the arm was never sent. */
+  /** `false` when the arm was never sent: the stack check failed, or the preflight did not finish (`stack` is then `null`). */
   ran: boolean
   startedAt: string
   endedAt: string
@@ -136,6 +136,8 @@ export interface HostExecutorOptions {
   returnedModel?: (body: Record<string, unknown>) => string
   /** Real-world attempts: the owner's gh login for reads, and extra child-env entries (tests put a gh stand-in on `PATH`). */
   world?: { gh?: GhAuth; env?: Record<string, string>; sandbox?: 'required' | 'off'; /** Test seam: further paths the sandbox lets the host write. */ writable?: string[] }
+  /** The limit on `debug config`, the stack preflight. Default 180 000 ms. */
+  preflightTimeoutMs?: number
   /** Test seam: sees the imported seed, the host's export of the session and the fixture's data directory before the fixture is removed. */
   afterExport?: (seen: { seed: ReplaySeed; exported: unknown; dataDir: string }) => void | Promise<void>
 }
@@ -225,7 +227,7 @@ export function createHostExecutor(options: HostExecutorOptions): Executor {
       const host = (tag: string, argv: string[], timeoutMs: number) =>
         spawnCapture([...sandbox, harness, ...argv], { cwd: fx.workspace, env, timeoutMs, ...(job.signal ? { signal: job.signal } : {}), stdoutPath: join(fx.root, 'logs', `${tag}.out`), stderrPath: join(fx.root, 'logs', `${tag}.err`) })
 
-      const dbg = await host('debug', ['debug', 'config'], 180_000)
+      const dbg = await host('debug', ['debug', 'config'], options.preflightTimeoutMs ?? 180_000)
       const effective = dbg.exitCode === 0 ? parseJson(dbg.stdout) : undefined
       const stack = checkDailyStack({
         effective,
@@ -246,6 +248,12 @@ export function createHostExecutor(options: HostExecutorOptions): Executor {
       const finish = (extra: Partial<HostResult>): HostResult => {
         const ended = new Date()
         return { ...base, requests: server.requests, stdout: '', stderr: '', exitCode: -1, timedOut: false, aborted: false, ran: false, startedAt: startedAt.toISOString(), endedAt: ended.toISOString(), wallMs: ended.getTime() - startedAt.getTime(), assistants: null, partTypes: null, ...extra }
+      }
+      // No config to judge, because the preflight timed out, was aborted or exited without one: nothing was checked and nothing ran,
+      // so this is an infrastructure error for the caller to retry. It says nothing about isolation.
+      if (dbg.timedOut || dbg.aborted || effective === undefined) {
+        if (ghDir) removeGhConfig(ghDir)
+        return finish({ stack: null, stackSummary: null, stderr: dbg.stderr, exitCode: dbg.exitCode, timedOut: dbg.timedOut, aborted: dbg.aborted })
       }
       if (!stack.passed) {
         if (ghDir) removeGhConfig(ghDir)

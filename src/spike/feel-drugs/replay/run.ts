@@ -281,6 +281,8 @@ export async function runAttempt(ctx: AttemptContext): Promise<AttemptRecord> {
   }
 
   if (message === null) return keep(failed('error', ['arm_not_applicable']))
+  // A built scenario carries its own seed turns. Without them the history gate would have nothing to check, so the attempt does not run.
+  if (fixture.world && !fixture.seedUserTurns?.length) return keep(failed('error', ['seed_turns_missing']))
   let result: HostResult | undefined
   /** Set as soon as the host has run: from then on a failure keeps the charge. */
   let incurred: AttemptRecord['cost'] | undefined
@@ -296,7 +298,11 @@ export async function runAttempt(ctx: AttemptContext): Promise<AttemptRecord> {
     let reasons: string[] = []
     let gates: AttemptRecord['gates'] = null
     let receivedArgs: string | null = null
-    if (result.stack && !result.stack.passed) {
+    if (!result.ran && result.stack === null) {
+      // The preflight never produced a config: nothing was checked and the arm was not sent. Infrastructure, retryable; the abort and timeout state stays in the reason.
+      status = 'host_error'
+      reasons = [result.aborted ? 'preflight_aborted' : result.timedOut ? 'preflight_timeout' : 'preflight_no_config']
+    } else if (result.stack && !result.stack.passed) {
       status = 'excluded'
       reasons = ['isolation_failed' satisfies ExclusionReason]
       gates = { passed: false, checks: result.stack.checks.filter((c) => !c.passed).map((c) => ({ name: c.name, passed: false, reason: 'isolation_failed', detail: c.detail })) }
@@ -321,7 +327,7 @@ export async function runAttempt(ctx: AttemptContext): Promise<AttemptRecord> {
         hostVersion: result.hostVersion,
         ...(ctx.skillsDir ? { skillsDir: ctx.skillsDir } : {}),
         requests: result.requests,
-        seedUserTurns: fixture.seedUserTurns ?? fixture.spec.turns.flatMap((t) => (t.role === 'user' ? [t.text] : [])),
+        seedUserTurns: fixture.world ? fixture.seedUserTurns! : (fixture.seedUserTurns ?? fixture.spec.turns.flatMap((t) => (t.role === 'user' ? [t.text] : []))),
         assistants: result.assistants,
         partTypes: result.partTypes,
         eventTypes: parsed.map((e) => e.type),
@@ -521,7 +527,7 @@ export async function runCampaign(options: CampaignOptions, deps: CampaignDeps):
       log(`${key.fixture} ${key.model} ${key.arm} ${record.attempt}: ${record.status}${record.reasons.length ? ` (${record.reasons.join(', ')})` : ''}`)
       settled = record.terminal
       if (!settled && record.status === 'rate_limited' && tryNo < maxAttempts) await sleep(BACKOFF_MS[Math.min(tryNo - 1, BACKOFF_MS.length - 1)]!)
-      if (!settled && record.status === 'error' && record.reasons.includes('aborted')) {
+      if (!settled && (record.reasons.includes('aborted') || record.reasons.includes('preflight_aborted'))) {
         stoppedBy = 'aborted'
         break
       }

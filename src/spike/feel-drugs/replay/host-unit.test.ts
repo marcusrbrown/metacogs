@@ -4,9 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { buildExport } from './store'
-import { hostVersion, resolveHarness, shiftTimes } from './host'
+import { type AttemptJob, createHostExecutor, hostVersion, resolveHarness, shiftTimes } from './host'
 import { parseSkillDelivery } from './gates'
-import { SYNTHETIC_SPEC } from './test-support'
+import { armMessage } from './gates'
+import { MODEL, SYNTHETIC_SPEC } from './test-support'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -72,5 +73,52 @@ describe('magic-context text decoration', () => {
     const body = '# drugs\n\nbody\n\nBase directory for this skill: /p/plugin/skills/drugs\nRelative paths are relative to this base directory.\n\ncaffeine'
     expect(parseSkillDelivery(`§6§ ${body}`)?.receivedArgs).toBe('caffeine')
     expect(parseSkillDelivery(`§6§ <!-- +44w 2d -->\n${body}`)?.receivedArgs).toBe('caffeine')
+  })
+})
+
+describe('the debug preflight', () => {
+  /** A stand-in harness: `--version` works, `debug config` does what the case says. */
+  function executorWith(debug: string, preflightTimeoutMs?: number) {
+    const dir = tmp()
+    const harness = join(dir, 'fake-opencode')
+    writeFileSync(harness, `#!/bin/sh\ncase "$1" in\n  --version) echo 9.9.9+fake ;;\n  debug) ${debug} ;;\n  *) exit 9 ;;\nesac\n`)
+    chmodSync(harness, 0o755)
+    const baseDir = join(dir, 'base')
+    mkdirSync(join(baseDir, 'cache'), { recursive: true })
+    mkdirSync(join(baseDir, 'opencode-config-dir'), { recursive: true })
+    return createHostExecutor({ harness, baseDir, packed: { spec: 'file:///fake-plugin', pluginSkillsDir: '/fake/skills' }, provider: 'scripted', owner: { opencodeDir: null, cortexkitDir: null }, ...(preflightTimeoutMs ? { preflightTimeoutMs } : {}) })
+  }
+  const job = (over: Partial<AttemptJob> = {}): AttemptJob => ({ fixtureId: SYNTHETIC_SPEC.id, seed: buildExport(SYNTHETIC_SPEC), model: MODEL, arm: 'continue-a', message: armMessage('continue-a', SYNTHETIC_SPEC)!, timeoutMs: 5_000, ...over })
+
+  test('a preflight that times out leaves the arm unsent and keeps the timeout state', async () => {
+    const result = await executorWith('sleep 30', 300)(job())
+    try {
+      expect(result).toMatchObject({ ran: false, stack: null, stackSummary: null, timedOut: true, aborted: false })
+    } finally {
+      result.cleanup()
+    }
+  })
+
+  test('a preflight that exits without a config leaves the arm unsent', async () => {
+    for (const debug of ['exit 3', 'echo not-json']) {
+      const result = await executorWith(debug)(job())
+      try {
+        expect(result).toMatchObject({ ran: false, stack: null, timedOut: false, aborted: false })
+      } finally {
+        result.cleanup()
+      }
+    }
+  })
+
+  test('an aborted preflight keeps the abort state', async () => {
+    const abort = new AbortController()
+    const pending = executorWith('sleep 30')(job({ signal: abort.signal }))
+    setTimeout(() => abort.abort(), 300)
+    const result = await pending
+    try {
+      expect(result).toMatchObject({ ran: false, stack: null, aborted: true })
+    } finally {
+      result.cleanup()
+    }
   })
 })
