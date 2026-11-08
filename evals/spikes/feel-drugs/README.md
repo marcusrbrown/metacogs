@@ -295,7 +295,7 @@ Not scored. Both arms used the new tool descriptions. ON added an opt-in reminde
 
 Free probe (`src/spike/feel-drugs/replay/probe.test.ts`, `METACOGS_HOST_PROBES=1`, scripted provider, no paid call). Facts from two clean passes of 13 probes.
 
-- **Host:** `1.19.5+harness.bf7f7dfe`, the owner's `npm-fro-bot-harness` build run directly, never `--pure`.
+- **Host:** `1.19.5+harness.bf7f7dfe`, the daily `npm-fro-bot-harness` build run directly, never `--pure`.
 - **Chosen mechanism: import.** Take a session export (`opencode export <id>`, shape `{ info, messages: [{ info, parts }] }`), set `info.directory` to the new fixture's workspace, run `opencode import <file>` in a fresh fixture, then `opencode run --format json --model <provider/model> -s <id> <arm message>`. The next request matched the source: same messages in the same order, the `read` call with its result, the `task` call with its result (child session id included), the same tool set, same part contents in the export, no compaction and no extra provider request.
 - **Rejected: `-s <id> --fork`.** History and parts match, but the fork loses the source session's `question: deny` rule, so the host offers a 40th tool, `question` (source 39). A headless run cannot answer it. Fork also needs the source session to stay unmodified, which `-s` alone does not.
 - **One fixture per attempt.** The installed plugin cache is about 1.6 GB; `cp -c` clones it in about 6 s. Stdout and stderr must go to files, because a pipe cuts `opencode debug config` at 768 KiB. Runs took 2 to 4 s and none hung.
@@ -306,7 +306,7 @@ Free probe (`src/spike/feel-drugs/replay/probe.test.ts`, `METACOGS_HOST_PROBES=1
 - **Wire shapes.** The scripted provider speaks chat completions. Reading the same facts from Responses (`input[]` items with `input_text` blocks) or Anthropic (`messages[]` with `text` blocks, top-level `system`) needs a user-text reader for those shapes. `userTextsAnyWire` in the probe covers them against hand-built bodies only; check it against a captured live body.
 - **CLIProxyAPI `GET /v1/models`:** lists `claude-opus-5-5` (owned by anthropic) and `gpt-6-luna` and `gpt-5.6-luna` (owned by openai). No `opencode-go/` id contains `luna`, so the list does not show Luna served through opencode-go.
 - **Egress switches set in the fixture:** slim `autoUpdate: false` and `disabled_mcps: [context7, gh_grep]` (it adds both remote MCPs by default); magic-context `auto_update: false`, `embedding.provider: "off"`, `historian.disable` and `dreamer.disable` (the log shows `dreamer.disable is true` and `dreaming=false`); aft `auto_update: false` and `indexes.semantic: false` (without it the first run starts an ONNX Runtime download from GitHub); Systematic `search.allow_project_sources: []` (no network code in its bundle); host `OPENCODE_DISABLE_AUTOUPDATE`, `OPENCODE_DISABLE_MODELS_FETCH`, `OPENCODE_DISABLE_LSP_DOWNLOAD` and `share: disabled`. A full turn under a proxy that refuses every tunnel, with the process group sampled for open sockets, showed no outside connection. Only plugin installs (first run) and the provider call use the network. Left on and not exercised: slim's ast-grep download and `webfetch`, aft's URL tools, which run only when a model calls them.
-- **Not copied from the owner:** the aft and magic-context configs, which were unreadable here. The fixture writes only the switches above, so other settings are defaults.
+- **Not copied in the probe:** the aft and magic-context configs, which the probe could not read. The fixture writes only the switches above, so other settings are defaults.
 
 #### Real-world replay mode
 
@@ -314,9 +314,9 @@ Replaces the paraphrased fixtures, whose answers were dominated by "no repo, gh 
 
 - **Scenarios.** `world/<id>/spec.json` carries `id`, `kind`, `project`, `source_session`, `cutoff_message`, `somewhere`, `substance`, `expected_outcome_ref` and an optional `author_next_turn_ref`. Both `_ref` fields are for the judge only; neither is sent to the agent or written to an attempt record. `substance` defaults to `caffeine` for /feel and ordinary moments and `psilocybin` for /drugs moments. The 11 scenarios are the 8 feel and drugs fixtures plus `ord-sys-46`, `ord-sys-20` and `ord-fro-130`; specs come from the paraphrased fixtures' provenance, and `author_next_turn_ref` is the first human-typed user message after the cutoff (first text part not starting with `<`).
 - **History.** The real `message.data` and `part.data` rows up to and including the cutoff, mapped to `{ info, messages: [{ info, parts }] }` by adding the row ids (`id`, `sessionID`, `messageID`). The mapping was compared with a real `opencode export` of a scripted session (host test). Window: from the latest `compaction` part, else the last N messages, with N chosen so the estimate (content characters over four, no system prompt or tool schema) stays under 120k tokens; it starts on a user message. Parts the importer would reject (unknown type, malformed) are dropped and counted per type. Nothing is stripped for privacy. The export ends on the cutoff assistant message and `meta.json` records the window, the token estimate and the drop counts.
-- **World.** Each attempt clones the owner's checkout with `git clone --local --no-hardlinks` into the fixture workspace, then fetches the source's remote-tracking refs. Commit rule 1: a branch the session named (`On branch`, `Switched to branch`, `git checkout -b`, `git status -sb`, `git branch --show-current`, a `.worktrees/<branch>` directory) that exists locally or remotely, at its tip at or before the cutoff. Rule 2: `git rev-list -1 --before=<cutoff ISO> origin/main`. `origin` is set to the GitHub URL and `remote.origin.pushurl` to `DISABLED`. `attempt.json` records `world: { repo, commit, rule, gh: 'read' }`, the history window and `hindsight_note: 'gh reads show current GitHub state'`. Branches the sessions named were deleted after merging, so all 11 resolve by rule 2 today.
-- **gh reads.** The owner's gh token comes from `hosts.yml` or `gh auth token` (the owner's config is keyring-backed), is written to a 0600 `hosts.yml` in the fixture, pointed at with `GH_CONFIG_DIR`, deleted when the run ends, and used as a leak-scan needle. The shell rules deny `gh auth*` and any command naming `hosts.yml` or `auth.json`.
-- **Permissions.** Read, edit, write, bash, git, gh reads and task subagents are allowed in the clone; subagents inherit the rules. Denied: `git push`, the `gh pr`, `gh issue`, `gh workflow`, `gh run`, `gh release`, `gh repo` writes, `gh api` with a method other than GET or with `-f`, `-F`, `--field`, `--raw-field` or `--input`, `npm`/`bun`/`changeset publish`, `gh` or push behind a wrapper or an env prefix, and writes outside the clone. **Permissions alone do not confine the shell:** with `bash` allowed, a scripted `touch` and `echo >` outside the clone both succeeded on the host. Every real-world host process therefore runs under `/usr/bin/sandbox-exec` with writes denied outside the fixture root and the bun install cache, and the owner's `~/.ssh`, `.gnupg`, `.aws`, `~/.config/gh` and `~/.local/share/opencode` unreadable. An attempt refuses to start without it.
+- **World.** Each attempt clones the local checkout with `git clone --local --no-hardlinks` into the fixture workspace, then fetches the source's remote-tracking refs. Commit rule 1: a branch the session named (`On branch`, `Switched to branch`, `git checkout -b`, `git status -sb`, `git branch --show-current`, a `.worktrees/<branch>` directory) that exists locally or remotely, at its tip at or before the cutoff. Rule 2: `git rev-list -1 --before=<cutoff ISO> origin/main`. `origin` is set to the GitHub URL and `remote.origin.pushurl` to `DISABLED`. `attempt.json` records `world: { repo, commit, rule, gh: 'read' }`, the history window and `hindsight_note: 'gh reads show current GitHub state'`. Branches the sessions named were deleted after merging, so all 11 resolve by rule 2 today.
+- **gh reads.** The local gh token comes from `hosts.yml` or `gh auth token` (for a keyring-backed config), is written to a 0600 `hosts.yml` in the fixture, pointed at with `GH_CONFIG_DIR`, deleted when the run ends, and used as a leak-scan needle. The shell rules deny `gh auth*` and any command naming `hosts.yml` or `auth.json`.
+- **Permissions.** Read, edit, write, bash, git, gh reads and task subagents are allowed in the clone; subagents inherit the rules. Denied: `git push`, the `gh pr`, `gh issue`, `gh workflow`, `gh run`, `gh release`, `gh repo` writes, `gh api` with a method other than GET or with `-f`, `-F`, `--field`, `--raw-field` or `--input`, `npm`/`bun`/`changeset publish`, `gh` or push behind a wrapper or an env prefix, and writes outside the clone. **Permissions alone do not confine the shell:** with `bash` allowed, a scripted `touch` and `echo >` outside the clone both succeeded on the host. Every real-world host process therefore runs under `/usr/bin/sandbox-exec` with writes denied outside the fixture root and the bun install cache, and `~/.ssh`, `.gnupg`, `.aws`, `~/.config/gh` and `~/.local/share/opencode` unreadable. An attempt refuses to start without it.
 - **Project config.** The clone's own `opencode.json` applies, as in the daily setup. Systematic's declares `./src/index.ts` as a plugin, so the stack check allows plugin origins that are `file://` paths inside the clone; the generated permission, share and compaction keys must still survive exactly, or the attempt is excluded.
 - **Scripted check of the real history.** One scripted-provider attempt per scenario imported all 11 real histories (nothing dropped) and passed every gate.
 - **Arms.** `continue-a`, `continue-b`, `feel`, `feel-somewhere`, `drugs`, `drugs-substance`. Generous timeout (15 minutes); the host offers `agent.<name>.steps` as a tool-step cap, which is not set because slim defines the orchestrator.
@@ -328,3 +328,28 @@ bun run replay world build [--fixtures <ids|all>] [--db <path>] [--budget <token
 bun run replay world list
 bun run replay campaign --world real --name <n> --models <list> --arms <list|all> --fixtures <ids|all> --cap <usd> [--provider scripted|cliproxy ...]
 ```
+
+#### Real-world replay results (2026-11-08)
+
+Campaign `real1`: 11 moments × 6 arms on `openai/gpt-6-luna` and `anthropic/claude-opus-5-5`. That is 61 counted runs per model, because `/feel <where>` runs only on the 6 /feel moments. Every run completed. One errored attempt per model was retried. Charged cost was $169.46 for Opus and $2.69 for Luna.
+
+Scoring: `bun run replay judge real1` with `opencode-go/glm-5.3`, prompt sha `5b01f5736c37`. All 22 pairs were judged and every noise floor agreed.
+
+| Arm | Opus toward / away | Luna toward / away | Ordinary turns derailed (Opus, Luna, of 3 each) |
+| --- | --- | --- | --- |
+| `/feel` | 2 / 2 | 7 / 0 | 0, 1 |
+| `/feel <where>` | 3 / 0 | 3 / 0 | n/a |
+| `/drugs` | 3 / 4 | 3 / 2 | 1, 1 |
+| `/drugs <substance>` | 4 / 0 | 4 / 0 | 0, 0 |
+
+Reading:
+- **Arguments.** With an argument, both commands moved the first move toward how the moment resolved and never away. Bare `/drugs` changed Opus's move in 10 of 11 runs, and close to half of those changes went away.
+- **Where the gains were.** They clustered where the default move committed to an unchecked premise: dispatching a fixer, relaunching analysis, pushing. Where `Continue.` already took the right step, the commands added nothing.
+
+Caveats:
+- One run per arm.
+- `gh` and `main` reads show current state, and about a fifth of runs noticed that work had since landed, baseline runs included.
+- The judge scores the first substantive move.
+- 14 Luna quotes did not match the answer text (`unanchored`).
+
+The guide built from this is [docs/using-feel-and-drugs.md](../../../docs/using-feel-and-drugs.md).
