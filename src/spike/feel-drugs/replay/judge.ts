@@ -776,7 +776,7 @@ export interface JudgeDeps {
 const estimateUsd = (inputChars: number): number => ((inputChars / 3) * ASSUMED_PRICE_PER_MTOK.input + ASSUMED_OUTPUT_TOKENS * ASSUMED_PRICE_PER_MTOK.output) / 1e6
 const actualUsd = (r: CompleteResponse): number | undefined => (r.inputTokens === undefined || r.outputTokens === undefined ? undefined : (r.inputTokens * ASSUMED_PRICE_PER_MTOK.input + r.outputTokens * ASSUMED_PRICE_PER_MTOK.output) / 1e6)
 
-type PairOutcome = { kind: 'written'; status: 'judged' | 'judge_error'; spent: number } | { kind: 'unjudged'; reason: string; spent: number } | { kind: 'budget'; spent: number }
+type PairOutcome = { kind: 'written'; status: 'judged' | 'judge_error'; spent: number; run: number } | { kind: 'unjudged'; reason: string; spent: number } | { kind: 'budget'; spent: number }
 
 async function judgePair(pair: JudgePair, reference: Reference, ctx: { options: JudgeOptions; deps: JudgeDeps; model: string; dir: string; existing: readonly Judgement[]; spentSoFar: number }): Promise<PairOutcome> {
   const { options, deps, model } = ctx
@@ -828,15 +828,15 @@ async function judgePair(pair: JudgePair, reference: Reference, ctx: { options: 
       const baselines = pair.arms.filter((a) => a.kind === 'baseline').length
       const cell: CellFloor = baselines < 2 ? 'no_floor' : parsed.value.floor === 'agree' ? 'agree' : 'noisy'
       const record = base(pair, reference, ctx, { attempts, returned, input_sha256, spent })
-      writeJudgement(ctx.dir, { ...record, status: 'judged', cell, verdict: { default_move: parsed.value.default_move, floor: parsed.value.floor }, verdicts }, ctx.existing, needles)
+      const { run } = writeJudgement(ctx.dir, { ...record, status: 'judged', cell, verdict: { default_move: parsed.value.default_move, floor: parsed.value.floor }, verdicts }, ctx.existing, needles)
       written = true
-      return { kind: 'written', status: 'judged', spent }
+      return { kind: 'written', status: 'judged', spent, run }
     }
     if (failure.transport) return { kind: 'unjudged', reason: `${failure.code}: ${failure.detail}`, spent }
     const record = base(pair, reference, ctx, { attempts, returned, input_sha256, spent })
-    writeJudgement(ctx.dir, { ...record, status: 'judge_error', cell: null, verdict: null, verdicts: [], error: { code: failure.code, detail: failure.detail, excerpt: failure.excerpt } }, ctx.existing, needles)
+    const { run } = writeJudgement(ctx.dir, { ...record, status: 'judge_error', cell: null, verdict: null, verdicts: [], error: { code: failure.code, detail: failure.detail, excerpt: failure.excerpt } }, ctx.existing, needles)
     written = true
-    return { kind: 'written', status: 'judge_error', spent }
+    return { kind: 'written', status: 'judge_error', spent, run }
   } finally {
     // Whatever left the pair without a file (transport failure, the cap mid-pair, a leak) still cost its estimate: a resume must count it.
     if (!written && spent > 0 && options.provider === 'cliproxy') {
@@ -972,14 +972,15 @@ export function defaultSeed(campaign: string, files: readonly Judgement[]): numb
 const cell = (text: string): string => oneLine(text).replace(/\|/g, '\\|')
 const table = (head: readonly string[], rows: readonly (readonly (string | number)[])[]): string[] => [`| ${head.join(' | ')} |`, `| ${head.map(() => '---').join(' | ')} |`, ...rows.map((r) => `| ${r.map((c) => cell(String(c))).join(' | ')} |`)]
 
-export function renderSummary(input: { campaign: string; files: readonly Judgement[]; skipped: readonly SkippedCell[]; seed: number }): string {
+export function renderSummary(input: { campaign: string; files: readonly Judgement[]; skipped: readonly SkippedCell[]; seed: number; unjudged?: readonly { fixture: string; model: string; reason: string }[] }): string {
   const { campaign, skipped, seed } = input
+  const unjudged = input.unjudged ?? []
   const latest = latestPerPair(input.files)
   const rows = aggregate(input.files)
   const out: string[] = [`# Judge summary: ${campaign}`, '']
   const judgedFiles = latest.filter((f) => f.status === 'judged')
   const judges = [...new Set(latest.map((f) => f.judge.model))].sort()
-  out.push(`pairs: ${latest.length} (judged ${judgedFiles.length}, judge_error ${latest.length - judgedFiles.length}) · judge: ${judges.join(', ') || 'none'} · prompt sha ${JUDGE_PROMPT_SHA256.slice(0, 12)}`)
+  out.push(`pairs: ${latest.length} (judged ${judgedFiles.length}, judge_error ${latest.length - judgedFiles.length}, not judged ${unjudged.length}) · judge: ${judges.join(', ') || 'none'} · prompt sha ${JUDGE_PROMPT_SHA256.slice(0, 12)}`)
   out.push('', 'Changes count only where both Continue runs made the same first move (floor agree). Toward, away and neutral count changed answers only. Noisy cells are not counted.', '')
   out.push('## Per arm and model', '')
   out.push(...table(['model', 'arm', 'judged', 'changed', 'toward', 'away', 'neutral', 'noisy cells', 'no floor', 'judge errors', 'unanchored'], rows.map((r) => [r.model, r.arm, r.pairs, r.changed, r.toward, r.away, r.neutral, r.noisy, r.no_floor, r.judge_errors, r.unanchored])))
@@ -1020,6 +1021,9 @@ export function renderSummary(input: { campaign: string; files: readonly Judgeme
     out.push(`   - quote: "${oneLine(p.quote)}"`)
     out.push(`   - attempt: ${p.attempt}`)
   })
+  out.push('', '## Pairs not judged', '')
+  if (unjudged.length === 0) out.push('none')
+  else for (const u of unjudged) out.push(`- ${u.fixture} · ${u.model}: ${u.reason}`)
   out.push('', '## Cells not judged', '')
   const counts = new Map<string, number>()
   for (const s of skipped) counts.set(`${s.status} · ${s.reason}`, (counts.get(`${s.status} · ${s.reason}`) ?? 0) + 1)
@@ -1070,6 +1074,8 @@ export async function judgeCampaign(options: JudgeOptions, deps: JudgeDeps): Pro
   const prior = priorSpentUsd(dir)
   let judgeModel: string | null = null
   let stopped = false
+  /** The one record of each pair that this invocation stands behind: reused, or written now. */
+  const selected: Judgement[] = []
 
   for (const pair of collected.pairs) {
     const mark = (reason: string): void => void unjudged.push({ fixture: pair.fixture, model: pair.model, reason })
@@ -1088,8 +1094,10 @@ export async function judgeCampaign(options: JudgeOptions, deps: JudgeDeps): Pro
       j.fixture === pair.fixture && j.model === pair.model && j.status === 'judged' && j.judge.provider === options.provider && j.judge.prompt_sha256 === JUDGE_PROMPT_SHA256 && j.judge.input_sha256 === inputHash(reference, pair.arms)
     if (!options.again && existing.some(sameInputs)) {
       judgeModel ??= options.judgeModel ?? selectJudgeModel(await deps.transport.listModels())
-      if (existing.some((j) => sameInputs(j) && j.judge.model === judgeModel)) {
+      const reused = existing.filter((j) => sameInputs(j) && j.judge.model === judgeModel).sort((a, b) => b.run - a.run)[0]
+      if (reused) {
         already += 1
+        selected.push(reused)
         continue
       }
     }
@@ -1105,18 +1113,22 @@ export async function judgeCampaign(options: JudgeOptions, deps: JudgeDeps): Pro
       mark('budget')
     } else if (outcome.kind === 'unjudged') {
       mark(outcome.reason)
-    } else if (outcome.status === 'judged') {
-      judged += 1
     } else {
-      judgeErrors += 1
+      if (outcome.status === 'judged') judged += 1
+      else judgeErrors += 1
     }
     existing = readJudgements(dir)
+    if (outcome.kind === 'written') {
+      const mine = existing.find((j) => j.fixture === pair.fixture && j.model === pair.model && j.run === outcome.run)
+      if (mine) selected.push(mine)
+    }
     log(`${pair.fixture} ${pair.model}: ${outcome.kind === 'written' ? outcome.status : outcome.kind === 'budget' ? 'stopped before the next call: it could pass the cap' : 'unjudged'}`)
   }
 
-  // A run's summary reads its own provider's files: canned verdicts never stand in for a live judge, or the other way round.
-  const files = readJudgements(dir).filter((j) => j.judge.provider === options.provider)
-  const summary = renderSummary({ campaign: options.campaign, files, skipped: collected.skipped, seed: options.seed ?? defaultSeed(options.campaign, files) })
+  // The summary and the spot-check come from the records this invocation selected or wrote, one per pair. History on disk (another judge
+  // model, another provider, an older input) never stands in for a pair that is unjudged now.
+  const files = selected
+  const summary = renderSummary({ campaign: options.campaign, files, skipped: collected.skipped, seed: options.seed ?? defaultSeed(options.campaign, files), unjudged })
   assertNoNeedles(summary, deps.needles ?? [], 'summary')
   const summaryPath = join(dir, 'summary.md')
   const temp = `${summaryPath}.tmp-${process.pid}`

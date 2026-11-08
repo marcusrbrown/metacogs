@@ -873,6 +873,77 @@ describe('reuse of an earlier judgement', () => {
   })
 })
 
+describe('summary provenance', () => {
+  const prepared = async () => {
+    const l = lab()
+    await runSyntheticCampaign(l, { fixtures: [FIXTURES[0]!], models: [REPLAY_MODELS[0]] })
+    return l
+  }
+  const summaryOf = (l: JudgeLab): string => readFileSync(join(judgementDir(l.store, 'phase1'), 'summary.md'), 'utf8')
+
+  test('judge model A, then B, then A again: the summary and spot-check show the record reused, A', async () => {
+    const l = await prepared()
+    await full(l, fake(ok({ default_move: 'MOVE-FROM-A' })), { judgeModel: 'model-a' })
+    await full(l, fake(ok({ default_move: 'MOVE-FROM-B' })), { judgeModel: 'model-b' })
+    expect(summaryOf(l)).toContain('MOVE-FROM-B')
+    const again = fake(ok())
+    const summary = await full(l, again, { judgeModel: 'model-a' })
+    expect(again.calls).toHaveLength(0)
+    expect(summary.already_judged).toBe(1)
+    const text = summaryOf(l)
+    expect(text).toContain('MOVE-FROM-A')
+    expect(text).not.toContain('MOVE-FROM-B')
+    expect(text).toContain('judge: model-a')
+    expect(text).not.toContain('model-b')
+    expect(judgements(l)).toHaveLength(2) // nothing was rewritten
+  })
+
+  test('a changed-input rejudge that fails does not bring the stale verdict back', async () => {
+    const l = await prepared()
+    await full(l, fake(ok({ default_move: 'STALE-VERDICT' })))
+    const dir = judgementDir(l.store, 'phase1')
+    for (const name of readdirSync(dir).filter((n) => n.endsWith('.json'))) {
+      const j = JSON.parse(readFileSync(join(dir, name), 'utf8')) as Judgement
+      j.judge.input_sha256 = 'an-older-input'
+      writeFileSync(join(dir, name), JSON.stringify(j))
+    }
+    const summary = await full(l, fake(() => new TransportError('HTTP 503')))
+    expect(summary.unjudged).toHaveLength(1)
+    const text = summaryOf(l)
+    expect(text).not.toContain('STALE-VERDICT')
+    expect(text).toContain('## Pairs not judged')
+    expect(text).toContain('transport: HTTP 503')
+    expect(text).toMatch(/pairs: 0 \(judged 0, judge_error 0, not judged 1\)/)
+    expect(text).toContain('## Spot-check (10 verdicts')
+    expect(text).toMatch(/Spot-check[^\n]*\n\nnone/)
+  })
+
+  test('a changed-input rejudge that ends in judge_error shows the error, not the stale verdict', async () => {
+    const l = await prepared()
+    await full(l, fake(ok({ default_move: 'STALE-VERDICT' })))
+    const dir = judgementDir(l.store, 'phase1')
+    for (const name of readdirSync(dir).filter((n) => n.endsWith('.json'))) {
+      const j = JSON.parse(readFileSync(join(dir, name), 'utf8')) as Judgement
+      j.judge.prompt_sha256 = 'an-older-prompt'
+      writeFileSync(join(dir, name), JSON.stringify(j))
+    }
+    await full(l, fake(() => 'not json'))
+    const text = summaryOf(l)
+    expect(text).not.toContain('STALE-VERDICT')
+    expect(text).toContain('judge_error 1')
+  })
+
+  test('pairs outside this invocation do not enter its summary', async () => {
+    const l = lab()
+    await runSyntheticCampaign(l, { fixtures: FIXTURES, models: [REPLAY_MODELS[0]] })
+    await full(l, fake(ok({ default_move: 'FIRST-MOVE-ONE' })), { fixtures: ['moment-one'] })
+    await full(l, fake(ok({ default_move: 'SECOND-MOVE-TWO' })), { fixtures: ['turn-two'] })
+    const text = readFileSync(join(judgementDir(l.store, 'phase1'), 'summary.md'), 'utf8')
+    expect(text).toContain('SECOND-MOVE-TWO')
+    expect(text).not.toContain('FIRST-MOVE-ONE')
+  })
+})
+
 // ── the cap ────────────────────────────────────────────────────────────────
 
 describe('cap', () => {
