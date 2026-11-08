@@ -75,6 +75,8 @@ export interface ScriptedProviderOptions {
    */
   turns?: readonly (readonly ScriptedStep[])[]
   finalText?: string
+  /** The model id recorded as the provider's answer for a request. Default: `SPIKE_MODEL_ID`. */
+  returnedModel?: (body: Record<string, unknown>) => string
 }
 
 /**
@@ -225,7 +227,7 @@ export function startScriptedProvider(
       const main = isMainRequest(record.messages)
       const turn = Math.max(0, countUserTurns(record.messages) - 1)
       const turnRound = countToolRounds(Array.isArray(record.messages) ? record.messages.slice(lastUserIndex(record.messages) + 1) : [])
-      requests.push({ hasTools, round, turn, turnRound, body, returnedModel: SPIKE_MODEL_ID })
+      requests.push({ hasTools, round, turn, turnRound, body, returnedModel: options.returnedModel?.(record) ?? SPIKE_MODEL_ID })
 
       const messages: readonly unknown[] = Array.isArray(record.messages) ? record.messages : []
       let step: ScriptedStep

@@ -26,7 +26,7 @@ A slash command puts the user's arguments at the very end of this text, after th
 
 If there are arguments, pass them as one string for `somewhere`. Several words may arrive in double quotes; drop those quotes before using the text. Write `quality` and `sigil` yourself, and `since_last` only if you have paused before in this session.
 
-If there are none, choose `somewhere`, `quality` and `sigil` yourself from what is going on in this session.
+If there are none, choose `somewhere` from something concrete in this session: the claim, file, commit, check result or plan step you are about to rely on but have not verified. Name that thing, not a general mood. Write `quality` and `sigil` yourself.
 
 ## After the call
 

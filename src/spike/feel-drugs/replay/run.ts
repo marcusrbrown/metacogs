@@ -1,0 +1,760 @@
+/** Append-only replay attempts, gated and budgeted. Nothing here deletes or overwrites evidence. */
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { hostname } from 'node:os'
+import { join, relative } from 'node:path'
+
+import type { ResolvedCliproxy } from '../../../runner/cliproxy'
+import { analyzeEvents, isRateLimited, isSkillContentLoad, parseEvents, skillCallName, type Usage } from '../../../runner/events'
+import { CredentialLeakError, type Needle } from '../../../runner/manifest'
+import { sha256 } from '../../../runner/workspace'
+import { writeEvidence } from '../artifacts'
+import { BACKOFF_MS, RUN_TIMEOUT_MS } from '../driver'
+import { ARM_NAMES, type ArmMessage, type ArmName, armMessage, type ExclusionReason, evaluateGates, type GateCheck, mainRequests, WORLD_ARM_NAMES } from './gates'
+import type { Executor, HostResult } from './host'
+import type { ReplayFixture } from './scenario'
+import { HOST_VERSION, ID_PATTERN, loadFrozen, type Store } from './store'
+import { HINDSIGHT_NOTE, type WorldRecord } from './world'
+
+// ── statuses and records ───────────────────────────────────────────────────
+
+/**
+ * `completed`: every gate passed. `excluded`: a gate failed, reported and never an outcome. `timeout`: the attempt hit its
+ * limit and its process group was killed. Those three are terminal. `rate_limited`, `host_error` and `error` are
+ * infrastructure failures: they keep their directory, are not counted, and the cell tries again.
+ */
+export type AttemptStatus = 'completed' | 'excluded' | 'timeout' | 'rate_limited' | 'host_error' | 'error'
+export const TERMINAL: readonly AttemptStatus[] = ['completed', 'excluded', 'timeout']
+export const isTerminal = (status: AttemptStatus): boolean => TERMINAL.includes(status)
+
+/** What the host-reported cost is multiplied by for the cap: earlier spike runs reported about $3.87 against an estimate near $6.2, and $1.25 against $2.15. */
+export const UNDERCOUNT_FACTOR = 1.75
+
+export type OutcomeLabel = 'no_tool' | 'metacogs_tool' | 'skill_only'
+
+export interface ObservedCalls {
+  tool_calls: { tool: string; status: string | undefined }[]
+  /** `feel` and `drugs` calls, by tool name. */
+  metacogs_calls: string[]
+  /** Names of skills whose content a `skill` call loaded. */
+  skill_loads: string[]
+}
+
+export interface AttemptRecord {
+  schema_version: 1
+  campaign: string
+  fixture: { id: string; kind: string; spec_sha256: string; export_sha256: string }
+  model: string
+  arm: ArmName
+  attempt: string
+  seq: number
+  provider: 'scripted' | 'cliproxy'
+  host: { version: string | null; expected_version: string }
+  message: ArmMessage | null
+  /** Command arms: the argument text the model received; `''` for none, `null` when the skill text was not found or the arm is not a command. */
+  received_args: string | null
+  gates: { passed: boolean; checks: GateCheck[] } | null
+  status: AttemptStatus
+  terminal: boolean
+  reasons: string[]
+  /** What the model did, recorded for every attempt that reached the host. Only a `completed` attempt has an outcome. */
+  observed: ObservedCalls | null
+  outcome: OutcomeLabel | null
+  requests: { total: number; main: number }
+  stack: { plugins: string[]; default_agent: string | null; mcp_entries: number } | null
+  unrecognized_events: number
+  usage: Usage | null
+  cost: { reported_usd: number; charged_usd: number; basis: 'scripted' | 'no_request' | 'reported_x_factor' | 'estimate' }
+  timing: { started_at: string; ended_at: string; wall_ms: number }
+  artifacts: Record<string, string>
+  /** Real-world mode: the repo, commit and rule the clone landed on, and the history window the model was given. */
+  world?: WorldRecord
+  hindsight_note?: string
+  history?: NonNullable<ReplayFixture['history']>
+  error?: { name: string; message: string }
+  leak_labels?: string[]
+}
+
+// ── paths ──────────────────────────────────────────────────────────────────
+
+export interface CellKey {
+  campaign: string
+  fixture: string
+  model: string
+  arm: ArmName
+}
+
+export const MODEL_PATTERN = /^[a-z0-9][a-z0-9.-]*\/[a-z0-9][a-z0-9._-]*$/
+
+const modelSlug = (model: string): string => model.replace('/', '__')
+const modelOfSlug = (slug: string): string => slug.replace('__', '/')
+
+export const campaignsRoot = (store: Store): string => join(store.root, 'campaigns')
+export const campaignDir = (store: Store, campaign: string): string => join(campaignsRoot(store), campaign)
+export const cellDir = (store: Store, key: CellKey): string => join(campaignDir(store, key.campaign), key.fixture, modelSlug(key.model), key.arm)
+
+const ATTEMPT_ID = /^a\d{3,}$/
+const attemptId = (seq: number): string => `a${String(seq).padStart(3, '0')}`
+
+export class AttemptExistsError extends Error {
+  constructor(path: string) {
+    super(`${path} already exists; replay evidence is never overwritten`)
+    this.name = 'AttemptExistsError'
+  }
+}
+
+/** Creates one attempt directory (0700). An existing directory is refused. */
+export function createAttemptDir(cell: string, id: string): string {
+  if (!ATTEMPT_ID.test(id)) throw new Error(`attempt id ${id}: expected a followed by at least three digits`)
+  const dir = join(cell, id)
+  mkdirSync(cell, { recursive: true, mode: 0o700 })
+  try {
+    mkdirSync(dir, { mode: 0o700 })
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'EEXIST') throw new AttemptExistsError(dir)
+    throw e
+  }
+  return dir
+}
+
+const attemptSeqs = (cell: string): number[] => (existsSync(cell) ? readdirSync(cell).filter((d) => ATTEMPT_ID.test(d)).map((d) => Number(d.slice(1))) : [])
+
+/** The next free attempt directory of a cell. */
+export function allocateAttempt(cell: string): { id: string; seq: number; dir: string } {
+  for (let tries = 0; tries < 8; tries++) {
+    const seq = Math.max(0, ...attemptSeqs(cell)) + 1
+    try {
+      return { id: attemptId(seq), seq, dir: createAttemptDir(cell, attemptId(seq)) }
+    } catch (e) {
+      if (!(e instanceof AttemptExistsError)) throw e // lost a race: take the next one
+    }
+  }
+  throw new Error(`could not allocate an attempt directory under ${cell}`)
+}
+
+// ── reading evidence ───────────────────────────────────────────────────────
+
+export interface AttemptSummary {
+  id: string
+  seq: number
+  /** `null`: the directory has no `attempt.json` (the process died mid-attempt). */
+  status: AttemptStatus | null
+  terminal: boolean
+  charged_usd: number
+}
+
+export function readAttempts(cell: string): AttemptSummary[] {
+  return attemptSeqs(cell)
+    .sort((a, b) => a - b)
+    .map((seq) => {
+      const file = join(cell, attemptId(seq), 'attempt.json')
+      if (!existsSync(file)) return { id: attemptId(seq), seq, status: null, terminal: false, charged_usd: 0 }
+      const record = JSON.parse(readFileSync(file, 'utf8')) as AttemptRecord
+      return { id: attemptId(seq), seq, status: record.status, terminal: record.terminal, charged_usd: record.cost.charged_usd }
+    })
+}
+
+/** The first terminal attempt is the counted one; later attempts are kept and never replace it. */
+export const countedAttempt = (attempts: readonly AttemptSummary[]): AttemptSummary | undefined => attempts.find((a) => a.terminal)
+
+export interface CellRow {
+  fixture: string
+  model: string
+  arm: string
+  attempts: AttemptSummary[]
+  counted: AttemptSummary | undefined
+}
+
+const subdirs = (dir: string): string[] => (existsSync(dir) ? readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort() : [])
+
+export function campaignCells(store: Store, campaign: string): CellRow[] {
+  const root = campaignDir(store, campaign)
+  const rows: CellRow[] = []
+  for (const fixture of subdirs(root)) {
+    for (const slug of subdirs(join(root, fixture))) {
+      for (const arm of subdirs(join(root, fixture, slug))) {
+        const attempts = readAttempts(join(root, fixture, slug, arm))
+        rows.push({ fixture, model: modelOfSlug(slug), arm, attempts, counted: countedAttempt(attempts) })
+      }
+    }
+  }
+  return rows
+}
+
+// ── the pending marker ─────────────────────────────────────────────────────
+
+/** Written into a live attempt's directory before the host is dispatched; removed once the attempt's record is on disk. */
+export const STARTED_FILE = 'started.json'
+
+/** Who is running: the pid and host a marker records, and the probe that asks whether a recorded pid still answers. */
+export interface RunnerIdentity {
+  pid: number
+  host: string
+  /** True when the pid is alive on this host. Real runs use `pidAlive`. */
+  alive: (pid: number) => boolean
+}
+
+/**
+ * Signal 0 sends nothing: it only asks the OS whether the pid exists and may be signalled. `EPERM` means it exists. This never
+ * signals or kills anything.
+ */
+export function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
+const defaultIdentity = (): RunnerIdentity => ({ pid: process.pid, host: hostname(), alive: pidAlive })
+
+interface Started {
+  started_at: string
+  pid: number | null
+  host: string | null
+}
+
+export interface PendingAttempt {
+  /** Relative to the store root. */
+  dir: string
+  fixture: string
+  model: string
+  arm: string
+  attempt: string
+  started_at: string | null
+}
+
+/** Null for a marker that cannot be read at all. A marker from before pids were recorded reads with `pid: null`. */
+const startedOf = (file: string): Started | null => {
+  try {
+    const v = JSON.parse(readFileSync(file, 'utf8')) as { started_at?: unknown; pid?: unknown; host?: unknown }
+    if (typeof v.started_at !== 'string' || !Number.isFinite(Date.parse(v.started_at))) return null
+    return { started_at: v.started_at, pid: typeof v.pid === 'number' && Number.isInteger(v.pid) && v.pid > 0 ? v.pid : null, host: typeof v.host === 'string' ? v.host : null }
+  } catch {
+    return null
+  }
+}
+
+// ── orphan charges ─────────────────────────────────────────────────────────
+
+/** A charge whose attempt left no record: the host ran and billed, but not even the minimal `attempt.json` could be written. Append-only, per campaign. */
+export const ORPHAN_FILE = 'orphan-charges.jsonl'
+
+export interface OrphanCharge {
+  schema_version: 1
+  at: string
+  fixture: string
+  model: string
+  arm: string
+  attempt: string
+  charged_usd: number
+}
+
+const orphanPath = (store: Store, campaign: string): string => join(campaignDir(store, campaign), ORPHAN_FILE)
+
+const orphanEntry = (value: unknown): OrphanCharge | null => {
+  if (typeof value !== 'object' || value === null) return null
+  const o = value as Record<string, unknown>
+  const ok = o.schema_version === 1 && typeof o.at === 'string' && typeof o.fixture === 'string' && typeof o.model === 'string' && typeof o.arm === 'string' && typeof o.attempt === 'string' && typeof o.charged_usd === 'number' && Number.isFinite(o.charged_usd) && o.charged_usd >= 0
+  return ok ? (o as unknown as OrphanCharge) : null
+}
+
+/** Throws on a file that is not a readable ledger: a charge that cannot be read is not a charge of zero. */
+export function readOrphanCharges(store: Store, campaign: string): OrphanCharge[] {
+  const file = orphanPath(store, campaign)
+  if (!existsSync(file)) return []
+  if (!statSync(file).isFile()) throw new Error(`campaign ${campaign}: ${ORPHAN_FILE} is not a file; move it aside before running`)
+  return readFileSync(file, 'utf8')
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line, i) => {
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(line)
+      } catch {
+        parsed = null
+      }
+      const entry = orphanEntry(parsed)
+      if (!entry) throw new Error(`campaign ${campaign}: line ${i + 1} of ${ORPHAN_FILE} is not a valid orphan charge; fix or remove it before running`)
+      return entry
+    })
+}
+
+function appendOrphanCharge(store: Store, campaign: string, entry: OrphanCharge): void {
+  mkdirSync(campaignDir(store, campaign), { recursive: true, mode: 0o700 })
+  const file = orphanPath(store, campaign)
+  appendFileSync(file, `${JSON.stringify(entry)}\n`, { mode: 0o600 })
+  chmodSync(file, 0o600)
+}
+
+const sameCharge = (a: Pick<OrphanCharge, 'fixture' | 'model' | 'arm' | 'attempt'>, b: Pick<OrphanCharge, 'fixture' | 'model' | 'arm' | 'attempt'>): boolean => a.fixture === b.fixture && a.model === b.model && a.arm === b.arm && a.attempt === b.attempt
+
+/**
+ * Attempt directories that were dispatched live, left no `attempt.json`, and have no orphan entry. Whatever such an attempt was
+ * charged is in no record. The only exception is a run in flight: the marker's pid is alive on this host. Age proves nothing (a
+ * restart seconds after a crash is the case that matters), so every other marker blocks: dead pid, no pid, another host, or unreadable.
+ * A directory with no marker was never dispatched.
+ */
+export function pendingAttempts(store: Store, campaign: string, self: RunnerIdentity = defaultIdentity()): PendingAttempt[] {
+  const known = readOrphanCharges(store, campaign)
+  const pending: PendingAttempt[] = []
+  for (const row of campaignCells(store, campaign)) {
+    for (const a of row.attempts) {
+      if (a.status !== null) continue
+      const dir = join(cellDir(store, { campaign, fixture: row.fixture, model: row.model, arm: row.arm as ArmName }), a.id)
+      const markerFile = join(dir, STARTED_FILE)
+      if (!existsSync(markerFile)) continue
+      const started = startedOf(markerFile)
+      if (started && started.pid !== null && started.host === self.host && self.alive(started.pid)) continue
+      if (known.some((k) => sameCharge(k, { fixture: row.fixture, model: row.model, arm: row.arm, attempt: a.id }))) continue
+      pending.push({ dir: relative(store.root, dir), fixture: row.fixture, model: row.model, arm: row.arm, attempt: a.id, started_at: started?.started_at ?? null })
+    }
+  }
+  return pending
+}
+
+/**
+ * Refuses to go on when spend may be missing from the records: an earlier invocation stopped on an accounting failure and its
+ * orphan charge is not in the ledger, or an attempt directory was dispatched and never got a record. Each message says how to settle it.
+ */
+function assertAccountingReconciled(store: Store, campaign: string, now: Date, estimateUsd: number, self: RunnerIdentity): void {
+  const dir = campaignDir(store, campaign)
+  const known = readOrphanCharges(store, campaign)
+  for (const name of existsSync(dir) ? readdirSync(dir).filter((f) => /^run-.*\.json$/.test(f)).sort() : []) {
+    let note: { stoppedBy?: unknown; orphan_charge?: unknown }
+    try {
+      note = JSON.parse(readFileSync(join(dir, name), 'utf8')) as typeof note
+    } catch {
+      continue
+    }
+    const orphan = note.stoppedBy === 'accounting' ? orphanEntry(note.orphan_charge) : null
+    if (orphan && !known.some((k) => sameCharge(k, orphan))) {
+      throw new Error(
+        `campaign ${campaign}: ${name} stopped because attempt ${orphan.attempt} of ${orphan.fixture}/${orphan.model}/${orphan.arm} could not be recorded, and ${ORPHAN_FILE} has no entry for its $${orphan.charged_usd.toFixed(4)} charge, so that spend would count as zero. Append this line to campaigns/${campaign}/${ORPHAN_FILE}, then run again: ${JSON.stringify(orphan)}`,
+      )
+    }
+  }
+  const [first, ...rest] = pendingAttempts(store, campaign, self)
+  if (first) {
+    const line: OrphanCharge = { schema_version: 1, at: now.toISOString(), fixture: first.fixture, model: first.model, arm: first.arm, attempt: first.attempt, charged_usd: estimateUsd }
+    throw new Error(
+      `campaign ${campaign}: ${first.dir} was dispatched${first.started_at ? ` at ${first.started_at}` : ''} and has no attempt.json and no entry in ${ORPHAN_FILE}${rest.length > 0 ? ` (${rest.length} more directories are in the same state)` : ''}, so whatever it was charged would count as zero. ` +
+        `If it was charged, append this line to campaigns/${campaign}/${ORPHAN_FILE} with the real amount, then run again: ${JSON.stringify(line)}. ` +
+        'If you have confirmed nothing was charged, remove the directory.',
+    )
+  }
+}
+
+/** Everything the campaign has been charged: attempt records plus orphan charges. */
+export const spentUsd = (store: Store, campaign: string): number =>
+  campaignCells(store, campaign).reduce((sum, row) => sum + row.attempts.reduce((s, a) => s + a.charged_usd, 0), 0) + readOrphanCharges(store, campaign).reduce((s, o) => s + o.charged_usd, 0)
+
+/** The largest single charge on disk for a campaign: what a resumed run assumes the next attempt can cost, besides the estimate. */
+export const largestChargeUsd = (store: Store, campaign: string): number =>
+  Math.max(0, ...campaignCells(store, campaign).flatMap((row) => row.attempts.map((a) => a.charged_usd)), ...readOrphanCharges(store, campaign).map((o) => o.charged_usd))
+
+/** An attempt ran and was charged, but not even its minimal record could be written. The charge is in `record`; the campaign counts it and stops. */
+export class AccountingPersistError extends Error {
+  override name = 'AccountingPersistError'
+  constructor(readonly record: AttemptRecord) {
+    super(`${record.fixture.id}/${record.model}/${record.arm}/${record.attempt}: the attempt record could not be written; stopping so no spend goes uncounted`)
+  }
+}
+
+// ── one attempt ────────────────────────────────────────────────────────────
+
+export interface AttemptContext {
+  store: Store
+  key: CellKey
+  fixture: ReplayFixture
+  executor: Executor
+  provider: 'scripted' | 'cliproxy'
+  /** Leak-scan needles: the CLIProxyAPI key and its prefix. */
+  needles?: readonly Needle[]
+  expectedHostVersion?: string
+  /** The packed plugin's `plugin/skills` directory; the delivered skill must come from it. */
+  skillsDir?: string
+  timeoutMs?: number
+  /** What the cap charges when the host reports no cost for a live attempt. */
+  attemptEstimateUsd?: number
+  signal?: AbortSignal
+  now?: () => Date
+  /** The pid and host written into a live attempt's marker. Default: this process. */
+  pid?: number
+  host?: string
+}
+
+function observe(events: ReturnType<typeof analyzeEvents>): ObservedCalls {
+  return {
+    tool_calls: events.toolUses.map((t) => ({ tool: t.tool, status: t.status })),
+    metacogs_calls: events.toolUses.map((t) => t.tool).filter((t) => t === 'feel' || t === 'drugs'),
+    skill_loads: events.skillCalls.filter((s) => isSkillContentLoad(s)).map((s) => skillCallName(s) ?? 'unknown'),
+  }
+}
+
+const outcomeOf = (o: ObservedCalls): OutcomeLabel => (o.metacogs_calls.length > 0 ? 'metacogs_tool' : o.skill_loads.length > 0 ? 'skill_only' : 'no_tool')
+
+function chargeFor(provider: 'scripted' | 'cliproxy', reported: number, requests: number, estimate: number): AttemptRecord['cost'] {
+  if (provider === 'scripted') return { reported_usd: reported, charged_usd: 0, basis: 'scripted' }
+  if (requests === 0) return { reported_usd: reported, charged_usd: 0, basis: 'no_request' }
+  if (reported > 0) return { reported_usd: reported, charged_usd: reported * UNDERCOUNT_FACTOR, basis: 'reported_x_factor' }
+  return { reported_usd: reported, charged_usd: estimate, basis: 'estimate' }
+}
+
+/** Runs one attempt into a fresh directory and writes its evidence. A credential leak writes labels only and rethrows. */
+export async function runAttempt(ctx: AttemptContext): Promise<AttemptRecord> {
+  const { store, key, fixture } = ctx
+  const now = ctx.now ?? (() => new Date())
+  const expectedVersion = ctx.expectedHostVersion ?? HOST_VERSION
+  const cell = cellDir(store, key)
+  const slot = allocateAttempt(cell)
+  const message = armMessage(key.arm, fixture.spec)
+  const startedAt = now().toISOString()
+  const needles = ctx.needles ?? []
+  const base = {
+    schema_version: 1 as const,
+    campaign: key.campaign,
+    fixture: { id: key.fixture, kind: fixture.spec.kind, spec_sha256: fixture.entry.spec_sha256, export_sha256: fixture.entry.export_sha256 },
+    model: key.model,
+    arm: key.arm,
+    attempt: slot.id,
+    seq: slot.seq,
+    provider: ctx.provider,
+    host: { version: null as string | null, expected_version: expectedVersion },
+    message,
+  }
+  const failed = (status: 'error' | 'host_error', reasons: string[], extra: Partial<AttemptRecord> = {}): AttemptRecord => ({
+    ...base,
+    received_args: null,
+    gates: null,
+    status,
+    terminal: false,
+    reasons,
+    observed: null,
+    outcome: null,
+    requests: { total: 0, main: 0 },
+    stack: null,
+    unrecognized_events: 0,
+    usage: null,
+    cost: { reported_usd: 0, charged_usd: 0, basis: ctx.provider === 'scripted' ? 'scripted' : 'no_request' },
+    timing: { started_at: startedAt, ended_at: now().toISOString(), wall_ms: 0 },
+    artifacts: {},
+    ...extra,
+  })
+  let persisted = true
+  const marker = join(slot.dir, STARTED_FILE)
+  /** The record is on disk, so the mark has done its job. */
+  const clearMarker = (): void => {
+    try {
+      rmSync(marker, { force: true })
+    } catch {
+      // a stale mark beside an attempt.json is ignored
+    }
+  }
+  const keep = (record: AttemptRecord): AttemptRecord => {
+    try {
+      writeFileSync(join(slot.dir, 'attempt.json'), `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600, flag: 'wx' })
+      clearMarker()
+    } catch {
+      // the directory stays either way; an unreadable record shows as an attempt with no status
+      persisted = false
+    }
+    return record
+  }
+
+  if (message === null) return keep(failed('error', ['arm_not_applicable']))
+  // A built scenario carries its own seed turns. Without them the history gate would have nothing to check, so the attempt does not run.
+  if (fixture.world && !fixture.seedUserTurns?.length) return keep(failed('error', ['seed_turns_missing']))
+  // A live attempt can be billed from the first request on. The directory, marked here, is what a later run finds if every record write fails.
+  if (ctx.provider === 'cliproxy') {
+    try {
+      writeFileSync(marker, `${JSON.stringify({ schema_version: 1, started_at: startedAt, pid: ctx.pid ?? process.pid, host: ctx.host ?? hostname() })}\n`, { mode: 0o600, flag: 'wx' })
+    } catch {
+      return keep(failed('error', ['pending_marker_unwritable']))
+    }
+  }
+  let result: HostResult | undefined
+  /** Set as soon as the host has run: from then on a failure keeps the charge. */
+  let incurred: AttemptRecord['cost'] | undefined
+  try {
+    result = await ctx.executor({ fixtureId: key.fixture, seed: fixture.export, model: key.model, arm: key.arm, message, timeoutMs: ctx.timeoutMs ?? RUN_TIMEOUT_MS, ...(fixture.world ? { world: fixture.world } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) })
+    const events = analyzeEvents(result.stdout)
+    const observed = observe(events)
+    const cost = chargeFor(ctx.provider, events.usage.cost, result.requests.length, ctx.attemptEstimateUsd ?? 0)
+    incurred = cost
+    const parsed = parseEvents(result.stdout).events
+
+    let status: AttemptStatus
+    let reasons: string[] = []
+    let gates: AttemptRecord['gates'] = null
+    let receivedArgs: string | null = null
+    if (!result.ran && result.stack === null) {
+      // The preflight never produced a config: nothing was checked and the arm was not sent. Infrastructure, retryable; the abort and timeout state stays in the reason.
+      status = 'host_error'
+      reasons = [result.aborted ? 'preflight_aborted' : result.timedOut ? 'preflight_timeout' : 'preflight_no_config']
+    } else if (result.stack && !result.stack.passed) {
+      status = 'excluded'
+      reasons = ['isolation_failed' satisfies ExclusionReason]
+      gates = { passed: false, checks: result.stack.checks.filter((c) => !c.passed).map((c) => ({ name: c.name, passed: false, reason: 'isolation_failed', detail: c.detail })) }
+    } else if (result.aborted) {
+      status = 'error'
+      reasons = ['aborted']
+    } else if (result.timedOut) {
+      status = 'timeout'
+      reasons = ['timeout']
+    } else if (isRateLimited(events.hostErrors)) {
+      status = 'rate_limited'
+      reasons = ['provider_429']
+    } else if (events.hostErrors.length > 0 || result.exitCode !== 0 || parsed.length === 0 || (events.stepFinishCount === 0 && events.assistantText.trim() === '')) {
+      status = 'host_error'
+      reasons = events.hostErrors.length > 0 ? events.hostErrors.map((e) => `host_error:${e.name ?? 'unknown'}`) : result.exitCode !== 0 ? [`host_exit_${result.exitCode}`] : [parsed.length === 0 ? 'no_events' : 'no_completion']
+    } else {
+      const g = evaluateGates({
+        arm: key.arm,
+        message,
+        model: key.model,
+        expectedHostVersion: expectedVersion,
+        hostVersion: result.hostVersion,
+        ...(ctx.skillsDir ? { skillsDir: ctx.skillsDir } : {}),
+        requests: result.requests,
+        seedUserTurns: fixture.world ? fixture.seedUserTurns! : (fixture.seedUserTurns ?? fixture.spec.turns.flatMap((t) => (t.role === 'user' ? [t.text] : []))),
+        assistants: result.assistants,
+        partTypes: result.partTypes,
+        eventTypes: parsed.map((e) => e.type),
+      })
+      gates = { passed: g.passed, checks: g.checks }
+      receivedArgs = g.receivedArgs
+      status = g.passed ? 'completed' : 'excluded'
+      reasons = g.reasons
+    }
+
+    const artifacts = {
+      'requests.json': JSON.stringify(result.requests.map((r) => ({ returned_model: r.returnedModel ?? null, body: r.body }))),
+      'stdout.jsonl': result.stdout,
+      'stderr.txt': result.stderr,
+    }
+    const record: AttemptRecord = {
+      ...base,
+      host: { version: result.hostVersion, expected_version: expectedVersion },
+      received_args: receivedArgs,
+      gates,
+      status,
+      terminal: isTerminal(status),
+      reasons,
+      observed,
+      outcome: status === 'completed' ? outcomeOf(observed) : null,
+      requests: { total: result.requests.length, main: mainRequests(result.requests).length },
+      stack: result.stackSummary,
+      unrecognized_events: events.unrecognized.length,
+      usage: events.usage,
+      cost,
+      timing: { started_at: result.startedAt, ended_at: result.endedAt, wall_ms: result.wallMs },
+      artifacts: Object.fromEntries(Object.entries(artifacts).map(([file, text]) => [file, sha256(text)])),
+      ...(result.world ? { world: result.world, hindsight_note: HINDSIGHT_NOTE } : {}),
+      ...(fixture.history ? { history: fixture.history } : {}),
+    }
+    writeEvidence({ dir: slot.dir, runId: `${key.fixture}/${key.model}/${key.arm}/${slot.id}`, artifacts, manifestFile: 'attempt.json', manifest: `${JSON.stringify(record, null, 2)}\n`, needles, scanDirs: result.leakDirs, exclusive: true })
+    clearMarker()
+    return record
+  } catch (e) {
+    // The host ran: the charge stands whatever went wrong afterwards (scan, write, analysis).
+    const cost = incurred ?? (result ? chargeFor(ctx.provider, 0, result.requests.length, ctx.attemptEstimateUsd ?? 0) : undefined)
+    const charged = cost ? { cost } : {}
+    if (e instanceof CredentialLeakError) {
+      keep(failed('error', ['credential_leak'], { leak_labels: e.labels, ...charged }))
+      throw e
+    }
+    const raw = e instanceof Error ? e.message : String(e)
+    const leaked = needles.some((n) => n.value && raw.includes(n.value))
+    const record = keep(failed('error', [e instanceof Error ? e.name : 'unknown_error'], { error: { name: e instanceof Error ? e.name : 'unknown', message: leaked ? '[redacted]' : raw.slice(0, 300) }, ...charged }))
+    if (!persisted && result) throw new AccountingPersistError(record)
+    return record
+  } finally {
+    result?.cleanup()
+  }
+}
+
+// ── the campaign ───────────────────────────────────────────────────────────
+
+export interface CampaignOptions {
+  name: string
+  models: readonly string[]
+  arms: readonly ArmName[]
+  fixtures: readonly string[]
+  capUsd: number
+  provider: 'scripted' | 'cliproxy'
+  /** Cliproxy only, required: what one attempt is assumed to cost until a larger one is seen. */
+  attemptEstimateUsd?: number
+  timeoutMs?: number
+  /** Also run cells that already have a counted attempt. The extra attempts are kept and never count. */
+  again?: boolean
+  /** Tries per cell in one invocation when attempts keep failing for infrastructure reasons. Default 3. */
+  maxAttempts?: number
+  expectedHostVersion?: string
+  /** Real-world mode: the fixtures are built scenarios, run on the six real-world arms. */
+  world?: boolean
+}
+
+/** Real repos can quote the key prefix in their own files, so a real-world scan keeps the full key only. */
+export function realWorldNeedles(needles: readonly Needle[], realWorld: boolean): Needle[] {
+  return realWorld ? needles.filter((n) => n.label !== 'auth_cliproxy:key_prefix') : [...needles]
+}
+
+export interface CampaignDeps {
+  store: Store
+  executor: Executor
+  cliproxy?: ResolvedCliproxy
+  /** Further leak-scan needles (the gh token). */
+  needles?: readonly Needle[]
+  /** Where fixtures come from. Default: frozen, approved paraphrased fixtures. */
+  loadFixture?: (id: string) => ReplayFixture
+  skillsDir?: string
+  sleep?: (ms: number) => Promise<void>
+  log?: (line: string) => void
+  signal?: AbortSignal
+  now?: () => Date
+  /** Test seams for the marker's identity and the liveness probe. Default: this process, this host, `process.kill(pid, 0)`. */
+  pid?: number
+  host?: string
+  alive?: (pid: number) => boolean
+}
+
+export type UnrunReason = 'budget' | 'aborted' | 'accounting' | 'no_somewhere' | 'attempts_exhausted'
+
+export interface UnrunCell {
+  fixture: string
+  model: string
+  arm: ArmName
+  reason: UnrunReason
+}
+
+export interface CampaignSummary {
+  cells: number
+  attempts: number
+  /** Cells whose counted attempt is of each status, as of the end of this invocation. */
+  counted: Partial<Record<AttemptStatus, number>>
+  unrun: UnrunCell[]
+  spentUsd: number
+  capUsd: number
+  stoppedBy: 'budget' | 'aborted' | 'accounting' | null
+}
+
+const stamp = (d: Date): string => d.toISOString().replace(/[-:.]/g, '').slice(0, 18)
+
+/** Runs every fixture, model and arm cell that has no counted attempt, stopping before a provider attempt that could pass the cap. */
+export async function runCampaign(options: CampaignOptions, deps: CampaignDeps): Promise<CampaignSummary> {
+  const { store } = deps
+  const now = deps.now ?? (() => new Date())
+  const log = deps.log ?? (() => {})
+  const sleep = deps.sleep ?? ((ms: number) => Bun.sleep(ms))
+  if (!ID_PATTERN.test(options.name)) throw new Error('campaign name: expected lowercase letters, digits and hyphens, up to 64 characters')
+  for (const model of options.models) if (!MODEL_PATTERN.test(model)) throw new Error(`model ${JSON.stringify(model)}: expected provider/model`)
+  for (const arm of options.arms) if (!((options.world ? WORLD_ARM_NAMES : [...ARM_NAMES, ...WORLD_ARM_NAMES]) as readonly string[]).includes(arm)) throw new Error(`unknown arm ${arm}`)
+  if (!(options.capUsd > 0)) throw new Error('the cap takes a positive amount in USD')
+  const live = options.provider === 'cliproxy'
+  if (live && !(options.attemptEstimateUsd && options.attemptEstimateUsd > 0)) throw new Error('a cliproxy campaign needs an attempt estimate in USD, so the cap holds before the first call')
+  if (live && !deps.cliproxy) throw new Error('a cliproxy campaign needs a resolved CLIProxyAPI key')
+
+  // Fixtures come only through loadFrozen: frozen, scanned clean as of now, unedited and approved. All load before any run.
+  const load = deps.loadFixture ?? ((id: string) => loadFrozen(store, id))
+  const fixtures = new Map(options.fixtures.map((id) => [id, load(id)] as const))
+  const self: RunnerIdentity = { pid: deps.pid ?? process.pid, host: deps.host ?? hostname(), alive: deps.alive ?? pidAlive }
+  const maxAttempts = options.maxAttempts ?? 3
+  const estimate = options.attemptEstimateUsd ?? 0
+  assertAccountingReconciled(store, options.name, now(), estimate, self)
+  const before = spentUsd(store, options.name)
+  let spent = before
+  // The largest charge already on disk counts: a resumed run does not forget what an attempt can cost.
+  let largest = largestChargeUsd(store, options.name)
+  let attempts = 0
+  const unrun: UnrunCell[] = []
+  let stoppedBy: CampaignSummary['stoppedBy'] = null
+  let orphan: OrphanCharge | undefined
+
+  const cells = options.fixtures.flatMap((fixture) => options.models.flatMap((model) => options.arms.map((arm): CellKey => ({ campaign: options.name, fixture, model, arm }))))
+  for (const key of cells) {
+    const loaded = fixtures.get(key.fixture)!
+    if (armMessage(key.arm, loaded.spec) === null) {
+      unrun.push({ fixture: key.fixture, model: key.model, arm: key.arm, reason: 'no_somewhere' })
+      continue
+    }
+    if (!options.again && countedAttempt(readAttempts(cellDir(store, key)))) continue
+    if (stoppedBy) {
+      unrun.push({ fixture: key.fixture, model: key.model, arm: key.arm, reason: stoppedBy })
+      continue
+    }
+
+    let settled = false
+    for (let tryNo = 1; tryNo <= maxAttempts && !settled; tryNo++) {
+      if (deps.signal?.aborted) {
+        stoppedBy = 'aborted'
+        break
+      }
+      if (live && spent + Math.max(estimate, largest) > options.capUsd) {
+        stoppedBy = 'budget'
+        break
+      }
+      let record: AttemptRecord
+      try {
+        record = await runAttempt({
+          store,
+          key,
+          fixture: loaded,
+          executor: deps.executor,
+          provider: options.provider,
+          ...(deps.cliproxy || deps.needles ? { needles: [...realWorldNeedles(deps.cliproxy?.needles ?? [], options.world === true), ...(deps.needles ?? [])] } : {}),
+          ...(options.expectedHostVersion ? { expectedHostVersion: options.expectedHostVersion } : {}),
+          ...(deps.skillsDir ? { skillsDir: deps.skillsDir } : {}),
+          ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
+          attemptEstimateUsd: estimate,
+          ...(deps.signal ? { signal: deps.signal } : {}),
+          now,
+          pid: self.pid,
+          host: self.host,
+        })
+      } catch (e) {
+        if (!(e instanceof AccountingPersistError)) throw e
+        // The charge is real but its record is gone: count it here and schedule nothing more.
+        attempts += 1
+        spent += e.record.cost.charged_usd
+        largest = Math.max(largest, e.record.cost.charged_usd)
+        orphan = { schema_version: 1, at: now().toISOString(), fixture: key.fixture, model: key.model, arm: key.arm, attempt: e.record.attempt, charged_usd: e.record.cost.charged_usd }
+        try {
+          appendOrphanCharge(store, options.name, orphan)
+        } catch {
+          log(`${ORPHAN_FILE} could not be written either; the run note carries the charge and the next run will ask for it`)
+        }
+        log(`${key.fixture} ${key.model} ${key.arm} ${e.record.attempt}: ${e.message}`)
+        stoppedBy = 'accounting'
+        break
+      }
+      attempts += 1
+      spent += record.cost.charged_usd
+      largest = Math.max(largest, record.cost.charged_usd)
+      log(`${key.fixture} ${key.model} ${key.arm} ${record.attempt}: ${record.status}${record.reasons.length ? ` (${record.reasons.join(', ')})` : ''}`)
+      settled = record.terminal
+      if (!settled && record.status === 'rate_limited' && tryNo < maxAttempts) await sleep(BACKOFF_MS[Math.min(tryNo - 1, BACKOFF_MS.length - 1)]!)
+      if (!settled && (record.reasons.includes('aborted') || record.reasons.includes('preflight_aborted'))) {
+        stoppedBy = 'aborted'
+        break
+      }
+    }
+    if (!settled) unrun.push({ fixture: key.fixture, model: key.model, arm: key.arm, reason: stoppedBy ?? 'attempts_exhausted' })
+  }
+
+  const counted: CampaignSummary['counted'] = {}
+  for (const row of campaignCells(store, options.name)) if (row.counted?.status) counted[row.counted.status] = (counted[row.counted.status] ?? 0) + 1
+  const summary: CampaignSummary = { cells: cells.length, attempts, counted, unrun, spentUsd: spent, capUsd: options.capUsd, stoppedBy }
+  const dir = campaignDir(store, options.name)
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  const note = `${JSON.stringify({ schema_version: 1, started_spent_usd: before, ...summary, provider: options.provider, ...(options.world ? { mode: 'real-world' } : {}), ...(orphan ? { orphan_charge: orphan } : {}), models: options.models, arms: options.arms, fixtures: options.fixtures }, null, 2)}\n`
+  for (let n = 1; ; n++) {
+    try {
+      writeFileSync(join(dir, `run-${stamp(now())}${n > 1 ? `-${n}` : ''}.json`), note, { mode: 0o600, flag: 'wx' })
+      break
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST' || n > 99) throw e
+    }
+  }
+  return summary
+}

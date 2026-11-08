@@ -6,6 +6,7 @@
  * interrupt reaps `bunx` and its `opencode` grandchild together.
  */
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
+import { closeSync, openSync, readFileSync } from 'node:fs'
 
 import { bunInstallCacheDir, OPENCODE_PIN } from './env'
 
@@ -109,6 +110,10 @@ export interface SpawnOptions {
    * message verbatim, whereas a multi-word argv message reaches the model JSON-quoted. Absent: stdin is closed.
    */
   stdin?: string
+  /** Send stdout to this file instead of a pipe (a pipe cuts `debug config` at 768 KiB). The result still carries the text. */
+  stdoutPath?: string
+  /** Send stderr to this file instead of a pipe. */
+  stderrPath?: string
 }
 
 /**
@@ -121,11 +126,13 @@ export function spawnCapture(argv: readonly string[], options: SpawnOptions): Pr
   const started = Date.now()
   const graceMs = options.killGraceMs ?? 5_000
   return new Promise((resolve) => {
+    const outFd = options.stdoutPath === undefined ? undefined : openSync(options.stdoutPath, 'w', 0o600)
+    const errFd = options.stderrPath === undefined ? undefined : openSync(options.stderrPath, 'w', 0o600)
     const child = spawn(command, rest, {
       cwd: options.cwd,
       env: options.env,
       detached: true,
-      stdio: [options.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+      stdio: [options.stdin === undefined ? 'ignore' : 'pipe', outFd ?? 'pipe', errFd ?? 'pipe'],
     })
     if (child.pid !== undefined) liveGroups.add(child.pid)
     if (options.stdin !== undefined) {
@@ -136,6 +143,7 @@ export function spawnCapture(argv: readonly string[], options: SpawnOptions): Pr
     child.stderr?.setEncoding('utf8')
     let stdout = ''
     let stderr = ''
+    let spawnError = ''
     let timedOut = false
     let aborted = false
     let settled = false
@@ -149,6 +157,10 @@ export function spawnCapture(argv: readonly string[], options: SpawnOptions): Pr
       options.signal?.removeEventListener('abort', onAbort)
       // Reap any survivor in the group (e.g. a grandchild holding pipes).
       killGroup(child, 'SIGKILL')
+      if (outFd !== undefined) closeSync(outFd)
+      if (errFd !== undefined) closeSync(errFd)
+      if (options.stdoutPath !== undefined) stdout = readFileSync(options.stdoutPath, 'utf8')
+      if (options.stderrPath !== undefined) stderr = readFileSync(options.stderrPath, 'utf8') + spawnError
       resolve({
         stdout,
         stderr,
@@ -183,7 +195,8 @@ export function spawnCapture(argv: readonly string[], options: SpawnOptions): Pr
       stderr += c
     })
     child.once('error', (e) => {
-      stderr += `\n${String(e)}`
+      spawnError = `\n${String(e)}`
+      stderr += spawnError
       finish(-1)
     })
     child.once('close', (code) => finish(timedOut || aborted ? -1 : (code ?? -1)))

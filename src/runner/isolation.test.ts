@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { availableSkillsFromRequests, checkDebugConfig, checkIsolation, type ExpectedConfig, failedChecks, type IsolationInput, isMainRequest, offeredTools, systemPromptSent, systemTexts } from './isolation'
+import { availableSkillsFromRequests, checkDailyStack, type DailyStackInput, checkDebugConfig, checkIsolation, type ExpectedConfig, failedChecks, type IsolationInput, isMainRequest, offeredTools, systemPromptSent, systemTexts } from './isolation'
 import type { RecordedRequest } from './scripted-provider'
 
 const skillsBlock = (names: string[]) =>
@@ -354,5 +354,73 @@ describe('checkIsolation for an arm declared tool-free', () => {
     const withObject = input({ generatedConfig: generated, debugConfigJson: effective, expectedConfig: { pluginOrigins: true } })
     expect(failedChecks(checkIsolation(withObject))).toEqual([])
     expect(failedChecks(checkIsolation({ ...withObject, expectedConfig: undefined })).map((c) => c.name)).toEqual(['debug_config_generated_only'])
+  })
+})
+
+describe('checkDailyStack', () => {
+  const PLUGINS = ['slim@1', 'magic@2', 'file:///pkg/dist/index.js']
+  const GEN = { share: 'disabled', permission: { edit: 'allow', bash: { '*': 'deny', 'git push*': 'deny' } }, compaction: { auto: false, prune: false }, provider: { p: {} }, plugin: PLUGINS }
+  // The stack adds agents, commands, skills and more around the generated keys.
+  const EFF = {
+    ...GEN,
+    plugin: PLUGINS,
+    plugin_origins: PLUGINS.map((spec) => ({ spec, source: '/fx/opencode.json' })),
+    default_agent: 'orchestrator',
+    mcp: {},
+    agent: { orchestrator: {}, explorer: {}, oracle: {}, 'systematic-implementer': {} },
+    command: { interview: {}, 'ctx-status': {}, 'ce:plan': {} },
+    skills: { paths: ['/pkg/skills', '/pkg/plugin/skills', '/extra'] },
+  }
+  const mainRequest = (tools: string[], skills: string[]): RecordedRequest => ({
+    hasTools: true,
+    round: 0,
+    body: { messages: [{ role: 'system', content: `You are the orchestrator.\n${skillsBlock(skills)}` }, { role: 'user', content: 'hi' }], tools: tools.map((name) => ({ function: { name } })) },
+  })
+  const base = (over: Partial<DailyStackInput> = {}): DailyStackInput => ({ effective: EFF, generated: GEN, plugins: PLUGINS, configPath: '/fx/opencode.json', defaultAgent: 'orchestrator', skillsPaths: ['/pkg/plugin/skills'], keepKeys: ['permission', 'share', 'compaction'], offered: mainRequest(['task', 'feel', 'drugs'], ['feel', 'drugs', 'synthesis']), ...over })
+  const failedNames = (input: DailyStackInput) => checkDailyStack(input).checks.filter((c) => !c.passed).map((c) => c.name)
+
+  test('accepts the stack: extra agents, commands and skill paths around the generated config', () => {
+    expect(checkDailyStack(base())).toMatchObject({ passed: true })
+  })
+
+  test('a plugin origin the caller allows is not counted, and one it does not allow still fails', () => {
+    const own = { spec: 'file:///work/clone/src/index.ts', source: '/work/clone/opencode.json' }
+    const eff = { ...EFF, plugin_origins: [...EFF.plugin_origins, own] }
+    expect(failedNames(base({ effective: eff }))).toEqual(['plugins_loaded'])
+    expect(checkDailyStack(base({ effective: eff, allowOrigin: (o) => String(o.spec).startsWith('file:///work/clone/') })).passed).toBe(true)
+    expect(failedNames(base({ effective: eff, allowOrigin: (o) => String(o.spec).startsWith('file:///elsewhere/') }))).toEqual(['plugins_loaded'])
+  })
+
+  test('fails when feel or drugs is not offered as a tool or listed as a skill', () => {
+    expect(failedNames(base({ offered: mainRequest(['task', 'feel'], ['feel', 'drugs']) }))).toEqual(['tools_offered'])
+    expect(failedNames(base({ offered: mainRequest(['task', 'feel', 'drugs'], ['feel']) }))).toEqual(['skills_listed'])
+  })
+
+  test('fails when a plugin did not load, loaded from elsewhere, or an auth plugin is present', () => {
+    expect(failedNames(base({ effective: { ...EFF, plugin_origins: EFF.plugin_origins.slice(0, 2) } }))).toEqual(['plugins_loaded'])
+    expect(failedNames(base({ effective: { ...EFF, plugin_origins: EFF.plugin_origins.map((o) => ({ ...o, source: '/home/x/opencode.json' })) } }))).toEqual(['plugins_loaded'])
+    expect(failedNames(base({ effective: { ...EFF, plugin: [...PLUGINS, 'opencode-anthropic-auth@1'] } }))).toEqual(['no_auth_plugins'])
+  })
+
+  test('fails on another default agent, a non-empty mcp block, or a changed permission set', () => {
+    expect(failedNames(base({ effective: { ...EFF, default_agent: 'build' } }))).toEqual(['default_agent'])
+    expect(failedNames(base({ effective: { ...EFF, mcp: { context7: {} } } }))).toEqual(['mcp_empty'])
+    expect(failedNames(base({ effective: { ...EFF, permission: { edit: 'allow', bash: { '*': 'allow' } } } }))).toEqual(['generated_kept'])
+    expect(failedNames(base({ effective: { ...EFF, permission: { ...GEN.permission, ctx_memory_list: 'allow' } } }))).toEqual(['generated_kept'])
+  })
+
+  test('a plugin may add deny rules to the permission set, and nothing else to the kept keys', () => {
+    expect(checkDailyStack(base({ effective: { ...EFF, permission: { ...GEN.permission, ctx_memory_list: 'deny' } } })).passed).toBe(true)
+    expect(failedNames(base({ effective: { ...EFF, compaction: { auto: false, prune: false, extra: 'deny' } } }))).toEqual(['generated_kept'])
+  })
+
+  test('fails when the plugin skill directory is missing, and on output that is not an object', () => {
+    expect(failedNames(base({ effective: { ...EFF, skills: { paths: ['/pkg/skills'] } } }))).toEqual(['skills_paths'])
+    expect(checkDailyStack(base({ effective: undefined })).passed).toBe(false)
+  })
+
+  test('without an offered request only the config is checked', () => {
+    const { offered: _skip, ...configOnly } = base()
+    expect(checkDailyStack(configOnly).checks.map((c) => c.name)).not.toContain('tools_offered')
   })
 })
