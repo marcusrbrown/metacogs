@@ -56,6 +56,8 @@ OpenCode installs the package on the next start. The supported versions are Open
 
 On OpenCode v1, typed `/feel` and `/drugs` run the skills, but the TUI `/` popup lists only commands that are not skills. On v2, multi-word arguments arrive as typed, unquoted. A skill denied by permissions is still delivered when typed as a slash command; the `permissions` array form is in [docs/install.md](docs/install.md#opencode-plugin).
 
+[Using /feel and /drugs](docs/using-feel-and-drugs.md)
+
 If you copied `synthesis` or `counterfactual` into `.agents/skills/` or another scanned path, remove those copies. The plugin provides the same skill names, and OpenCode does not guarantee which of two same-named skills wins. The method skills still write their records as described under Install above.
 
 ### Where it comes from

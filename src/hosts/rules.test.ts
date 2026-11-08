@@ -249,8 +249,12 @@ describe('the Codex renders', () => {
     expect(text).toContain(
       'If no text follows the mention, or you loaded this skill yourself, there are none.\n\nIf there are arguments, pass them as one string for `somewhere`.',
     )
-    expect(text).toContain('If there are none, choose `somewhere`, `quality` and `sigil` yourself from what is going on in this session.')
-    expect(renderCodex('drugs')).toContain('If there are none, choose `substance`, `method` and `displaces` yourself from what is going on in this session.')
+    expect(text).toContain(
+      'If there are none, choose `somewhere` from something concrete in this session: the claim, file, commit, check result or plan step you are about to rely on but have not verified. Name that thing, not a general mood. Write `quality` and `sigil` yourself.',
+    )
+    expect(renderCodex('drugs')).toContain(
+      'If there are none, start with `displaces`: name, in your own words, the approach you have been taking and the premise it rests on. Then choose a substance whose stance tests that premise, for example caffeine to narrow down and verify one thing, or psilocybin to step back and reframe the problem. Write `method` as the concrete check or change that stance makes you do next. Do not pick a substance at random.',
+    )
   })
 
   test('both tool renders carry the tool-unavailable fallback before the first section', () => {
