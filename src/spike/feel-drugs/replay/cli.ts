@@ -9,6 +9,7 @@ import { extractSession } from './extract'
 import { type JudgeCliDeps, judgeMain } from './judge'
 import { revealCampaign } from './reveal'
 import { buildSheet } from './sheet'
+import { WorldUsageError, worldCommand } from './world-cli'
 import { approveFixture, assertOutsideRepo, buildFixture, freezeFixture, listFixtures, openStore, saveRaw, type StoreOptions } from './store'
 
 export interface CliIo {
@@ -30,7 +31,8 @@ const USAGE = [
   '       bun run replay build <spec.json> | freeze <id> | approve <id> | list',
   '       bun run replay campaign --name <n> --models <list> --arms <list|all> --fixtures <list|all> --cap <usd>',
   '                              [--provider scripted|cliproxy] [--auth-cliproxy <keyname>] [--attempt-estimate <usd>]',
-  '                              [--timeout-ms N] [--again] [--expect-host-version <v>]',
+  '                              [--timeout-ms N] [--again] [--expect-host-version <v>] [--world real]',
+  '       bun run replay world specs | build | list [--db <path>] [--fixtures <list|all>] [--budget <tokens>] [--resolve] [--force]',
   '       bun run replay status <campaign>',
   '       bun run replay sheet <campaign> [--models <list>]',
   '       bun run replay reveal <campaign> [--partial]',
@@ -67,7 +69,7 @@ export function main(argv: readonly string[], io: Partial<CliIo> = {}): number {
   try {
     return run(argv, { out, err }, io)
   } catch (e) {
-    if (e instanceof UsageError || e instanceof CampaignUsageError) {
+    if (e instanceof UsageError || e instanceof CampaignUsageError || e instanceof WorldUsageError) {
       err(`${e.message}\n${USAGE}`)
       return 2
     }
@@ -154,6 +156,8 @@ function run(argv: readonly string[], log: Pick<CliIo, 'out' | 'err'>, io: Parti
       log.out(`summary ${revealed.summaryPath}`)
       return 0
     }
+    case 'world':
+      return worldCommand(arg, { db: values.db, fixtures: values.fixtures, budget: values.budget, resolve: values.resolve, force: values.force }, { store: openStore(storeOptions), out: log.out })
     case 'campaign':
       return fail('campaign runs through mainAsync')
     default:
@@ -187,6 +191,10 @@ function parse(argv: readonly string[]) {
       'expect-host-version': { type: 'string' },
       again: { type: 'boolean' },
       partial: { type: 'boolean' },
+      world: { type: 'string' },
+      budget: { type: 'string' },
+      resolve: { type: 'boolean' },
+      force: { type: 'boolean' },
     },
   })
 }

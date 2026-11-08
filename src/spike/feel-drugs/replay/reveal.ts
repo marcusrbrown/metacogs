@@ -241,7 +241,7 @@ function score(answer: KeyAnswer, raw: RawMark | undefined): Scored {
   return raw.direction === null ? { answer, changed: null, direction: null } : { answer, changed: true, direction: raw.direction }
 }
 
-const armRank = (arm: ArmName): number => ARM_NAMES.indexOf(arm)
+const armRank = (arm: ArmName): number => (ARM_NAMES as readonly string[]).indexOf(arm)
 const modelRank = (model: string): number => {
   const i = (REPLAY_MODELS as readonly string[]).indexOf(model)
   return i === -1 ? REPLAY_MODELS.length : i

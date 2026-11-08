@@ -31,13 +31,13 @@ export function assertOutsideRepo(path: string, repoRoot = REPO_ROOT): void {
   if (isInside(path, repoRoot)) throw new CustodyError(`refusing ${path}: it resolves inside the repository ${repoRoot}; replay material must live outside the working tree`)
 }
 
-function privateDir(path: string): void {
+export function privateDir(path: string): void {
   mkdirSync(path, { recursive: true, mode: 0o700 })
   chmodSync(path, 0o700)
 }
 
 /** Atomic, 0600, through a temp file in the same directory. `exclusive` refuses to replace an existing file. */
-function writePrivate(path: string, text: string, exclusive = false): void {
+export function writePrivate(path: string, text: string, exclusive = false): void {
   if (exclusive && existsSync(path)) throw new Error(`${path} already exists; replay evidence is never overwritten`)
   const temp = `${path}.tmp-${process.pid}`
   writeFileSync(temp, text, { mode: 0o600, flag: 'w' })

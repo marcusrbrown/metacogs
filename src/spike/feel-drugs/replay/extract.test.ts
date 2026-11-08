@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { EXTRACT_SQL, extractSession } from './extract'
+import { EXTRACT_SQL, extractSession, nextHumanTurn } from './extract'
 
 const cleanup: (() => void)[] = []
 afterEach(() => {
@@ -135,5 +135,32 @@ describe('extraction SQL', () => {
     expect(EXTRACT_SQL.messages).toMatch(/^SELECT id, session_id, time_created, data FROM message\b/)
     expect(EXTRACT_SQL.parts).toMatch(/^SELECT id, message_id, session_id, time_created, data FROM part\b/)
     for (const sql of Object.values(EXTRACT_SQL)) expect(sql).not.toMatch(/SELECT\s+\*|\.\*/i)
+  })
+})
+
+describe('nextHumanTurn', () => {
+  const add = (db: Database, session: string, id: string, t: number, role: string, texts: string[]) => {
+    db.run('INSERT INTO message VALUES (?, ?, ?, ?, ?)', [id, session, t, 0, JSON.stringify({ role })])
+    texts.forEach((text, i) => db.run('INSERT INTO part VALUES (?, ?, ?, ?, ?, ?)', [`prt_${id}_${i}`, id, session, t, 0, JSON.stringify(text.startsWith('{') ? JSON.parse(text) : { type: 'text', text })]))
+  }
+
+  test('returns the first user message after the cutoff whose first text part is not machine-made', () => {
+    const { path, db } = makeDb()
+    const ids = seed(db, 'ses_one', 4)
+    add(db, 'ses_one', 'msg_x1', 2000, 'assistant', ['assistant reply'])
+    add(db, 'ses_one', 'msg_x2', 2001, 'user', ['<system-reminder>machine</system-reminder>'])
+    add(db, 'ses_one', 'msg_x3', 2002, 'user', ['{"type":"file","mime":"x","url":"u"}'])
+    add(db, 'ses_one', 'msg_x4', 2003, 'user', ['what next?', 'second part'])
+    add(db, 'ses_one', 'msg_x5', 2004, 'user', ['later turn'])
+    expect(nextHumanTurn({ db: path, session: 'ses_one', cutoff: ids[3]! })).toBe('what next?')
+  })
+
+  test('is null when no human turn follows, and never looks at another session or at the cutoff itself', () => {
+    const { path, db } = makeDb()
+    const ids = seed(db, 'ses_one', 4)
+    seed(db, 'ses_two', 6)
+    add(db, 'ses_two', 'msg_y1', 5000, 'user', ['other session'])
+    expect(nextHumanTurn({ db: path, session: 'ses_one', cutoff: ids[3]! })).toBeNull()
+    expect(() => nextHumanTurn({ db: path, session: 'ses_one', cutoff: 'msg_nope' })).toThrow(/cutoff/)
   })
 })

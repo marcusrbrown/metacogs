@@ -9,7 +9,9 @@ import { requestedModel, toolNamesAnyWire, userMessageParts, userTextsAnyWire } 
 export const REPLAY_MODELS = ['openai/gpt-6-luna', 'anthropic/claude-opus-5-5'] as const
 
 export const ARM_NAMES = ['continue-a', 'continue-b', 'feel', 'feel-somewhere', 'drugs', 'drugs-caffeine', 'drugs-psilocybin', 'whichever', 'nudge-only'] as const
-export type ArmName = (typeof ARM_NAMES)[number]
+/** Real-world mode: the six arms, `drugs-substance` sending the scenario's own substance. */
+export const WORLD_ARM_NAMES = ['continue-a', 'continue-b', 'feel', 'feel-somewhere', 'drugs', 'drugs-substance'] as const
+export type ArmName = (typeof ARM_NAMES)[number] | (typeof WORLD_ARM_NAMES)[number]
 
 export const WHICHEVER = 'Use whichever metacogs tool fits this moment, then continue.'
 export const NUDGE_ONLY = 'Use whichever tool fits this moment, then continue.'
@@ -19,7 +21,7 @@ export type ArmMessage = { kind: 'text'; text: string } | { kind: 'command'; nam
 const words = (text: string): string[] => text.split(/\s+/).filter(Boolean)
 
 /** What an arm sends. `null` when the arm does not apply to this fixture (`feel-somewhere` with no phrase). */
-export function armMessage(arm: ArmName, spec: Pick<FixtureSpec, 'somewhere'>): ArmMessage | null {
+export function armMessage(arm: ArmName, spec: Pick<FixtureSpec, 'somewhere'> & { kind?: FixtureSpec['kind']; substance?: string }): ArmMessage | null {
   switch (arm) {
     case 'continue-a':
     case 'continue-b':
@@ -32,6 +34,8 @@ export function armMessage(arm: ArmName, spec: Pick<FixtureSpec, 'somewhere'>): 
     }
     case 'drugs':
       return { kind: 'command', name: 'drugs', args: [] }
+    case 'drugs-substance':
+      return { kind: 'command', name: 'drugs', args: [spec.substance ?? (spec.kind === 'drugs' ? 'psilocybin' : 'caffeine')] }
     case 'drugs-caffeine':
       return { kind: 'command', name: 'drugs', args: ['caffeine'] }
     case 'drugs-psilocybin':

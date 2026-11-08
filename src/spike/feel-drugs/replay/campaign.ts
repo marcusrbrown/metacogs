@@ -2,10 +2,12 @@
 import { disposeFixtures, packedPlugin } from '../../../plugin/fixture'
 import { type ResolvedCliproxy, resolveCliproxy as defaultResolveCliproxy } from '../../../runner/cliproxy'
 import { CredentialLeakError } from '../../../runner/manifest'
-import { ARM_NAMES, type ArmName, REPLAY_MODELS } from './gates'
+import { ARM_NAMES, type ArmName, REPLAY_MODELS, WORLD_ARM_NAMES } from './gates'
 import { createHostExecutor, defaultBaseDir, type Executor, prepareBase, resolveHarness } from './host'
 import { campaignCells, campaignDir, runCampaign, spentUsd } from './run'
+import { listWorldScenarios, loadWorldFixture, type ReplayFixture } from './scenario'
 import { listFixtures, loadFrozen, type Store } from './store'
+import { type GhAuth, resolveGhAuth as defaultResolveGhAuth } from './world'
 
 export class CampaignUsageError extends Error {}
 
@@ -21,7 +23,12 @@ export interface CampaignValues {
   'timeout-ms'?: string | undefined
   'expect-host-version'?: string | undefined
   again?: boolean | undefined
+  /** `real`: replay the real history in a clone of the real repo. */
+  world?: string | undefined
 }
+
+/** A real-world attempt may run long; this is its default limit. */
+export const WORLD_TIMEOUT_MS = 900_000
 
 /** Test seams: a fake host, and the credential lookup. */
 export interface CampaignCliDeps {
@@ -29,6 +36,9 @@ export interface CampaignCliDeps {
   resolveCliproxy?: typeof defaultResolveCliproxy
   skillsDir?: string
   sleep?: (ms: number) => Promise<void>
+  resolveGhAuth?: () => GhAuth
+  /** The home directory the project checkouts are looked up under. */
+  home?: string
 }
 
 export interface CampaignCliContext {
@@ -59,25 +69,41 @@ function fixtureIds(store: Store, spec: string): string[] {
   return ids
 }
 
+/** Scenario ids to run: the named ones, or every built one. */
+function worldFixtureIds(store: Store, spec: string): string[] {
+  return spec === 'all' ? listWorldScenarios(store).filter((s) => s.built).map((s) => s.id) : list(spec)
+}
+
 /** Exit 0 every cell has a counted attempt, 3 some cell did not run, 4 a credential leak. */
 export async function campaignCommand(values: CampaignValues, ctx: CampaignCliContext): Promise<number> {
+  const world = values.world === undefined ? false : values.world === 'real' ? true : usage(`--world takes real; got ${values.world}`)
   const name = values.name ?? usage('campaign needs --name')
   const models = list(values.models ?? usage('campaign needs --models'))
   for (const m of models) if (!(REPLAY_MODELS as readonly string[]).includes(m)) usage(`--models takes ${REPLAY_MODELS.join(', ')}; got ${m}`)
   const armSpec = values.arms ?? usage('campaign needs --arms')
-  const arms = armSpec === 'all' ? [...ARM_NAMES] : list(armSpec)
-  for (const a of arms) if (!(ARM_NAMES as readonly string[]).includes(a)) usage(`--arms takes all or ${ARM_NAMES.join(', ')}; got ${a}`)
+  const armNames: readonly string[] = world ? WORLD_ARM_NAMES : ARM_NAMES
+  const arms = armSpec === 'all' ? [...armNames] : list(armSpec)
+  for (const a of arms) if (!armNames.includes(a)) usage(`--arms takes all or ${armNames.join(', ')}; got ${a}`)
   const capUsd = positive(values.cap ?? usage('campaign needs --cap <usd>'), '--cap')
   const provider = values.provider === undefined || values.provider === 'scripted' ? 'scripted' : values.provider === 'cliproxy' ? 'cliproxy' : usage(`--provider takes scripted or cliproxy; got ${values.provider}`)
   const live = provider === 'cliproxy'
   const attemptEstimateUsd = values['attempt-estimate'] === undefined ? undefined : positive(values['attempt-estimate'], '--attempt-estimate')
   if (live && attemptEstimateUsd === undefined) usage('--provider cliproxy needs --attempt-estimate <usd>, so the cap holds before the first call')
-  const timeoutMs = values['timeout-ms'] === undefined ? undefined : positive(values['timeout-ms'], '--timeout-ms')
+  const timeoutMs = values['timeout-ms'] === undefined ? (world ? WORLD_TIMEOUT_MS : undefined) : positive(values['timeout-ms'], '--timeout-ms')
 
   // Fixtures first, then the credential: no key is fetched for a fixture that would be refused.
-  const ids = fixtureIds(ctx.store, values.fixtures ?? usage('campaign needs --fixtures'))
-  if (ids.length === 0) usage('no frozen, approved fixtures to run')
-  for (const id of ids) loadFrozen(ctx.store, id)
+  const loadWorld = (id: string): ReplayFixture => loadWorldFixture(ctx.store, id, { ...(ctx.deps?.home ? { home: ctx.deps.home } : {}), repoRoot: ctx.store.repoRoot })
+  const ids = world ? worldFixtureIds(ctx.store, values.fixtures ?? usage('campaign needs --fixtures')) : fixtureIds(ctx.store, values.fixtures ?? usage('campaign needs --fixtures'))
+  if (ids.length === 0) usage(world ? 'no built real-world scenarios to run; run `replay world build`' : 'no frozen, approved fixtures to run')
+  for (const id of ids) world ? loadWorld(id) : loadFrozen(ctx.store, id)
+  let gh: GhAuth | undefined
+  if (world) {
+    try {
+      gh = (ctx.deps?.resolveGhAuth ?? defaultResolveGhAuth)()
+    } catch (e) {
+      usage(e instanceof Error ? e.message : 'no gh login') // the message names no token
+    }
+  }
   let cliproxy: ResolvedCliproxy | undefined
   if (live) {
     cliproxy = (ctx.deps?.resolveCliproxy ?? defaultResolveCliproxy)(values['auth-cliproxy'], ctx.env, { live: true })
@@ -97,15 +123,15 @@ export async function campaignCommand(values: CampaignValues, ctx: CampaignCliCo
       const baseDir = await prepareBase({ harness, baseDir: defaultBaseDir(ctx.store.root, harness), log: ctx.out })
       const packed = await packedPlugin()
       owned = true
-      executor = createHostExecutor({ harness, baseDir, packed, provider, ...(cliproxy ? { cliproxy } : {}) })
+      executor = createHostExecutor({ harness, baseDir, packed, provider, ...(cliproxy ? { cliproxy } : {}), ...(world ? { world: { ...(gh ? { gh } : {}) } } : {}) })
       skillsDir = packed.pluginSkillsDir
     }
     const summary = await runCampaign(
-      { name, models, arms: arms as ArmName[], fixtures: ids, capUsd, provider, ...(attemptEstimateUsd ? { attemptEstimateUsd } : {}), ...(timeoutMs ? { timeoutMs } : {}), ...(values.again ? { again: true } : {}), ...(values['expect-host-version'] ? { expectedHostVersion: values['expect-host-version'] } : {}) },
-      { store: ctx.store, executor, ...(cliproxy ? { cliproxy } : {}), ...(skillsDir ? { skillsDir } : {}), ...(ctx.deps?.sleep ? { sleep: ctx.deps.sleep } : {}), log: ctx.out, signal: abort.signal },
+      { name, models, arms: arms as ArmName[], fixtures: ids, capUsd, provider, ...(attemptEstimateUsd ? { attemptEstimateUsd } : {}), ...(timeoutMs ? { timeoutMs } : {}), ...(values.again ? { again: true } : {}), ...(values['expect-host-version'] ? { expectedHostVersion: values['expect-host-version'] } : {}), ...(world ? { world: true } : {}) },
+      { store: ctx.store, executor, ...(cliproxy ? { cliproxy } : {}), ...(world ? { loadFixture: loadWorld, ...(gh ? { needles: gh.needles } : {}) } : {}), ...(skillsDir ? { skillsDir } : {}), ...(ctx.deps?.sleep ? { sleep: ctx.deps.sleep } : {}), log: ctx.out, signal: abort.signal },
     )
     const counted = Object.entries(summary.counted).map(([status, n]) => `${status}=${n}`).join(' ') || 'none'
-    ctx.out(`campaign ${name} cells=${summary.cells} attempts=${summary.attempts} spent=$${summary.spentUsd.toFixed(4)} cap=$${summary.capUsd.toFixed(4)}`)
+    ctx.out(`campaign ${name}${world ? ' (real world)' : ''} cells=${summary.cells} attempts=${summary.attempts} spent=$${summary.spentUsd.toFixed(4)} cap=$${summary.capUsd.toFixed(4)}`)
     ctx.out(`counted: ${counted}`)
     for (const u of summary.unrun) ctx.out(`not run\t${u.fixture}\t${u.model}\t${u.arm}\t${u.reason}`)
     if (summary.stoppedBy === 'budget') ctx.out('stopped before the next provider attempt: it could pass the cap')

@@ -8,9 +8,11 @@ import { CredentialLeakError, type Needle } from '../../../runner/manifest'
 import { sha256 } from '../../../runner/workspace'
 import { writeEvidence } from '../artifacts'
 import { BACKOFF_MS, RUN_TIMEOUT_MS } from '../driver'
-import { ARM_NAMES, type ArmMessage, type ArmName, armMessage, type ExclusionReason, evaluateGates, type GateCheck, mainRequests } from './gates'
+import { ARM_NAMES, type ArmMessage, type ArmName, armMessage, type ExclusionReason, evaluateGates, type GateCheck, mainRequests, WORLD_ARM_NAMES } from './gates'
 import type { Executor, HostResult } from './host'
-import { HOST_VERSION, ID_PATTERN, loadFrozen, type LoadedFixture, type Store } from './store'
+import type { ReplayFixture } from './scenario'
+import { HOST_VERSION, ID_PATTERN, loadFrozen, type Store } from './store'
+import { HINDSIGHT_NOTE, type WorldRecord } from './world'
 
 // ── statuses and records ───────────────────────────────────────────────────
 
@@ -63,6 +65,10 @@ export interface AttemptRecord {
   cost: { reported_usd: number; charged_usd: number; basis: 'scripted' | 'no_request' | 'reported_x_factor' | 'estimate' }
   timing: { started_at: string; ended_at: string; wall_ms: number }
   artifacts: Record<string, string>
+  /** Real-world mode: the repo, commit and rule the clone landed on, and the history window the model was given. */
+  world?: WorldRecord
+  hindsight_note?: string
+  history?: NonNullable<ReplayFixture['history']>
   error?: { name: string; message: string }
   leak_labels?: string[]
 }
@@ -180,7 +186,7 @@ export const spentUsd = (store: Store, campaign: string): number => campaignCell
 export interface AttemptContext {
   store: Store
   key: CellKey
-  fixture: LoadedFixture
+  fixture: ReplayFixture
   executor: Executor
   provider: 'scripted' | 'cliproxy'
   /** Leak-scan needles: the CLIProxyAPI key and its prefix. */
@@ -264,7 +270,7 @@ export async function runAttempt(ctx: AttemptContext): Promise<AttemptRecord> {
   if (message === null) return keep(failed('error', ['arm_not_applicable']))
   let result: HostResult | undefined
   try {
-    result = await ctx.executor({ fixtureId: key.fixture, seed: fixture.export, model: key.model, arm: key.arm, message, timeoutMs: ctx.timeoutMs ?? RUN_TIMEOUT_MS, ...(ctx.signal ? { signal: ctx.signal } : {}) })
+    result = await ctx.executor({ fixtureId: key.fixture, seed: fixture.export, model: key.model, arm: key.arm, message, timeoutMs: ctx.timeoutMs ?? RUN_TIMEOUT_MS, ...(fixture.world ? { world: fixture.world } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) })
     const events = analyzeEvents(result.stdout)
     const observed = observe(events)
     const cost = chargeFor(ctx.provider, events.usage.cost, result.requests.length, ctx.attemptEstimateUsd ?? 0)
@@ -299,7 +305,7 @@ export async function runAttempt(ctx: AttemptContext): Promise<AttemptRecord> {
         hostVersion: result.hostVersion,
         ...(ctx.skillsDir ? { skillsDir: ctx.skillsDir } : {}),
         requests: result.requests,
-        seedUserTurns: fixture.spec.turns.flatMap((t) => (t.role === 'user' ? [t.text] : [])),
+        seedUserTurns: fixture.seedUserTurns ?? fixture.spec.turns.flatMap((t) => (t.role === 'user' ? [t.text] : [])),
         assistants: result.assistants,
         partTypes: result.partTypes,
         eventTypes: parsed.map((e) => e.type),
@@ -332,6 +338,8 @@ export async function runAttempt(ctx: AttemptContext): Promise<AttemptRecord> {
       cost,
       timing: { started_at: result.startedAt, ended_at: result.endedAt, wall_ms: result.wallMs },
       artifacts: Object.fromEntries(Object.entries(artifacts).map(([file, text]) => [file, sha256(text)])),
+      ...(result.world ? { world: result.world, hindsight_note: HINDSIGHT_NOTE } : {}),
+      ...(fixture.history ? { history: fixture.history } : {}),
     }
     writeEvidence({ dir: slot.dir, runId: `${key.fixture}/${key.model}/${key.arm}/${slot.id}`, artifacts, manifestFile: 'attempt.json', manifest: `${JSON.stringify(record, null, 2)}\n`, needles, scanDirs: result.leakDirs, exclusive: true })
     return record
@@ -365,12 +373,18 @@ export interface CampaignOptions {
   /** Tries per cell in one invocation when attempts keep failing for infrastructure reasons. Default 3. */
   maxAttempts?: number
   expectedHostVersion?: string
+  /** Real-world mode: the fixtures are built scenarios, run on the six real-world arms. */
+  world?: boolean
 }
 
 export interface CampaignDeps {
   store: Store
   executor: Executor
   cliproxy?: ResolvedCliproxy
+  /** Further leak-scan needles (the gh token). */
+  needles?: readonly Needle[]
+  /** Where fixtures come from. Default: frozen, approved paraphrased fixtures. */
+  loadFixture?: (id: string) => ReplayFixture
   skillsDir?: string
   sleep?: (ms: number) => Promise<void>
   log?: (line: string) => void
@@ -408,14 +422,15 @@ export async function runCampaign(options: CampaignOptions, deps: CampaignDeps):
   const sleep = deps.sleep ?? ((ms: number) => Bun.sleep(ms))
   if (!ID_PATTERN.test(options.name)) throw new Error('campaign name: expected lowercase letters, digits and hyphens, up to 64 characters')
   for (const model of options.models) if (!MODEL_PATTERN.test(model)) throw new Error(`model ${JSON.stringify(model)}: expected provider/model`)
-  for (const arm of options.arms) if (!(ARM_NAMES as readonly string[]).includes(arm)) throw new Error(`unknown arm ${arm}`)
+  for (const arm of options.arms) if (!((options.world ? WORLD_ARM_NAMES : [...ARM_NAMES, ...WORLD_ARM_NAMES]) as readonly string[]).includes(arm)) throw new Error(`unknown arm ${arm}`)
   if (!(options.capUsd > 0)) throw new Error('the cap takes a positive amount in USD')
   const live = options.provider === 'cliproxy'
   if (live && !(options.attemptEstimateUsd && options.attemptEstimateUsd > 0)) throw new Error('a cliproxy campaign needs an attempt estimate in USD, so the cap holds before the first call')
   if (live && !deps.cliproxy) throw new Error('a cliproxy campaign needs a resolved CLIProxyAPI key')
 
   // Fixtures come only through loadFrozen: frozen, scanned clean as of now, unedited and approved. All load before any run.
-  const fixtures = new Map(options.fixtures.map((id) => [id, loadFrozen(store, id)] as const))
+  const load = deps.loadFixture ?? ((id: string) => loadFrozen(store, id))
+  const fixtures = new Map(options.fixtures.map((id) => [id, load(id)] as const))
   const maxAttempts = options.maxAttempts ?? 3
   const estimate = options.attemptEstimateUsd ?? 0
   const before = spentUsd(store, options.name)
@@ -454,7 +469,7 @@ export async function runCampaign(options: CampaignOptions, deps: CampaignDeps):
         fixture: loaded,
         executor: deps.executor,
         provider: options.provider,
-        ...(deps.cliproxy ? { needles: deps.cliproxy.needles } : {}),
+        ...(deps.cliproxy || deps.needles ? { needles: [...(deps.cliproxy?.needles ?? []), ...(deps.needles ?? [])] } : {}),
         ...(options.expectedHostVersion ? { expectedHostVersion: options.expectedHostVersion } : {}),
         ...(deps.skillsDir ? { skillsDir: deps.skillsDir } : {}),
         ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
@@ -481,7 +496,7 @@ export async function runCampaign(options: CampaignOptions, deps: CampaignDeps):
   const summary: CampaignSummary = { cells: cells.length, attempts, counted, unrun, spentUsd: spent, capUsd: options.capUsd, stoppedBy }
   const dir = campaignDir(store, options.name)
   mkdirSync(dir, { recursive: true, mode: 0o700 })
-  const note = `${JSON.stringify({ schema_version: 1, started_spent_usd: before, ...summary, provider: options.provider, models: options.models, arms: options.arms, fixtures: options.fixtures }, null, 2)}\n`
+  const note = `${JSON.stringify({ schema_version: 1, started_spent_usd: before, ...summary, provider: options.provider, ...(options.world ? { mode: 'real-world' } : {}), models: options.models, arms: options.arms, fixtures: options.fixtures }, null, 2)}\n`
   for (let n = 1; ; n++) {
     try {
       writeFileSync(join(dir, `run-${stamp(now())}${n > 1 ? `-${n}` : ''}.json`), note, { mode: 0o600, flag: 'wx' })

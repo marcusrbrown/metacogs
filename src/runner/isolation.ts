@@ -358,6 +358,8 @@ export interface DailyStackInput {
   keepKeys?: readonly string[]
   /** A main request: when given, the tools and skills it offers must include `feel` and `drugs`. */
   offered?: RecordedRequest
+  /** Plugin origins beyond `plugins` that are fine, such as a repo's own plugin its project config declares. They are not counted or ordered. */
+  allowOrigin?: (origin: Record<string, unknown>) => boolean
 }
 
 export interface DailyStackVerdict {
@@ -387,11 +389,13 @@ export function checkDailyStack(input: DailyStackInput): DailyStackVerdict {
     return { passed: false, checks }
   }
 
-  const origins = Array.isArray(eff.plugin_origins) ? eff.plugin_origins.filter(isRecord) : []
+  const allOrigins = Array.isArray(eff.plugin_origins) ? eff.plugin_origins.filter(isRecord) : []
+  const allowed = allOrigins.filter((o) => input.allowOrigin?.(o) === true && !input.plugins.includes(typeof o.spec === 'string' ? o.spec : ''))
+  const origins = allOrigins.filter((o) => !allowed.includes(o))
   const specs = origins.map((o) => (typeof o.spec === 'string' ? o.spec : ''))
   const sameOrder = specs.length === input.plugins.length && specs.every((s, i) => s === input.plugins[i])
   const stray = input.configPath === undefined ? 0 : origins.filter((o) => o.source !== input.configPath).length
-  add('plugins_loaded', sameOrder && stray === 0, sameOrder ? (stray ? `${stray} plugin origins come from outside the generated config` : `${specs.length} plugins from the generated config`) : `plugin_origins lists ${specs.length} plugins, expected ${input.plugins.length}, or in another order`)
+  add('plugins_loaded', sameOrder && stray === 0, sameOrder ? (stray ? `${stray} plugin origins come from outside the generated config` : `${specs.length} plugins from the generated config${allowed.length ? ` and ${allowed.length} the project declares` : ''}`) : `plugin_origins lists ${specs.length} plugins, expected ${input.plugins.length}, or in another order`)
   add('no_auth_plugins', !/(anthropic|openai|opencode)-auth/.test(JSON.stringify(eff.plugin ?? [])), 'no auth plugin in the effective plugin list')
   add('default_agent', eff.default_agent === input.defaultAgent, `default agent is ${String(eff.default_agent)}, expected ${input.defaultAgent}`)
   add('mcp_empty', isRecord(eff.mcp) && Object.keys(eff.mcp).length === 0, `mcp has ${isRecord(eff.mcp) ? Object.keys(eff.mcp).length : 'no'} entries`)

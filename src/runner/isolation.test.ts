@@ -383,6 +383,14 @@ describe('checkDailyStack', () => {
     expect(checkDailyStack(base())).toMatchObject({ passed: true })
   })
 
+  test('a plugin origin the caller allows is not counted, and one it does not allow still fails', () => {
+    const own = { spec: 'file:///work/clone/src/index.ts', source: '/work/clone/opencode.json' }
+    const eff = { ...EFF, plugin_origins: [...EFF.plugin_origins, own] }
+    expect(failedNames(base({ effective: eff }))).toEqual(['plugins_loaded'])
+    expect(checkDailyStack(base({ effective: eff, allowOrigin: (o) => String(o.spec).startsWith('file:///work/clone/') })).passed).toBe(true)
+    expect(failedNames(base({ effective: eff, allowOrigin: (o) => String(o.spec).startsWith('file:///elsewhere/') }))).toEqual(['plugins_loaded'])
+  })
+
   test('fails when feel or drugs is not offered as a tool or listed as a skill', () => {
     expect(failedNames(base({ offered: mainRequest(['task', 'feel'], ['feel', 'drugs']) }))).toEqual(['tools_offered'])
     expect(failedNames(base({ offered: mainRequest(['task', 'feel', 'drugs'], ['feel']) }))).toEqual(['skills_listed'])

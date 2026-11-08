@@ -7,14 +7,16 @@ import { join } from 'node:path'
 import { OFFLINE_NPM, type PackedPlugin } from '../../../plugin/fixture'
 import { writeIsolatedAuth } from '../../../runner/auth'
 import { CLIPROXY_UPSTREAM, cliproxyProviderConfig, type ResolvedCliproxy } from '../../../runner/cliproxy'
-import { buildChildEnv, createFixture, destroyFixture } from '../../../runner/env'
+import { buildChildEnv, bunInstallCacheDir, createFixture, destroyFixture } from '../../../runner/env'
 import { checkDailyStack, type DailyStackVerdict } from '../../../runner/isolation'
 import { spawnCapture } from '../../../runner/opencode'
 import { type RecordedRequest, type ScriptedStep, type ScriptRequest, startRecordingProxy, startScriptedProvider } from '../../../runner/scripted-provider'
 import { gitInit, sha256 } from '../../../runner/workspace'
 import { type ArmMessage, type ArmName, type AssistantInfo, runArgs } from './gates'
 import { defaultOwnerConfig, type OwnerConfig, REPLAY_AGENT, STACK_NPM_PLUGINS, stackHostConfig, stubProviders, writeStackConfigs } from './stack'
-import type { SessionExport } from './store'
+import type { ReplaySeed } from './history'
+import { defaultUnreadable, sandboxAvailable, sandboxPrefix } from './sandbox'
+import { cloneWorld, ghEnv, type GhAuth, removeGhConfig, type WorldJob, type WorldRecord, worldPermission, writeGhConfig } from './world'
 
 // ── the harness binary ─────────────────────────────────────────────────────
 
@@ -83,7 +85,9 @@ export async function prepareBase(input: { harness: string; baseDir: string; own
 
 export interface AttemptJob {
   fixtureId: string
-  seed: SessionExport
+  seed: ReplaySeed
+  /** Real-world mode: clone this repo into the workspace instead of an empty git init. */
+  world?: WorldJob
   model: string
   arm: ArmName
   message: ArmMessage
@@ -111,6 +115,8 @@ export interface HostResult {
   assistants: AssistantInfo[] | null
   partTypes: string[] | null
   leakDirs: string[]
+  /** Real-world mode: the commit and rule the clone landed on. */
+  world?: WorldRecord
   cleanup(): void
 }
 
@@ -128,6 +134,10 @@ export interface HostExecutorOptions {
   script?: (arm: ArmName, request: ScriptRequest) => ScriptedStep | undefined
   /** Scripted provider only: the model id each request reports back. Default: the one it asked for. */
   returnedModel?: (body: Record<string, unknown>) => string
+  /** Real-world attempts: the owner's gh login for reads, and extra child-env entries (tests put a gh stand-in on `PATH`). */
+  world?: { gh?: GhAuth; env?: Record<string, string>; sandbox?: 'required' | 'off'; /** Test seam: further paths the sandbox lets the host write. */ writable?: string[] }
+  /** Test seam: sees the imported seed, the host's export of the session and the fixture's data directory before the fixture is removed. */
+  afterExport?: (seen: { seed: ReplaySeed; exported: unknown; dataDir: string }) => void | Promise<void>
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -191,20 +201,29 @@ export function createHostExecutor(options: HostExecutorOptions): Executor {
       destroyFixture(fx)
     }
     try {
-      gitInit(fx.workspace)
+      if (job.world && options.world?.sandbox !== 'off' && !sandboxAvailable()) throw new Error('real-world attempts need /usr/bin/sandbox-exec (macOS) to confine the agent shell to its clone')
+      let worldRecord: WorldRecord | undefined
+      let ghDir: string | undefined
+      if (job.world) {
+        worldRecord = cloneWorld({ ...job.world, dest: fx.workspace })
+        if (options.world?.gh) ghDir = writeGhConfig(fx.root, options.world.gh)
+        else worldRecord = { ...worldRecord, gh: 'none' }
+      } else gitInit(fx.workspace)
+      // the agent's shell is allowed in the clone and permissions do not confine it, so every real-world host process runs write-confined to the fixture
+      const sandbox = job.world && options.world?.sandbox !== 'off' ? sandboxPrefix({ writable: [fx.root, bunInstallCacheDir(), ...(options.world?.writable ?? [])], unreadable: defaultUnreadable() }) : []
       writeStackConfigs(fx, owner)
       clone(join(options.baseDir, 'cache'), fx.xdgCacheHome)
       clone(join(options.baseDir, 'opencode-config-dir'), fx.opencodeConfigDir)
       const provider = options.provider === 'scripted' ? stubProviders(server.url) : cliproxyProviderConfig(server.url)
-      const config = stackHostConfig({ provider, pluginSpecs: [...STACK_NPM_PLUGINS, options.packed.spec] })
-      const env = buildChildEnv({ fixture: fx, config, extra: OFFLINE_NPM })
+      const config = stackHostConfig({ provider, pluginSpecs: [...STACK_NPM_PLUGINS, options.packed.spec], ...(job.world ? { permission: worldPermission() } : {}) })
+      const env = buildChildEnv({ fixture: fx, config, extra: { ...OFFLINE_NPM, ...(ghDir ? ghEnv(ghDir) : {}), ...(job.world ? options.world?.env : {}) } })
       if (options.provider === 'cliproxy') {
         if (!options.cliproxy) throw new Error('the cliproxy provider needs a resolved key')
         writeIsolatedAuth(fx, options.cliproxy.auth)
       }
       mkdirSync(join(fx.root, 'logs'), { recursive: true })
       const host = (tag: string, argv: string[], timeoutMs: number) =>
-        spawnCapture([harness, ...argv], { cwd: fx.workspace, env, timeoutMs, ...(job.signal ? { signal: job.signal } : {}), stdoutPath: join(fx.root, 'logs', `${tag}.out`), stderrPath: join(fx.root, 'logs', `${tag}.err`) })
+        spawnCapture([...sandbox, harness, ...argv], { cwd: fx.workspace, env, timeoutMs, ...(job.signal ? { signal: job.signal } : {}), stdoutPath: join(fx.root, 'logs', `${tag}.out`), stderrPath: join(fx.root, 'logs', `${tag}.err`) })
 
       const dbg = await host('debug', ['debug', 'config'], 180_000)
       const effective = dbg.exitCode === 0 ? parseJson(dbg.stdout) : undefined
@@ -216,17 +235,22 @@ export function createHostExecutor(options: HostExecutorOptions): Executor {
         defaultAgent: REPLAY_AGENT,
         skillsPaths: [options.packed.pluginSkillsDir],
         keepKeys: ['permission', 'share', 'compaction'],
+        // a real repo may declare its own plugin (Systematic loads ./src/index.ts); the daily setup runs it too
+        ...(job.world ? { allowOrigin: (o: Record<string, unknown>) => typeof o.spec === 'string' && o.spec.startsWith(`file://${realpathSync(fx.workspace)}/`) } : {}),
       })
       const eff = isRecord(effective) ? effective : undefined
       const stackSummary = eff
         ? { plugins: Array.isArray(eff.plugin_origins) ? eff.plugin_origins.filter(isRecord).map((o) => String(o.spec)) : [], default_agent: typeof eff.default_agent === 'string' ? eff.default_agent : null, mcp_entries: isRecord(eff.mcp) ? Object.keys(eff.mcp).length : -1 }
         : null
-      const base = { hostVersion: version, leakDirs: [fx.workspace], cleanup, stack, stackSummary }
+      const base = { hostVersion: version, leakDirs: job.world ? worldLeakDirs(fx) : [fx.workspace], ...(worldRecord ? { world: worldRecord } : {}), cleanup, stack, stackSummary }
       const finish = (extra: Partial<HostResult>): HostResult => {
         const ended = new Date()
         return { ...base, requests: server.requests, stdout: '', stderr: '', exitCode: -1, timedOut: false, aborted: false, ran: false, startedAt: startedAt.toISOString(), endedAt: ended.toISOString(), wallMs: ended.getTime() - startedAt.getTime(), assistants: null, partTypes: null, ...extra }
       }
-      if (!stack.passed) return finish({ stderr: dbg.stderr })
+      if (!stack.passed) {
+        if (ghDir) removeGhConfig(ghDir)
+        return finish({ stderr: dbg.stderr })
+      }
 
       const seed = structuredClone(job.seed)
       seed.info.directory = realpathSync(fx.workspace)
@@ -244,17 +268,25 @@ export function createHostExecutor(options: HostExecutorOptions): Executor {
       if (!run.timedOut && !run.aborted) {
         const exported = await host('export', ['export', seed.info.id], 180_000)
         const doc = exported.exitCode === 0 ? parseJson(exported.stdout.slice(Math.max(0, exported.stdout.indexOf('{')))) : undefined
+        await options.afterExport?.({ seed, exported: doc, dataDir: fx.xdgDataHome })
         const messages = isRecord(doc) && Array.isArray(doc.messages) ? doc.messages.filter(isRecord) : []
         if (messages.length > 0) {
           const infos = messages.slice(seed.messages.length).map((m) => (isRecord(m.info) ? m.info : {}))
           assistants = infos.filter((i) => i.role === 'assistant').map((i) => ({ ...(typeof i.agent === 'string' ? { agent: i.agent } : {}), ...(typeof i.providerID === 'string' ? { providerID: i.providerID } : {}), ...(typeof i.modelID === 'string' ? { modelID: i.modelID } : {}) }))
-          partTypes = messages.flatMap((m) => (Array.isArray(m.parts) ? m.parts.filter(isRecord).map((p) => String(p.type)) : []))
+          partTypes = messages.slice(seed.messages.length).flatMap((m) => (Array.isArray(m.parts) ? m.parts.filter(isRecord).map((p) => String(p.type)) : []))
         }
       }
+      if (ghDir) removeGhConfig(ghDir) // the login is gone before anything is scanned or kept
       return finish({ stdout: run.stdout, stderr: run.stderr, exitCode: run.exitCode, timedOut: run.timedOut, aborted: run.aborted, ran: true, assistants, partTypes })
     } catch (e) {
       cleanup()
       throw e
     }
   }
+}
+
+/** Where a credential could land in a real-world attempt: the clone's own directories (not `.git` or dependencies), the temp dir and the host logs. */
+function worldLeakDirs(fx: { workspace: string; tmp: string; root: string }): string[] {
+  const top = readdirSync(fx.workspace, { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== '.git' && e.name !== 'node_modules').map((e) => join(fx.workspace, e.name))
+  return [...top, fx.tmp, join(fx.root, 'logs')]
 }

@@ -51,7 +51,10 @@ export const EXTRACT_SQL = {
   messages: `SELECT id, session_id, time_created, data FROM message WHERE session_id = ? AND ${UP_TO_CUTOFF} ORDER BY time_created DESC, id DESC LIMIT ?`,
   compaction: `SELECT DISTINCT message_id FROM part WHERE session_id = ? AND CASE WHEN json_valid(data) THEN json_extract(data, '$.type') END = 'compaction' AND message_id IN (SELECT id FROM message WHERE session_id = ? AND ${UP_TO_CUTOFF})`,
   message: 'SELECT id, session_id, time_created, data FROM message WHERE id = ? AND session_id = ?',
-  parts: 'SELECT id, message_id, session_id, time_created, data FROM part WHERE session_id = ? AND message_id = ? ORDER BY time_created, id',
+  // One pass over the session's parts, bucketed in code: a per-message query rescans the whole session (quadratic).
+  parts: 'SELECT id, message_id, session_id, time_created, data FROM part WHERE session_id = ? ORDER BY time_created, id',
+  after: 'SELECT id, session_id, time_created, data FROM message WHERE session_id = ? AND (time_created > ? OR (time_created = ? AND id > ?)) ORDER BY time_created, id',
+  partsOfMessage: 'SELECT id, message_id, session_id, time_created, data FROM part WHERE session_id = ? AND message_id = ? ORDER BY time_created, id',
 } as const
 
 export interface ExtractOptions {
@@ -86,7 +89,12 @@ export function extractSession(options: ExtractOptions): RawExtract {
       kept.push(db.query<RawMessage, [string, string]>(EXTRACT_SQL.message).get(id, options.session)!)
     }
     const messages = kept.sort(byStoredOrder)
-    const partsOf = db.query<RawPart, [string, string]>(EXTRACT_SQL.parts)
+    const byMessage = new Map<string, RawPart[]>()
+    for (const p of db.query<RawPart, [string]>(EXTRACT_SQL.parts).all(options.session)) {
+      const list = byMessage.get(p.message_id)
+      if (list) list.push(p)
+      else byMessage.set(p.message_id, [p])
+    }
     return {
       schema_version: 1,
       session,
@@ -94,10 +102,47 @@ export function extractSession(options: ExtractOptions): RawExtract {
       window: window ?? null,
       total_messages: total,
       messages,
-      parts: messages.flatMap((m) => partsOf.all(options.session, m.id)),
+      parts: messages.flatMap((m) => byMessage.get(m.id) ?? []),
       compaction_message_ids: messages.filter((m) => compactionIds.includes(m.id)).map((m) => m.id),
     }
   } finally {
     db.close()
+  }
+}
+
+/** The first user message after the cutoff whose first text part is human-typed (does not start with `<`); `null` when there is none. */
+export function nextHumanTurn(options: { db: string; session: string; cutoff: string }): string | null {
+  const db = new Database(options.db, { readonly: true })
+  try {
+    db.run('PRAGMA query_only = ON')
+    const at = db.query<{ time_created: number }, [string, string]>(EXTRACT_SQL.cutoff).get(options.cutoff, options.session)
+    if (!at) throw new Error(`cutoff message ${options.cutoff} not found in session ${options.session}`)
+    const partsOf = db.query<RawPart, [string, string]>(EXTRACT_SQL.partsOfMessage)
+    for (const m of db.query<RawMessage, [string, number, number, string]>(EXTRACT_SQL.after).iterate(options.session, at.time_created, at.time_created, options.cutoff)) {
+      if (jsonRole(m.data) !== 'user') continue
+      const first = partsOf.all(options.session, m.id).map((p) => jsonText(p.data)).find((t) => t !== null)
+      if (first !== undefined && first !== null && !first.startsWith('<')) return first
+    }
+    return null
+  } finally {
+    db.close()
+  }
+}
+
+function jsonRole(data: string): unknown {
+  try {
+    return (JSON.parse(data) as { role?: unknown }).role
+  } catch {
+    return undefined
+  }
+}
+
+/** The text of a `text` part; `null` for any other part or unreadable JSON. */
+function jsonText(data: string): string | null {
+  try {
+    const part = JSON.parse(data) as { type?: unknown; text?: unknown }
+    return part.type === 'text' && typeof part.text === 'string' ? part.text : null
+  } catch {
+    return null
   }
 }

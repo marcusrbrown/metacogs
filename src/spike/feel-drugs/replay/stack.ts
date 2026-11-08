@@ -93,9 +93,9 @@ export function stubProviders(baseURL: string): Json {
 }
 
 /** The generated `OPENCODE_CONFIG` of one attempt. */
-export function stackHostConfig(input: { provider: Json; pluginSpecs: readonly string[] }): Json {
+export function stackHostConfig(input: { provider: Json; pluginSpecs: readonly string[]; permission?: Json }): Json {
   return buildConfig({
-    permission: replayPermission(),
+    permission: input.permission ?? replayPermission(),
     provider: input.provider,
     extra: {
       plugin: [...input.pluginSpecs],
