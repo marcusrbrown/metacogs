@@ -399,7 +399,7 @@ export interface CliproxyTransportOptions {
 export function cliproxyTransport(options: CliproxyTransportOptions): JudgeTransport {
   const base = (options.baseUrl ?? CLIPROXY_UPSTREAM).replace(/\/$/, '')
   const doFetch = options.fetch ?? fetch
-  const timeoutMs = options.timeoutMs ?? 180_000
+  const timeoutMs = options.timeoutMs ?? 600_000
   const scrub = (text: string): string => text.split(options.key).join('[key]').replace(/sk-[A-Za-z0-9_-]{6,}/g, 'sk-[scrubbed]').replace(/\s+/g, ' ').trim().slice(0, 160)
   const call = async (path: string, init: RequestInit, signal?: AbortSignal): Promise<unknown> => {
     let response: Response
