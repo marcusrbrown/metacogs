@@ -7,7 +7,7 @@ This page covers when to type them, what argument to give, and when to skip them
 ## The short version
 
 - Type a command just before the agent commits to something it hasn't checked: dispatching a subagent, pushing, re-running the same analysis, or calling a cause "conclusive".
-- Give it an argument. `/feel <where it's stuck>` never pulled the agent off course, and `/drugs <substance>` helped far more often than it hurt. Bare `/feel` and bare `/drugs` were close to a coin flip.
+- Give it an argument. `/feel <where it's stuck>` never pulled the agent off course, and `/drugs <substance>` almost never did. Bare `/feel` and bare `/drugs` were close to a coin flip.
 - Skip them when the agent is already doing the right thing, or when it's making normal progress. They add nothing there, and a bare command can derail it.
 
 ## When to type /feel
@@ -74,17 +74,17 @@ The commands act only when you type them, or when you name metacogs in the reque
 
 | Arm | Opus: changed, toward / away | Luna: changed, toward / away |
 | --- | --- | --- |
-| `/feel` | 6 of 11, 3 / 2 | 7 of 11, 3 / 3 |
-| `/feel <where>` (the /feel moments) | 3 of 6, 2 / 0 | 5 of 6, 4 / 0 |
-| `/drugs` | 10 of 11, 5 / 3 | 4 of 11, 1 / 2 |
-| `/drugs <substance>` | 5 of 11, 3 / 1 | 6 of 11, 4 / 1 |
+| `/feel` | 6 of 11, 2 / 2 | 6 of 11, 4 / 2 |
+| `/feel <where>` (the /feel moments) | 4 of 6, 4 / 0 | 5 of 6, 5 / 0 |
+| `/drugs` | 9 of 11, 3 / 3 | 4 of 11, 1 / 2 |
+| `/drugs <substance>` | 3 of 11, 2 / 0 | 5 of 11, 3 / 0 |
 
-On one Luna moment the two `Continue.` runs disagreed, so its changes are not counted.
+On one Opus moment the two `Continue.` runs disagreed, so its changes are not counted.
 
 Limits:
 
 - Each arm ran once per moment, so treat these as directions, not rates.
 - GitHub reads in the replays showed current state, so some runs could see that the work had since landed. This affected the baseline runs too.
 - The judge scores the first move, so it can miss a change in framing that keeps the same action.
-- The judge is steadier on whether a move changed than on which way it went. Run twice with differently framed references, it agreed on "changed" for 69 of 74 verdicts but on the full label for only 58. Read toward/away as a lean, not a measurement.
+- The judge is steadier on whether a move changed than on which way it went. The counts above come from the third judging, the first one given the full real context. Compared with the second, it agreed on "changed" for 73 of 78 verdicts but on the full label for only 65. Across all three judgings, `/feel <where>` was never scored away, and bare `/drugs` never came out ahead. Read toward/away as a lean, not a measurement.
 - Only OpenCode was tested. The Claude Code and Codex skill renders use the same text.

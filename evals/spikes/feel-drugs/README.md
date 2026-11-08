@@ -336,19 +336,19 @@ bun run replay campaign --world real --name <n> --models <list> --arms <list|all
 
 Campaign `real1`: 11 moments × 6 arms on `openai/gpt-6-luna` and `anthropic/claude-opus-5-5`. That is 61 counted runs per model, because `/feel <where>` runs only on the 6 /feel moments. Every run completed. One errored attempt per model was retried. Charged cost was $169.46 for Opus and $2.69 for Luna.
 
-Scoring: `bun run replay judge real1` with `opencode-go/glm-5.3`, prompt sha `5b01f5736c37`. The reference for each pair was the real-world scenario (outcome, the author's next turn, and a brief from the real history). All 22 pairs were judged. One cell, Luna on `feel-fro-fe3c-94`, was noisy: its two `Continue.` runs disagreed, so its changes are not counted.
+Scoring: `bun run replay judge real1` with `opencode-go/glm-5.3`, prompt sha `5b01f5736c37`. The reference for each pair was the real-world scenario: the outcome, the author's next turn, and a brief from the real history that keeps the most recent turns. All 22 pairs were judged. One cell, Opus on `feel-fro-fe3c-94`, was noisy: its two `Continue.` runs disagreed, so its changes are not counted.
 
 | Arm | Opus changed, toward / away | Luna changed, toward / away | Ordinary turns derailed (Opus, Luna, of 3 each) |
 | --- | --- | --- | --- |
-| `/feel` | 6 of 11, 3 / 2 | 7 of 11, 3 / 3 | 0, 1 |
-| `/feel <where>` | 3 of 6, 2 / 0 | 5 of 6, 4 / 0 | n/a |
-| `/drugs` | 10 of 11, 5 / 3 | 4 of 11, 1 / 2 | 1, 0 |
-| `/drugs <substance>` | 5 of 11, 3 / 1 | 6 of 11, 4 / 1 | 0, 0 |
+| `/feel` | 6 of 11, 2 / 2 | 6 of 11, 4 / 2 | 1, 1 |
+| `/feel <where>` | 4 of 6, 4 / 0 | 5 of 6, 5 / 0 | n/a |
+| `/drugs` | 9 of 11, 3 / 3 | 4 of 11, 1 / 2 | 2, 0 |
+| `/drugs <substance>` | 3 of 11, 2 / 0 | 5 of 11, 3 / 0 | 0, 0 |
 
-A first judging used the paraphrased fixture as the reference, which was a bug fixed in this PR. It agreed with this one on "changed" for 69 of 74 verdicts, but on the full label for only 58 of 74. Direction is the noisy part.
+These are the third judging. The first judging used the paraphrased fixture as the reference. The second used the world scenario, but its brief kept the oldest turns, and in 8 of 11 scenarios it dropped the latest request or the cutoff message. Both bugs are fixed in this PR. The second and third judgings agreed on "changed" for 73 of 78 verdicts and on the full label for 65. Direction is the noisy part.
 
 Reading:
-- **Arguments.** `/feel <where>` was never scored away in either judging. `/drugs <substance>` was scored toward 7 times and away 2. Both bare forms came out about even: 6 toward and 5 away each across the two models. Bare `/drugs` changed Opus's move in 10 of 11 runs.
+- **Arguments.** `/feel <where>` was never scored away in any of the three judgings, and in this one it was 9 toward, 0 away. `/drugs <substance>` was 5 toward and 0 away here, against 8/0 and 7/2 before. Bare `/feel` came out 6 toward and 4 away. Bare `/drugs` came out 4 toward and 5 away, and was never ahead in any judging. It changed Opus's move in 9 of 11 runs.
 - **Where the gains were.** They clustered where the default move committed to an unchecked premise: dispatching a fixer, relaunching analysis, pushing. Where `Continue.` already took the right step, the commands added nothing.
 
 Caveats:
