@@ -38,14 +38,14 @@ import {
   TransportError,
 } from './judge'
 import { campaignDir } from './run'
-import { newSheetLab, OUTCOME_REF, runSyntheticCampaign, type SheetLab, stdoutOf, stepFinish, textEvent, toolEvent } from './sheet-support'
+import { newJudgeLab, OUTCOME_REF, runSyntheticCampaign, type JudgeLab, stdoutOf, stepFinish, textEvent, toolEvent } from './judge-support'
 
-const labs: SheetLab[] = []
+const labs: JudgeLab[] = []
 afterEach(() => {
   for (const l of labs.splice(0)) l.dispose()
 })
-const lab = (): SheetLab => {
-  const l = newSheetLab()
+const lab = (): JudgeLab => {
+  const l = newJudgeLab()
   labs.push(l)
   return l
 }
@@ -140,7 +140,7 @@ const treeHash = (dir: string): string =>
     .digest('hex')
 
 /** Writes one attempt by hand: for arms and states a scripted campaign cannot make. */
-function handAttempt(l: SheetLab, o: { campaign: string; fixture: string; model: string; arm: string; status: string; passed?: boolean; terminal?: boolean; stdout?: string }): void {
+function handAttempt(l: JudgeLab, o: { campaign: string; fixture: string; model: string; arm: string; status: string; passed?: boolean; terminal?: boolean; stdout?: string }): void {
   const stdout = o.stdout ?? stdoutOf(textEvent(`${QUOTE} (${o.arm})`), stepFinish())
   const dir = join(campaignDir(l.store, o.campaign), o.fixture, o.model.replace('/', '__'), o.arm, 'a001')
   mkdirSync(dir, { recursive: true })
@@ -166,12 +166,12 @@ function handAttempt(l: SheetLab, o: { campaign: string; fixture: string; model:
 
 const options = (over: Partial<JudgeOptions> = {}): JudgeOptions => ({ campaign: 'phase1', provider: 'scripted', ...over })
 
-async function full(l: SheetLab, f: Fake, over: Partial<JudgeOptions> = {}, extra: { nonce?: () => string; needles?: { label: string; value: string }[] } = {}) {
+async function full(l: JudgeLab, f: Fake, over: Partial<JudgeOptions> = {}, extra: { nonce?: () => string; needles?: { label: string; value: string }[] } = {}) {
   let n = 0
   return judgeCampaign(options(over), { store: l.store, transport: f.transport, nonce: extra.nonce ?? (() => `nonce${++n}`), ...(extra.needles ? { needles: extra.needles } : {}) })
 }
 
-const judgements = (l: SheetLab, campaign = 'phase1'): Judgement[] => readJudgements(judgementDir(l.store, campaign))
+const judgements = (l: JudgeLab, campaign = 'phase1'): Judgement[] => readJudgements(judgementDir(l.store, campaign))
 
 // ── collection ─────────────────────────────────────────────────────────────
 
@@ -671,7 +671,7 @@ describe('reruns', () => {
 // ── the reference version and reuse ────────────────────────────────────────
 
 /** Turns a synthetic campaign into a real-world one: attempts record the world spec's hash and a `world` block. */
-function asWorld(l: SheetLab, campaign: string, id: string, specText: string): void {
+function asWorld(l: JudgeLab, campaign: string, id: string, specText: string): void {
   mkdirSync(join(l.store.root, 'world', id), { recursive: true })
   writeFileSync(join(l.store.root, 'world', id, 'spec.json'), specText)
   for (const file of walk(campaignDir(l.store, campaign)).filter((f) => f.endsWith('attempt.json'))) {
@@ -682,7 +682,7 @@ function asWorld(l: SheetLab, campaign: string, id: string, specText: string): v
   }
 }
 
-const specPath = (l: SheetLab, id = 'moment-one') => join(l.store.root, 'fixtures', id, 'spec.json')
+const specPath = (l: JudgeLab, id = 'moment-one') => join(l.store.root, 'fixtures', id, 'spec.json')
 
 describe('reference version', () => {
   test('a spec rebuilt after the attempts is refused, with the reason, and nothing is judged', async () => {
@@ -717,7 +717,7 @@ describe('reference version', () => {
 })
 
 describe('reuse of an earlier judgement', () => {
-  const edit = (l: SheetLab, change: (j: Judgement) => void): void => {
+  const edit = (l: JudgeLab, change: (j: Judgement) => void): void => {
     const dir = judgementDir(l.store, 'phase1')
     for (const name of readdirSync(dir).filter((n) => n.endsWith('.json'))) {
       const j = JSON.parse(readFileSync(join(dir, name), 'utf8')) as Judgement
@@ -972,7 +972,7 @@ describe('secrets', () => {
 // ── the command line ───────────────────────────────────────────────────────
 
 describe('judge command', () => {
-  function cli(l: SheetLab, deps: JudgeCliDeps = {}) {
+  function cli(l: JudgeLab, deps: JudgeCliDeps = {}) {
     const out: string[] = []
     const err: string[] = []
     const run = (...argv: string[]) => judgeMain(['judge', ...argv], { out: (s) => out.push(s), err: (s) => err.push(s), env: { XDG_STATE_HOME: l.state }, repoRoot: l.repoRoot, now: () => new Date('2026-11-07T12:00:00.000Z'), judge: deps })

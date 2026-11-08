@@ -13,8 +13,7 @@ import type { Rng } from '../blind'
 import { redactPaths } from '../sheet'
 import { ARM_NAMES } from './gates'
 import { type AttemptRecord, campaignCells, campaignDir, cellDir, MODEL_PATTERN } from './run'
-import { renderBrief, shuffle, summarizeInput } from './sheet'
-import { assertOutsideRepo, ID_PATTERN, openStore, type StoreOptions, type Store, type Turn } from './store'
+import { assertOutsideRepo, type FixtureSpec, ID_PATTERN, openStore, type StoreOptions, type Store, type Turn } from './store'
 
 export const JUDGE_SCHEMA_VERSION = 1 as const
 /** The answer text a judge sees is capped here; the evidence on disk is whole. */
@@ -60,6 +59,46 @@ export const JUDGE_PROMPT_SHA256 = sha256(JUDGE_SYSTEM_PROMPT)
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 const oneLine = (text: string): string => text.replace(/\s+/g, ' ').trim()
 const clip = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max - 1)}…` : text)
+
+/** One short line for a tool input: up to three fields, each clipped. */
+export function summarizeInput(input: unknown): string {
+  if (isRecord(input)) {
+    const entries = Object.entries(input)
+    const shown = entries.slice(0, 3).map(([k, v]) => `${k}=${clip(oneLine(typeof v === 'string' ? v : (JSON.stringify(v) ?? '')), 80)}`)
+    return clip(`${shown.join(' ')}${entries.length > 3 ? ' …' : ''}`, 220)
+  }
+  return input === undefined || input === null ? '' : clip(oneLine(typeof input === 'string' ? input : (JSON.stringify(input) ?? '')), 220)
+}
+
+const BRIEF_TURNS = 4
+const BRIEF_TEXT = 700
+const BRIEF_OUTPUT = 200
+
+/** The last few turns of the fixture. Never the real outcome, provenance or the `somewhere` phrase. */
+export function renderBrief(spec: Pick<FixtureSpec, 'turns'>): string {
+  const turns = spec.turns
+  const start = Math.max(0, turns.length - BRIEF_TURNS)
+  const lines: string[] = []
+  for (const turn of turns.slice(start)) {
+    lines.push(`${turn.role === 'user' ? 'User' : 'Assistant'}: ${clip(turn.text.trim(), BRIEF_TEXT)}`)
+    if (turn.role === 'assistant') {
+      for (const call of turn.tools ?? []) {
+        const output = oneLine(call.output)
+        lines.push(`  [tool] ${call.tool} ${summarizeInput(call.input)}${output ? ` -> ${clip(output, BRIEF_OUTPUT)}` : ''}`.trimEnd())
+      }
+    }
+  }
+  return lines.join('\n')
+}
+
+export function shuffle<T>(items: readonly T[], rng: Rng): T[] {
+  const out = [...items]
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.min(i, Math.floor(rng() * (i + 1)))
+    ;[out[i], out[j]] = [out[j]!, out[i]!]
+  }
+  return out
+}
 
 export type ArmKind = 'baseline' | 'command' | 'nudge'
 export const isBaselineArm = (arm: string): boolean => /^continue(?:-|$)/.test(arm)
