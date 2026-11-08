@@ -1,5 +1,5 @@
 /** Append-only replay attempts, gated and budgeted. Nothing here deletes or overwrites evidence. */
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { ResolvedCliproxy } from '../../../runner/cliproxy'
@@ -179,10 +179,90 @@ export function campaignCells(store: Store, campaign: string): CellRow[] {
   return rows
 }
 
-export const spentUsd = (store: Store, campaign: string): number => campaignCells(store, campaign).reduce((sum, row) => sum + row.attempts.reduce((s, a) => s + a.charged_usd, 0), 0)
+// ── orphan charges ─────────────────────────────────────────────────────────
+
+/** A charge whose attempt left no record: the host ran and billed, but not even the minimal `attempt.json` could be written. Append-only, per campaign. */
+export const ORPHAN_FILE = 'orphan-charges.jsonl'
+
+export interface OrphanCharge {
+  schema_version: 1
+  at: string
+  fixture: string
+  model: string
+  arm: string
+  attempt: string
+  charged_usd: number
+}
+
+const orphanPath = (store: Store, campaign: string): string => join(campaignDir(store, campaign), ORPHAN_FILE)
+
+const orphanEntry = (value: unknown): OrphanCharge | null => {
+  if (typeof value !== 'object' || value === null) return null
+  const o = value as Record<string, unknown>
+  const ok = o.schema_version === 1 && typeof o.at === 'string' && typeof o.fixture === 'string' && typeof o.model === 'string' && typeof o.arm === 'string' && typeof o.attempt === 'string' && typeof o.charged_usd === 'number' && Number.isFinite(o.charged_usd) && o.charged_usd >= 0
+  return ok ? (o as unknown as OrphanCharge) : null
+}
+
+/** Throws on a file that is not a readable ledger: a charge that cannot be read is not a charge of zero. */
+export function readOrphanCharges(store: Store, campaign: string): OrphanCharge[] {
+  const file = orphanPath(store, campaign)
+  if (!existsSync(file)) return []
+  if (!statSync(file).isFile()) throw new Error(`campaign ${campaign}: ${ORPHAN_FILE} is not a file; move it aside before running`)
+  return readFileSync(file, 'utf8')
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line, i) => {
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(line)
+      } catch {
+        parsed = null
+      }
+      const entry = orphanEntry(parsed)
+      if (!entry) throw new Error(`campaign ${campaign}: line ${i + 1} of ${ORPHAN_FILE} is not a valid orphan charge; fix or remove it before running`)
+      return entry
+    })
+}
+
+function appendOrphanCharge(store: Store, campaign: string, entry: OrphanCharge): void {
+  mkdirSync(campaignDir(store, campaign), { recursive: true, mode: 0o700 })
+  const file = orphanPath(store, campaign)
+  appendFileSync(file, `${JSON.stringify(entry)}\n`, { mode: 0o600 })
+  chmodSync(file, 0o600)
+}
+
+const sameCharge = (a: Pick<OrphanCharge, 'fixture' | 'model' | 'arm' | 'attempt'>, b: Pick<OrphanCharge, 'fixture' | 'model' | 'arm' | 'attempt'>): boolean => a.fixture === b.fixture && a.model === b.model && a.arm === b.arm && a.attempt === b.attempt
+
+/**
+ * Refuses to go on when an earlier invocation stopped on an accounting failure and its orphan charge is not in the ledger: the
+ * spend would read as zero. The message carries the line to append.
+ */
+function assertOrphansReconciled(store: Store, campaign: string): void {
+  const dir = campaignDir(store, campaign)
+  const known = readOrphanCharges(store, campaign)
+  for (const name of existsSync(dir) ? readdirSync(dir).filter((f) => /^run-.*\.json$/.test(f)).sort() : []) {
+    let note: { stoppedBy?: unknown; orphan_charge?: unknown }
+    try {
+      note = JSON.parse(readFileSync(join(dir, name), 'utf8')) as typeof note
+    } catch {
+      continue
+    }
+    const orphan = note.stoppedBy === 'accounting' ? orphanEntry(note.orphan_charge) : null
+    if (orphan && !known.some((k) => sameCharge(k, orphan))) {
+      throw new Error(
+        `campaign ${campaign}: ${name} stopped because attempt ${orphan.attempt} of ${orphan.fixture}/${orphan.model}/${orphan.arm} could not be recorded, and ${ORPHAN_FILE} has no entry for its $${orphan.charged_usd.toFixed(4)} charge, so that spend would count as zero. Append this line to campaigns/${campaign}/${ORPHAN_FILE}, then run again: ${JSON.stringify(orphan)}`,
+      )
+    }
+  }
+}
+
+/** Everything the campaign has been charged: attempt records plus orphan charges. */
+export const spentUsd = (store: Store, campaign: string): number =>
+  campaignCells(store, campaign).reduce((sum, row) => sum + row.attempts.reduce((s, a) => s + a.charged_usd, 0), 0) + readOrphanCharges(store, campaign).reduce((s, o) => s + o.charged_usd, 0)
 
 /** The largest single charge on disk for a campaign: what a resumed run assumes the next attempt can cost, besides the estimate. */
-export const largestChargeUsd = (store: Store, campaign: string): number => Math.max(0, ...campaignCells(store, campaign).flatMap((row) => row.attempts.map((a) => a.charged_usd)))
+export const largestChargeUsd = (store: Store, campaign: string): number =>
+  Math.max(0, ...campaignCells(store, campaign).flatMap((row) => row.attempts.map((a) => a.charged_usd)), ...readOrphanCharges(store, campaign).map((o) => o.charged_usd))
 
 /** An attempt ran and was charged, but not even its minimal record could be written. The charge is in `record`; the campaign counts it and stops. */
 export class AccountingPersistError extends Error {
@@ -465,6 +545,7 @@ export async function runCampaign(options: CampaignOptions, deps: CampaignDeps):
   const fixtures = new Map(options.fixtures.map((id) => [id, load(id)] as const))
   const maxAttempts = options.maxAttempts ?? 3
   const estimate = options.attemptEstimateUsd ?? 0
+  assertOrphansReconciled(store, options.name)
   const before = spentUsd(store, options.name)
   let spent = before
   // The largest charge already on disk counts: a resumed run does not forget what an attempt can cost.
@@ -472,6 +553,7 @@ export async function runCampaign(options: CampaignOptions, deps: CampaignDeps):
   let attempts = 0
   const unrun: UnrunCell[] = []
   let stoppedBy: CampaignSummary['stoppedBy'] = null
+  let orphan: OrphanCharge | undefined
 
   const cells = options.fixtures.flatMap((fixture) => options.models.flatMap((model) => options.arms.map((arm): CellKey => ({ campaign: options.name, fixture, model, arm }))))
   for (const key of cells) {
@@ -517,6 +599,13 @@ export async function runCampaign(options: CampaignOptions, deps: CampaignDeps):
         // The charge is real but its record is gone: count it here and schedule nothing more.
         attempts += 1
         spent += e.record.cost.charged_usd
+        largest = Math.max(largest, e.record.cost.charged_usd)
+        orphan = { schema_version: 1, at: now().toISOString(), fixture: key.fixture, model: key.model, arm: key.arm, attempt: e.record.attempt, charged_usd: e.record.cost.charged_usd }
+        try {
+          appendOrphanCharge(store, options.name, orphan)
+        } catch {
+          log(`${ORPHAN_FILE} could not be written either; the run note carries the charge and the next run will ask for it`)
+        }
         log(`${key.fixture} ${key.model} ${key.arm} ${e.record.attempt}: ${e.message}`)
         stoppedBy = 'accounting'
         break
@@ -540,7 +629,7 @@ export async function runCampaign(options: CampaignOptions, deps: CampaignDeps):
   const summary: CampaignSummary = { cells: cells.length, attempts, counted, unrun, spentUsd: spent, capUsd: options.capUsd, stoppedBy }
   const dir = campaignDir(store, options.name)
   mkdirSync(dir, { recursive: true, mode: 0o700 })
-  const note = `${JSON.stringify({ schema_version: 1, started_spent_usd: before, ...summary, provider: options.provider, ...(options.world ? { mode: 'real-world' } : {}), models: options.models, arms: options.arms, fixtures: options.fixtures }, null, 2)}\n`
+  const note = `${JSON.stringify({ schema_version: 1, started_spent_usd: before, ...summary, provider: options.provider, ...(options.world ? { mode: 'real-world' } : {}), ...(orphan ? { orphan_charge: orphan } : {}), models: options.models, arms: options.arms, fixtures: options.fixtures }, null, 2)}\n`
   for (let n = 1; ; n++) {
     try {
       writeFileSync(join(dir, `run-${stamp(now())}${n > 1 ? `-${n}` : ''}.json`), note, { mode: 0o600, flag: 'wx' })

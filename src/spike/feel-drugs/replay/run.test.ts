@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
-import { chmodSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { ResolvedCliproxy } from '../../../runner/cliproxy'
@@ -413,27 +413,96 @@ describe('accounting', () => {
     expect(spentUsd(l.store, 'camp')).toBeCloseTo(1.75)
   })
 
-  test('when not even the minimal record can be written, the campaign stops scheduling and still counts the charge', async () => {
+  /** Makes both the evidence and the minimal record of the first attempt fail. */
+  const blockRecord = (l: Lab, extra?: () => void) => (job: { arm: string; model: string }, r: Awaited<ReturnType<ReturnType<typeof fakeExecutor>['executor']>>) => {
+    const dir = aDir(l, job.arm, job.model)
+    if (readdirSync(dir).length === 0) {
+      chmodSync(dir, 0o500)
+      extra?.()
+    }
+    return r
+  }
+  const orphanFile = (l: Lab) => join(campaignDir(l.store, 'camp'), 'orphan-charges.jsonl')
+  const notes = (l: Lab) => readdirSync(campaignDir(l.store, 'camp')).filter((f) => f.startsWith('run-')).map((f) => JSON.parse(readFileSync(join(campaignDir(l.store, 'camp'), f), 'utf8')))
+
+  test('when not even the minimal record can be written, the campaign stops scheduling, counts the charge and leaves an orphan entry', async () => {
     const l = lab()
     approvedFixture(l.store)
-    const { executor, jobs } = fakeExecutor({
-      cost: 1,
-      tweak: (job, r) => {
-        chmodSync(aDir(l, job.arm, job.model), 0o500) // evidence and the minimal record both fail
-        return r
-      },
-    })
+    const { executor, jobs } = fakeExecutor({ cost: 1, tweak: blockRecord(l) })
     try {
       const summary = await runCampaign(options({ ...live, arms: ['continue-a', 'continue-b', 'feel'] }), { store: l.store, executor, cliproxy: fakeCliproxy })
       expect(jobs).toHaveLength(1)
       expect(summary.stoppedBy).toBe('accounting')
       expect(summary.spentUsd).toBeCloseTo(1.75)
       expect(summary.unrun.map((u) => [u.arm, u.reason])).toEqual([['continue-a', 'accounting'], ['continue-b', 'accounting'], ['feel', 'accounting']])
-      const note = readdirSync(campaignDir(l.store, 'camp')).find((f) => f.startsWith('run-'))!
-      expect(JSON.parse(readFileSync(join(campaignDir(l.store, 'camp'), note), 'utf8'))).toMatchObject({ stoppedBy: 'accounting', spentUsd: 1.75 })
+      expect(notes(l)[0]).toMatchObject({ stoppedBy: 'accounting', spentUsd: 1.75 })
+      const entries = readFileSync(orphanFile(l), 'utf8').trim().split('\n').map((line) => JSON.parse(line))
+      expect(entries).toEqual([{ schema_version: 1, at: expect.any(String), fixture: 'moment-a', model: MODEL, arm: 'continue-a', attempt: 'a001', charged_usd: 1.75 }])
     } finally {
       chmodSync(aDir(l, 'continue-a'), 0o700)
     }
+  })
+
+  test('a resume after an accounting stop keeps the orphan charge: it counts toward the cap and the largest charge', async () => {
+    const l = lab()
+    approvedFixture(l.store)
+    try {
+      await runCampaign(options({ ...live, capUsd: 10, arms: ['continue-a', 'continue-b'] }), { store: l.store, executor: fakeExecutor({ cost: 1, tweak: blockRecord(l) }).executor, cliproxy: fakeCliproxy })
+    } finally {
+      chmodSync(aDir(l, 'continue-a'), 0o700) // write access is back
+    }
+    expect(readAttempts(cellDir(l.store, { campaign: 'camp', fixture: 'moment-a', model: MODEL, arm: 'continue-a' })).map((a) => a.charged_usd)).toEqual([0]) // the attempt itself left no record
+    expect(spentUsd(l.store, 'camp')).toBeCloseTo(1.75)
+    // 1.75 spent; a 0.1 estimate would fit under 3, but the 1.75 charge has been seen.
+    const resumed = fakeExecutor({ cost: 1 })
+    const summary = await runCampaign(options({ ...live, attemptEstimateUsd: 0.1, capUsd: 3, arms: ['continue-a', 'continue-b'] }), { store: l.store, executor: resumed.executor, cliproxy: fakeCliproxy })
+    expect(resumed.jobs).toHaveLength(0)
+    expect(summary).toMatchObject({ stoppedBy: 'budget' })
+    expect(summary.spentUsd).toBeCloseTo(1.75)
+  })
+
+  test('when the orphan entry cannot be written either, resume refuses until it is added; adding it keeps the charge', async () => {
+    const l = lab()
+    approvedFixture(l.store)
+    const inTheWay = () => mkdirSync(orphanFile(l)) // a directory where the ledger file goes: the append fails
+    try {
+      const summary = await runCampaign(options({ ...live, capUsd: 10, arms: ['continue-a', 'continue-b'] }), { store: l.store, executor: fakeExecutor({ cost: 1, tweak: blockRecord(l, inTheWay) }).executor, cliproxy: fakeCliproxy })
+      expect(summary.stoppedBy).toBe('accounting')
+    } finally {
+      chmodSync(aDir(l, 'continue-a'), 0o700)
+    }
+    rmSync(orphanFile(l), { recursive: true })
+    expect(notes(l)[0]).toMatchObject({ stoppedBy: 'accounting', orphan_charge: { arm: 'continue-a', attempt: 'a001', charged_usd: 1.75 } })
+
+    const resumed = fakeExecutor({ cost: 1 })
+    let message = ''
+    try {
+      await runCampaign(options({ ...live, capUsd: 10, arms: ['continue-a', 'continue-b'] }), { store: l.store, executor: resumed.executor, cliproxy: fakeCliproxy })
+    } catch (e) {
+      message = (e as Error).message
+    }
+    expect(message).toMatch(/orphan-charges\.jsonl/)
+    expect(message).toContain('continue-a')
+    expect(message).toContain('1.75')
+    expect(resumed.jobs).toHaveLength(0)
+
+    // The message carries the line to add; with it in place the charge counts and the campaign goes on.
+    const line = /(\{"schema_version":1[^\n]*\})/.exec(message)![1]!
+    appendFileSync(orphanFile(l), `${line}\n`)
+    const summary = await runCampaign(options({ ...live, attemptEstimateUsd: 0.1, capUsd: 3, arms: ['continue-a', 'continue-b'] }), { store: l.store, executor: resumed.executor, cliproxy: fakeCliproxy })
+    expect(resumed.jobs).toHaveLength(0)
+    expect(summary).toMatchObject({ stoppedBy: 'budget' })
+    expect(summary.spentUsd).toBeCloseTo(1.75)
+  })
+
+  test('an unreadable orphan ledger stops a run before any dispatch', async () => {
+    const l = lab()
+    approvedFixture(l.store)
+    mkdirSync(campaignDir(l.store, 'camp'), { recursive: true })
+    writeFileSync(orphanFile(l), 'not json\n')
+    const { executor, jobs } = fakeExecutor()
+    await expect(runCampaign(options({ arms: ['continue-a'] }), { store: l.store, executor })).rejects.toThrow(/orphan-charges\.jsonl/)
+    expect(jobs).toHaveLength(0)
   })
 
   test('a resumed campaign restores the largest charge before any admission decision', async () => {
