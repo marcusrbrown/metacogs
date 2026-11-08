@@ -323,6 +323,7 @@ Replaces the paraphrased fixtures, whose answers were dominated by "no repo, gh 
 - **Scripted check of the real history.** One scripted-provider attempt per scenario imported all 11 real histories (nothing dropped) and passed every gate.
 - **Arms.** `continue-a`, `continue-b`, `feel`, `feel-somewhere`, `drugs`, `drugs-substance`. Generous timeout (15 minutes); the host offers `agent.<name>.steps` as a tool-step cap, which is not set because slim defines the orchestrator.
 - **Known limits.** Child sessions of `task` calls in the history are not imported, so resuming one by `task_id` fails. Uncommitted work and unpushed branches of the original moment are not reconstructable. The history keeps the original absolute paths, which now sit outside the clone.
+- **Trust boundary.** The replay runs your own agent on your own sessions, with the same access it has in daily use. The sandbox and deny rules guard against accidental outward actions and stray writes. They are not a security boundary against a hostile history or repo: the gh login and same-user reads are reachable from inside. A campaign's cap is checked per invocation, so parallel invocations on one campaign can each overshoot it by one attempt.
 
 ```
 bun run replay world specs [--fixtures <ids|all>] [--db <path>] [--force]
