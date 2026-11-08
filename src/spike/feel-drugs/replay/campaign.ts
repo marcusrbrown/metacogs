@@ -135,6 +135,7 @@ export async function campaignCommand(values: CampaignValues, ctx: CampaignCliCo
     ctx.out(`counted: ${counted}`)
     for (const u of summary.unrun) ctx.out(`not run\t${u.fixture}\t${u.model}\t${u.arm}\t${u.reason}`)
     if (summary.stoppedBy === 'budget') ctx.out('stopped before the next provider attempt: it could pass the cap')
+    if (summary.stoppedBy === 'accounting') ctx.out('stopped: an attempt record could not be written, so its spend is only in the run note')
     return summary.unrun.some((u) => u.reason !== 'no_somewhere') ? 3 : 0
   } catch (e) {
     if (e instanceof CredentialLeakError) {

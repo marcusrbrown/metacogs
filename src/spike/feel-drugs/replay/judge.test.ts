@@ -694,6 +694,44 @@ describe('cap', () => {
     expect(summary).toMatchObject({ judged: 4, unjudged: [] })
     expect(summary.spentUsd).toBeGreaterThan(0)
   })
+
+  test('a transport failure keeps its estimate in the spend and leaves a text-free ledger record', async () => {
+    const l = lab()
+    await runSyntheticCampaign(l, { fixtures: [FIXTURES[0]!], models: [REPLAY_MODELS[0]] })
+    const f = fake(() => new TransportError('HTTP 503'))
+    const summary = await full(l, f, { provider: 'cliproxy', capUsd: 5 })
+    expect(f.calls).toHaveLength(2)
+    expect(summary.spentUsd).toBeGreaterThan(0)
+    expect(judgements(l)).toEqual([])
+    const ledger = readFileSync(join(summary.dir, 'ledger.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line))
+    expect(ledger).toHaveLength(1)
+    expect(ledger[0]).toMatchObject({ fixture: 'moment-one', model: REPLAY_MODELS[0], judge: { provider: 'cliproxy' } })
+    expect(ledger[0].estimated_usd).toBeCloseTo(summary.spentUsd, 6)
+    expect(JSON.stringify(ledger)).not.toContain('503')
+  })
+
+  test('the estimate is reserved before dispatch: a failed first call counts against the retry', async () => {
+    const probe = lab()
+    await runSyntheticCampaign(probe, { fixtures: [FIXTURES[0]!], models: [REPLAY_MODELS[0]] })
+    const one = (await full(probe, fake(() => new TransportError('HTTP 503')), { provider: 'cliproxy', capUsd: 5 })).spentUsd / 2
+    const l = lab()
+    await runSyntheticCampaign(l, { fixtures: [FIXTURES[0]!], models: [REPLAY_MODELS[0]] })
+    const f = fake(() => new TransportError('HTTP 503'))
+    const summary = await full(l, f, { provider: 'cliproxy', capUsd: one * 1.5 })
+    expect(f.calls).toHaveLength(1)
+    expect(summary.unjudged).toHaveLength(1)
+    expect(summary.spentUsd).toBeCloseTo(one, 6)
+  })
+
+  test('a resume counts what an earlier failed run was estimated to cost', async () => {
+    const l = lab()
+    await runSyntheticCampaign(l, { fixtures: [FIXTURES[0]!], models: [REPLAY_MODELS[0]] })
+    const first = await full(l, fake(() => new TransportError('HTTP 503')), { provider: 'cliproxy', capUsd: 5 })
+    const f = fake(ok())
+    const resumed = await full(l, f, { provider: 'cliproxy', capUsd: first.spentUsd * 1.2 })
+    expect(f.calls).toHaveLength(0)
+    expect(resumed.unjudged.map((u) => u.reason)).toEqual(['budget'])
+  })
 })
 
 // ── the summary and the spot-check ─────────────────────────────────────────

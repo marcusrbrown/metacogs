@@ -181,6 +181,17 @@ export function campaignCells(store: Store, campaign: string): CellRow[] {
 
 export const spentUsd = (store: Store, campaign: string): number => campaignCells(store, campaign).reduce((sum, row) => sum + row.attempts.reduce((s, a) => s + a.charged_usd, 0), 0)
 
+/** The largest single charge on disk for a campaign: what a resumed run assumes the next attempt can cost, besides the estimate. */
+export const largestChargeUsd = (store: Store, campaign: string): number => Math.max(0, ...campaignCells(store, campaign).flatMap((row) => row.attempts.map((a) => a.charged_usd)))
+
+/** An attempt ran and was charged, but not even its minimal record could be written. The charge is in `record`; the campaign counts it and stops. */
+export class AccountingPersistError extends Error {
+  override name = 'AccountingPersistError'
+  constructor(readonly record: AttemptRecord) {
+    super(`${record.fixture.id}/${record.model}/${record.arm}/${record.attempt}: the attempt record could not be written; stopping so no spend goes uncounted`)
+  }
+}
+
 // ── one attempt ────────────────────────────────────────────────────────────
 
 export interface AttemptContext {
@@ -258,22 +269,27 @@ export async function runAttempt(ctx: AttemptContext): Promise<AttemptRecord> {
     artifacts: {},
     ...extra,
   })
+  let persisted = true
   const keep = (record: AttemptRecord): AttemptRecord => {
     try {
       writeFileSync(join(slot.dir, 'attempt.json'), `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600, flag: 'wx' })
     } catch {
       // the directory stays either way; an unreadable record shows as an attempt with no status
+      persisted = false
     }
     return record
   }
 
   if (message === null) return keep(failed('error', ['arm_not_applicable']))
   let result: HostResult | undefined
+  /** Set as soon as the host has run: from then on a failure keeps the charge. */
+  let incurred: AttemptRecord['cost'] | undefined
   try {
     result = await ctx.executor({ fixtureId: key.fixture, seed: fixture.export, model: key.model, arm: key.arm, message, timeoutMs: ctx.timeoutMs ?? RUN_TIMEOUT_MS, ...(fixture.world ? { world: fixture.world } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) })
     const events = analyzeEvents(result.stdout)
     const observed = observe(events)
     const cost = chargeFor(ctx.provider, events.usage.cost, result.requests.length, ctx.attemptEstimateUsd ?? 0)
+    incurred = cost
     const parsed = parseEvents(result.stdout).events
 
     let status: AttemptStatus
@@ -344,13 +360,18 @@ export async function runAttempt(ctx: AttemptContext): Promise<AttemptRecord> {
     writeEvidence({ dir: slot.dir, runId: `${key.fixture}/${key.model}/${key.arm}/${slot.id}`, artifacts, manifestFile: 'attempt.json', manifest: `${JSON.stringify(record, null, 2)}\n`, needles, scanDirs: result.leakDirs, exclusive: true })
     return record
   } catch (e) {
+    // The host ran: the charge stands whatever went wrong afterwards (scan, write, analysis).
+    const cost = incurred ?? (result ? chargeFor(ctx.provider, 0, result.requests.length, ctx.attemptEstimateUsd ?? 0) : undefined)
+    const charged = cost ? { cost } : {}
     if (e instanceof CredentialLeakError) {
-      keep(failed('error', ['credential_leak'], { leak_labels: e.labels }))
+      keep(failed('error', ['credential_leak'], { leak_labels: e.labels, ...charged }))
       throw e
     }
     const raw = e instanceof Error ? e.message : String(e)
     const leaked = needles.some((n) => n.value && raw.includes(n.value))
-    return keep(failed('error', [e instanceof Error ? e.name : 'unknown_error'], { error: { name: e instanceof Error ? e.name : 'unknown', message: leaked ? '[redacted]' : raw.slice(0, 300) } }))
+    const record = keep(failed('error', [e instanceof Error ? e.name : 'unknown_error'], { error: { name: e instanceof Error ? e.name : 'unknown', message: leaked ? '[redacted]' : raw.slice(0, 300) }, ...charged }))
+    if (!persisted && result) throw new AccountingPersistError(record)
+    return record
   } finally {
     result?.cleanup()
   }
@@ -397,7 +418,7 @@ export interface CampaignDeps {
   now?: () => Date
 }
 
-export type UnrunReason = 'budget' | 'aborted' | 'no_somewhere' | 'attempts_exhausted'
+export type UnrunReason = 'budget' | 'aborted' | 'accounting' | 'no_somewhere' | 'attempts_exhausted'
 
 export interface UnrunCell {
   fixture: string
@@ -414,7 +435,7 @@ export interface CampaignSummary {
   unrun: UnrunCell[]
   spentUsd: number
   capUsd: number
-  stoppedBy: 'budget' | 'aborted' | null
+  stoppedBy: 'budget' | 'aborted' | 'accounting' | null
 }
 
 const stamp = (d: Date): string => d.toISOString().replace(/[-:.]/g, '').slice(0, 18)
@@ -440,7 +461,8 @@ export async function runCampaign(options: CampaignOptions, deps: CampaignDeps):
   const estimate = options.attemptEstimateUsd ?? 0
   const before = spentUsd(store, options.name)
   let spent = before
-  let largest = 0
+  // The largest charge already on disk counts: a resumed run does not forget what an attempt can cost.
+  let largest = largestChargeUsd(store, options.name)
   let attempts = 0
   const unrun: UnrunCell[] = []
   let stoppedBy: CampaignSummary['stoppedBy'] = null
@@ -468,20 +490,31 @@ export async function runCampaign(options: CampaignOptions, deps: CampaignDeps):
         stoppedBy = 'budget'
         break
       }
-      const record = await runAttempt({
-        store,
-        key,
-        fixture: loaded,
-        executor: deps.executor,
-        provider: options.provider,
-        ...(deps.cliproxy || deps.needles ? { needles: [...realWorldNeedles(deps.cliproxy?.needles ?? [], deps.loadFixture !== undefined), ...(deps.needles ?? [])] } : {}),
-        ...(options.expectedHostVersion ? { expectedHostVersion: options.expectedHostVersion } : {}),
-        ...(deps.skillsDir ? { skillsDir: deps.skillsDir } : {}),
-        ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
-        attemptEstimateUsd: estimate,
-        ...(deps.signal ? { signal: deps.signal } : {}),
-        now,
-      })
+      let record: AttemptRecord
+      try {
+        record = await runAttempt({
+          store,
+          key,
+          fixture: loaded,
+          executor: deps.executor,
+          provider: options.provider,
+          ...(deps.cliproxy || deps.needles ? { needles: [...realWorldNeedles(deps.cliproxy?.needles ?? [], deps.loadFixture !== undefined), ...(deps.needles ?? [])] } : {}),
+          ...(options.expectedHostVersion ? { expectedHostVersion: options.expectedHostVersion } : {}),
+          ...(deps.skillsDir ? { skillsDir: deps.skillsDir } : {}),
+          ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
+          attemptEstimateUsd: estimate,
+          ...(deps.signal ? { signal: deps.signal } : {}),
+          now,
+        })
+      } catch (e) {
+        if (!(e instanceof AccountingPersistError)) throw e
+        // The charge is real but its record is gone: count it here and schedule nothing more.
+        attempts += 1
+        spent += e.record.cost.charged_usd
+        log(`${key.fixture} ${key.model} ${key.arm} ${e.record.attempt}: ${e.message}`)
+        stoppedBy = 'accounting'
+        break
+      }
       attempts += 1
       spent += record.cost.charged_usd
       largest = Math.max(largest, record.cost.charged_usd)

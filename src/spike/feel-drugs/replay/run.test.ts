@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { chmodSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { ResolvedCliproxy } from '../../../runner/cliproxy'
@@ -368,5 +368,85 @@ describe('realWorldNeedles', () => {
     const needles = [{ label: 'auth_cliproxy:key', value: 'k' }, { label: 'auth_cliproxy:key_prefix', value: 'p' }]
     expect(realWorldNeedles(needles, true).map((n) => n.label)).toEqual(['auth_cliproxy:key'])
     expect(realWorldNeedles(needles, false).map((n) => n.label)).toEqual(['auth_cliproxy:key', 'auth_cliproxy:key_prefix'])
+  })
+})
+
+// ── accounting ─────────────────────────────────────────────────────────────
+
+describe('accounting', () => {
+  const live = { provider: 'cliproxy' as const, attemptEstimateUsd: 1 }
+  const aDir = (l: Lab, arm: string, model = MODEL) => join(cellDir(l.store, { campaign: 'camp', fixture: 'moment-a', model, arm: arm as never }), 'a001')
+  /** Makes the evidence write of the first attempt fail: `requests.json` is already there. */
+  const blockWrite = (l: Lab) => (job: { arm: string; model: string }, r: Awaited<ReturnType<ReturnType<typeof fakeExecutor>['executor']>>) => {
+    const dir = aDir(l, job.arm, job.model)
+    if (!existsSync(join(dir, 'requests.json'))) writeFileSync(join(dir, 'requests.json'), 'in the way')
+    return r
+  }
+
+  test('a cost survives an evidence write failure: the failed record carries the charge', async () => {
+    const l = lab()
+    approvedFixture(l.store)
+    const { executor } = fakeExecutor({ cost: 1, tweak: blockWrite(l) })
+    const summary = await runCampaign(options({ ...live, arms: ['continue-a'], maxAttempts: 1 }), { store: l.store, executor, cliproxy: fakeCliproxy })
+    const r = readRecord(attemptFile(l, 'continue-a'))
+    expect(r).toMatchObject({ status: 'error', terminal: false, artifacts: {} })
+    expect(r.cost).toEqual({ reported_usd: 1, charged_usd: 1.75, basis: 'reported_x_factor' })
+    expect(spentUsd(l.store, 'camp')).toBeCloseTo(1.75)
+    expect(summary.spentUsd).toBeCloseTo(1.75)
+  })
+
+  test('a failure after a host that reported no cost is charged the attempt estimate', async () => {
+    const l = lab()
+    approvedFixture(l.store)
+    const { executor } = fakeExecutor({ tweak: blockWrite(l) })
+    await runCampaign(options({ ...live, attemptEstimateUsd: 2, arms: ['continue-a'], maxAttempts: 1 }), { store: l.store, executor, cliproxy: fakeCliproxy })
+    expect(readRecord(attemptFile(l, 'continue-a')).cost).toMatchObject({ charged_usd: 2, basis: 'estimate' })
+  })
+
+  test('a credential-leak record keeps the charge too', async () => {
+    const l = lab()
+    approvedFixture(l.store)
+    const { executor } = fakeExecutor({ tweak: (_j, r) => ({ ...r, stdout: stdoutOf(textEvent(`the key is ${KEY}`), stepFinish(1)) }) })
+    await expect(runCampaign(options({ ...live, arms: ['continue-a'] }), { store: l.store, executor, cliproxy: fakeCliproxy })).rejects.toBeInstanceOf(CredentialLeakError)
+    const r = readRecord(attemptFile(l, 'continue-a'))
+    expect(r).toMatchObject({ reasons: ['credential_leak'], cost: { charged_usd: 1.75 } })
+    expect(spentUsd(l.store, 'camp')).toBeCloseTo(1.75)
+  })
+
+  test('when not even the minimal record can be written, the campaign stops scheduling and still counts the charge', async () => {
+    const l = lab()
+    approvedFixture(l.store)
+    const { executor, jobs } = fakeExecutor({
+      cost: 1,
+      tweak: (job, r) => {
+        chmodSync(aDir(l, job.arm, job.model), 0o500) // evidence and the minimal record both fail
+        return r
+      },
+    })
+    try {
+      const summary = await runCampaign(options({ ...live, arms: ['continue-a', 'continue-b', 'feel'] }), { store: l.store, executor, cliproxy: fakeCliproxy })
+      expect(jobs).toHaveLength(1)
+      expect(summary.stoppedBy).toBe('accounting')
+      expect(summary.spentUsd).toBeCloseTo(1.75)
+      expect(summary.unrun.map((u) => [u.arm, u.reason])).toEqual([['continue-a', 'accounting'], ['continue-b', 'accounting'], ['feel', 'accounting']])
+      const note = readdirSync(campaignDir(l.store, 'camp')).find((f) => f.startsWith('run-'))!
+      expect(JSON.parse(readFileSync(join(campaignDir(l.store, 'camp'), note), 'utf8'))).toMatchObject({ stoppedBy: 'accounting', spentUsd: 1.75 })
+    } finally {
+      chmodSync(aDir(l, 'continue-a'), 0o700)
+    }
+  })
+
+  test('a resumed campaign restores the largest charge before any admission decision', async () => {
+    const l = lab()
+    approvedFixture(l.store)
+    const first = fakeExecutor({ cost: 1 })
+    await runCampaign(options({ ...live, attemptEstimateUsd: 0.1, capUsd: 10, arms: ['continue-a', 'continue-b'] }), { store: l.store, executor: first.executor, cliproxy: fakeCliproxy })
+    expect(spentUsd(l.store, 'camp')).toBeCloseTo(3.5) // two attempts at 1.75
+    const second = fakeExecutor({ cost: 1 })
+    // 3.5 spent, a 0.1 estimate would fit under 4, but a 1.75 charge has been seen.
+    const summary = await runCampaign(options({ ...live, attemptEstimateUsd: 0.1, capUsd: 4, arms: ['continue-a', 'continue-b', 'feel'] }), { store: l.store, executor: second.executor, cliproxy: fakeCliproxy })
+    expect(second.jobs).toHaveLength(0)
+    expect(summary).toMatchObject({ stoppedBy: 'budget' })
+    expect(summary.unrun.map((u) => u.arm)).toEqual(['feel'])
   })
 })

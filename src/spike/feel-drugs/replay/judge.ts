@@ -1,6 +1,6 @@
 /** `bun run replay judge`: an automated judge for replay campaigns, then a seeded spot-check list for the owner. Reads campaigns, never writes them. */
 import { createHash, randomBytes } from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { z } from 'zod'
@@ -568,6 +568,44 @@ function writeJudgement(dir: string, record: Omit<Judgement, 'run'>, existing: r
   throw new Error(`could not allocate a judgement file under ${dir}`)
 }
 
+// ── the ledger ─────────────────────────────────────────────────────────────
+
+/** Spend with no judgement file to carry it: a pair that failed on transport, hit the cap mid-pair, or leaked. Append-only; no judge text. */
+export const LEDGER_FILE = 'ledger.jsonl'
+
+export interface LedgerEntry {
+  schema_version: typeof JUDGE_SCHEMA_VERSION
+  at: string
+  campaign: string
+  fixture: string
+  model: string
+  judge: { model: string; provider: 'scripted' | 'cliproxy' }
+  attempts: number
+  estimated_usd: number
+}
+
+function appendLedger(dir: string, entry: LedgerEntry): void {
+  privateDir(dir)
+  const path = join(dir, LEDGER_FILE)
+  appendFileSync(path, `${JSON.stringify(entry)}\n`, { mode: 0o600 })
+  chmodSync(path, 0o600)
+}
+
+function readLedger(dir: string): LedgerEntry[] {
+  const file = join(dir, LEDGER_FILE)
+  if (!existsSync(file)) return []
+  return readFileSync(file, 'utf8')
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => JSON.parse(line) as LedgerEntry)
+}
+
+/** What earlier live runs of this campaign already spent: judgement files plus ledger entries. Scripted runs cost nothing. */
+export function priorSpentUsd(dir: string): number {
+  const files = readJudgements(dir).filter((j) => j.judge.provider === 'cliproxy').reduce((sum, j) => sum + j.cost.estimated_usd, 0)
+  return files + readLedger(dir).filter((e) => e.judge.provider === 'cliproxy').reduce((sum, e) => sum + e.estimated_usd, 0)
+}
+
 // ── judging one pair ───────────────────────────────────────────────────────
 
 export interface JudgeOptions {
@@ -613,45 +651,57 @@ async function judgePair(pair: JudgePair, reference: Reference, ctx: { options: 
   let returned: string | null = null
   let failure: { code: string; detail: string; excerpt: string; transport: boolean } = { code: 'invalid_json', detail: '', excerpt: '', transport: false }
 
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    let nonce = nonceOf()
-    while ([reference.brief, reference.expected_outcome_ref, reference.author_next_turn_ref ?? '', ...pair.arms.map((a) => a.text)].some((t) => t.includes(nonce))) nonce = nonceOf()
-    const user = buildUserMessage({ nonce, reference, arms: pair.arms })
-    assertNoNeedles(user, needles, 'judge-input')
-    const estimate = estimateUsd(JUDGE_SYSTEM_PROMPT.length + user.length)
-    if (options.provider === 'cliproxy' && options.capUsd !== undefined && ctx.spentSoFar + spent + estimate > options.capUsd) return { kind: 'budget', spent }
-    attempts = attempt
-    let response: CompleteResponse
-    try {
-      response = await deps.transport.complete({ model, system: JUDGE_SYSTEM_PROMPT, user, sessionId, signal: deps.signal })
-    } catch (e) {
-      if (e instanceof CredentialLeakError) throw e
-      failure = { code: 'transport', detail: e instanceof Error ? clip(e.message, 200) : 'unknown transport failure', excerpt: '', transport: true }
-      continue
+  let written = false
+  try {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      let nonce = nonceOf()
+      while ([reference.brief, reference.expected_outcome_ref, reference.author_next_turn_ref ?? '', ...pair.arms.map((a) => a.text)].some((t) => t.includes(nonce))) nonce = nonceOf()
+      const user = buildUserMessage({ nonce, reference, arms: pair.arms })
+      assertNoNeedles(user, needles, 'judge-input')
+      const estimate = estimateUsd(JUDGE_SYSTEM_PROMPT.length + user.length)
+      if (options.provider === 'cliproxy' && options.capUsd !== undefined && ctx.spentSoFar + spent + estimate > options.capUsd) return { kind: 'budget', spent }
+      attempts = attempt
+      // Reserved before the call: a timeout or a dropped connection can follow billable work, so the estimate stays unless a response says otherwise.
+      spent += estimate
+      let response: CompleteResponse
+      try {
+        response = await deps.transport.complete({ model, system: JUDGE_SYSTEM_PROMPT, user, sessionId, signal: deps.signal })
+      } catch (e) {
+        if (e instanceof CredentialLeakError) throw e
+        failure = { code: 'transport', detail: e instanceof Error ? clip(e.message, 200) : 'unknown transport failure', excerpt: '', transport: true }
+        continue
+      }
+      spent += (actualUsd(response) ?? estimate) - estimate
+      returned = response.returnedModel ?? returned
+      const parsed = parseVerdict(response.text, expected)
+      if (!parsed.ok) {
+        failure = { code: parsed.code, detail: parsed.detail, excerpt: clip(response.text.trim(), 500), transport: false }
+        continue
+      }
+      const verdicts: ArmVerdict[] = parsed.value.arms.map((v) => {
+        const arm = judged.find((a) => a.arm === v.arm)!
+        const { disruption, ...rest } = v
+        return { ...rest, ...(disruption ? { disruption } : {}), unanchored: !quoteAnchored(v.quote, arm.text) }
+      })
+      verdicts.sort((a, b) => expected.arms.indexOf(a.arm) - expected.arms.indexOf(b.arm))
+      const baselines = pair.arms.filter((a) => a.kind === 'baseline').length
+      const cell: CellFloor = baselines < 2 ? 'no_floor' : parsed.value.floor === 'agree' ? 'agree' : 'noisy'
+      const record = base(pair, reference, ctx, { attempts, returned, input_sha256, spent })
+      writeJudgement(ctx.dir, { ...record, status: 'judged', cell, verdict: { default_move: parsed.value.default_move, floor: parsed.value.floor }, verdicts }, ctx.existing, needles)
+      written = true
+      return { kind: 'written', status: 'judged', spent }
     }
-    spent += actualUsd(response) ?? estimate
-    returned = response.returnedModel ?? returned
-    const parsed = parseVerdict(response.text, expected)
-    if (!parsed.ok) {
-      failure = { code: parsed.code, detail: parsed.detail, excerpt: clip(response.text.trim(), 500), transport: false }
-      continue
-    }
-    const verdicts: ArmVerdict[] = parsed.value.arms.map((v) => {
-      const arm = judged.find((a) => a.arm === v.arm)!
-      const { disruption, ...rest } = v
-      return { ...rest, ...(disruption ? { disruption } : {}), unanchored: !quoteAnchored(v.quote, arm.text) }
-    })
-    verdicts.sort((a, b) => expected.arms.indexOf(a.arm) - expected.arms.indexOf(b.arm))
-    const baselines = pair.arms.filter((a) => a.kind === 'baseline').length
-    const cell: CellFloor = baselines < 2 ? 'no_floor' : parsed.value.floor === 'agree' ? 'agree' : 'noisy'
+    if (failure.transport) return { kind: 'unjudged', reason: `${failure.code}: ${failure.detail}`, spent }
     const record = base(pair, reference, ctx, { attempts, returned, input_sha256, spent })
-    writeJudgement(ctx.dir, { ...record, status: 'judged', cell, verdict: { default_move: parsed.value.default_move, floor: parsed.value.floor }, verdicts }, ctx.existing, needles)
-    return { kind: 'written', status: 'judged', spent }
+    writeJudgement(ctx.dir, { ...record, status: 'judge_error', cell: null, verdict: null, verdicts: [], error: { code: failure.code, detail: failure.detail, excerpt: failure.excerpt } }, ctx.existing, needles)
+    written = true
+    return { kind: 'written', status: 'judge_error', spent }
+  } finally {
+    // Whatever left the pair without a file (transport failure, the cap mid-pair, a leak) still cost its estimate: a resume must count it.
+    if (!written && spent > 0 && options.provider === 'cliproxy') {
+      appendLedger(ctx.dir, { schema_version: JUDGE_SCHEMA_VERSION, at: deps.store.now().toISOString(), campaign: options.campaign, fixture: pair.fixture, model: pair.model, judge: { model, provider: options.provider }, attempts, estimated_usd: Number(spent.toFixed(6)) })
+    }
   }
-  if (failure.transport) return { kind: 'unjudged', reason: `${failure.code}: ${failure.detail}`, spent }
-  const record = base(pair, reference, ctx, { attempts, returned, input_sha256, spent })
-  writeJudgement(ctx.dir, { ...record, status: 'judge_error', cell: null, verdict: null, verdicts: [], error: { code: failure.code, detail: failure.detail, excerpt: failure.excerpt } }, ctx.existing, needles)
-  return { kind: 'written', status: 'judge_error', spent }
 }
 
 function base(pair: JudgePair, reference: Reference, ctx: { options: JudgeOptions; deps: JudgeDeps; model: string }, f: { attempts: number; returned: string | null; input_sha256: string; spent: number }): Omit<Judgement, 'run' | 'status' | 'cell' | 'verdict' | 'verdicts' | 'error'> {
@@ -845,7 +895,10 @@ export interface JudgeRunSummary {
   unjudged: { fixture: string; model: string; reason: string }[]
   already_judged: number
   skipped_cells: number
+  /** Spent by this invocation. */
   spentUsd: number
+  /** Spent by earlier live invocations on this campaign; the cap covers both. */
+  priorSpentUsd: number
   judgeModel: string | null
   summaryPath: string
   dir: string
@@ -870,6 +923,8 @@ export async function judgeCampaign(options: JudgeOptions, deps: JudgeDeps): Pro
   let judgeErrors = 0
   let already = 0
   let spent = 0
+  // The cap covers the campaign's judging as a whole: earlier live runs, failed ones included, count before this one starts.
+  const prior = priorSpentUsd(dir)
   let judgeModel: string | null = null
   let stopped = false
 
@@ -889,7 +944,7 @@ export async function judgeCampaign(options: JudgeOptions, deps: JudgeDeps): Pro
     }
     if (judgeModel === null) judgeModel = options.judgeModel ?? selectJudgeModel(await deps.transport.listModels())
     const reference = loadReference(store, pair.fixture)
-    const outcome = await judgePair(pair, reference, { options, deps, model: judgeModel, dir, existing, spentSoFar: spent })
+    const outcome = await judgePair(pair, reference, { options, deps, model: judgeModel, dir, existing, spentSoFar: prior + spent })
     spent += outcome.spent
     if (outcome.kind === 'budget') {
       stopped = true
@@ -913,7 +968,7 @@ export async function judgeCampaign(options: JudgeOptions, deps: JudgeDeps): Pro
   writeFileSync(temp, summary, { mode: 0o600 })
   chmodSync(temp, 0o600)
   renameSync(temp, summaryPath)
-  return { pairs: collected.pairs.length, judged, judge_errors: judgeErrors, unjudged, already_judged: already, skipped_cells: collected.skipped.length, spentUsd: spent, judgeModel, summaryPath, dir }
+  return { pairs: collected.pairs.length, judged, judge_errors: judgeErrors, unjudged, already_judged: already, skipped_cells: collected.skipped.length, spentUsd: spent, priorSpentUsd: prior, judgeModel, summaryPath, dir }
 }
 
 // ── the command line ───────────────────────────────────────────────────────
@@ -989,7 +1044,7 @@ export async function judgeMain(argv: readonly string[], io: Partial<JudgeIo> = 
       { campaign, models, fixtures, judgeModel: values['judge-model'], capUsd, provider, again: values.again === true, seed },
       { store, transport, ...(cliproxy ? { needles: cliproxy.needles } : {}), ...(io.judge?.nonce ? { nonce: io.judge.nonce } : {}), log: out },
     )
-    out(`judge ${campaign} model=${summary.judgeModel ?? 'none'} pairs=${summary.pairs} judged=${summary.judged} judge_error=${summary.judge_errors} already=${summary.already_judged} unjudged=${summary.unjudged.length} skipped_cells=${summary.skipped_cells} spent~$${summary.spentUsd.toFixed(4)}`)
+    out(`judge ${campaign} model=${summary.judgeModel ?? 'none'} pairs=${summary.pairs} judged=${summary.judged} judge_error=${summary.judge_errors} already=${summary.already_judged} unjudged=${summary.unjudged.length} skipped_cells=${summary.skipped_cells} spent~$${summary.spentUsd.toFixed(4)}${summary.priorSpentUsd > 0 ? ` prior~$${summary.priorSpentUsd.toFixed(4)}` : ''}`)
     for (const u of summary.unjudged) out(`not judged\t${u.fixture}\t${u.model}\t${u.reason}`)
     out(`summary ${summary.summaryPath}`)
     return summary.judge_errors > 0 || summary.unjudged.length > 0 ? 3 : 0
