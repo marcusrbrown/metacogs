@@ -416,7 +416,7 @@ describe('accounting', () => {
   /** Makes both the evidence and the minimal record of the first attempt fail. */
   const blockRecord = (l: Lab, extra?: () => void) => (job: { arm: string; model: string }, r: Awaited<ReturnType<ReturnType<typeof fakeExecutor>['executor']>>) => {
     const dir = aDir(l, job.arm, job.model)
-    if (readdirSync(dir).length === 0) {
+    if (readdirSync(dir).every((f) => f === 'started.json')) {
       chmodSync(dir, 0o500)
       extra?.()
     }
@@ -517,6 +517,111 @@ describe('accounting', () => {
     expect(second.jobs).toHaveLength(0)
     expect(summary).toMatchObject({ stoppedBy: 'budget' })
     expect(summary.unrun.map((u) => u.arm)).toEqual(['feel'])
+  })
+})
+
+describe('a pending attempt directory is the accounting marker', () => {
+  const live = { provider: 'cliproxy' as const, attemptEstimateUsd: 1 }
+  const T0 = new Date('2026-11-07T12:00:00.000Z')
+  const at = (minutes: number) => () => new Date(T0.getTime() + minutes * 60_000)
+  const campaign = (l: Lab) => campaignDir(l.store, 'camp')
+  const aDir = (l: Lab, arm = 'continue-a') => join(cellDir(l.store, { campaign: 'camp', fixture: 'moment-a', model: MODEL, arm: arm as never }), 'a001')
+  const orphanFile = (l: Lab) => join(campaign(l), 'orphan-charges.jsonl')
+
+  /** Every post-host write fails: the attempt record, the orphan ledger and the run note. Storage comes back afterwards. */
+  async function allWritesFail(l: Lab): Promise<void> {
+    const { executor } = fakeExecutor({
+      cost: 1,
+      tweak: (_j, r) => {
+        chmodSync(aDir(l), 0o500)
+        chmodSync(campaign(l), 0o500)
+        return r
+      },
+    })
+    try {
+      await expect(runCampaign(options({ ...live, capUsd: 10, arms: ['continue-a', 'continue-b'] }), { store: l.store, executor, cliproxy: fakeCliproxy, now: at(0) })).rejects.toThrow()
+    } finally {
+      chmodSync(campaign(l), 0o700)
+      chmodSync(aDir(l), 0o700)
+    }
+  }
+
+  test('a live attempt marks its directory before dispatch and clears the mark once its record is durable', async () => {
+    const l = lab()
+    approvedFixture(l.store)
+    let during: string[] = []
+    const { executor } = fakeExecutor({ tweak: (_j, r) => ((during = readdirSync(aDir(l))), r) })
+    await runCampaign(options({ ...live, arms: ['continue-a'] }), { store: l.store, executor, cliproxy: fakeCliproxy, now: at(0) })
+    expect(during).toEqual(['started.json'])
+    expect(readdirSync(aDir(l))).not.toContain('started.json')
+    expect(JSON.parse(readFileSync(attemptFile(l, 'continue-a'), 'utf8')).status).toBe('completed')
+  })
+
+  test('with every post-host write failed, a resume is blocked until the directory is reconciled, and says how', async () => {
+    const l = lab()
+    approvedFixture(l.store)
+    await allWritesFail(l)
+    expect(readdirSync(aDir(l))).toEqual(['started.json']) // the marker is all that is left
+    expect(existsSync(orphanFile(l))).toBe(false)
+
+    const resumed = fakeExecutor({ cost: 1 })
+    let message = ''
+    try {
+      await runCampaign(options({ ...live, capUsd: 3, attemptEstimateUsd: 0.1, arms: ['continue-a', 'continue-b'] }), { store: l.store, executor: resumed.executor, cliproxy: fakeCliproxy, now: at(60) })
+    } catch (e) {
+      message = (e as Error).message
+    }
+    expect(resumed.jobs).toHaveLength(0)
+    expect(message).toContain(join('campaigns', 'camp', 'moment-a', 'anthropic__claude-opus-5-5', 'continue-a', 'a001'))
+    expect(message).toMatch(/orphan-charges\.jsonl/)
+    expect(message).toMatch(/remove the directory/i)
+
+    // Reconciled as charged: the printed line, with the real figure, goes in the ledger; the charge counts and holds the cap.
+    const line = JSON.parse(/(\{"schema_version":1[^\n]*\})/.exec(message)![1]!) as { charged_usd: number }
+    appendFileSync(orphanFile(l), `${JSON.stringify({ ...line, charged_usd: 1.75 })}\n`)
+    const held = await runCampaign(options({ ...live, capUsd: 3, attemptEstimateUsd: 0.1, arms: ['continue-a', 'continue-b'] }), { store: l.store, executor: resumed.executor, cliproxy: fakeCliproxy, now: at(60) })
+    expect(resumed.jobs).toHaveLength(0)
+    expect(held).toMatchObject({ stoppedBy: 'budget' })
+    expect(held.spentUsd).toBeCloseTo(1.75)
+  })
+
+  test('reconciled as not charged (the directory removed), the resume goes ahead', async () => {
+    const l = lab()
+    approvedFixture(l.store)
+    await allWritesFail(l)
+    rmSync(aDir(l), { recursive: true })
+    const resumed = fakeExecutor()
+    const summary = await runCampaign(options({ ...live, arms: ['continue-a'] }), { store: l.store, executor: resumed.executor, cliproxy: fakeCliproxy, now: at(60) })
+    expect(resumed.jobs).toHaveLength(1)
+    expect(summary.counted).toEqual({ completed: 1 })
+  })
+
+  test('a directory still inside the attempt timeout belongs to a run that may be going: it does not block', async () => {
+    const l = lab()
+    approvedFixture(l.store)
+    await allWritesFail(l)
+    const resumed = fakeExecutor()
+    await runCampaign(options({ ...live, arms: ['continue-b'] }), { store: l.store, executor: resumed.executor, cliproxy: fakeCliproxy, now: at(1) })
+    expect(resumed.jobs).toHaveLength(1)
+  })
+
+  test('empty directories that were never dispatched (a leak abort, an old crash before the host) do not block', async () => {
+    const l = lab()
+    approvedFixture(l.store)
+    createAttemptDir(cellDir(l.store, { campaign: 'camp', fixture: 'moment-a', model: MODEL, arm: 'continue-a' }), 'a001')
+    const resumed = fakeExecutor()
+    const summary = await runCampaign(options({ ...live, arms: ['continue-a'] }), { store: l.store, executor: resumed.executor, cliproxy: fakeCliproxy, now: at(600) })
+    expect(resumed.jobs).toHaveLength(1)
+    expect(summary.counted).toEqual({ completed: 1 })
+  })
+
+  test('a scripted attempt is never marked: it costs nothing to lose', async () => {
+    const l = lab()
+    approvedFixture(l.store)
+    let during: string[] = []
+    const { executor } = fakeExecutor({ tweak: (_j, r) => ((during = readdirSync(aDir(l))), r) })
+    await runCampaign(options({ arms: ['continue-a'] }), { store: l.store, executor, now: at(0) })
+    expect(during).toEqual([])
   })
 })
 

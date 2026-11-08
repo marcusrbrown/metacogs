@@ -1,6 +1,6 @@
 /** Append-only replay attempts, gated and budgeted. Nothing here deletes or overwrites evidence. */
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { join, relative } from 'node:path'
 
 import type { ResolvedCliproxy } from '../../../runner/cliproxy'
 import { analyzeEvents, isRateLimited, isSkillContentLoad, parseEvents, skillCallName, type Usage } from '../../../runner/events'
@@ -179,6 +179,37 @@ export function campaignCells(store: Store, campaign: string): CellRow[] {
   return rows
 }
 
+// ── the pending marker ─────────────────────────────────────────────────────
+
+/** Written into a live attempt's directory before the host is dispatched; removed once the attempt's record is on disk. */
+export const STARTED_FILE = 'started.json'
+/** Host steps outside the attempt's own limit (preflight, import, export) and clock skew. */
+export const PENDING_MARGIN_MS = 15 * 60_000
+
+interface Started {
+  started_at: string
+  timeout_ms: number
+}
+
+export interface PendingAttempt {
+  /** Relative to the store root. */
+  dir: string
+  fixture: string
+  model: string
+  arm: string
+  attempt: string
+  started_at: string | null
+}
+
+const startedOf = (file: string): Started | null => {
+  try {
+    const v = JSON.parse(readFileSync(file, 'utf8')) as Partial<Started>
+    return typeof v.started_at === 'string' && Number.isFinite(Date.parse(v.started_at)) && typeof v.timeout_ms === 'number' ? { started_at: v.started_at, timeout_ms: v.timeout_ms } : null
+  } catch {
+    return null
+  }
+}
+
 // ── orphan charges ─────────────────────────────────────────────────────────
 
 /** A charge whose attempt left no record: the host ran and billed, but not even the minimal `attempt.json` could be written. Append-only, per campaign. */
@@ -234,10 +265,32 @@ function appendOrphanCharge(store: Store, campaign: string, entry: OrphanCharge)
 const sameCharge = (a: Pick<OrphanCharge, 'fixture' | 'model' | 'arm' | 'attempt'>, b: Pick<OrphanCharge, 'fixture' | 'model' | 'arm' | 'attempt'>): boolean => a.fixture === b.fixture && a.model === b.model && a.arm === b.arm && a.attempt === b.attempt
 
 /**
- * Refuses to go on when an earlier invocation stopped on an accounting failure and its orphan charge is not in the ledger: the
- * spend would read as zero. The message carries the line to append.
+ * Attempt directories that were dispatched live, left no `attempt.json`, and have no orphan entry, long enough ago that no run can
+ * still be writing them. Whatever such an attempt was charged is in no record. A directory with no marker was never dispatched.
  */
-function assertOrphansReconciled(store: Store, campaign: string): void {
+export function pendingAttempts(store: Store, campaign: string, now: Date): PendingAttempt[] {
+  const known = readOrphanCharges(store, campaign)
+  const pending: PendingAttempt[] = []
+  for (const row of campaignCells(store, campaign)) {
+    for (const a of row.attempts) {
+      if (a.status !== null) continue
+      const dir = join(cellDir(store, { campaign, fixture: row.fixture, model: row.model, arm: row.arm as ArmName }), a.id)
+      const markerFile = join(dir, STARTED_FILE)
+      if (!existsSync(markerFile)) continue
+      const started = startedOf(markerFile) // unreadable: age unknown, so it counts as old
+      if (started && now.getTime() - Date.parse(started.started_at) <= started.timeout_ms + PENDING_MARGIN_MS) continue
+      if (known.some((k) => sameCharge(k, { fixture: row.fixture, model: row.model, arm: row.arm, attempt: a.id }))) continue
+      pending.push({ dir: relative(store.root, dir), fixture: row.fixture, model: row.model, arm: row.arm, attempt: a.id, started_at: started?.started_at ?? null })
+    }
+  }
+  return pending
+}
+
+/**
+ * Refuses to go on when spend may be missing from the records: an earlier invocation stopped on an accounting failure and its
+ * orphan charge is not in the ledger, or an attempt directory was dispatched and never got a record. Each message says how to settle it.
+ */
+function assertAccountingReconciled(store: Store, campaign: string, now: Date, estimateUsd: number): void {
   const dir = campaignDir(store, campaign)
   const known = readOrphanCharges(store, campaign)
   for (const name of existsSync(dir) ? readdirSync(dir).filter((f) => /^run-.*\.json$/.test(f)).sort() : []) {
@@ -253,6 +306,15 @@ function assertOrphansReconciled(store: Store, campaign: string): void {
         `campaign ${campaign}: ${name} stopped because attempt ${orphan.attempt} of ${orphan.fixture}/${orphan.model}/${orphan.arm} could not be recorded, and ${ORPHAN_FILE} has no entry for its $${orphan.charged_usd.toFixed(4)} charge, so that spend would count as zero. Append this line to campaigns/${campaign}/${ORPHAN_FILE}, then run again: ${JSON.stringify(orphan)}`,
       )
     }
+  }
+  const [first, ...rest] = pendingAttempts(store, campaign, now)
+  if (first) {
+    const line: OrphanCharge = { schema_version: 1, at: now.toISOString(), fixture: first.fixture, model: first.model, arm: first.arm, attempt: first.attempt, charged_usd: estimateUsd }
+    throw new Error(
+      `campaign ${campaign}: ${first.dir} was dispatched${first.started_at ? ` at ${first.started_at}` : ''} and has no attempt.json and no entry in ${ORPHAN_FILE}${rest.length > 0 ? ` (${rest.length} more directories are in the same state)` : ''}, so whatever it was charged would count as zero. ` +
+        `If it was charged, append this line to campaigns/${campaign}/${ORPHAN_FILE} with the real amount, then run again: ${JSON.stringify(line)}. ` +
+        'If you have confirmed nothing was charged, remove the directory.',
+    )
   }
 }
 
@@ -350,9 +412,19 @@ export async function runAttempt(ctx: AttemptContext): Promise<AttemptRecord> {
     ...extra,
   })
   let persisted = true
+  const marker = join(slot.dir, STARTED_FILE)
+  /** The record is on disk, so the mark has done its job. */
+  const clearMarker = (): void => {
+    try {
+      rmSync(marker, { force: true })
+    } catch {
+      // a stale mark beside an attempt.json is ignored
+    }
+  }
   const keep = (record: AttemptRecord): AttemptRecord => {
     try {
       writeFileSync(join(slot.dir, 'attempt.json'), `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600, flag: 'wx' })
+      clearMarker()
     } catch {
       // the directory stays either way; an unreadable record shows as an attempt with no status
       persisted = false
@@ -363,6 +435,14 @@ export async function runAttempt(ctx: AttemptContext): Promise<AttemptRecord> {
   if (message === null) return keep(failed('error', ['arm_not_applicable']))
   // A built scenario carries its own seed turns. Without them the history gate would have nothing to check, so the attempt does not run.
   if (fixture.world && !fixture.seedUserTurns?.length) return keep(failed('error', ['seed_turns_missing']))
+  // A live attempt can be billed from the first request on. The directory, marked here, is what a later run finds if every record write fails.
+  if (ctx.provider === 'cliproxy') {
+    try {
+      writeFileSync(marker, `${JSON.stringify({ schema_version: 1, started_at: startedAt, timeout_ms: ctx.timeoutMs ?? RUN_TIMEOUT_MS })}\n`, { mode: 0o600, flag: 'wx' })
+    } catch {
+      return keep(failed('error', ['pending_marker_unwritable']))
+    }
+  }
   let result: HostResult | undefined
   /** Set as soon as the host has run: from then on a failure keeps the charge. */
   let incurred: AttemptRecord['cost'] | undefined
@@ -444,6 +524,7 @@ export async function runAttempt(ctx: AttemptContext): Promise<AttemptRecord> {
       ...(fixture.history ? { history: fixture.history } : {}),
     }
     writeEvidence({ dir: slot.dir, runId: `${key.fixture}/${key.model}/${key.arm}/${slot.id}`, artifacts, manifestFile: 'attempt.json', manifest: `${JSON.stringify(record, null, 2)}\n`, needles, scanDirs: result.leakDirs, exclusive: true })
+    clearMarker()
     return record
   } catch (e) {
     // The host ran: the charge stands whatever went wrong afterwards (scan, write, analysis).
@@ -545,7 +626,7 @@ export async function runCampaign(options: CampaignOptions, deps: CampaignDeps):
   const fixtures = new Map(options.fixtures.map((id) => [id, load(id)] as const))
   const maxAttempts = options.maxAttempts ?? 3
   const estimate = options.attemptEstimateUsd ?? 0
-  assertOrphansReconciled(store, options.name)
+  assertAccountingReconciled(store, options.name, now(), estimate)
   const before = spentUsd(store, options.name)
   let spent = before
   // The largest charge already on disk counts: a resumed run does not forget what an attempt can cost.
