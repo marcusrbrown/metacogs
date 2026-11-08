@@ -150,6 +150,7 @@ describe('the gate matrix', () => {
     expect(run('continue-a', { seedUserTurns: [...SEED_USER].reverse() }).reasons).toEqual(['seed_history_missing'])
     expect(run('continue-a', { requests: [chatRequest({ last: ['Continue.'], history: [SEED_USER[0]!] })] }).reasons).toEqual(['seed_history_missing'])
     expect(run('continue-a', { requests: [chatRequest({ last: ['Continue.'], history: [`§1§ ${SEED_USER[0]}`, `${SEED_USER[1]}<system-reminder>r</system-reminder>`] })] }).passed).toBe(true)
+    expect(run('continue-a', { requests: [chatRequest({ last: ['Continue.'], history: [`${SEED_USER[0]}\n${SEED_USER[1]}`] })] }).passed).toBe(true)
   })
 
   test('a Council Mode block on the last user message is stack injection', () => {

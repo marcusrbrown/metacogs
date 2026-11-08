@@ -144,7 +144,7 @@ const check = (name: string, passed: boolean, detail: string, reason: ExclusionR
 function seedPresent(body: Record<string, unknown>, turns: readonly string[]): boolean {
   let next = 0
   for (const text of userTextsAnyWire(body)) {
-    if (next < turns.length && text.includes(turns[next]!)) next += 1
+    while (next < turns.length && text.includes(turns[next]!)) next += 1
   }
   return next === turns.length
 }
