@@ -1,5 +1,6 @@
 /** Append-only replay attempts, gated and budgeted. Nothing here deletes or overwrites evidence. */
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { hostname } from 'node:os'
 import { join, relative } from 'node:path'
 
 import type { ResolvedCliproxy } from '../../../runner/cliproxy'
@@ -183,12 +184,34 @@ export function campaignCells(store: Store, campaign: string): CellRow[] {
 
 /** Written into a live attempt's directory before the host is dispatched; removed once the attempt's record is on disk. */
 export const STARTED_FILE = 'started.json'
-/** Host steps outside the attempt's own limit (preflight, import, export) and clock skew. */
-export const PENDING_MARGIN_MS = 15 * 60_000
+
+/** Who is running: the pid and host a marker records, and the probe that asks whether a recorded pid still answers. */
+export interface RunnerIdentity {
+  pid: number
+  host: string
+  /** True when the pid is alive on this host. Real runs use `pidAlive`. */
+  alive: (pid: number) => boolean
+}
+
+/**
+ * Signal 0 sends nothing: it only asks the OS whether the pid exists and may be signalled. `EPERM` means it exists. This never
+ * signals or kills anything.
+ */
+export function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
+const defaultIdentity = (): RunnerIdentity => ({ pid: process.pid, host: hostname(), alive: pidAlive })
 
 interface Started {
   started_at: string
-  timeout_ms: number
+  pid: number | null
+  host: string | null
 }
 
 export interface PendingAttempt {
@@ -201,10 +224,12 @@ export interface PendingAttempt {
   started_at: string | null
 }
 
+/** Null for a marker that cannot be read at all. A marker from before pids were recorded reads with `pid: null`. */
 const startedOf = (file: string): Started | null => {
   try {
-    const v = JSON.parse(readFileSync(file, 'utf8')) as Partial<Started>
-    return typeof v.started_at === 'string' && Number.isFinite(Date.parse(v.started_at)) && typeof v.timeout_ms === 'number' ? { started_at: v.started_at, timeout_ms: v.timeout_ms } : null
+    const v = JSON.parse(readFileSync(file, 'utf8')) as { started_at?: unknown; pid?: unknown; host?: unknown }
+    if (typeof v.started_at !== 'string' || !Number.isFinite(Date.parse(v.started_at))) return null
+    return { started_at: v.started_at, pid: typeof v.pid === 'number' && Number.isInteger(v.pid) && v.pid > 0 ? v.pid : null, host: typeof v.host === 'string' ? v.host : null }
   } catch {
     return null
   }
@@ -265,10 +290,12 @@ function appendOrphanCharge(store: Store, campaign: string, entry: OrphanCharge)
 const sameCharge = (a: Pick<OrphanCharge, 'fixture' | 'model' | 'arm' | 'attempt'>, b: Pick<OrphanCharge, 'fixture' | 'model' | 'arm' | 'attempt'>): boolean => a.fixture === b.fixture && a.model === b.model && a.arm === b.arm && a.attempt === b.attempt
 
 /**
- * Attempt directories that were dispatched live, left no `attempt.json`, and have no orphan entry, long enough ago that no run can
- * still be writing them. Whatever such an attempt was charged is in no record. A directory with no marker was never dispatched.
+ * Attempt directories that were dispatched live, left no `attempt.json`, and have no orphan entry. Whatever such an attempt was
+ * charged is in no record. The only exception is a run in flight: the marker's pid is alive on this host. Age proves nothing (a
+ * restart seconds after a crash is the case that matters), so every other marker blocks: dead pid, no pid, another host, or unreadable.
+ * A directory with no marker was never dispatched.
  */
-export function pendingAttempts(store: Store, campaign: string, now: Date): PendingAttempt[] {
+export function pendingAttempts(store: Store, campaign: string, self: RunnerIdentity = defaultIdentity()): PendingAttempt[] {
   const known = readOrphanCharges(store, campaign)
   const pending: PendingAttempt[] = []
   for (const row of campaignCells(store, campaign)) {
@@ -277,8 +304,8 @@ export function pendingAttempts(store: Store, campaign: string, now: Date): Pend
       const dir = join(cellDir(store, { campaign, fixture: row.fixture, model: row.model, arm: row.arm as ArmName }), a.id)
       const markerFile = join(dir, STARTED_FILE)
       if (!existsSync(markerFile)) continue
-      const started = startedOf(markerFile) // unreadable: age unknown, so it counts as old
-      if (started && now.getTime() - Date.parse(started.started_at) <= started.timeout_ms + PENDING_MARGIN_MS) continue
+      const started = startedOf(markerFile)
+      if (started && started.pid !== null && started.host === self.host && self.alive(started.pid)) continue
       if (known.some((k) => sameCharge(k, { fixture: row.fixture, model: row.model, arm: row.arm, attempt: a.id }))) continue
       pending.push({ dir: relative(store.root, dir), fixture: row.fixture, model: row.model, arm: row.arm, attempt: a.id, started_at: started?.started_at ?? null })
     }
@@ -290,7 +317,7 @@ export function pendingAttempts(store: Store, campaign: string, now: Date): Pend
  * Refuses to go on when spend may be missing from the records: an earlier invocation stopped on an accounting failure and its
  * orphan charge is not in the ledger, or an attempt directory was dispatched and never got a record. Each message says how to settle it.
  */
-function assertAccountingReconciled(store: Store, campaign: string, now: Date, estimateUsd: number): void {
+function assertAccountingReconciled(store: Store, campaign: string, now: Date, estimateUsd: number, self: RunnerIdentity): void {
   const dir = campaignDir(store, campaign)
   const known = readOrphanCharges(store, campaign)
   for (const name of existsSync(dir) ? readdirSync(dir).filter((f) => /^run-.*\.json$/.test(f)).sort() : []) {
@@ -307,7 +334,7 @@ function assertAccountingReconciled(store: Store, campaign: string, now: Date, e
       )
     }
   }
-  const [first, ...rest] = pendingAttempts(store, campaign, now)
+  const [first, ...rest] = pendingAttempts(store, campaign, self)
   if (first) {
     const line: OrphanCharge = { schema_version: 1, at: now.toISOString(), fixture: first.fixture, model: first.model, arm: first.arm, attempt: first.attempt, charged_usd: estimateUsd }
     throw new Error(
@@ -352,6 +379,9 @@ export interface AttemptContext {
   attemptEstimateUsd?: number
   signal?: AbortSignal
   now?: () => Date
+  /** The pid and host written into a live attempt's marker. Default: this process. */
+  pid?: number
+  host?: string
 }
 
 function observe(events: ReturnType<typeof analyzeEvents>): ObservedCalls {
@@ -438,7 +468,7 @@ export async function runAttempt(ctx: AttemptContext): Promise<AttemptRecord> {
   // A live attempt can be billed from the first request on. The directory, marked here, is what a later run finds if every record write fails.
   if (ctx.provider === 'cliproxy') {
     try {
-      writeFileSync(marker, `${JSON.stringify({ schema_version: 1, started_at: startedAt, timeout_ms: ctx.timeoutMs ?? RUN_TIMEOUT_MS })}\n`, { mode: 0o600, flag: 'wx' })
+      writeFileSync(marker, `${JSON.stringify({ schema_version: 1, started_at: startedAt, pid: ctx.pid ?? process.pid, host: ctx.host ?? hostname() })}\n`, { mode: 0o600, flag: 'wx' })
     } catch {
       return keep(failed('error', ['pending_marker_unwritable']))
     }
@@ -583,6 +613,10 @@ export interface CampaignDeps {
   log?: (line: string) => void
   signal?: AbortSignal
   now?: () => Date
+  /** Test seams for the marker's identity and the liveness probe. Default: this process, this host, `process.kill(pid, 0)`. */
+  pid?: number
+  host?: string
+  alive?: (pid: number) => boolean
 }
 
 export type UnrunReason = 'budget' | 'aborted' | 'accounting' | 'no_somewhere' | 'attempts_exhausted'
@@ -624,9 +658,10 @@ export async function runCampaign(options: CampaignOptions, deps: CampaignDeps):
   // Fixtures come only through loadFrozen: frozen, scanned clean as of now, unedited and approved. All load before any run.
   const load = deps.loadFixture ?? ((id: string) => loadFrozen(store, id))
   const fixtures = new Map(options.fixtures.map((id) => [id, load(id)] as const))
+  const self: RunnerIdentity = { pid: deps.pid ?? process.pid, host: deps.host ?? hostname(), alive: deps.alive ?? pidAlive }
   const maxAttempts = options.maxAttempts ?? 3
   const estimate = options.attemptEstimateUsd ?? 0
-  assertAccountingReconciled(store, options.name, now(), estimate)
+  assertAccountingReconciled(store, options.name, now(), estimate, self)
   const before = spentUsd(store, options.name)
   let spent = before
   // The largest charge already on disk counts: a resumed run does not forget what an attempt can cost.
@@ -674,6 +709,8 @@ export async function runCampaign(options: CampaignOptions, deps: CampaignDeps):
           attemptEstimateUsd: estimate,
           ...(deps.signal ? { signal: deps.signal } : {}),
           now,
+          pid: self.pid,
+          host: self.host,
         })
       } catch (e) {
         if (!(e instanceof AccountingPersistError)) throw e

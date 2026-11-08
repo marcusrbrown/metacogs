@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test'
+import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { hostname } from 'node:os'
 import { join } from 'node:path'
 
 import type { ResolvedCliproxy } from '../../../runner/cliproxy'
@@ -529,7 +531,15 @@ describe('a pending attempt directory is the accounting marker', () => {
   const orphanFile = (l: Lab) => join(campaign(l), 'orphan-charges.jsonl')
 
   /** Every post-host write fails: the attempt record, the orphan ledger and the run note. Storage comes back afterwards. */
-  async function allWritesFail(l: Lab): Promise<void> {
+  /** A pid that was real and is gone: a child that ran and was reaped. */
+  const deadPid = (): number => {
+    const pid = spawnSync('true').pid
+    expect(() => process.kill(pid, 0)).toThrow() // sanity: nothing answers on it
+    return pid
+  }
+  const markerOf = (l: Lab, arm = 'continue-a') => join(aDir(l, arm), 'started.json')
+
+  async function allWritesFail(l: Lab, pid: number = deadPid()): Promise<void> {
     const { executor } = fakeExecutor({
       cost: 1,
       tweak: (_j, r) => {
@@ -539,7 +549,7 @@ describe('a pending attempt directory is the accounting marker', () => {
       },
     })
     try {
-      await expect(runCampaign(options({ ...live, capUsd: 10, arms: ['continue-a', 'continue-b'] }), { store: l.store, executor, cliproxy: fakeCliproxy, now: at(0) })).rejects.toThrow()
+      await expect(runCampaign(options({ ...live, capUsd: 10, arms: ['continue-a', 'continue-b'] }), { store: l.store, executor, cliproxy: fakeCliproxy, now: at(0), pid })).rejects.toThrow()
     } finally {
       chmodSync(campaign(l), 0o700)
       chmodSync(aDir(l), 0o700)
@@ -550,10 +560,12 @@ describe('a pending attempt directory is the accounting marker', () => {
     const l = lab()
     approvedFixture(l.store)
     let during: string[] = []
-    const { executor } = fakeExecutor({ tweak: (_j, r) => ((during = readdirSync(aDir(l))), r) })
+    let markerDuring: unknown
+    const { executor } = fakeExecutor({ tweak: (_j, r) => ((during = readdirSync(aDir(l))), (markerDuring = JSON.parse(readFileSync(markerOf(l), 'utf8'))), r) })
     await runCampaign(options({ ...live, arms: ['continue-a'] }), { store: l.store, executor, cliproxy: fakeCliproxy, now: at(0) })
     expect(during).toEqual(['started.json'])
     expect(readdirSync(aDir(l))).not.toContain('started.json')
+    expect(markerDuring).toMatchObject({ started_at: T0.toISOString(), pid: process.pid, host: hostname() })
     expect(JSON.parse(readFileSync(attemptFile(l, 'continue-a'), 'utf8')).status).toBe('completed')
   })
 
@@ -596,13 +608,45 @@ describe('a pending attempt directory is the accounting marker', () => {
     expect(summary.counted).toEqual({ completed: 1 })
   })
 
-  test('a directory still inside the attempt timeout belongs to a run that may be going: it does not block', async () => {
+  test('a sequential restart right after a crash is blocked: age says nothing, the dead pid does', async () => {
     const l = lab()
     approvedFixture(l.store)
-    await allWritesFail(l)
-    const resumed = fakeExecutor()
-    await runCampaign(options({ ...live, arms: ['continue-b'] }), { store: l.store, executor: resumed.executor, cliproxy: fakeCliproxy, now: at(1) })
-    expect(resumed.jobs).toHaveLength(1)
+    await allWritesFail(l) // the invocation ended; its pid is gone
+    const restarted = fakeExecutor({ cost: 1 })
+    // seconds later, under a tight cap: this is the restart that used to dispatch over the unresolved directory
+    await expect(runCampaign(options({ ...live, capUsd: 3, attemptEstimateUsd: 0.1, arms: ['continue-b'] }), { store: l.store, executor: restarted.executor, cliproxy: fakeCliproxy, now: at(0.5) })).rejects.toThrow(/a001.*orphan-charges\.jsonl/s)
+    expect(restarted.jobs).toHaveLength(0)
+    // reconciled with the real amount: the charge counts, and the tight cap holds
+    appendFileSync(orphanFile(l), `${JSON.stringify({ schema_version: 1, at: T0.toISOString(), fixture: 'moment-a', model: MODEL, arm: 'continue-a', attempt: 'a001', charged_usd: 1.75 })}\n`)
+    const held = await runCampaign(options({ ...live, capUsd: 3, attemptEstimateUsd: 0.1, arms: ['continue-b'] }), { store: l.store, executor: restarted.executor, cliproxy: fakeCliproxy, now: at(0.5) })
+    expect(restarted.jobs).toHaveLength(0)
+    expect(held).toMatchObject({ stoppedBy: 'budget' })
+  })
+
+  test('a marker whose recorded pid is alive on this host is a run in flight: it does not block', async () => {
+    const l = lab()
+    approvedFixture(l.store)
+    await allWritesFail(l, process.pid) // this process stands in for the still-running invocation
+    const other = fakeExecutor()
+    await runCampaign(options({ ...live, arms: ['continue-b'] }), { store: l.store, executor: other.executor, cliproxy: fakeCliproxy, now: at(600) })
+    expect(other.jobs).toHaveLength(1)
+  })
+
+  test.each([
+    ['a dead pid', (m: Record<string, unknown>) => ({ ...m, pid: deadPid(), host: hostname() })],
+    ['no pid (a marker from before pids were recorded)', (m: Record<string, unknown>) => ({ started_at: m.started_at, timeout_ms: 300_000 })],
+    ['a live pid on another host', (m: Record<string, unknown>) => ({ ...m, pid: process.pid, host: `${hostname()}-elsewhere` })],
+    ['an unreadable marker', () => 'not json'],
+  ])('a marker with %s blocks, whatever its age', async (_name, rewrite) => {
+    const l = lab()
+    approvedFixture(l.store)
+    await allWritesFail(l, process.pid)
+    const marker = JSON.parse(readFileSync(markerOf(l), 'utf8')) as Record<string, unknown>
+    const next = rewrite(marker)
+    writeFileSync(markerOf(l), typeof next === 'string' ? next : `${JSON.stringify(next)}\n`)
+    const other = fakeExecutor()
+    await expect(runCampaign(options({ ...live, arms: ['continue-b'] }), { store: l.store, executor: other.executor, cliproxy: fakeCliproxy, now: at(0) })).rejects.toThrow(/orphan-charges\.jsonl/)
+    expect(other.jobs).toHaveLength(0)
   })
 
   test('empty directories that were never dispatched (a leak abort, an old crash before the host) do not block', async () => {
