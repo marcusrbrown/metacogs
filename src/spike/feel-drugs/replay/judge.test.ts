@@ -32,7 +32,10 @@ import {
   parseVerdict,
   quoteAnchored,
   readJudgements,
+  renderBrief,
   renderJudgeAnswer,
+  renderWorldBrief,
+  turnsOfHistory,
   renderSummary,
   selectJudgeModel,
   spotCheck,
@@ -807,7 +810,63 @@ describe('reference version', () => {
     expect(scenario).not.toContain('OLD-TURN-0')
     expect(scenario).toMatch(/\[tool\] bash command=bun test -> REAL-TOOL-OUTPUT 3 failing/)
     // consecutive assistant steps read as one turn
-    expect(scenario.match(/^Assistant:/gm)!.length).toBeLessThanOrEqual(2)
+    expect(scenario).toMatch(/Assistant: REAL-ASSISTANT-STEP-ONE\nREAL-ASSISTANT-STEP-TWO/)
+  })
+
+  /** A history whose recent turns are tool-heavy: 16 long bash calls in each of the turns before the last request, and 20 in the answer to it. */
+  function toolHeavyHistory() {
+    const calls = (n: number, tag: string) => Array.from({ length: n }, (_, i) => toolPart('bash', { command: `${tag}-command-${i} ${'c'.repeat(300)}`, description: `d ${'d'.repeat(200)}` }, `${tag}-output-${i} ${'o'.repeat(600)}`))
+    const msg = (id: string, role: string, parts: unknown[]) => ({ info: { id, role }, parts })
+    return {
+      info: { id: 'ses_world' },
+      messages: [
+        ...Array.from({ length: 8 }, (_, i) => [msg(`e${i}u`, 'user', [textPart(`EARLY-ASK-${i} the build`)]), msg(`e${i}a`, 'assistant', [...calls(16, `early${i}`), textPart(`EARLY-ANSWER-${i} ${'e'.repeat(500)}`)])]).flat(),
+        msg('m3', 'user', [textPart('MIDDLE-ASK then the lint')]),
+        msg('m4', 'assistant', [...calls(16, 'middle'), textPart('MIDDLE-ANSWER ' + 'm'.repeat(500))]),
+        msg('m5', 'user', [textPart('LATEST-REQUEST-MARKER please make the release now ' + 'r'.repeat(300))]),
+        msg('m6', 'assistant', [...calls(10, 'late-a'), textPart('LATE-STEP-NOTE ' + 'n'.repeat(400))]),
+        msg('m7', 'assistant', [...calls(10, 'late-b'), textPart('CUTOFF-ASSISTANT-TEXT the release is ready to push')]),
+      ],
+    }
+  }
+
+  test('a tool-heavy recent history keeps the latest request and the cutoff text, and marks what was left out', async () => {
+    const l = lab()
+    await runSyntheticCampaign(l, { name: 'world1', fixtures: [FIXTURES[0]!], models: [REPLAY_MODELS[0]], arms: SIX })
+    const history = toolHeavyHistory()
+    // what the brief would be without any budgeting is far over the cap, and the ends are what a head clip loses
+    expect(renderBrief({ turns: turnsOfHistory(history) }).length).toBeGreaterThan(4000)
+    asWorld(l, 'world1', 'moment-one', { history })
+    const f = fake(ok())
+    await full(l, f, { campaign: 'world1' })
+    const scenario = new RegExp('<<<BEGIN \\S+ SCENARIO>>>\\n([\\s\\S]*?)\\n<<<END', 'm').exec(f.calls[0]!.user)![1]!
+    expect(scenario.length).toBeLessThanOrEqual(4000)
+    expect(scenario.startsWith('[earlier turns omitted]')).toBe(true)
+    expect(scenario).toContain('LATEST-REQUEST-MARKER please make the release now')
+    expect(scenario).toContain('CUTOFF-ASSISTANT-TEXT the release is ready to push')
+    // the order is the history's: older turns first, then the request, then the answer
+    expect(scenario.indexOf('LATEST-REQUEST-MARKER')).toBeLessThan(scenario.indexOf('CUTOFF-ASSISTANT-TEXT'))
+    expect(scenario).not.toContain('EARLY-ASK-0')
+    expect(scenario).not.toContain('early0-command-0')
+  })
+
+  test('older turns come in newest first, each tool bounded, until the cap', () => {
+    const turns = turnsOfHistory(toolHeavyHistory())
+    const brief = renderWorldBrief(turns, 4000)
+    expect(brief.length).toBeLessThanOrEqual(4000)
+    // the turn before the request fits in a bounded form when there is room
+    expect(brief).toContain('MIDDLE-ASK then the lint')
+    const toolLines = brief.split('\n').filter((line) => line.includes('[tool]'))
+    for (const line of toolLines) expect(line.length).toBeLessThan(260)
+    // a small history is shown whole, with no marker
+    const small = renderWorldBrief(turnsOfHistory(worldExport()), 4000)
+    expect(small.startsWith('[earlier turns omitted]')).toBe(false)
+    expect(small).toContain('REAL-USER-ASK the build is red')
+    // a tiny cap still keeps the latest request and the cutoff text
+    const tiny = renderWorldBrief(turns, 1500)
+    expect(tiny.length).toBeLessThanOrEqual(1500)
+    expect(tiny).toContain('LATEST-REQUEST-MARKER')
+    expect(tiny).toContain('CUTOFF-ASSISTANT-TEXT')
   })
 
   test('the reference source and sha are part of the input sha', () => {

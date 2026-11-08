@@ -356,6 +356,71 @@ export function turnsOfHistory(history: unknown): Turn[] {
   return turns
 }
 
+const OMITTED_NOTE = '[earlier turns omitted]'
+
+const clipTail = (text: string, max: number): string => (text.length > max ? `…${text.slice(text.length - (max - 1))}` : text)
+
+type ToolCallOf = NonNullable<Extract<Turn, { role: 'assistant' }>['tools']>[number]
+
+/** One bounded tool line: the call's input and output each get their own small cap. */
+const boundedToolLine = (call: ToolCallOf): string => {
+  const output = oneLine(call.output)
+  return `  [tool] ${call.tool} ${clip(summarizeInput(call.input), 80)}${output ? ` -> ${clip(output, 80)}` : ''}`.trimEnd()
+}
+
+/**
+ * One turn inside a budget. Text takes at most half of it when tool calls follow; the newest tool calls are shown and the count of
+ * the earlier ones is noted. `tail` keeps the end of the text, where an assistant turn's final message sits.
+ */
+function renderTurnWithin(turn: Turn, budget: number, o: { tail: boolean; maxTools: number }): string {
+  const label = turn.role === 'user' ? 'User' : 'Assistant'
+  const tools = turn.role === 'assistant' ? (turn.tools ?? []) : []
+  const textBudget = Math.max(40, Math.floor(tools.length > 0 ? budget / 2 : budget) - label.length - 2)
+  const head = `${label}: ${(o.tail ? clipTail : clip)(turn.text.trim(), textBudget)}`
+  let used = head.length
+  const shown: string[] = []
+  for (const call of [...tools].reverse().slice(0, o.maxTools)) {
+    const line = boundedToolLine(call)
+    if (used + 1 + line.length > budget) break
+    shown.unshift(line)
+    used += 1 + line.length
+  }
+  const left = tools.length - shown.length
+  const note = left > 0 ? `  [+${left} earlier tool calls]` : ''
+  return [head, ...(note && used + 1 + note.length <= budget ? [note] : []), ...shown].join('\n')
+}
+
+/**
+ * The scenario brief of a real-world pair, budgeted by recency. The latest user turn and the cutoff assistant turn are always kept,
+ * each inside its own share of the cap; older turns follow newest first, each with its tool calls bounded, until the cap is reached.
+ * A head clip would drop exactly the turns the judge needs. What was left out is marked at the top.
+ */
+export function renderWorldBrief(turns: readonly Turn[], cap = WORLD_BRIEF_CAP): string {
+  if (turns.length === 0) return ''
+  let latestUser = -1
+  for (let i = turns.length - 1; i >= 0 && latestUser === -1; i--) if (turns[i]!.role === 'user') latestUser = i
+  const priority = new Set([turns.length - 1, latestUser].filter((i) => i >= 0))
+  const blocks = new Map<number, string>()
+  for (const i of priority) {
+    const turn = turns[i]!
+    blocks.set(i, renderTurnWithin(turn, Math.floor(cap * (turn.role === 'user' ? 0.25 : 0.45)), { tail: turn.role === 'assistant', maxTools: 6 }))
+  }
+  let used = [...blocks.values()].reduce((n, b) => n + b.length + 1, 0)
+  let omitted = false
+  for (let i = turns.length - 1; i >= 0; i--) {
+    if (priority.has(i)) continue
+    const block = renderTurnWithin(turns[i]!, Math.min(700, Math.floor(cap * 0.2)), { tail: false, maxTools: 3 })
+    if (used + block.length + 1 + OMITTED_NOTE.length + 1 > cap) {
+      omitted = true
+      break
+    }
+    blocks.set(i, block)
+    used += block.length + 1
+  }
+  const body = [...blocks.keys()].sort((a, b) => a - b).map((i) => blocks.get(i)!).join('\n')
+  return clip(omitted ? `${OMITTED_NOTE}\n${body}` : body, cap)
+}
+
 function parseWorldReference(specText: string, exportText: string, fixture: string): Reference {
   let spec: WorldSpec
   try {
@@ -363,7 +428,7 @@ function parseWorldReference(specText: string, exportText: string, fixture: stri
   } catch (e) {
     throw new Error(`fixture ${fixture}: the world spec is unreadable (${e instanceof Error ? e.message : 'bad JSON'})`)
   }
-  const brief = clip(renderBrief({ turns: turnsOfHistory(JSON.parse(exportText)) }), WORLD_BRIEF_CAP)
+  const brief = renderWorldBrief(turnsOfHistory(JSON.parse(exportText)), WORLD_BRIEF_CAP)
   return { kind: spec.kind, expected_outcome_ref: spec.expected_outcome_ref, author_next_turn_ref: spec.author_next_turn_ref ?? null, brief, source: 'world', sha256: sha256(JSON.stringify({ spec: sha256(specText), export: sha256(exportText) })) }
 }
 
