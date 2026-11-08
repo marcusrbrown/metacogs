@@ -5,6 +5,9 @@ import { join } from 'node:path'
 
 import { aftConfig, magicContextConfig, replayPermission, slimConfig, stackHostConfig, STACK_NPM_PLUGINS, stubProviders, systematicConfig, writeStackConfigs } from './stack'
 
+/** The parts of the generated host config these tests read. */
+type GeneratedConfig = { plugin: unknown[]; share: string; compaction: { auto: boolean; prune: boolean }; provider: Record<string, unknown> }
+
 const cleanup: string[] = []
 afterEach(() => {
   for (const d of cleanup.splice(0)) rmSync(d, { recursive: true, force: true })
@@ -76,7 +79,7 @@ describe('the host config', () => {
   })
 
   test('the generated config carries the stack, the compaction switches and no mcp block', () => {
-    const c = stackHostConfig({ provider: stubProviders('http://127.0.0.1:1/v1'), pluginSpecs: [...STACK_NPM_PLUGINS, 'file:///pkg/dist/index.js'] }) as Record<string, any>
+    const c = stackHostConfig({ provider: stubProviders('http://127.0.0.1:1/v1'), pluginSpecs: [...STACK_NPM_PLUGINS, 'file:///pkg/dist/index.js'] }) as GeneratedConfig
     expect(c.plugin).toHaveLength(5)
     expect(JSON.stringify(c.plugin)).not.toMatch(/-auth/)
     expect(c.share).toBe('disabled')

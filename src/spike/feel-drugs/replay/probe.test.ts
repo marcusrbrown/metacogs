@@ -25,6 +25,18 @@ const HOST_TIMEOUT = 900_000
 
 // ── host process ───────────────────────────────────────────────────────────
 
+/** The parts of `opencode debug config` output the stack probe reads. */
+type DebugConfig = {
+  plugin_origins: { spec: string; source: string }[]
+  plugin: unknown
+  default_agent: string
+  mcp: Record<string, unknown>
+  agent: Record<string, unknown>
+  command: Record<string, unknown>
+  skills: { paths: string[] }
+  compaction: { auto: boolean; prune: boolean }
+}
+
 interface FileRun {
   stdout: string
   stderr: string
@@ -353,9 +365,9 @@ describe.skipIf(process.env.METACOGS_HOST_PROBES !== '1' || !existsSync(HARNESS)
     const packed = await packedPlugin()
     const { run } = await hostRun(source, ['debug', 'config'], { tag: 'dbg', online: true, timeoutMs: 600_000 })
     expect(run.exitCode).toBe(0)
-    const cfg = JSON.parse(run.stdout) as Record<string, any>
-    expect((cfg.plugin_origins as { spec: string; source: string }[]).map((o) => o.spec)).toEqual([...STACK_PLUGINS, packed.spec])
-    expect((cfg.plugin_origins as { source: string }[]).every((o) => o.source === source.configPath)).toBe(true)
+    const cfg = JSON.parse(run.stdout) as DebugConfig
+    expect(cfg.plugin_origins.map((o) => o.spec)).toEqual([...STACK_PLUGINS, packed.spec])
+    expect(cfg.plugin_origins.every((o) => o.source === source.configPath)).toBe(true)
     expect(JSON.stringify(cfg.plugin)).not.toMatch(/anthropic-auth|openai-auth/)
     expect(cfg.default_agent).toBe('orchestrator')
     expect(cfg.mcp).toEqual({})
@@ -363,7 +375,7 @@ describe.skipIf(process.env.METACOGS_HOST_PROBES !== '1' || !existsSync(HARNESS)
     expect(Object.keys(cfg.command)).toEqual(expect.arrayContaining(['interview', 'implement', 'deepwork', 'reflect', 'ctx-status', 'aft-status', 'systematic:git-commit', 'ce:plan']))
     expect(Object.keys(cfg.command)).not.toContain('feel')
     expect(Object.keys(cfg.command)).not.toContain('drugs')
-    expect((cfg.skills as { paths: string[] }).paths).toContain(packed.pluginSkillsDir)
+    expect(cfg.skills.paths).toContain(packed.pluginSkillsDir)
     expect(cfg.compaction).toEqual({ auto: false, prune: false })
     const log = readFileSync(join(source.tmp, 'opencode', 'magic-context', 'magic-context.log'), 'utf8')
     expect(log).toContain('dreamer.disable is true')
