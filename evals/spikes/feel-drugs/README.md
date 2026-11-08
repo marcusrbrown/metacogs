@@ -336,17 +336,19 @@ bun run replay campaign --world real --name <n> --models <list> --arms <list|all
 
 Campaign `real1`: 11 moments × 6 arms on `openai/gpt-6-luna` and `anthropic/claude-opus-5-5`. That is 61 counted runs per model, because `/feel <where>` runs only on the 6 /feel moments. Every run completed. One errored attempt per model was retried. Charged cost was $169.46 for Opus and $2.69 for Luna.
 
-Scoring: `bun run replay judge real1` with `opencode-go/glm-5.3`, prompt sha `5b01f5736c37`. All 22 pairs were judged and every noise floor agreed.
+Scoring: `bun run replay judge real1` with `opencode-go/glm-5.3`, prompt sha `5b01f5736c37`. The reference for each pair was the real-world scenario (outcome, the author's next turn, and a brief from the real history). 21 of 22 pairs were judged, and every noise floor agreed. Luna on `feel-fro-fe3c-94` exceeded the judge's 10-minute request limit on every try.
 
-| Arm | Opus toward / away | Luna toward / away | Ordinary turns derailed (Opus, Luna, of 3 each) |
+| Arm | Opus changed, toward / away | Luna changed, toward / away | Ordinary turns derailed (Opus, Luna, of 3 each) |
 | --- | --- | --- | --- |
-| `/feel` | 2 / 2 | 7 / 0 | 0, 1 |
-| `/feel <where>` | 3 / 0 | 3 / 0 | n/a |
-| `/drugs` | 3 / 4 | 3 / 2 | 1, 1 |
-| `/drugs <substance>` | 4 / 0 | 4 / 0 | 0, 0 |
+| `/feel` | 6 of 11, 3 / 2 | 7 of 10, 3 / 3 | 0, 1 |
+| `/feel <where>` | 3 of 6, 2 / 0 | 5 of 5, 4 / 0 | n/a |
+| `/drugs` | 10 of 11, 5 / 3 | 4 of 10, 1 / 2 | 1, 0 |
+| `/drugs <substance>` | 5 of 11, 3 / 1 | 6 of 10, 4 / 1 | 0, 0 |
+
+A first judging used the paraphrased fixture as the reference, which was a bug fixed in this PR. It agreed with this one on "changed" for 69 of 74 verdicts, but on the full label for only 58 of 74. Direction is the noisy part.
 
 Reading:
-- **Arguments.** With an argument, both commands moved the first move toward how the moment resolved and never away. Bare `/drugs` changed Opus's move in 10 of 11 runs, and close to half of those changes went away.
+- **Arguments.** `/feel <where>` was never scored away in either judging. `/drugs <substance>` was scored toward 7 times and away 2. Both bare forms came out about even: 6 toward and 5 away each across the two models. Bare `/drugs` changed Opus's move in 10 of 11 runs.
 - **Where the gains were.** They clustered where the default move committed to an unchecked premise: dispatching a fixer, relaunching analysis, pushing. Where `Continue.` already took the right step, the commands added nothing.
 
 Caveats:

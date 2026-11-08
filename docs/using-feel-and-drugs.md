@@ -7,8 +7,8 @@ This page covers when to type them, what argument to give, and when to skip them
 ## The short version
 
 - Type a command just before the agent commits to something it hasn't checked: dispatching a subagent, pushing, re-running the same analysis, or calling a cause "conclusive".
-- Give it an argument. `/feel <where it's stuck>` and `/drugs <substance>` moved the agent toward a better next step and never pulled it off course. The bare forms were less reliable.
-- Skip them when the agent is already doing the right thing, or when it's making normal progress. They add nothing there, and bare `/drugs` can derail it.
+- Give it an argument. `/feel <where it's stuck>` never pulled the agent off course, and `/drugs <substance>` helped far more often than it hurt. Bare `/feel` and bare `/drugs` were close to a coin flip.
+- Skip them when the agent is already doing the right thing, or when it's making normal progress. They add nothing there, and a bare command can derail it.
 
 ## When to type /feel
 
@@ -26,7 +26,7 @@ Give the argument as a short phrase that says where the tension is, not what the
 /feel the tracker entry for the second unit
 ```
 
-A locating phrase works best when it names a thing: a claim, a file, a commit, a check result or a plan step. In one replay, bare `/feel` left the agent's next move unchanged. `/feel a fix that looked right in the file` sent it to check whether the fix survived the commit, and that was where the real problem was.
+A locating phrase works best when it names a thing: a claim, a file, a commit, a check result or a plan step. In one replay the agent was about to push a formatting fix. `/feel a fix that looked right in the file` sent it to inspect what the commit actually contained instead of trusting the file view, and that was where the real problem was.
 
 ## When to type /drugs
 
@@ -50,12 +50,12 @@ Those two are the ones the replays tested. Any real drug or neurotransmitter wor
 /drugs psilocybin
 ```
 
-In the replays, a named substance produced concrete changes. The agent wrote a probe to measure the actual stall, checked whether a component should own a responsibility at all instead of patching it again, or audited a design for parts nobody had asked for. Bare `/drugs` changed Opus's move almost every time, but it was close to a coin flip whether the change helped.
+In the replays, a named substance produced concrete changes. The agent wrote a probe to measure the actual stall, checked whether a component should own a responsibility at all instead of patching it again, or audited a design for parts nobody had asked for. Bare `/drugs` changed Opus's move almost every time, but the change often went the wrong way.
 
 ## When not to type them
 
 - **The agent is already on track.** If its next move is already the one you'd pick, a command just restates it.
-- **Normal progress.** On turns where the agent was simply waiting for a merge or an approval, bare `/drugs` sometimes sent it off to audit something unrelated.
+- **Normal progress.** On turns where the agent was simply waiting for a merge or an approval, a bare command sometimes sent it off to audit something unrelated.
 - **As a retry button.** If one command didn't change anything useful, don't stack another. Say what you want checked.
 
 ## The same thing without the command
@@ -72,16 +72,19 @@ The commands act only when you type them, or when you name metacogs in the reque
 - **Models:** `openai/gpt-6-luna` and `anthropic/claude-opus-5-5`, on OpenCode 1.19.
 - **Scoring:** a judge from a third model family compared each arm's first substantive move with both baseline runs. It marked each move as unchanged, toward how the moment really resolved, or away from it.
 
-| Arm | Opus: toward / away | Luna: toward / away |
+| Arm | Opus: changed, toward / away | Luna: changed, toward / away |
 | --- | --- | --- |
-| `/feel` | 2 / 2 | 7 / 0 |
-| `/feel <where>` (six /feel moments) | 3 / 0 | 3 / 0 |
-| `/drugs` | 3 / 4 | 3 / 2 |
-| `/drugs <substance>` | 4 / 0 | 4 / 0 |
+| `/feel` | 6 of 11, 3 / 2 | 7 of 10, 3 / 3 |
+| `/feel <where>` (the /feel moments) | 3 of 6, 2 / 0 | 5 of 5, 4 / 0 |
+| `/drugs` | 10 of 11, 5 / 3 | 4 of 10, 1 / 2 |
+| `/drugs <substance>` | 5 of 11, 3 / 1 | 6 of 10, 4 / 1 |
+
+One Luna moment could not be judged because its prompt exceeded the judge's request limit.
 
 Limits:
 
 - Each arm ran once per moment, so treat these as directions, not rates.
 - GitHub reads in the replays showed current state, so some runs could see that the work had since landed. This affected the baseline runs too.
 - The judge scores the first move, so it can miss a change in framing that keeps the same action.
+- The judge is steadier on whether a move changed than on which way it went. Run twice with differently framed references, it agreed on "changed" for 69 of 74 verdicts but on the full label for only 58. Read toward/away as a lean, not a measurement.
 - Only OpenCode was tested. The Claude Code and Codex skill renders use the same text.
