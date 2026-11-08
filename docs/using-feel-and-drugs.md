@@ -74,12 +74,12 @@ The commands act only when you type them, or when you name metacogs in the reque
 
 | Arm | Opus: changed, toward / away | Luna: changed, toward / away |
 | --- | --- | --- |
-| `/feel` | 6 of 11, 3 / 2 | 7 of 10, 3 / 3 |
-| `/feel <where>` (the /feel moments) | 3 of 6, 2 / 0 | 5 of 5, 4 / 0 |
-| `/drugs` | 10 of 11, 5 / 3 | 4 of 10, 1 / 2 |
-| `/drugs <substance>` | 5 of 11, 3 / 1 | 6 of 10, 4 / 1 |
+| `/feel` | 6 of 11, 3 / 2 | 7 of 11, 3 / 3 |
+| `/feel <where>` (the /feel moments) | 3 of 6, 2 / 0 | 5 of 6, 4 / 0 |
+| `/drugs` | 10 of 11, 5 / 3 | 4 of 11, 1 / 2 |
+| `/drugs <substance>` | 5 of 11, 3 / 1 | 6 of 11, 4 / 1 |
 
-One Luna moment could not be judged because its prompt exceeded the judge's request limit.
+On one Luna moment the two `Continue.` runs disagreed, so its changes are not counted.
 
 Limits:
 
