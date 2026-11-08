@@ -361,3 +361,12 @@ describe('reading a campaign', () => {
     expect(healthyResult).toBeDefined()
   })
 })
+
+describe('realWorldNeedles', () => {
+  test('a real-world scan drops only the key prefix', async () => {
+    const { realWorldNeedles } = await import('./run')
+    const needles = [{ label: 'auth_cliproxy:key', value: 'k' }, { label: 'auth_cliproxy:key_prefix', value: 'p' }]
+    expect(realWorldNeedles(needles, true).map((n) => n.label)).toEqual(['auth_cliproxy:key'])
+    expect(realWorldNeedles(needles, false).map((n) => n.label)).toEqual(['auth_cliproxy:key', 'auth_cliproxy:key_prefix'])
+  })
+})

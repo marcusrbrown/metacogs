@@ -377,6 +377,11 @@ export interface CampaignOptions {
   world?: boolean
 }
 
+/** Real repos can quote the key prefix in their own files, so a real-world scan keeps the full key only. */
+export function realWorldNeedles(needles: readonly Needle[], realWorld: boolean): Needle[] {
+  return realWorld ? needles.filter((n) => n.label !== 'auth_cliproxy:key_prefix') : [...needles]
+}
+
 export interface CampaignDeps {
   store: Store
   executor: Executor
@@ -469,7 +474,7 @@ export async function runCampaign(options: CampaignOptions, deps: CampaignDeps):
         fixture: loaded,
         executor: deps.executor,
         provider: options.provider,
-        ...(deps.cliproxy || deps.needles ? { needles: [...(deps.cliproxy?.needles ?? []), ...(deps.needles ?? [])] } : {}),
+        ...(deps.cliproxy || deps.needles ? { needles: [...realWorldNeedles(deps.cliproxy?.needles ?? [], deps.loadFixture !== undefined), ...(deps.needles ?? [])] } : {}),
         ...(options.expectedHostVersion ? { expectedHostVersion: options.expectedHostVersion } : {}),
         ...(deps.skillsDir ? { skillsDir: deps.skillsDir } : {}),
         ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
