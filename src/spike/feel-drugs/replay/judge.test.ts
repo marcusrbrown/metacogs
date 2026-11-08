@@ -17,6 +17,7 @@ import {
   type CompleteRequest,
   DEFAULT_JUDGE_ID,
   defaultSeed,
+  inputHash,
   JUDGE_PROMPT_SHA256,
   JUDGE_SYSTEM_PROMPT,
   type Judgement,
@@ -670,16 +671,48 @@ describe('reruns', () => {
 
 // ── the reference version and reuse ────────────────────────────────────────
 
-/** Turns a synthetic campaign into a real-world one: attempts record the world spec's hash and a `world` block. */
-function asWorld(l: JudgeLab, campaign: string, id: string, specText: string): void {
+const WORLD_OUTCOME = 'WORLD-OUTCOME-REF-5521'
+const WORLD_NEXT = 'WORLD-NEXT-TURN-REF-8842'
+
+const textPart = (text: string, extra: Record<string, unknown> = {}) => ({ type: 'text', text, ...extra })
+const toolPart = (tool: string, input: Record<string, unknown>, output: string) => ({ type: 'tool', tool, callID: `call_${tool}`, state: { status: 'completed', input, output, time: { start: 1, end: 2 } } })
+
+/** A built real-world scenario's history: a user ask, assistant steps with a tool call, a second ask, and the cutoff answer. */
+function worldExport(over: { first?: string } = {}) {
+  const msg = (id: string, role: string, parts: unknown[]) => ({ info: { id, role }, parts })
+  return {
+    info: { id: 'ses_world' },
+    messages: [
+      msg('msg_1', 'user', [textPart(over.first ?? 'REAL-USER-ASK the build is red')]),
+      msg('msg_2', 'assistant', [toolPart('bash', { command: 'bun test' }, 'REAL-TOOL-OUTPUT 3 failing'), textPart('REAL-ASSISTANT-STEP-ONE')]),
+      msg('msg_3', 'assistant', [textPart('REAL-ASSISTANT-STEP-TWO')]),
+      msg('msg_4', 'user', [textPart('REAL-USER-FOLLOWUP still failing'), textPart('<system-reminder>noise</system-reminder>', { synthetic: true })]),
+      msg('msg_5', 'assistant', [textPart('REAL-CUTOFF-ANSWER')]),
+    ],
+  }
+}
+
+interface WorldSetup {
+  spec?: Record<string, unknown>
+  history?: unknown
+}
+
+/** Turns a synthetic campaign into a real-world one: a world spec and history of their own, and attempts that record both hashes. */
+function asWorld(l: JudgeLab, campaign: string, id: string, setup: WorldSetup = {}): { specText: string; exportText: string } {
+  const spec = { id, kind: 'feel', project: 'systematic', source_session: 'ses_world', cutoff_message: 'msg_5', somewhere: 'in the gap', expected_outcome_ref: WORLD_OUTCOME, author_next_turn_ref: WORLD_NEXT, ...setup.spec }
+  const specText = `${JSON.stringify(spec, null, 2)}\n`
+  const exportText = `${JSON.stringify(setup.history ?? worldExport(), null, 2)}\n`
   mkdirSync(join(l.store.root, 'world', id), { recursive: true })
   writeFileSync(join(l.store.root, 'world', id, 'spec.json'), specText)
+  writeFileSync(join(l.store.root, 'world', id, 'export.json'), exportText)
   for (const file of walk(campaignDir(l.store, campaign)).filter((f) => f.endsWith('attempt.json'))) {
     const record = JSON.parse(readFileSync(file, 'utf8'))
     record.world = { repo: 'synthetic' }
     record.fixture.spec_sha256 = sha256(specText)
+    record.fixture.export_sha256 = sha256(exportText)
     writeFileSync(file, `${JSON.stringify(record)}\n`)
   }
+  return { specText, exportText }
 }
 
 const specPath = (l: JudgeLab, id = 'moment-one') => join(l.store.root, 'fixtures', id, 'spec.json')
@@ -704,15 +737,84 @@ describe('reference version', () => {
     expect(await full(l, f)).toMatchObject({ judged: 1, unjudged: [] })
   })
 
-  test('a real-world pair is checked against the world spec', async () => {
+  test('a real-world pair is judged against the world scenario: its references and its real history', async () => {
     const l = lab()
     await runSyntheticCampaign(l, { name: 'world1', fixtures: [FIXTURES[0]!], models: [REPLAY_MODELS[0]], arms: SIX })
-    asWorld(l, 'world1', 'moment-one', '{"id":"moment-one"}\n')
+    asWorld(l, 'world1', 'moment-one')
     const f = fake(ok())
     expect(await full(l, f, { campaign: 'world1' })).toMatchObject({ judged: 1 })
-    writeFileSync(join(l.store.root, 'world', 'moment-one', 'spec.json'), '{"id":"moment-one","changed":true}\n')
-    const refused = await full(l, fake(ok()), { campaign: 'world1', again: true })
-    expect(refused.unjudged[0]!.reason).toMatch(/^spec_changed/)
+    const user = f.calls[0]!.user
+    // the world's references are sent, the synthetic fixture's are not
+    expect(user).toContain(WORLD_OUTCOME)
+    expect(user).toContain(WORLD_NEXT)
+    expect(user).not.toContain(OUTCOME_REF)
+    // the scenario is the real history's last turns, not the paraphrased ones
+    expect(user).toContain('REAL-USER-FOLLOWUP still failing')
+    expect(user).toContain('REAL-CUTOFF-ANSWER')
+    expect(user).not.toContain('Trying a clean install.')
+    expect(user).not.toContain('noise')
+    const [j] = judgements(l, 'world1')
+    expect(j).toMatchObject({ reference_source: 'world' })
+    expect(j!.reference_sha256).toMatch(/^[0-9a-f]{64}$/)
+    expect(JSON.stringify(j)).not.toContain(WORLD_OUTCOME)
+  })
+
+  test('a paraphrased pair is judged against the fixture spec and says so', async () => {
+    const l = lab()
+    await runSyntheticCampaign(l, { fixtures: [FIXTURES[0]!], models: [REPLAY_MODELS[0]] })
+    // a world spec in the store must not leak into a paraphrased campaign
+    mkdirSync(join(l.store.root, 'world', 'moment-one'), { recursive: true })
+    writeFileSync(join(l.store.root, 'world', 'moment-one', 'spec.json'), JSON.stringify({ id: 'moment-one', expected_outcome_ref: WORLD_OUTCOME }))
+    const f = fake(ok())
+    await full(l, f)
+    expect(f.calls[0]!.user).toContain(OUTCOME_REF)
+    expect(f.calls[0]!.user).not.toContain(WORLD_OUTCOME)
+    expect(judgements(l)[0]).toMatchObject({ reference_source: 'fixture' })
+  })
+
+  test('replacing the world spec, the world history or the fixture spec the attempts ran from is refused', async () => {
+    const l = lab()
+    await runSyntheticCampaign(l, { name: 'world1', fixtures: [FIXTURES[0]!], models: [REPLAY_MODELS[0]], arms: SIX })
+    const { specText, exportText } = asWorld(l, 'world1', 'moment-one')
+    const worldFile = (name: string) => join(l.store.root, 'world', 'moment-one', name)
+    // the paraphrased fixture is not this pair's reference: rebuilding it changes nothing
+    writeFileSync(specPath(l), `${readFileSync(specPath(l), 'utf8')} `)
+    expect(await full(l, fake(ok()), { campaign: 'world1' })).toMatchObject({ judged: 1 })
+
+    writeFileSync(worldFile('spec.json'), specText.replace(WORLD_OUTCOME, 'SOMETHING-ELSE'))
+    const spec = await full(l, fake(ok()), { campaign: 'world1', again: true })
+    expect(spec.unjudged[0]!.reason).toMatch(/^spec_changed: .*spec was rebuilt/)
+    writeFileSync(worldFile('spec.json'), specText)
+
+    writeFileSync(worldFile('export.json'), exportText.replace('REAL-CUTOFF-ANSWER', 'A-DIFFERENT-ANSWER'))
+    const history = await full(l, fake(ok()), { campaign: 'world1', again: true })
+    expect(history.unjudged[0]!.reason).toMatch(/^spec_changed: .*history export was rebuilt/)
+    writeFileSync(worldFile('export.json'), exportText)
+    expect(await full(l, fake(ok()), { campaign: 'world1', again: true })).toMatchObject({ judged: 1 })
+  })
+
+  test('a world pair with no paraphrased turns gets a compact brief of the last real turns', async () => {
+    const l = lab()
+    await runSyntheticCampaign(l, { name: 'world1', fixtures: [FIXTURES[0]!], models: [REPLAY_MODELS[0]], arms: SIX })
+    const filler = Array.from({ length: 12 }, (_, i) => ({ info: { id: `msg_f${i}`, role: i % 2 === 0 ? 'user' : 'assistant' }, parts: [textPart(`OLD-TURN-${i} ${'x'.repeat(5000)}`)] }))
+    const base = worldExport()
+    asWorld(l, 'world1', 'moment-one', { history: { ...base, messages: [...filler, ...base.messages] } })
+    const f = fake(ok())
+    await full(l, f, { campaign: 'world1' })
+    const scenario = new RegExp('<<<BEGIN \\S+ SCENARIO>>>\\n([\\s\\S]*?)\\n<<<END', 'm').exec(f.calls[0]!.user)![1]!
+    expect(scenario.length).toBeLessThanOrEqual(4000)
+    expect(scenario).toContain('REAL-CUTOFF-ANSWER')
+    expect(scenario).not.toContain('OLD-TURN-0')
+    expect(scenario).toMatch(/\[tool\] bash command=bun test -> REAL-TOOL-OUTPUT 3 failing/)
+    // consecutive assistant steps read as one turn
+    expect(scenario.match(/^Assistant:/gm)!.length).toBeLessThanOrEqual(2)
+  })
+
+  test('the reference source and sha are part of the input sha', () => {
+    const arms = [{ arm: 'continue-a', message: 'Continue.', text: 'x' }] as never
+    const ref = { kind: 'feel', expected_outcome_ref: 'o', author_next_turn_ref: null, brief: 'b', source: 'fixture' as const, sha256: 'a'.repeat(64) }
+    expect(inputHash(ref, arms)).not.toBe(inputHash({ ...ref, source: 'world' }, arms))
+    expect(inputHash(ref, arms)).not.toBe(inputHash({ ...ref, sha256: 'b'.repeat(64) }, arms))
   })
 })
 

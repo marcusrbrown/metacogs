@@ -13,6 +13,7 @@ import type { Rng } from '../blind'
 import { redactPaths } from '../sheet'
 import { ARM_NAMES } from './gates'
 import { type AttemptRecord, campaignCells, campaignDir, cellDir, MODEL_PATTERN } from './run'
+import { parseWorldSpec, type WorldSpec } from './scenario'
 import { assertOutsideRepo, type FixtureSpec, ID_PATTERN, openStore, type StoreOptions, type Store, type Turn } from './store'
 
 export const JUDGE_SCHEMA_VERSION = 1 as const
@@ -113,6 +114,8 @@ export interface CollectedArm {
   attempt_sha256: string
   /** The `fixture.spec_sha256` the attempt recorded: the version of the spec it ran from. */
   spec_sha256: string
+  /** The `fixture.export_sha256` it recorded: for a real-world attempt, the history the scenario brief is drawn from. */
+  export_sha256: string
   /** The attempt ran in real-world mode, so its spec is the world spec. */
   world: boolean
   /** The answer text exactly as the judge sees it. */
@@ -269,6 +272,7 @@ export function collectJudgeable(store: Store, campaign: string, options: Collec
       attempt: `${row.fixture}/${modelSlug(row.model)}/${row.arm}/${row.counted.id}`,
       attempt_sha256: sha256(bytes),
       spec_sha256: record.fixture.spec_sha256,
+      export_sha256: record.fixture.export_sha256,
       world: record.world !== undefined,
       text: rendered.text,
       environment_errors: rendered.environment_errors,
@@ -289,44 +293,112 @@ const specSchema = z.looseObject({
   turns: z.array(z.looseObject({ role: z.enum(['user', 'assistant']), text: z.string(), tools: z.array(z.looseObject({ tool: z.string(), input: z.record(z.string(), z.unknown()), output: z.string() })).optional() })),
 })
 
+export type ReferenceSource = 'world' | 'fixture'
+
 export interface Reference {
   kind: string
   expected_outcome_ref: string
   author_next_turn_ref: string | null
   /** The scenario's last few turns. */
   brief: string
+  /** Where all of the above came from: the world scenario of a real-world campaign, the paraphrased fixture otherwise. */
+  source: ReferenceSource
+  /** Hash of the exact files the reference was read from. Part of the input hash. */
+  sha256: string
 }
 
-/** The private spec in the store. Extra fields (a real-world spec) are tolerated. */
-export function loadReference(store: Store, fixture: string): Reference {
-  if (!ID_PATTERN.test(fixture)) throw new Error('fixture id: expected lowercase letters, digits and hyphens')
-  const file = join(store.root, 'fixtures', fixture, 'spec.json')
-  if (!existsSync(file)) throw new Error(`fixture ${fixture}: no spec in the store`)
-  const parsed = specSchema.safeParse(JSON.parse(readFileSync(file, 'utf8')))
+/** The scenario brief of a real-world pair is capped here; the history on disk is whole. */
+const WORLD_BRIEF_CAP = 4000
+
+function parseFixtureReference(text: string, fixture: string): Reference {
+  const parsed = specSchema.safeParse(JSON.parse(text))
   if (!parsed.success) throw new Error(`fixture ${fixture}: spec.json is unreadable (${parsed.error.issues.map((i) => i.path.join('.')).join(', ')})`)
   const spec = parsed.data
-  return { kind: spec.kind, expected_outcome_ref: spec.expected_outcome_ref, author_next_turn_ref: spec.author_next_turn_ref ?? null, brief: renderBrief({ turns: spec.turns as unknown as Turn[] }) }
+  return { kind: spec.kind, expected_outcome_ref: spec.expected_outcome_ref, author_next_turn_ref: spec.author_next_turn_ref ?? null, brief: renderBrief({ turns: spec.turns as unknown as Turn[] }), source: 'fixture', sha256: sha256(text) }
+}
+
+/** The private paraphrased spec in the store. Extra fields (a real-world spec) are tolerated. */
+export function loadReference(store: Store, fixture: string): Reference {
+  if (!ID_PATTERN.test(fixture)) throw new Error('fixture id: expected lowercase letters, digits and hyphens')
+  const file = specFileOf(store, fixture, false)
+  if (!existsSync(file)) throw new Error(`fixture ${fixture}: no spec in the store`)
+  return parseFixtureReference(readFileSync(file, 'utf8'), fixture)
+}
+
+const seedSchema = z.looseObject({ messages: z.array(z.looseObject({ info: z.looseObject({ role: z.string() }), parts: z.array(z.looseObject({ type: z.string() })) })) })
+
+/**
+ * The real history as the paraphrased shape: one turn per speaker change. Synthetic parts (reminders) are not the author's words,
+ * and consecutive assistant steps read as one turn.
+ */
+export function turnsOfHistory(history: unknown): Turn[] {
+  const parsed = seedSchema.safeParse(history)
+  if (!parsed.success) return []
+  const turns: Turn[] = []
+  for (const message of parsed.data.messages) {
+    const role = message.info.role === 'user' ? 'user' : message.info.role === 'assistant' ? 'assistant' : null
+    if (!role) continue
+    const texts = message.parts.filter((p) => p.type === 'text' && p.synthetic !== true && typeof p.text === 'string').map((p) => String(p.text).trim()).filter(Boolean)
+    const tools = role === 'assistant' ? message.parts.filter((p) => p.type === 'tool' && typeof p.tool === 'string').map((p) => {
+      const state = isRecord(p.state) ? p.state : {}
+      return { tool: String(p.tool), input: isRecord(state.input) ? state.input : {}, output: typeof state.output === 'string' ? state.output : '' }
+    }) : []
+    if (texts.length === 0 && tools.length === 0) continue
+    const text = texts.join('\n')
+    const last = turns.at(-1)
+    if (last && last.role === 'assistant' && role === 'assistant') {
+      last.text = [last.text, text].filter(Boolean).join('\n')
+      last.tools = [...(last.tools ?? []), ...tools]
+    } else {
+      turns.push(role === 'assistant' ? { role, text, tools } : { role, text })
+    }
+  }
+  return turns
+}
+
+function parseWorldReference(specText: string, exportText: string, fixture: string): Reference {
+  let spec: WorldSpec
+  try {
+    spec = parseWorldSpec(JSON.parse(specText))
+  } catch (e) {
+    throw new Error(`fixture ${fixture}: the world spec is unreadable (${e instanceof Error ? e.message : 'bad JSON'})`)
+  }
+  const brief = clip(renderBrief({ turns: turnsOfHistory(JSON.parse(exportText)) }), WORLD_BRIEF_CAP)
+  return { kind: spec.kind, expected_outcome_ref: spec.expected_outcome_ref, author_next_turn_ref: spec.author_next_turn_ref ?? null, brief, source: 'world', sha256: sha256(JSON.stringify({ spec: sha256(specText), export: sha256(exportText) })) }
 }
 
 /** The spec file an attempt ran from: the world spec of a real-world attempt, the fixture spec otherwise. */
-const specFileOf = (store: Store, fixture: string, world: boolean): string => join(store.root, world ? 'world' : 'fixtures', fixture, 'spec.json')
+function specFileOf(store: Store, fixture: string, world: boolean): string {
+  return join(store.root, world ? 'world' : 'fixtures', fixture, 'spec.json')
+}
+
+export type ResolvedReference = { ok: true; reference: Reference } | { ok: false; reason: string }
 
 /**
- * Null when every arm ran from the spec that is in the store now. Otherwise the reason to refuse the pair: a spec rebuilt after
- * the attempts would hand the judge a reference that belongs to a different scenario. Snapshots are out of scope; refusing is enough.
+ * The reference of a pair, read once from the source its attempts ran from and checked against what they recorded: a real-world
+ * pair takes the outcome refs and the brief from its world scenario, a paraphrased pair from its fixture spec. A file rebuilt after
+ * the attempts would hand the judge a reference that belongs to another scenario, so it is refused with a reason. Snapshots are out of scope.
  */
-export function specVersionProblem(store: Store, pair: JudgePair): string | null {
-  const recorded = new Set(pair.arms.map((a) => `${a.world}:${a.spec_sha256}`))
-  if (recorded.size > 1) return `spec_changed: the arms of ${pair.fixture} ran from different versions of its spec`
-  for (const arm of pair.arms) {
-    const file = specFileOf(store, pair.fixture, arm.world)
-    if (!existsSync(file)) {
-      if (arm.world) return `spec_changed: the ${pair.fixture} world spec is no longer in the store`
-      continue // loadReference reports a missing fixture spec
-    }
-    if (sha256(readFileSync(file, 'utf8')) !== arm.spec_sha256) return `spec_changed: the ${pair.fixture} spec was rebuilt after these attempts ran; rerun the cells or restore the spec`
+export function resolveReference(store: Store, pair: JudgePair): ResolvedReference {
+  if (!ID_PATTERN.test(pair.fixture)) throw new Error('fixture id: expected lowercase letters, digits and hyphens')
+  const recorded = new Set(pair.arms.map((a) => `${a.world}:${a.spec_sha256}:${a.world ? a.export_sha256 : ''}`))
+  if (recorded.size > 1) return { ok: false, reason: `spec_changed: the arms of ${pair.fixture} ran from different versions of its spec` }
+  const first = pair.arms[0]!
+  const stale = (what: string): ResolvedReference => ({ ok: false, reason: `spec_changed: the ${pair.fixture} ${what} was rebuilt after these attempts ran; rerun the cells or restore it` })
+  if (!first.world) {
+    const file = specFileOf(store, pair.fixture, false)
+    if (!existsSync(file)) throw new Error(`fixture ${pair.fixture}: no spec in the store`)
+    const text = readFileSync(file, 'utf8')
+    return sha256(text) === first.spec_sha256 ? { ok: true, reference: parseFixtureReference(text, pair.fixture) } : stale('spec')
   }
-  return null
+  const specFile = specFileOf(store, pair.fixture, true)
+  const exportFile = join(store.root, 'world', pair.fixture, 'export.json')
+  if (!existsSync(specFile) || !existsSync(exportFile)) return { ok: false, reason: `spec_changed: the ${pair.fixture} world scenario is no longer in the store` }
+  const specText = readFileSync(specFile, 'utf8')
+  const exportText = readFileSync(exportFile, 'utf8')
+  if (sha256(specText) !== first.spec_sha256) return stale('spec')
+  if (sha256(exportText) !== first.export_sha256) return stale('history export')
+  return { ok: true, reference: parseWorldReference(specText, exportText, pair.fixture) }
 }
 
 // ── the request ────────────────────────────────────────────────────────────
@@ -582,6 +654,9 @@ export interface Judgement {
   created_at: string
   judge: { model: string; provider: 'scripted' | 'cliproxy'; returned_model: string | null; prompt_sha256: string; input_sha256: string; attempts: number }
   cost: { estimated_usd: number }
+  /** Where the outcome refs and the scenario brief came from, and the hash of those files. Absent in files from before this was recorded. */
+  reference_source?: ReferenceSource
+  reference_sha256?: string
   arms: JudgementArm[]
   /** The noise floor for this fixture and model: `noisy` cells' changes are not counted. */
   cell: CellFloor | null
@@ -780,6 +855,8 @@ function base(pair: JudgePair, reference: Reference, ctx: { options: JudgeOption
     created_at: ctx.deps.store.now().toISOString(),
     judge: { model: ctx.model, provider: ctx.options.provider, returned_model: f.returned, prompt_sha256: JUDGE_PROMPT_SHA256, input_sha256: f.input_sha256, attempts: f.attempts },
     cost: { estimated_usd: Number(f.spent.toFixed(6)) },
+    reference_source: reference.source,
+    reference_sha256: reference.sha256,
     arms: pair.arms.map((a) => ({ arm: a.arm, kind: a.kind, message: a.message, attempt: a.attempt, attempt_sha256: a.attempt_sha256, answer_chars: a.text.length, environment_errors: a.environment_errors, other_errors: a.other_errors })),
   }
 }
@@ -1000,12 +1077,12 @@ export async function judgeCampaign(options: JudgeOptions, deps: JudgeDeps): Pro
       mark(pair.arms.some((a) => a.kind === 'baseline') ? 'no_arm_to_judge' : 'no_continue_run')
       continue
     }
-    const problem = specVersionProblem(store, pair)
-    if (problem) {
-      mark(problem)
+    const resolved = resolveReference(store, pair)
+    if (!resolved.ok) {
+      mark(resolved.reason)
       continue
     }
-    const reference = loadReference(store, pair.fixture)
+    const reference = resolved.reference
     // A judged file is reused only when the same judge looked at the same input: provider, model, prompt and input all match.
     const sameInputs = (j: Judgement): boolean =>
       j.fixture === pair.fixture && j.model === pair.model && j.status === 'judged' && j.judge.provider === options.provider && j.judge.prompt_sha256 === JUDGE_PROMPT_SHA256 && j.judge.input_sha256 === inputHash(reference, pair.arms)
