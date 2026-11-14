@@ -27,7 +27,7 @@ function sampleReport(overrides: Partial<CountReport> = {}): CountReport {
     declarationHash: HASH,
     deviations: ['masking_fix', 'session_cap_raise'],
     outcome: 'errors_observed',
-    notes: ['minimum_unmet', 'labeling_incomplete'],
+    notes: ['minimum_unmet', 'labeling_incomplete', 'unreadable_rows'],
     counts: {
       stimuli: 310,
       methods: {
@@ -51,7 +51,8 @@ function sampleReport(overrides: Partial<CountReport> = {}): CountReport {
         other: { counterfactual: zero(), synthesis: zero() },
       },
     },
-    sample: { considered: 120, eligible: 41, sampled: 40, exclusions: { child_session: 30, outside_window: 12, excluded_project_root: 4, already_sampled: 0, no_workflow_load: 33 } },
+    sample: { considered: 120, eligible: 41, sampled: 40, exclusions: { child_session: 30, outside_window: 12, excluded_project_root: 4, already_sampled: 0, no_workflow_load: 33, unfinished: 2 } },
+    unreadableRows: 3,
     coverage: { chunks: 30, labeled: 29, failed: 1, notAttempted: 0, spendCapReached: false },
     scrubbed: { scrubbedOutputs: 5, scrubbedInputs: 2, scrubbedStimuli: 1, redactedEmails: 3 },
     omissions: { sampleSize: 20, found: 1 },
@@ -85,9 +86,10 @@ describe('projectCounts: the fixed-key projection', () => {
       schema_version: 1,
       declaration_hash: HASH,
       outcome: 'errors_observed',
-      coverage_notes: ['minimum_unmet', 'labeling_incomplete'],
-      sessions: { considered: 120, eligible: 41, sampled: 40, exclusions: { child_session: 30, outside_window: 12, excluded_project_root: 4, already_sampled: 0, no_workflow_load: 33 } },
+      coverage_notes: ['minimum_unmet', 'labeling_incomplete', 'unreadable_rows'],
+      sessions: { considered: 120, eligible: 41, sampled: 40, exclusions: { child_session: 30, outside_window: 12, excluded_project_root: 4, already_sampled: 0, no_workflow_load: 33, unfinished: 2 } },
       stimuli_in_scope: 310,
+      unreadable_rows: 3,
       methods: {
         counterfactual: {
           expected_fire: { accepted_marks: 6, hit: 2, miss: 3, loaded_earlier: 1 },
@@ -143,7 +145,7 @@ describe('projectCounts: the fixed-key projection', () => {
   })
 
   test('the outcome, notes and deviations are carried as given', () => {
-    const projection = projectCounts(sampleReport({ outcome: 'clean', notes: [], deviations: [] }))
+    const projection = projectCounts(sampleReport({ outcome: 'clean', notes: [], deviations: [], unreadableRows: 0 }))
     expect(projection).toMatchObject({ outcome: 'clean', coverage_notes: [], deviations: [] })
   })
 
@@ -249,6 +251,13 @@ describe('the projection schema', () => {
     expect(projectionSchema.safeParse(inconclusive).success).toBe(false)
   })
 
+  test('rejects unreadable rows with no note to say so: the count and its note go together', () => {
+    const silent = withAt(withAt(valid(), ['coverage_notes'], (t, k) => (t[k] = ['minimum_unmet'])), ['unreadable_rows'], (t, k) => (t[k] = 4))
+    expect(projectionSchema.safeParse(silent).success).toBe(false)
+    const noted = withAt(withAt(valid(), ['coverage_notes'], (t, k) => (t[k] = ['unreadable_rows'])), ['unreadable_rows'], (t, k) => (t[k] = 4))
+    expect(projectionSchema.safeParse(noted).success).toBe(true)
+  })
+
   test('projectCounts refuses a report that carries text where a code belongs', () => {
     const junk = sampleReport({ deviations: ['a masking fix for session ses_123' as never] })
     expect(() => projectCounts(junk)).toThrow()
@@ -287,7 +296,7 @@ describe('writing the projection', () => {
       rmSync(dir, { recursive: true, force: true })
     })
     const target = join(dir, 'counts.json')
-    const earlier = projectionText(projectCounts(sampleReport({ outcome: 'clean', notes: [], deviations: [] })))
+    const earlier = projectionText(projectCounts(sampleReport({ outcome: 'clean', notes: [], deviations: [], unreadableRows: 0 })))
     writeFileSync(target, earlier)
     // the file itself stays writable, so only a write that goes through a new file in the directory is stopped
     chmodSync(dir, 0o500)
@@ -320,15 +329,17 @@ describe('the counts table', () => {
   test('is generated from the projection alone, as text with the numbers in their rows', () => {
     const table = renderCountsTable(projection)
     expect(table).toBe(renderCountsTable(structuredClone(projection)))
-    expect(table).toContain('Outcome: errors_observed; coverage notes: minimum_unmet, labeling_incomplete')
+    expect(table).toContain('Outcome: errors_observed; coverage notes: minimum_unmet, labeling_incomplete, unreadable_rows')
     expect(table).toContain('| counterfactual | expected_fire | 6 | 2 | 3 | 1 | – | – |')
     expect(table).toContain('| counterfactual | expected_silence | 4 | – | – | – | 1 | 3 |')
     expect(table).toContain('| synthesis | expected_fire | 7 | 4 | 2 | 1 | – | – |')
     expect(table).toContain('| synthesis | expected_silence | 2 | – | – | – | 0 | 2 |')
     expect(table).toContain('| counterfactual | 1 | 1 | 5 |')
     expect(table).toContain('| anthropic | counterfactual | 2 | 1 | 1 | 1 | 3 |')
-    expect(table).toContain('| 120 | 41 | 40 | 310 | 20 | 1 |')
-    expect(table).toContain('| 30 | 12 | 4 | 0 | 33 |')
+    expect(table).toContain('| 120 | 41 | 40 | 310 | 20 | 1 | 3 |')
+    expect(table).toContain('| 30 | 12 | 4 | 0 | 33 | 2 |')
+    expect(table).toContain('Unfinished')
+    expect(table).toContain('Unreadable rows')
     expect(table).toContain('| 30 | 1 | 0 | 5 | 2 | 1 | 3 |')
     expect(table).toContain('Deviations: masking_fix, session_cap_raise')
     expect(table).toContain(`Declaration hash: ${HASH}`)
@@ -336,7 +347,7 @@ describe('the counts table', () => {
   })
 
   test('names no notes and no deviations as "none"', () => {
-    const table = renderCountsTable(projectCounts(sampleReport({ outcome: 'clean', notes: [], deviations: [] })))
+    const table = renderCountsTable(projectCounts(sampleReport({ outcome: 'clean', notes: [], deviations: [], unreadableRows: 0 })))
     expect(table).toContain('Outcome: clean; coverage notes: none')
     expect(table).toContain('Deviations: none')
   })
@@ -493,8 +504,9 @@ describe('end to end: freeze, view, label, judge, lock, count, project, purge', 
       declaration_hash: (written as Projection).declaration_hash,
       outcome: 'errors_observed',
       coverage_notes: ['minimum_unmet', 'omission_limit_exceeded'],
-      sessions: { considered: 6, eligible: 2, sampled: 2, exclusions: { child_session: 1, outside_window: 1, excluded_project_root: 1, already_sampled: 0, no_workflow_load: 1 } },
+      sessions: { considered: 6, eligible: 2, sampled: 2, exclusions: { child_session: 1, outside_window: 1, excluded_project_root: 1, already_sampled: 0, no_workflow_load: 1, unfinished: 0 } },
       stimuli_in_scope: 6,
+      unreadable_rows: 0,
       methods: {
         counterfactual: {
           expected_fire: { accepted_marks: 3, hit: 2, miss: 0, loaded_earlier: 1 },

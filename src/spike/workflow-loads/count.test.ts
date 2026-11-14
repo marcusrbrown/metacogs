@@ -70,7 +70,7 @@ function stimulus(id: string, loads: Loads = {}, after: WalkedEntry[] = []): Wal
 
 function walked(sessionId: string, stimuli: WalkedStimulus[], firstAssistant: RawMessage | null = null): WalkedSession {
   const scope: WalkedScope = { workflow: 'ce:plan', loadPartId: 'load', stimuli, ended: 'session_end' }
-  return { sessionId, lastMessage: { id: 'last', time_created: 1 }, scopes: [scope], firstAssistant }
+  return { sessionId, lastMessage: { id: 'last', time_created: 1 }, scopes: [scope], firstAssistant, unreadableRows: 0 }
 }
 
 const mark = (sessionId: string, stimulusId: string, method: Method, label: Label, source: 'proposal' | 'omission' = 'proposal') => ({ sessionId, scopeIndex: 0, stimulusId, method, label, source })
@@ -211,7 +211,7 @@ describe('countLoads: the buckets', () => {
       { workflow: 'ce:plan', loadPartId: 'l1', ended: 'workflow_load', stimuli: [stimulus('a', { counterfactual: { loaded: 'skill_call' } })] },
       { workflow: 'ce:review', loadPartId: 'l2', ended: 'session_end', stimuli: [stimulus('b')] },
     ]
-    const session: WalkedSession = { sessionId: 's1', lastMessage: { id: 'last', time_created: 1 }, scopes, firstAssistant: null }
+    const session: WalkedSession = { sessionId: 's1', lastMessage: { id: 'last', time_created: 1 }, scopes, firstAssistant: null, unreadableRows: 0 }
     const counts = countLoads([lockOf('initial', [{ ...mark('s1', 'b', CF, FIRE), scopeIndex: 1 }])], { initial: [session] })
     // `b` has no load and nothing loaded before it in this hand-built evidence, so it is a miss; the load at `a` is unmarked
     expect(counts.methods.counterfactual.buckets.miss).toBe(1)
@@ -312,6 +312,45 @@ describe('model families', () => {
   })
 })
 
+// ── counting from a walk that is read once ─────────────────────────────────
+
+describe('countLoads: a walk read once', () => {
+  /** `probe.earlierStillHeld` is, when the third session is asked for, whether the first session's stimulus is still in memory. */
+  const feed = (count: number, probe: { earlierStillHeld: boolean | null } = { earlierStillHeld: null }): Generator<WalkedSession> => {
+    function* sessions(): Generator<WalkedSession> {
+      const first: WeakRef<WalkedStimulus>[] = []
+      for (let i = 0; i < count; i++) {
+        if (i === 2) {
+          Bun.gc(true)
+          probe.earlierStillHeld = first[0]?.deref() !== undefined
+        }
+        const one = stimulus(`a${i}`, { counterfactual: { loaded: 'skill_call' } })
+        if (i === 0) first.push(new WeakRef(one))
+        yield walked(`s${i}`, [one])
+      }
+    }
+    return sessions()
+  }
+  const locks = [lockOf('initial', [mark('s0', 'a0', CF, FIRE), mark('s2', 'a2', CF, SILENCE)])]
+
+  test('a one-shot walk counts what the same sessions as an array count', () => {
+    const fromArray = countLoads(locks, { initial: [...feed(3)] })
+    expect(countLoads(locks, { initial: feed(3) })).toEqual(fromArray)
+    expect(fromArray.stimuli).toBe(3)
+  })
+
+  test('the rows of a session already counted are not held while the next one is read', () => {
+    const streamed = { earlierStillHeld: null as boolean | null }
+    countLoads(locks, { initial: feed(3, streamed) })
+    expect(streamed.earlierStillHeld).toBe(false)
+    // the control: the same sessions held in an array are still there when the third is reached
+    const held = { earlierStillHeld: null as boolean | null }
+    const all = [...feed(3, held)]
+    expect(held.earlierStillHeld).toBe(true)
+    expect(all).toHaveLength(3)
+  })
+})
+
 // ── the outcome rule ───────────────────────────────────────────────────────
 
 /** Counts with the given accepted marks per method and label, and the given buckets. */
@@ -325,9 +364,9 @@ function countsWith(options: { accepted?: Partial<Record<Method, Partial<Record<
 }
 
 const COMPLETE: LabelingCoverage = { chunks: 4, labeled: 4, failed: 0, notAttempted: 0, spendCapReached: false }
-const decide = (parts: { counts?: LoadCounts; coverage?: Partial<LabelingCoverage>; omissionsFound?: number; declaration?: Parameters<typeof sampleDeclaration>[0] } = {}) => {
+const decide = (parts: { counts?: LoadCounts; coverage?: Partial<LabelingCoverage>; omissionsFound?: number; unreadableRows?: number; declaration?: Parameters<typeof sampleDeclaration>[0] } = {}) => {
   const declaration = sampleDeclaration(parts.declaration)
-  return decideOutcome({ declaration, counts: parts.counts ?? countsWith(), coverage: { ...COMPLETE, ...parts.coverage }, omissionsFound: parts.omissionsFound ?? 0 })
+  return decideOutcome({ declaration, counts: parts.counts ?? countsWith(), coverage: { ...COMPLETE, ...parts.coverage }, omissionsFound: parts.omissionsFound ?? 0, unreadableRows: parts.unreadableRows ?? 0 })
 }
 
 describe('decideOutcome: errors-first', () => {
@@ -379,8 +418,9 @@ describe('decideOutcome: errors-first', () => {
       counts: countsWith({ accepted: { counterfactual: { expected_fire: 1 } }, buckets: { counterfactual: { miss: 1 } } }),
       coverage: { labeled: 2, notAttempted: 2, spendCapReached: true },
       omissionsFound: 5,
+      unreadableRows: 1,
     })
-    expect(result).toEqual({ outcome: 'errors_observed', notes: ['minimum_unmet', 'labeling_incomplete', 'spend_cap_reached', 'omission_limit_exceeded'] })
+    expect(result).toEqual({ outcome: 'errors_observed', notes: ['minimum_unmet', 'labeling_incomplete', 'spend_cap_reached', 'omission_limit_exceeded', 'unreadable_rows'] })
   })
 
   test('a miss alone is errors observed with no notes when coverage and minimums are fine', () => {
@@ -402,8 +442,17 @@ describe('decideOutcome: errors-first', () => {
     expect(decide({ counts: none })).toEqual({ outcome: 'inconclusive', notes: ['minimum_unmet'] })
   })
 
+  test('any unreadable row keeps the outcome from being clean, and carries its note', () => {
+    expect(decide({ unreadableRows: 1 })).toEqual({ outcome: 'inconclusive', notes: ['unreadable_rows'] })
+    expect(decide({ unreadableRows: 0 })).toEqual({ outcome: 'clean', notes: [] })
+  })
+
+  test('unreadable rows do not hide an error: a miss with unreadable rows is errors observed, with the note', () => {
+    expect(decide({ counts: countsWith({ buckets: { synthesis: { miss: 1 } } }), unreadableRows: 2 })).toEqual({ outcome: 'errors_observed', notes: ['unreadable_rows'] })
+  })
+
   test('notes come in the fixed order, each once', () => {
-    expect(COVERAGE_NOTES).toEqual(['minimum_unmet', 'labeling_incomplete', 'spend_cap_reached', 'omission_limit_exceeded'])
+    expect(COVERAGE_NOTES).toEqual(['minimum_unmet', 'labeling_incomplete', 'spend_cap_reached', 'omission_limit_exceeded', 'unreadable_rows'])
   })
 })
 
@@ -475,6 +524,8 @@ describe('runCount', () => {
     expect(report.deviations).toEqual([])
     expect(report.declarationHash).toMatch(/^[0-9a-f]{64}$/)
     expect(report.coverage).toEqual(COMPLETE)
+    expect(report.unreadableRows).toBe(0)
+    expect(report.notes).not.toContain('unreadable_rows')
   })
 
   test('marks from two locks are counted together; the sample is the sessions of both slots and the store counts are the initial manifest\'s', () => {
@@ -537,6 +588,28 @@ describe('runCount', () => {
     expect(report.omissions).toEqual({ sampleSize: 2, found: 2 })
     expect(report.counts.methods.counterfactual.accepted.expected_fire).toBe(2)
     expect(report.notes).not.toContain('omission_limit_exceeded')
+  })
+
+  test('unreadable rows are summed over the walks of every locked slot, and the report cannot be clean with any', () => {
+    const f = fixture({ session_cap: 1, min_accepted_marks: { counterfactual: { expected_fire: 1, expected_silence: 1 }, synthesis: { expected_fire: 1, expected_silence: 1 } } })
+    f.seed('s1', true)
+    f.seed('s2', true)
+    const spoil = (session: string, data: string): void => {
+      const part = f.store.addText(f.store.addMessage(session, 'assistant'), 'x')
+      f.store.db.run('UPDATE part SET data = ? WHERE id = ?', [data, part])
+    }
+    spoil('s1', '{broken')
+    spoil('s2', 'null')
+    const initial = f.build('initial')
+    f.lock(initial, 'initial', [])
+    recordDeviation({ git: f.repo.git, entry: { code: 'session_cap_raise', reason: 'too few marks', session_cap: 2 } })
+    const added = f.build('added')
+    f.lock(added, 'added', [])
+    const report = runCount({ ...f.input, skillBodies: BODIES, labeling: { ...f.labeling('initial'), ...f.labeling('added') } })
+    expect(report.slots).toEqual(['initial', 'added'])
+    expect(report.unreadableRows).toBe(2)
+    expect(report.notes).toContain('unreadable_rows')
+    expect(report.outcome).not.toBe('clean')
   })
 
   test('is refused with the lock reasons: none at all, and a frozen slot that is not locked', () => {

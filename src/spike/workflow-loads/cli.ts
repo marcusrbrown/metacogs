@@ -18,9 +18,9 @@ import { assertGate, type GateInput, MARKING_RULE_PATH, METHODS, type Method } f
 import { createLabelerTransport, deleteLabelerReplies, labelChunks, labelingCoverage, type LabelerTransport, loadLabelerProposals, type Proposal, type ResolveKeyOptions, resolveLabelerKey } from './labeler'
 import { collectSkillBodies } from './loads'
 import { answerOmission, assertJudgingNotStarted, judgeProposal, lockMarks, MarksRefusal, openMarking, type OmissionAnswer, pendingOmissions, pendingProposals, type ProposalChoice, readLocks, requireLocks, type StimulusRef } from './marks'
-import { auditLeaks, buildHiddenView, type Chunk, chunkScope, DEFAULT_CONTEXT, deleteHiddenViews, type HiddenView, type LeakKind, renderWithContext, viewPath, writeHiddenView } from './mask'
+import { auditRendered, buildHiddenView, type Chunk, chunkScope, DEFAULT_CONTEXT, deleteHiddenViews, type HiddenView, type LeakKind, renderWithContext, viewPath, writeHiddenView } from './mask'
 import { COUNTS_PATH, projectCounts, renderProjection, writeProjection } from './project'
-import { EXCLUSION_REASONS, freezeManifest, MANIFEST_SLOTS, type ManifestSlot, openPrivateRoot, type PrivateRoot, readManifest, walkManifest } from './store'
+import { EXCLUSION_REASONS, freezeManifest, MANIFEST_SLOTS, type ManifestSlot, openPrivateRoot, type PrivateRoot, readManifest, type WalkedSession, walkManifestEach } from './store'
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url)).replace(/\/$/, '')
 
@@ -288,23 +288,31 @@ function freezeCommand(ctx: Ctx): number {
 function viewCommand(ctx: Ctx): number {
   const pass = assertGate(gateInput(ctx))
   const skillBodies = collectSkillBodies(ctx.git, pass.declaration.window)
-  const sessions = walkManifest({ ...gateInput(ctx), db: ctx.db, privateRoot: ctx.privateRoot, slot: ctx.slot, skillBodies })
-  const audit = auditLeaks(sessions)
+  // the walk is read once, a session at a time: its raw rows are rendered and dropped before the next session is read
+  let sessionCount = 0
+  let stimuli = 0
+  function* tallied(sessions: Iterable<WalkedSession>): Generator<WalkedSession> {
+    for (const session of sessions) {
+      sessionCount += 1
+      stimuli += session.scopes.reduce((n, scope) => n + scope.stimuli.length, 0)
+      yield session
+    }
+  }
+  const view = buildHiddenView({ ...gateInput(ctx), sessions: tallied(walkManifestEach({ ...gateInput(ctx), db: ctx.db, privateRoot: ctx.privateRoot, slot: ctx.slot, skillBodies })) })
+  const audit = auditRendered(view.scopes)
   const hits = (kind: LeakKind): number => audit.hits.filter((hit) => hit.kind === kind).length
   const leaks = { method: hits('method'), helper: hits('helper'), label: hits('label') }
-  const stimuli = sessions.reduce((sum, s) => sum + s.scopes.reduce((n, scope) => n + scope.stimuli.length, 0), 0)
   if (!audit.ok) {
     // a view that fails its audit is never written: the labeler would be sent what the audit just found
-    ctx.io.out(`view ${pairs({ slot: ctx.slot, sessions: sessions.length, stimuli, audit: 'fail', ...leaks, written: 'no' })}`)
+    ctx.io.out(`view ${pairs({ slot: ctx.slot, sessions: sessionCount, stimuli, audit: 'fail', ...leaks, written: 'no' })}`)
     return 1
   }
-  const view = buildHiddenView({ ...gateInput(ctx), sessions })
   writeHiddenView(ctx.privateRoot, view, { slot: ctx.slot, repoRoot: ctx.repoRoot })
   const { counters } = view
   ctx.io.out(
     `view ${pairs({
       slot: ctx.slot,
-      sessions: sessions.length,
+      sessions: sessionCount,
       scopes: view.scopes.length,
       stimuli,
       scrubbed_outputs: counters.scrubbedOutputs,

@@ -43,9 +43,10 @@ export const projectionSchema = z
       considered: count,
       eligible: count,
       sampled: count,
-      exclusions: z.strictObject({ child_session: count, outside_window: count, excluded_project_root: count, already_sampled: count, no_workflow_load: count }),
+      exclusions: z.strictObject({ child_session: count, outside_window: count, excluded_project_root: count, already_sampled: count, no_workflow_load: count, unfinished: count }),
     }),
     stimuli_in_scope: count,
+    unreadable_rows: count,
     methods: perMethod(methodSchema),
     model_families: z.strictObject({ anthropic: perMethod(buckets), openai: perMethod(buckets), google: perMethod(buckets), other: perMethod(buckets) }),
     labeling: z.strictObject({ chunks: count, failed: count, not_attempted: count }),
@@ -55,6 +56,7 @@ export const projectionSchema = z
   })
   .refine((p) => p.outcome !== 'clean' || p.coverage_notes.length === 0, { message: 'a clean outcome carries no coverage note', path: ['coverage_notes'] })
   .refine((p) => p.outcome !== 'inconclusive' || p.coverage_notes.length > 0, { message: 'an inconclusive outcome names what was thin', path: ['coverage_notes'] })
+  .refine((p) => p.unreadable_rows === 0 || p.coverage_notes.includes('unreadable_rows'), { message: 'unreadable rows are named among the coverage notes', path: ['coverage_notes'] })
 
 export type Projection = z.infer<typeof projectionSchema>
 
@@ -91,6 +93,7 @@ export function projectCounts(report: CountReport): Projection {
       exclusions: Object.fromEntries(EXCLUSION_REASONS.map((reason) => [reason, report.sample.exclusions[reason]])),
     },
     stimuli_in_scope: counts.stimuli,
+    unreadable_rows: report.unreadableRows,
     methods,
     model_families: families,
     labeling: { chunks: report.coverage.chunks, failed: report.coverage.failed, not_attempted: report.coverage.notAttempted },
@@ -158,14 +161,14 @@ export function renderCountsTable(projection: Projection): string {
     for (const method of METHODS) lines.push(row([family, method, ...BUCKETS.map((bucket) => projection.model_families[family][method][bucket])]))
   }
   lines.push('')
-  lines.push(row(['Sessions considered', 'Eligible', 'Sampled', 'Stimuli in scope', 'Omission sample', 'Omissions found']))
-  lines.push(row(['---:', '---:', '---:', '---:', '---:', '---:']))
-  lines.push(row([projection.sessions.considered, projection.sessions.eligible, projection.sessions.sampled, projection.stimuli_in_scope, projection.omissions.sample_size, projection.omissions.found]))
+  lines.push(row(['Sessions considered', 'Eligible', 'Sampled', 'Stimuli in scope', 'Omission sample', 'Omissions found', 'Unreadable rows']))
+  lines.push(row(['---:', '---:', '---:', '---:', '---:', '---:', '---:']))
+  lines.push(row([projection.sessions.considered, projection.sessions.eligible, projection.sessions.sampled, projection.stimuli_in_scope, projection.omissions.sample_size, projection.omissions.found, projection.unreadable_rows]))
   lines.push('')
-  lines.push(row(['Child session', 'Outside window', 'Excluded project root', 'Already sampled', 'No workflow load']))
-  lines.push(row(['---:', '---:', '---:', '---:', '---:']))
+  lines.push(row(['Child session', 'Outside window', 'Excluded project root', 'Already sampled', 'No workflow load', 'Unfinished']))
+  lines.push(row(['---:', '---:', '---:', '---:', '---:', '---:']))
   const e = projection.sessions.exclusions
-  lines.push(row([e.child_session, e.outside_window, e.excluded_project_root, e.already_sampled, e.no_workflow_load]))
+  lines.push(row([e.child_session, e.outside_window, e.excluded_project_root, e.already_sampled, e.no_workflow_load, e.unfinished]))
   lines.push('')
   lines.push(row(['Labeling chunks', 'Failed', 'Not attempted', 'Scrubbed outputs', 'Scrubbed inputs', 'Scrubbed stimuli', 'Redacted emails']))
   lines.push(row(['---:', '---:', '---:', '---:', '---:', '---:', '---:']))

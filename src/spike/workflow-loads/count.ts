@@ -17,10 +17,10 @@
 import type { Declaration, DeviationCode, GateInput, Label, Method } from './declaration'
 import { assertGate, LABELS, METHODS } from './declaration'
 import type { LabelingCoverage } from './labeler'
-import type { LoadBasis, MethodEvidence, SkillBodies } from './loads'
+import type { IntervalEvidence, LoadBasis, MethodEvidence, SkillBodies } from './loads'
 import { itemKey, type Lock, requireLocks, type StimulusRef, stimulusKey } from './marks'
 import type { ViewCounters } from './mask'
-import { type ExclusionReason, EXCLUSION_REASONS, ManifestError, type ManifestSlot, type PrivateRoot, readManifest, type RawMessage, type WalkedSession, type WalkedStimulus, walkManifest } from './store'
+import { type ExclusionReason, EXCLUSION_REASONS, ManifestError, type ManifestSlot, type PrivateRoot, readManifest, type RawMessage, type WalkedSession, type WalkedStimulus, walkManifestEach } from './store'
 
 // ── refusals ───────────────────────────────────────────────────────────────
 
@@ -130,17 +130,20 @@ function bucketOf(label: Label, evidence: MethodEvidence): Bucket {
   return evidence.loaded ? 'false_fire' : 'correct_silence'
 }
 
+/** What counting keeps of a stimulus: its evidence and its model family, never the raw rows it came from. */
 interface Located {
   ref: StimulusRef
-  stimulus: WalkedStimulus
+  loads: IntervalEvidence
   family: ModelFamily
 }
 
 /**
  * Applies the bucket table to every locked mark and counts unmarked loads, over the walked sessions of each lock's slot. Refuses
  * with `slot_not_walked` when a lock's slot has no walk and `mark_stimulus_not_found` when a mark names a stimulus the walk lacks.
+ * A walk is read once, one session at a time: only each stimulus's evidence is kept, so the raw rows of a session are free to go
+ * as soon as the next one is asked for.
  */
-export function countLoads(locks: readonly Lock[], walks: Partial<Record<ManifestSlot, readonly WalkedSession[]>>): LoadCounts {
+export function countLoads(locks: readonly Lock[], walks: Partial<Record<ManifestSlot, Iterable<WalkedSession>>>): LoadCounts {
   const counts = emptyCounts()
   for (const lock of locks) {
     const sessions = walks[lock.slot]
@@ -151,7 +154,7 @@ export function countLoads(locks: readonly Lock[], walks: Partial<Record<Manifes
         for (const stimulus of scope.stimuli) {
           counts.stimuli += 1
           const ref: StimulusRef = { sessionId: session.sessionId, scopeIndex, stimulusId: stimulus.id }
-          index.set(stimulusKey(ref), { ref, stimulus, family: familyOf(stimulus, session) })
+          index.set(stimulusKey(ref), { ref, loads: stimulus.loads, family: familyOf(stimulus, session) })
         }
       }
     }
@@ -159,7 +162,7 @@ export function countLoads(locks: readonly Lock[], walks: Partial<Record<Manifes
     for (const mark of lock.marks) {
       const located = index.get(stimulusKey(mark))
       if (!located) throw new CountRefusal('mark_stimulus_not_found')
-      const evidence = located.stimulus.loads[mark.method]
+      const evidence = located.loads[mark.method]
       const bucket = bucketOf(mark.label, evidence)
       const method = counts.methods[mark.method]
       method.accepted[mark.label] += 1
@@ -172,8 +175,8 @@ export function countLoads(locks: readonly Lock[], walks: Partial<Record<Manifes
     }
 
     const marked = new Set(lock.marks.map(itemKey))
-    for (const { ref, stimulus } of index.values()) {
-      for (const method of METHODS) if (stimulus.loads[method].loaded && !marked.has(itemKey({ ...ref, method }))) counts.methods[method].unmarkedLoads += 1
+    for (const { ref, loads } of index.values()) {
+      for (const method of METHODS) if (loads[method].loaded && !marked.has(itemKey({ ...ref, method }))) counts.methods[method].unmarkedLoads += 1
     }
   }
   return counts
@@ -189,9 +192,10 @@ export type Outcome = (typeof OUTCOMES)[number]
  * - `minimum_unmet`: some method and label has fewer accepted marks than its declared minimum;
  * - `labeling_incomplete`: a chunk failed or was not attempted, or there were no chunks;
  * - `spend_cap_reached`: the spend cap cut a chunk short;
- * - `omission_limit_exceeded`: the omission check found more than the declared limit.
+ * - `omission_limit_exceeded`: the omission check found more than the declared limit;
+ * - `unreadable_rows`: a stored message or part row could not be read as JSON, so the walk took it for no load and no stimulus.
  */
-export const COVERAGE_NOTES = ['minimum_unmet', 'labeling_incomplete', 'spend_cap_reached', 'omission_limit_exceeded'] as const
+export const COVERAGE_NOTES = ['minimum_unmet', 'labeling_incomplete', 'spend_cap_reached', 'omission_limit_exceeded', 'unreadable_rows'] as const
 export type CoverageNote = (typeof COVERAGE_NOTES)[number]
 
 export interface OutcomeResult {
@@ -205,6 +209,8 @@ export interface OutcomeInput {
   coverage: LabelingCoverage
   /** Summed over the locks. */
   omissionsFound: number
+  /** Unreadable message and part rows, summed over the walks of every locked slot. */
+  unreadableRows: number
 }
 
 /**
@@ -221,6 +227,7 @@ export function decideOutcome(input: OutcomeInput): OutcomeResult {
     labeling_incomplete: coverage.chunks === 0 || coverage.labeled !== coverage.chunks,
     spend_cap_reached: coverage.spendCapReached,
     omission_limit_exceeded: input.omissionsFound > declaration.omission.limit,
+    unreadable_rows: input.unreadableRows > 0,
   }
   const notes = COVERAGE_NOTES.filter((note) => thin[note])
   return { outcome: errors > 0 ? 'errors_observed' : notes.length === 0 ? 'clean' : 'inconclusive', notes }
@@ -259,19 +266,29 @@ export interface CountReport {
   coverage: LabelingCoverage
   scrubbed: ViewCounters
   omissions: { sampleSize: number; found: number }
+  /** Message and part rows the walks could not read as JSON, over every locked slot. */
+  unreadableRows: number
   /** The locked slots, `initial` first. */
   slots: ManifestSlot[]
 }
 
 /**
- * Checks the gate, requires a lock for every frozen slot (`no_lock` or `slot_not_locked`), walks each locked slot's manifest,
- * counts every lock's marks and applies the outcome rule. Writes nothing.
+ * Checks the gate, requires a lock for every frozen slot (`no_lock` or `slot_not_locked`), walks each locked slot's manifest one
+ * session at a time, counts every lock's marks and applies the outcome rule. Writes nothing.
  */
 export function runCount(input: RunCountInput): CountReport {
   const pass = assertGate(input)
   const locks = requireLocks(input.privateRoot, pass.declarationHash)
 
-  const walks: Partial<Record<ManifestSlot, WalkedSession[]>> = {}
+  const walks: Partial<Record<ManifestSlot, Iterable<WalkedSession>>> = {}
+  let unreadableRows = 0
+  /** Passes a walk through one session at a time, adding up its unreadable rows on the way. */
+  function* tallied(sessions: Iterable<WalkedSession>): Generator<WalkedSession> {
+    for (const session of sessions) {
+      unreadableRows += session.unreadableRows
+      yield session
+    }
+  }
   const sample: CountReport['sample'] = { considered: 0, eligible: 0, sampled: 0, exclusions: Object.fromEntries(EXCLUSION_REASONS.map((reason) => [reason, 0])) as Record<ExclusionReason, number> }
   const coverage: LabelingCoverage = { chunks: 0, labeled: 0, failed: 0, notAttempted: 0, spendCapReached: false }
   const scrubbed: ViewCounters = { scrubbedOutputs: 0, scrubbedInputs: 0, scrubbedStimuli: 0, redactedEmails: 0 }
@@ -288,7 +305,7 @@ export function runCount(input: RunCountInput): CountReport {
     if (!labeling) throw new CountRefusal('labeling_missing')
     const manifest = readManifest(input.privateRoot, lock.slot, pass.declarationHash)
     if (!manifest) throw new ManifestError('manifest_missing', `the ${lock.slot} manifest has not been written`)
-    walks[lock.slot] = walkManifest({ ...input, slot: lock.slot })
+    walks[lock.slot] = tallied(walkManifestEach({ ...input, slot: lock.slot }))
 
     sample.sampled += manifest.sessions.length
     coverage.chunks += labeling.coverage.chunks
@@ -302,6 +319,6 @@ export function runCount(input: RunCountInput): CountReport {
   }
 
   const counts = countLoads(locks, walks)
-  const { outcome, notes } = decideOutcome({ declaration: pass.declaration, counts, coverage, omissionsFound: omissions.found })
-  return { declarationHash: pass.declarationHash, deviations: pass.deviations.map((deviation) => deviation.code), outcome, notes, counts, sample, coverage, scrubbed, omissions, slots: locks.map((lock) => lock.slot) }
+  const { outcome, notes } = decideOutcome({ declaration: pass.declaration, counts, coverage, omissionsFound: omissions.found, unreadableRows })
+  return { declarationHash: pass.declarationHash, deviations: pass.deviations.map((deviation) => deviation.code), outcome, notes, counts, sample, coverage, scrubbed, omissions, unreadableRows, slots: locks.map((lock) => lock.slot) }
 }

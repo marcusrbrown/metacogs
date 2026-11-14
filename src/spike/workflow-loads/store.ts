@@ -4,9 +4,12 @@
  *
  * The store is only ever opened read-only and queried through the fixed statements in `WORKFLOW_LOADS_SQL`, which touch the
  * `session`, `message` and `part` tables and nothing else. The store keeps growing while it is read, so the manifest records each
- * sampled session's last message when it was frozen, and every later read stops at that mark.
+ * sampled session's last message when it was frozen, and every later read stops at that mark. A session still being written at
+ * freeze time is left out, and a hash of each sampled session's rows up to its mark is kept, so a row that changes afterwards is
+ * refused by name instead of being read as if it had been there all along.
  */
 import { Database } from 'bun:sqlite'
+import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { z } from 'zod'
@@ -17,7 +20,7 @@ import { sha256, stateRoot } from '../../runner/workspace'
 import type { RawMessage, RawPart } from '../feel-drugs/replay/extract'
 import { assertOutsideRepo, privateDir, writePrivate } from '../feel-drugs/replay/store'
 import { assertGate, type Declaration, effectiveSessionCap, type GateInput, type GatePass, underExcludedRoot } from './declaration'
-import { type IntervalEvidence, intervalEvidence, type LoadEvent, loadEvents, type SkillBodies, toolUseOfPart, type WorkflowSkill, workflowLoadOf } from './loads'
+import { type IntervalEvidence, intervalEvidence, type LoadEvent, loadEvents, methodCallOf, parseJsonObject, type SkillBodies, toolUseOfPart, WORKFLOW_SKILL_NAMES, type WorkflowSkill, workflowLoadOf } from './loads'
 
 export type { RawMessage, RawPart }
 
@@ -26,6 +29,9 @@ export type { RawMessage, RawPart }
 /** Up to and including a mark, by the host's own order (time, then id). Takes `t, t, id`. */
 const UP_TO_MARK = '(time_created < ? OR (time_created = ? AND id <= ?))'
 
+/** The workflow skills' names as SQL literals. They are this module's own constants, never session text. */
+const WORKFLOW_NAMES = WORKFLOW_SKILL_NAMES.map((name) => `'${name}'`).join(', ')
+
 /**
  * Every statement this module runs. Each names its columns and none touches a table other than `session`, `message` and `part`
  * (`tables` reads the schema listing to confirm those three exist).
@@ -33,9 +39,12 @@ const UP_TO_MARK = '(time_created < ? OR (time_created = ? AND id <= ?))'
 export const WORKFLOW_LOADS_SQL = {
   tables: "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('session', 'message', 'part')",
   sessions: 'SELECT id, parent_id, directory, time_created FROM session ORDER BY time_created, id',
-  lastMessage: 'SELECT id, time_created FROM message WHERE session_id = ? ORDER BY time_created DESC, id DESC LIMIT 1',
-  /** Tool parts of the skill-loading tools in messages up to the mark. Takes `session, session, t, t, id`. */
-  skillParts: `SELECT id, message_id, session_id, time_created, data FROM part WHERE session_id = ? AND message_id IN (SELECT id FROM message WHERE session_id = ? AND ${UP_TO_MARK}) AND CASE WHEN json_valid(data) THEN json_extract(data, '$.type') END = 'tool' AND CASE WHEN json_valid(data) THEN json_extract(data, '$.tool') END IN ('skill', 'systematic_skill') ORDER BY time_created, id`,
+  lastMessage: 'SELECT id, time_created, data FROM message WHERE session_id = ? ORDER BY time_created DESC, id DESC LIMIT 1',
+  /**
+   * Whether a completed call of a skill tool naming a workflow skill sits in a message up to the mark: at most one row, found by
+   * the database. Takes `session, session, t, t, id`.
+   */
+  workflowLoad: `SELECT 1 AS found FROM part WHERE session_id = ? AND message_id IN (SELECT id FROM message WHERE session_id = ? AND ${UP_TO_MARK}) AND CASE WHEN json_valid(data) THEN json_extract(data, '$.type') END = 'tool' AND CASE WHEN json_valid(data) THEN json_extract(data, '$.tool') END IN ('skill', 'systematic_skill') AND CASE WHEN json_valid(data) THEN json_extract(data, '$.state.status') END = 'completed' AND CASE WHEN json_valid(data) THEN json_extract(data, '$.state.input.name') END IN (${WORKFLOW_NAMES}) LIMIT 1`,
   /** Takes `session, t, t, id`. */
   messages: `SELECT id, session_id, time_created, data FROM message WHERE session_id = ? AND ${UP_TO_MARK} ORDER BY time_created, id`,
   /** Takes `session, session, t, t, id`. */
@@ -58,7 +67,7 @@ export class StoreError extends Error {
 const REQUIRED_TABLES = ['session', 'message', 'part'] as const
 
 /** Opens the store read-only, enforces it with `query_only`, and confirms the three tables before running anything else. */
-function withStore<T>(path: string, run: (db: Database) => T): T {
+function openStore(path: string): Database {
   let db: Database
   try {
     db = new Database(path, { readonly: true })
@@ -70,11 +79,26 @@ function withStore<T>(path: string, run: (db: Database) => T): T {
     const present = new Set(db.query<{ name: string }, []>(WORKFLOW_LOADS_SQL.tables).all().map((row) => row.name))
     const missing = REQUIRED_TABLES.filter((table) => !present.has(table))
     if (missing.length > 0) throw new StoreError('store_missing_table', `the session store has no ${missing.join(', ')} table`)
+    return db
+  } catch (e) {
+    db.close()
+    throw asStoreError(e)
+  }
+}
+
+/** A missing table or column is a named store error; anything else is left as it is. */
+function asStoreError(e: unknown): unknown {
+  if (e instanceof StoreError) return e
+  if (e instanceof Error && /no such (table|column)/i.test(e.message)) return new StoreError('store_schema_mismatch', 'the session store lacks a table or column this reader expects')
+  return e
+}
+
+function withStore<T>(path: string, run: (db: Database) => T): T {
+  const db = openStore(path)
+  try {
     return run(db)
   } catch (e) {
-    if (e instanceof StoreError) throw e
-    if (e instanceof Error && /no such (table|column)/i.test(e.message)) throw new StoreError('store_schema_mismatch', 'the session store lacks a table or column this reader expects')
-    throw e
+    throw asStoreError(e)
   } finally {
     db.close()
   }
@@ -111,8 +135,11 @@ export function openPrivateRoot(options: PrivateRootOptions = {}): PrivateRoot {
 export const MANIFEST_SLOTS = ['initial', 'added'] as const
 export type ManifestSlot = (typeof MANIFEST_SLOTS)[number]
 
-/** Why a session is left out. Each session gets the first reason that applies, in this order. */
-export const EXCLUSION_REASONS = ['child_session', 'outside_window', 'excluded_project_root', 'already_sampled', 'no_workflow_load'] as const
+/**
+ * Why a session is left out. Each session gets the first reason that applies, in this order. `unfinished`: it holds a workflow load
+ * but its last message was still being written when the manifest was frozen.
+ */
+export const EXCLUSION_REASONS = ['child_session', 'outside_window', 'excluded_project_root', 'already_sampled', 'no_workflow_load', 'unfinished'] as const
 export type ExclusionReason = (typeof EXCLUSION_REASONS)[number]
 
 /** A session's last message at the moment it was frozen: later steps read the messages up to and including it, by (time, id). */
@@ -134,18 +161,18 @@ const manifestSchema = z.strictObject({
   /** Sessions in the store when it was frozen. */
   considered: count,
   /** Sessions left out, by reason. Counts only: a session is never named here. */
-  exclusions: z.strictObject({ child_session: count, outside_window: count, excluded_project_root: count, already_sampled: count, no_workflow_load: count }),
+  exclusions: z.strictObject({ child_session: count, outside_window: count, excluded_project_root: count, already_sampled: count, no_workflow_load: count, unfinished: count }),
   /** Sessions that passed every rule, before the cap. */
   eligible: count,
-  /** The sample, in salted-hash order. */
-  sessions: z.array(z.strictObject({ id: z.string().min(1), last_message: z.strictObject({ id: z.string().min(1), time_created: z.number().int() }) })),
+  /** The sample, in salted-hash order. `content_hash` covers the session's message and part rows up to its mark. */
+  sessions: z.array(z.strictObject({ id: z.string().min(1), last_message: z.strictObject({ id: z.string().min(1), time_created: z.number().int() }), content_hash: hex64 })),
   /** sha256 of the canonical form of every other field. */
   manifest_hash: hex64,
 })
 export type Manifest = z.infer<typeof manifestSchema>
 export type ManifestSession = Manifest['sessions'][number]
 
-export type ManifestReason = 'manifest_missing' | 'manifest_invalid' | 'manifest_tampered' | 'manifest_declaration_mismatch' | 'manifest_slot_mismatch' | 'initial_manifest_missing' | 'session_cap_not_raised' | 'session_not_in_manifest'
+export type ManifestReason = 'manifest_missing' | 'manifest_invalid' | 'manifest_tampered' | 'manifest_declaration_mismatch' | 'manifest_slot_mismatch' | 'initial_manifest_missing' | 'session_cap_not_raised' | 'session_not_in_manifest' | 'session_rows_changed'
 
 export class ManifestError extends Error {
   constructor(
@@ -210,16 +237,23 @@ function windowBounds(window: Declaration['window']): { from: number; until: num
 
 const markBound = (mark: Mark) => [mark.time_created, mark.time_created, mark.id] as const
 
-/** A session holds a completed workflow-skill load among its messages up to its mark. */
+/** A session holds a completed workflow-skill load among its messages up to its mark. One existence query: no part is read into memory. */
 function holdsWorkflowLoad(db: Database, sessionId: string, mark: Mark): boolean {
-  const rows = db.query<RawPart, [string, string, number, number, string]>(WORKFLOW_LOADS_SQL.skillParts).all(sessionId, sessionId, ...markBound(mark))
-  return rows.some((row) => workflowLoadOf(row) !== null)
+  return db.query<{ found: number }, [string, string, number, number, string]>(WORKFLOW_LOADS_SQL.workflowLoad).get(sessionId, sessionId, ...markBound(mark)) !== null
+}
+
+/** A user message is whole once it is stored; an assistant message is finished when the host stamped its completion time. */
+function isFinished(messageData: string): boolean {
+  const data = parseJsonObject(messageData)
+  if (data?.role !== 'assistant') return true
+  const time = data.time
+  return typeof time === 'object' && time !== null && typeof (time as { completed?: unknown }).completed === 'number'
 }
 
 /** Sorts sessions into the eligible and, for the rest, the one reason that applies first. */
 function classify(db: Database, declaration: Declaration, alreadySampled: ReadonlySet<string>) {
   const { from, until } = windowBounds(declaration.window)
-  const exclusions: Record<ExclusionReason, number> = { child_session: 0, outside_window: 0, excluded_project_root: 0, already_sampled: 0, no_workflow_load: 0 }
+  const exclusions = Object.fromEntries(EXCLUSION_REASONS.map((reason) => [reason, 0])) as Record<ExclusionReason, number>
   const eligible: Eligible[] = []
   const rows = db.query<SessionRow, []>(WORKFLOW_LOADS_SQL.sessions).all()
   for (const row of rows) {
@@ -229,9 +263,11 @@ function classify(db: Database, declaration: Declaration, alreadySampled: Readon
     else if (underExcludedRoot(declaration, row.directory ?? '')) reason = 'excluded_project_root'
     else if (alreadySampled.has(row.id)) reason = 'already_sampled'
     if (reason === null) {
-      const last = db.query<Mark, [string]>(WORKFLOW_LOADS_SQL.lastMessage).get(row.id)
-      if (last && holdsWorkflowLoad(db, row.id, last)) eligible.push({ id: row.id, lastMessage: { id: last.id, time_created: last.time_created } })
-      else reason = 'no_workflow_load'
+      const last = db.query<Mark & { data: string }, [string]>(WORKFLOW_LOADS_SQL.lastMessage).get(row.id)
+      const mark = last ? { id: last.id, time_created: last.time_created } : null
+      if (!last || !mark || !holdsWorkflowLoad(db, row.id, mark)) reason = 'no_workflow_load'
+      else if (!isFinished(last.data)) reason = 'unfinished'
+      else eligible.push({ id: row.id, lastMessage: mark })
     }
     if (reason !== null) exclusions[reason] += 1
   }
@@ -279,10 +315,13 @@ export function freezeManifest(input: FreezeInput): { manifest: Manifest; create
     alreadySampled = new Set(initial.sessions.map((s) => s.id))
   }
 
-  const { considered, exclusions, eligible } = withStore(input.db, (db) => classify(db, pass.declaration, alreadySampled))
-  const sessions = ranked(eligible, pass.declaration.salt)
-    .slice(0, slots)
-    .map((s): ManifestSession => ({ id: s.id, last_message: s.lastMessage }))
+  const { considered, exclusions, eligible, sessions } = withStore(input.db, (db) => {
+    const classified = classify(db, pass.declaration, alreadySampled)
+    const sampled = ranked(classified.eligible, pass.declaration.salt)
+      .slice(0, slots)
+      .map((s): ManifestSession => ({ id: s.id, last_message: s.lastMessage, content_hash: contentHashOf(rowsUpToMark(db, s.id, s.lastMessage)) }))
+    return { ...classified, sessions: sampled }
+  })
   const body: Omit<Manifest, 'manifest_hash'> = {
     schema_version: 1,
     slot,
@@ -297,6 +336,29 @@ export function freezeManifest(input: FreezeInput): { manifest: Manifest; create
   const manifest: Manifest = { ...body, manifest_hash: manifestHashOf(body) }
   writePrivate(manifestPath(input.privateRoot, slot), `${JSON.stringify(manifest, null, 2)}\n`, true)
   return { manifest, created: true }
+}
+
+// ── a session's rows up to its mark ────────────────────────────────────────
+
+interface SessionRows {
+  messages: RawMessage[]
+  parts: RawPart[]
+}
+
+/** Every message and part row of a session up to and including its mark, in the host's order. The one read the hash and the walk share. */
+function rowsUpToMark(db: Database, sessionId: string, mark: Mark): SessionRows {
+  return {
+    messages: db.query<RawMessage, [string, number, number, string]>(WORKFLOW_LOADS_SQL.messages).all(sessionId, ...markBound(mark)),
+    parts: db.query<RawPart, [string, string, number, number, string]>(WORKFLOW_LOADS_SQL.parts).all(sessionId, sessionId, ...markBound(mark)),
+  }
+}
+
+/** sha256 over every row's id, owner, time and data, each row length-framed by JSON, so any change to what the walk reads changes it. */
+function contentHashOf({ messages, parts }: SessionRows): string {
+  const hash = createHash('sha256')
+  for (const m of messages) hash.update(`${JSON.stringify(['message', m.id, m.time_created, m.data])}\n`)
+  for (const p of parts) hash.update(`${JSON.stringify(['part', p.id, p.message_id, p.time_created, p.data])}\n`)
+  return hash.digest('hex')
 }
 
 // ── walking a manifest: scopes, stimuli, intervals ─────────────────────────
@@ -353,15 +415,13 @@ export interface WalkedSession {
   /** The session's first assistant message up to the mark, with its stored data (it names the model); `null` when there is none. */
   firstAssistant: RawMessage | null
   scopes: WalkedScope[]
+  /** Message and part rows up to the mark whose data is not a JSON object. They were read as no load and no stimulus. */
+  unreadableRows: number
 }
 
 const parseRole = (data: string): MessageRole => {
-  try {
-    const role = (JSON.parse(data) as { role?: unknown } | null)?.role
-    return role === 'user' || role === 'assistant' ? role : 'other'
-  } catch {
-    return 'other'
-  }
+  const role = parseJsonObject(data)?.role
+  return role === 'user' || role === 'assistant' ? role : 'other'
 }
 
 function entriesOf(messages: readonly RawMessage[], parts: readonly RawPart[]): WalkedEntry[] {
@@ -389,6 +449,8 @@ function stimulusOf(entry: WalkedEntry, tools: ReadonlySet<string>): { kind: Sti
   if (entry.role !== 'assistant') return null
   const [part] = entry.parts
   const use = part ? toolUseOfPart(part) : null
+  // a call that loads or records a method belongs to the interval it fell in, whatever the declaration lists
+  if (use && methodCallOf(use) !== null) return null
   if (part && use && tools.has(use.storedTool) && use.status !== undefined && FINISHED.has(use.status)) return { kind: 'tool_result', tool: use.storedTool, partId: part.id }
   return null
 }
@@ -401,8 +463,10 @@ interface Building {
 
 function walkSession(db: Database, declaration: Declaration, session: ManifestSession, bodies: SkillBodies): WalkedSession {
   const mark = session.last_message
-  const messages = db.query<RawMessage, [string, number, number, string]>(WORKFLOW_LOADS_SQL.messages).all(session.id, ...markBound(mark))
-  const parts = db.query<RawPart, [string, string, number, number, string]>(WORKFLOW_LOADS_SQL.parts).all(session.id, session.id, ...markBound(mark))
+  const rows = rowsUpToMark(db, session.id, mark)
+  if (contentHashOf(rows) !== session.content_hash) throw new ManifestError('session_rows_changed', 'a sampled session has stored rows that differ from the ones frozen with the manifest')
+  const { messages, parts } = rows
+  const unreadableRows = [...messages, ...parts].filter((row) => parseJsonObject(row.data) === null).length
   const entries = entriesOf(messages, parts)
   const tools = new Set(declaration.decision_bearing_tools)
 
@@ -472,7 +536,7 @@ function walkSession(db: Database, declaration: Declaration, session: ManifestSe
     }
   }
   close('session_end')
-  return { sessionId: session.id, lastMessage: mark, firstAssistant: entries.find((entry) => entry.role === 'assistant')?.message ?? null, scopes }
+  return { sessionId: session.id, lastMessage: mark, firstAssistant: entries.find((entry) => entry.role === 'assistant')?.message ?? null, scopes, unreadableRows }
 }
 
 export interface WalkInput extends GateInput {
@@ -488,10 +552,12 @@ export interface WalkInput extends GateInput {
 
 /**
  * For each session of a manifest, in manifest order: its scopes, their stimuli in stored order with the raw rows to render, and the
- * load evidence of each interval. The gate runs first. Only rows up to each session's mark are read, so the same manifest gives the
- * same walk however much the store has grown.
+ * load evidence of each interval. The gate, the manifest and `only` are checked when this is called; the store is opened when the
+ * first session is asked for, one session's rows are read per step, and the store is closed when the walk ends or is abandoned.
+ * Only rows up to each session's mark are read, so the same manifest gives the same walk however much the store has grown, and a
+ * session whose rows up to its mark no longer hash to the manifest's refuses with `session_rows_changed`.
  */
-export function walkManifest(input: WalkInput): WalkedSession[] {
+export function walkManifestEach(input: WalkInput): Generator<WalkedSession, void, undefined> {
   const pass: GatePass = assertGate(input)
   const slot = input.slot ?? 'initial'
   const manifest = readManifest(input.privateRoot, slot, pass.declarationHash)
@@ -503,5 +569,19 @@ export function walkManifest(input: WalkInput): WalkedSession[] {
   }
   const wanted = input.only ? new Set(input.only) : null
   const sessions = manifest.sessions.filter((s) => wanted === null || wanted.has(s.id))
-  return withStore(input.db, (db) => sessions.map((s) => walkSession(db, pass.declaration, s, input.skillBodies)))
+  return walkSessions(input.db, pass.declaration, sessions, input.skillBodies)
 }
+
+function* walkSessions(path: string, declaration: Declaration, sessions: readonly ManifestSession[], bodies: SkillBodies): Generator<WalkedSession, void, undefined> {
+  const db = openStore(path)
+  try {
+    for (const session of sessions) yield walkSession(db, declaration, session, bodies)
+  } catch (e) {
+    throw asStoreError(e)
+  } finally {
+    db.close()
+  }
+}
+
+/** The whole walk at once, for callers that need every session together. Large samples go through `walkManifestEach`. */
+export const walkManifest = (input: WalkInput): WalkedSession[] => [...walkManifestEach(input)]

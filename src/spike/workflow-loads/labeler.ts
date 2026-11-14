@@ -22,11 +22,11 @@ import { z } from 'zod'
 
 import { CLIPROXY_UPSTREAM, resolveCliproxy } from '../../runner/cliproxy'
 import { sha256 } from '../../runner/workspace'
-import { scanText } from '../../scan/secrets'
 import { ASSUMED_PRICE_PER_MTOK, type CompleteRequest, type CompleteResponse, cliproxyTransport } from '../feel-drugs/replay/judge'
 import { assertOutsideRepo, privateDir, writePrivate } from '../feel-drugs/replay/store'
 import { assertGate, type Declaration, type GateInput, LABELS, type Label, markingRuleHash, METHODS, type Method } from './declaration'
 import type { Chunk } from './mask'
+import { scrubFindings } from './scrub'
 import type { PrivateRoot } from './store'
 
 // ── the refusals ───────────────────────────────────────────────────────────
@@ -424,8 +424,8 @@ export interface LabelerRun {
   coverageComplete: boolean
 }
 
-/** A secret rule fires on the text. Home paths are redacted before this point, so they are not a secret here. */
-const holdsSecret = (text: string): boolean => scanText('chunk', text, 'fixture').some((finding) => finding.rule !== 'home-path')
+/** A secret rule fires on the text: the same rules the view's scrub applies, so this check cannot be weaker than the scrub. */
+const holdsSecret = (text: string): boolean => scrubFindings(text).size > 0
 
 const MAX_NONCE_DRAWS = 8
 

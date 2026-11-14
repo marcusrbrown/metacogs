@@ -603,6 +603,49 @@ describe('what reaches the model', () => {
   })
 })
 
+describe('what reaches the model: credential fields', () => {
+  // Assembled at runtime so this file holds no credential-shaped literal.
+  const VALUE = ['hunter', 'two', 'pass', 'phrase', '99'].join('')
+  const fields = [
+    `DB_PASSWORD=${VALUE}`,
+    `{"${['to', 'ken'].join('')}": "${VALUE}"}`,
+    `${['Author', 'ization'].join('')}: Bearer ${VALUE}`,
+    `Cookie: session=${VALUE}`,
+  ]
+
+  test('a chunk holding a password, JSON token, authorization header or cookie value is never sent', async () => {
+    for (const field of fields) {
+      const f = fixture()
+      const transport = scripted([])
+      const run = await labelChunks(base(f, transport, [chunkOf(['a1'], { text: `before\n${field}\nafter` })]))
+      expect(transport.requests).toHaveLength(0)
+      expect(run.results[0]?.outcome).toEqual({ status: 'failed', attempts: 0, reason: 'unscrubbed_input' })
+      expect(JSON.stringify(run)).not.toContain(VALUE)
+    }
+  })
+
+  test('a view built from a session that held such a field reaches the transport without its value', async () => {
+    const f = fixture()
+    const store = syntheticStore()
+    cleanup.push(() => store.destroy())
+    seedWorkflowSession(store, { id: 'ses_a', created: '2026-01-15' })
+    store.addText(store.addMessage('ses_a', 'user'), `please set ${fields[0]} and send ${fields[2]}`)
+    const assistant = store.addMessage('ses_a', 'assistant')
+    store.addTool(assistant, { tool: 'bash', input: { command: 'cat creds.json' }, output: `${fields[1]}\n${fields[3]}` })
+    const input = { git: f.repo.git, db: store.path, privateRoot: f.privateRoot }
+    freezeManifest(input)
+    const scope = renderSessions(walkManifest({ ...input, skillBodies: { counterfactual: ['body of counterfactual'], synthesis: ['body of synthesis'] } })).scopes[0]
+    if (!scope) throw new Error('no scope')
+    const chunks = chunkScope(scope, { budget: 100_000 })
+    const transport = scripted(chunks.map(() => reply()))
+    await labelChunks(base(f, transport, chunks))
+    expect(transport.requests.length).toBeGreaterThan(0)
+    const sent = transport.requests.map((r) => `${r.system}\n${r.user}`).join('\n')
+    expect(sent).toContain(SCRUB_PLACEHOLDER)
+    expect(sent).not.toContain(VALUE)
+  })
+})
+
 describe('what leaves in results', () => {
   test('failed and not-attempted outcomes and refusals carry codes only, never chunk text or reply text', async () => {
     const f = fixture({ retry_count: 0, spend_cap_usd: 1 })

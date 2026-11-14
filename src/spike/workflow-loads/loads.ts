@@ -4,7 +4,7 @@
  * returned skill content, or a completed direct read whose output holds the skill's whole body.
  */
 import type { RawPart } from '../feel-drugs/replay/extract'
-import { isSkillBodyRead } from '../../runner/checks'
+import { isSkillBodyRead, skillFileAccess } from '../../runner/checks'
 import { isSkillContentLoad, type ToolUse } from '../../runner/events'
 import type { Git } from '../../runner/git'
 import { METHODS, type Method } from './declaration'
@@ -21,7 +21,8 @@ export type SkillBodies = Record<Method, readonly string[]>
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 
-function parseObject(text: string): Record<string, unknown> | null {
+/** The JSON object in a stored `data` column; `null` for text that is not JSON or not an object. Never throws. */
+export function parseJsonObject(text: string): Record<string, unknown> | null {
   try {
     const value: unknown = JSON.parse(text)
     return isRecord(value) ? value : null
@@ -38,7 +39,7 @@ export interface StoredToolUse extends ToolUse {
 
 /** A stored tool part as the detectors' tool-use shape; `null` for any other part or unreadable JSON. Never throws. */
 export function toolUseOfPart(part: RawPart): StoredToolUse | null {
-  const data = parseObject(part.data)
+  const data = parseJsonObject(part.data)
   if (!data || data.type !== 'tool' || typeof data.tool !== 'string') return null
   const state = isRecord(data.state) ? data.state : {}
   const time = isRecord(state.time) ? state.time : {}
@@ -59,12 +60,42 @@ export function toolUseOfPart(part: RawPart): StoredToolUse | null {
 
 const PLUGIN_PREFIX = 'systematic:'
 
+/** Every spelling of a workflow skill's name a completed load may carry: bare, or with the plugin prefix. */
+export const WORKFLOW_SKILL_NAMES: readonly string[] = WORKFLOW_SKILLS.flatMap((skill) => [skill, `${PLUGIN_PREFIX}${skill}`])
+
 /** The workflow skill a part loaded: a completed call of a skill tool whose input names `ce:plan` or `ce:review` (the plugin's `systematic:` prefix allowed). */
 export function workflowLoadOf(part: RawPart): WorkflowSkill | null {
   const use = toolUseOfPart(part)
   if (!use || use.tool !== 'skill' || use.status !== 'completed' || !isRecord(use.input) || typeof use.input.name !== 'string') return null
   const name = use.input.name.startsWith(PLUGIN_PREFIX) ? use.input.name.slice(PLUGIN_PREFIX.length) : use.input.name
   return WORKFLOW_SKILLS.find((skill) => skill === name) ?? null
+}
+
+// ── calls that touch a method ──────────────────────────────────────────────
+
+const SKILL_TOOLS: ReadonlySet<string> = new Set(['skill', 'systematic_skill'])
+const SHELL_TOOL = 'bash'
+const NAME_BOUNDARY_PREFIX = '(?<![A-Za-z0-9])'
+const NAME_BOUNDARY_SUFFIX = '(?![A-Za-z0-9])'
+/** A method's name as a whole word, in any case. Letters and digits join a word; `_`, `-`, `/` and `:` do not. */
+export const nameRegex = (): RegExp => new RegExp(`${NAME_BOUNDARY_PREFIX}(?:${METHODS.join('|')})${NAME_BOUNDARY_SUFFIX}`, 'gi')
+/** The same name matched alone, as a leak-list entry. */
+export const wholeWordRegex = (word: string): RegExp => new RegExp(`${NAME_BOUNDARY_PREFIX}${word}${NAME_BOUNDARY_SUFFIX}`, 'i')
+const HELPER_CALL = /scripts\/record\.mjs/i
+
+/** `skill_call`: a skill tool naming a method. `file_read`: access to a method's skill file. `helper_call`: a shell call to the record helper. */
+export type MethodCall = 'skill_call' | 'file_read' | 'helper_call'
+
+/**
+ * Whether a call loads or records a method, decided from the tool's name and its input alone: a failed call and a successful one
+ * are alike. The hidden view drops these calls, and the walk never takes one for a stimulus, so a load stays in the interval it fell in.
+ */
+export function methodCallOf(use: StoredToolUse): MethodCall | null {
+  const input = isRecord(use.input) ? use.input : {}
+  if (SKILL_TOOLS.has(use.storedTool) && typeof input.name === 'string' && nameRegex().test(input.name)) return 'skill_call'
+  if (METHODS.some((method) => skillFileAccess(use, method) !== null)) return 'file_read'
+  if (use.storedTool === SHELL_TOOL && typeof input.command === 'string' && HELPER_CALL.test(input.command)) return 'helper_call'
+  return null
 }
 
 export interface LoadEvent {

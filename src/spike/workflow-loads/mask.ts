@@ -8,19 +8,19 @@
  * - A call of a skill tool naming a method, a read of a method's skill file, and a shell call to the record helper are dropped
  *   whole, from the call's input alone: a failed call and a successful one are treated alike.
  * - Everywhere else each method name and the helper's path become one neutral token.
- * - Each tool output, tool input and stimulus text goes through the secret scanner: a text with a finding is replaced and counted,
- *   except that a text whose only finding is an email address keeps its text and loses the addresses. Then path redaction, then a
+ * - Each tool output, tool input and stimulus text goes through the scrub rules (`scrub.ts`: the secret scanner's stricter rules and
+ *   credential fields such as `password=…`): a text with a finding is replaced and counted, except that a text whose only finding is
+ *   an email address keeps its text and loses the addresses. Then path redaction (the current home, then any absolute path), then a
  *   length bound.
  */
 import { existsSync, readdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { scanText } from '../../scan/secrets'
-import { skillFileAccess } from '../../runner/checks'
 import { redactPaths } from '../feel-drugs/sheet'
 import { assertOutsideRepo, privateDir, writePrivate } from '../feel-drugs/replay/store'
 import { assertGate, type GateInput, METHODS } from './declaration'
-import { type StoredToolUse, toolUseOfPart, type WorkflowSkill } from './loads'
+import { type MethodCall, methodCallOf, nameRegex, type StoredToolUse, toolUseOfPart, type WorkflowSkill, wholeWordRegex } from './loads'
+import { redactAbsolutePaths, scrubFindings } from './scrub'
 import type { ManifestSlot, PrivateRoot, StimulusKind, WalkedEntry, WalkedSession } from './store'
 
 // ── rules ──────────────────────────────────────────────────────────────────
@@ -47,17 +47,12 @@ export const RENDER_LIMITS = { stimulus: 4000, input: 1500, output: 2000, traffi
 /** Preceding stimuli shown with a stimulus when a caller does not say. */
 export const DEFAULT_CONTEXT = 3
 
-const SKILL_TOOLS: ReadonlySet<string> = new Set(['skill', 'systematic_skill'])
-const SHELL_TOOL = 'bash'
-const NAME_BOUNDARY_PREFIX = '(?<![A-Za-z0-9])'
-const NAME_BOUNDARY_SUFFIX = '(?![A-Za-z0-9])'
-/** A method's name as a whole word, in any case. Letters and digits join a word; `_`, `-`, `/` and `:` do not. */
-const nameRegex = (): RegExp => new RegExp(`${NAME_BOUNDARY_PREFIX}(?:${METHODS.join('|')})${NAME_BOUNDARY_SUFFIX}`, 'gi')
 /** A path token ending in the helper's file name. */
 const HELPER_PATH = /[^\s"'`<>(),;|&]*record\.mjs/gi
-const HELPER_CALL = /scripts\/record\.mjs/i
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
+
+export { PATH_PLACEHOLDER } from './scrub'
 
 // ── what the view holds ────────────────────────────────────────────────────
 
@@ -110,10 +105,8 @@ interface Renderer {
 /** The scanner's address shape. The scanner reports lines, not positions, so addresses are replaced with this pattern. */
 const EMAIL_ADDRESS = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g
 
-/** The scanner's rules that fire on a text, other than a home path, which path redaction handles without losing the text. */
-const findingRules = (text: string): Set<string> => new Set(scanText('view', text, 'fixture').map((finding) => finding.rule).filter((rule) => rule !== 'home-path'))
-
-const redact = (text: string): string => redactPaths(text, { workspaces: [], homes: [] })
+/** The current home first, then any other absolute path. */
+const redact = (text: string): string => redactAbsolutePaths(redactPaths(text, { workspaces: [], homes: [] }))
 
 function truncate(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, Math.max(0, max - TRUNCATION_MARKER.length))}${TRUNCATION_MARKER}`
@@ -128,7 +121,7 @@ type Counter = keyof ViewCounters
 
 /** Scan, tokenize, redact paths, bound: in that order, so a secret is found in the whole text and a cut never half-hides one. */
 function finish(text: string, counter: Counter, limit: number, renderer: Renderer): string {
-  const rules = findingRules(text)
+  const rules = scrubFindings(text)
   // any finding but an address withholds the whole text; an address alone only loses the address
   if ([...rules].some((rule) => rule !== 'email')) {
     renderer.counters[counter] += 1
@@ -151,13 +144,12 @@ const stringifyInput = (input: unknown): string => {
   }
 }
 
+const DROP_RULE: Record<MethodCall, MaskRule> = { skill_call: 'drop_method_skill_calls', file_read: 'drop_method_file_reads', helper_call: 'drop_helper_calls' }
+
 /** Whether a call is one the view drops, decided from the tool's name and its input only. */
 function droppedBy(use: StoredToolUse): MaskRule | null {
-  const input = isRecord(use.input) ? use.input : {}
-  if (SKILL_TOOLS.has(use.storedTool) && typeof input.name === 'string' && nameRegex().test(input.name)) return 'drop_method_skill_calls'
-  if (METHODS.some((method) => skillFileAccess(use, method) !== null)) return 'drop_method_file_reads'
-  if (use.storedTool === SHELL_TOOL && typeof input.command === 'string' && HELPER_CALL.test(input.command)) return 'drop_helper_calls'
-  return null
+  const call = methodCallOf(use)
+  return call === null ? null : DROP_RULE[call]
 }
 
 /** One tool call as text, or `null` when the view drops it. */
@@ -223,15 +215,24 @@ function renderScope(session: WalkedSession, scopeIndex: number, renderer: Rende
   }
 }
 
-/** Renders every scope of the given sessions. Pure and ungated: `buildHiddenView` is the gated entry for real runs. */
-export function renderSessions(sessions: readonly WalkedSession[], options: MaskOptions = {}): RenderedSessions {
+/**
+ * Renders every scope of the given sessions, one session at a time: a walk read once is enough, and a session's raw rows are not
+ * held after its scopes are rendered. Pure and ungated: `buildHiddenView` is the gated entry for real runs.
+ */
+export function renderSessions(sessions: Iterable<WalkedSession>, options: MaskOptions = {}): RenderedSessions {
   const renderer: Renderer = { off: new Set(options.disable ?? []), counters: { scrubbedOutputs: 0, scrubbedInputs: 0, scrubbedStimuli: 0, redactedEmails: 0 } }
-  const scopes = sessions.flatMap((session) => session.scopes.flatMap((_, index) => renderScope(session, index, renderer) ?? []))
+  const scopes: HiddenScope[] = []
+  for (const session of sessions) {
+    for (const index of session.scopes.keys()) {
+      const scope = renderScope(session, index, renderer)
+      if (scope) scopes.push(scope)
+    }
+  }
   return { scopes, counters: renderer.counters }
 }
 
 export interface BuildViewInput extends GateInput {
-  sessions: readonly WalkedSession[]
+  sessions: Iterable<WalkedSession>
   options?: MaskOptions
 }
 
@@ -372,7 +373,7 @@ export interface LeakHit {
 /** The leak-list entries present in a text, each once. A hit names the entry, never an excerpt. Method names match as whole words, as the masking does. */
 export function scanLeaks(text: string): LeakHit[] {
   const lower = text.toLowerCase()
-  return LEAK_LIST.filter((entry) => (entry.kind === 'method' ? new RegExp(`${NAME_BOUNDARY_PREFIX}${entry.text}${NAME_BOUNDARY_SUFFIX}`, 'i').test(text) : lower.includes(entry.text.toLowerCase()))).map(
+  return LEAK_LIST.filter((entry) => (entry.kind === 'method' ? wholeWordRegex(entry.text).test(text) : lower.includes(entry.text.toLowerCase()))).map(
     (entry): LeakHit => ({ kind: entry.kind, entry: entry.text }),
   )
 }
@@ -389,10 +390,10 @@ export interface AuditResult {
   hits: AuditHit[]
 }
 
-/** Renders the sessions and scans every rendered stimulus text and tool call for the leak list. Passes when there is no hit. */
-export function auditLeaks(sessions: readonly WalkedSession[], options: MaskOptions = {}): AuditResult {
+/** Scans already rendered scopes, every stimulus text and tool call, for the leak list. Passes when there is no hit. */
+export function auditRendered(scopes: readonly HiddenScope[]): AuditResult {
   const hits: AuditHit[] = []
-  for (const scope of renderSessions(sessions, options).scopes) {
+  for (const scope of scopes) {
     for (const stimulus of scope.stimuli) {
       const fields = [
         ['text', stimulus.text],
@@ -403,3 +404,6 @@ export function auditLeaks(sessions: readonly WalkedSession[], options: MaskOpti
   }
   return { ok: hits.length === 0, hits }
 }
+
+/** Renders the sessions and scans what was rendered. Passes when there is no hit. */
+export const auditLeaks = (sessions: Iterable<WalkedSession>, options: MaskOptions = {}): AuditResult => auditRendered(renderSessions(sessions, options).scopes)

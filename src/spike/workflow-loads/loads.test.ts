@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process'
 
 import type { RawPart } from '../feel-drugs/replay/extract'
 import { hermeticGitEnv, TestRepo } from '../../runner/test-support'
-import { collectSkillBodies, intervalEvidence, type LoadEvent, loadEvents, type SkillBodies, toolUseOfPart, workflowLoadOf } from './loads'
+import { collectSkillBodies, intervalEvidence, type LoadEvent, loadEvents, methodCallOf, parseJsonObject, type SkillBodies, toolUseOfPart, workflowLoadOf } from './loads'
 import { numberedRead, skillOutput } from './test-support'
 
 let seq = 0
@@ -40,6 +40,37 @@ describe('toolUseOfPart', () => {
     expect(toolUseOfPart(part('[]'))).toBeNull()
     expect(toolUseOfPart(part({ type: 'tool', tool: 'read' }))).toMatchObject({ tool: 'read', status: undefined, output: undefined })
     expect(toolUseOfPart(part({ type: 'tool', state: {} }))).toBeNull()
+  })
+})
+
+describe('methodCallOf', () => {
+  const kindOf = (p: RawPart) => {
+    const use = toolUseOfPart(p)
+    return use ? methodCallOf(use) : 'no tool use'
+  }
+
+  test('a call that loads or records a method is classified from its input alone, whatever its status or output', () => {
+    expect(kindOf(skillCall('counterfactual'))).toBe('skill_call')
+    expect(kindOf(skillCall('systematic:synthesis', 'systematic_skill', 'error', 'boom'))).toBe('skill_call')
+    expect(kindOf(skillCall('Counterfactual', 'skill', 'running', ''))).toBe('skill_call')
+    expect(kindOf(read('/pkg/skills/synthesis/SKILL.md', 'partial'))).toBe('file_read')
+    expect(kindOf(toolPart('bash', { command: 'cat skills/counterfactual/SKILL.md' }, 'x'))).toBe('file_read')
+    expect(kindOf(toolPart('bash', { command: 'node skills/synthesis/scripts/record.mjs < in.json' }, 'x', 'error'))).toBe('helper_call')
+  })
+
+  test('any other call is none, including a workflow skill, another file and another shell command', () => {
+    expect(kindOf(skillCall('ce:plan'))).toBeNull()
+    expect(kindOf(read('src/a.ts', 'x'))).toBeNull()
+    expect(kindOf(toolPart('bash', { command: 'ls' }, 'x'))).toBeNull()
+    expect(kindOf(toolPart('bash', {}, 'x'))).toBeNull()
+    expect(kindOf(toolPart('task', { prompt: 'use the counterfactual method' }, 'x'))).toBeNull()
+  })
+})
+
+describe('parseJsonObject', () => {
+  test('is the object for an object, and null for anything else, without throwing', () => {
+    expect(parseJsonObject('{"a":1}')).toEqual({ a: 1 })
+    for (const text of ['', 'not json', 'null', '[1]', '"s"', '3', '{broken']) expect(parseJsonObject(text)).toBeNull()
   })
 })
 

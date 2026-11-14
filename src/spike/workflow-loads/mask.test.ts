@@ -9,6 +9,7 @@ import { GateRefusal, MARKING_RULE_PATH, METHODS } from './declaration'
 import type { SkillBodies } from './loads'
 import {
   auditLeaks,
+  auditRendered,
   buildHiddenView,
   deleteHiddenViews,
   type Chunk,
@@ -19,6 +20,7 @@ import {
   LEAK_LIST,
   MASK_RULES,
   METHOD_TOKEN,
+  PATH_PLACEHOLDER,
   RENDER_LIMITS,
   type RenderedStimulus,
   renderSessions,
@@ -55,8 +57,8 @@ const FIXTURE_ONLY_SECRETS: Record<string, string> = {
   'pem-private-key': ['-----BEGIN RSA ', 'PRIVATE KEY-----'].join(''),
 }
 
-function fixture() {
-  const { repo, declaration } = gatedRepo()
+function fixture(overrides: Parameters<typeof gatedRepo>[0] = {}) {
+  const { repo, declaration } = gatedRepo(overrides)
   const store = syntheticStore()
   const dir = mkdtempSync(join(tmpdir(), 'metacogs-workflow-loads-mask-'))
   const privateRoot = openPrivateRoot({ root: join(dir, 'state') })
@@ -136,6 +138,30 @@ describe('what the view shows and withholds', () => {
     const asText = (stimuli: RenderedStimulus[] = []) => stimuli.map((_, i) => renderWithContext(stimuli, i)).join('\n=====\n')
     const neutral = (stimuli: RenderedStimulus[] = []) => stimuli.reduce((text, s, i) => text.split(s.id).join(`ID${i}`), asText(stimuli))
     expect(neutral(withCall)).toBe(neutral(without))
+  })
+
+  test('with read decision-bearing, a session with a direct skill-file read renders exactly as the same session without it, and has no empty stimulus', () => {
+    const f = fixture({ decision_bearing_tools: ['read'] })
+    const shape = (id: string, withSkillRead: boolean) => {
+      scoped(f.store, id, [
+        {
+          user: 'plan the cache layer',
+          turn: (a) => {
+            f.store.addRead(a, 'src/cache.ts', 'export const cache = 1')
+            if (withSkillRead) f.store.addRead(a, '/opt/pkg/skills/synthesis/SKILL.md', BODIES.synthesis[0] ?? '')
+            f.store.addRead(a, 'src/other.ts', 'export const other = 2')
+          },
+        },
+      ])
+    }
+    shape('ses_with', true)
+    shape('ses_without', false)
+    const sessions = walk(f)
+    const [withRead, without] = [sessionOf(sessions, 'ses_with'), sessionOf(sessions, 'ses_without')].map((s) => renderSessions([s]).scopes[0]?.stimuli ?? [])
+    expect(withRead?.length).toBe(3)
+    expect(withRead?.every((s) => s.text.trim() !== '' && !s.text.includes('<method>'))).toBe(true)
+    const bare = (stimuli: RenderedStimulus[] = []) => stimuli.map(({ id: _id, ...rest }) => rest)
+    expect(bare(withRead)).toEqual(bare(without))
   })
 
   test('no assistant prose, text or reasoning, survives in any interval; user text and tool traffic do', () => {
@@ -838,5 +864,124 @@ describe('the audit', () => {
 
   test('scans the sessions it is given and nothing else: no sessions, no hits', () => {
     expect(auditLeaks([])).toEqual({ ok: true, hits: [] })
+  })
+})
+
+describe('rendering from a walk that is read once', () => {
+  /** The walk as a one-shot generator: a second pass over it would find nothing. */
+  function* once(sessions: readonly WalkedSession[]): Generator<WalkedSession> {
+    yield* sessions
+  }
+
+  test('rendering, building and auditing take a one-shot walk and give what an array gives', () => {
+    const f = fixture()
+    scoped(f.store, 'ses_a', [{ user: 'first', turn: (a) => f.store.addTool(a, { tool: 'bash', input: { command: 'ls' }, output: `key ${PLANTED}` }) }, { user: 'second' }])
+    scoped(f.store, 'ses_b', [{ user: 'third' }])
+    const sessions = walk(f)
+    expect(renderSessions(once(sessions))).toEqual(renderSessions(sessions))
+    expect(buildHiddenView({ git: f.repo.git, sessions: once(sessions) })).toEqual(buildHiddenView({ git: f.repo.git, sessions }))
+    expect(auditLeaks(once(sessions))).toEqual(auditLeaks(sessions))
+    expect(renderSessions(once(sessions)).scopes).toHaveLength(2)
+  })
+
+  test('a rendered view can be audited without walking again', () => {
+    const f = fixture()
+    scoped(f.store, 'ses_a', [{ user: 'one' }])
+    const sessions = walk(f)
+    const view = buildHiddenView({ git: f.repo.git, sessions })
+    expect(auditRendered(view.scopes)).toEqual(auditLeaks(sessions))
+    const leaky = { ...view.scopes[0], stimuli: [{ id: 'x', kind: 'user_message' as const, text: 'run the synthesis now', traffic: [] }] } as HiddenScope
+    expect(auditRendered([leaky]).ok).toBe(false)
+  })
+})
+
+describe('the scrub: credential fields', () => {
+  // Assembled at runtime so this file holds no credential-shaped literal.
+  const VALUE = ['hunter', 'two', 'pass', 'phrase', '99'].join('')
+  const JSON_VALUE = ['tok', 'en', 'ValueQ7', 'x'].join('')
+  const COOKIE_VALUE = ['sess', 'ion', '=', 'abc', 'def', '123'].join('')
+  const BEARER = ['Bear', 'er ', 'zq9Xw', '3Lm5Rt'].join('')
+
+  const planted: [string, string][] = [
+    ['a password field', `DB_PASSWORD=${VALUE}`],
+    ['a quoted JSON token field', `{"${['to', 'ken'].join('')}": "${JSON_VALUE}"}`],
+    ['an Authorization header', `${['Author', 'ization'].join('')}: ${BEARER}`],
+    ['a cookie header', `Cookie: ${COOKIE_VALUE}`],
+  ]
+
+  test.each(planted)('%s in a tool output is withheld and counted, and never reaches the view', (_name, text) => {
+    const f = fixture()
+    scoped(f.store, 'ses_a', [
+      {
+        user: 'go',
+        turn: (a) => {
+          f.store.addTool(a, { tool: 'bash', input: { command: 'cat config' }, output: `before\n${text}\nafter` })
+          f.store.addTool(a, { tool: 'bash', input: { command: 'ls' }, output: 'CLEAN_OUTPUT_MARKER' })
+        },
+      },
+    ])
+    const rendered = renderSessions([sessionOf(walk(f), 'ses_a')])
+    const traffic = rendered.scopes[0]?.stimuli[0]?.traffic ?? []
+    expect(traffic[0]).toContain(SCRUB_PLACEHOLDER)
+    expect(traffic[0]).not.toContain('before')
+    expect(traffic[1]).toContain('CLEAN_OUTPUT_MARKER')
+    expect(rendered.counters).toEqual({ scrubbedOutputs: 1, scrubbedInputs: 0, scrubbedStimuli: 0, redactedEmails: 0 })
+    const shown = JSON.stringify(rendered)
+    for (const secret of [VALUE, JSON_VALUE, COOKIE_VALUE, BEARER]) expect(shown).not.toContain(secret)
+  })
+
+  test('the same fields in a user message and in a tool input are withheld under their own counters', () => {
+    const f = fixture()
+    scoped(f.store, 'ses_a', [{ user: `set ${planted[0]?.[1]} in the env`, turn: (a) => f.store.addTool(a, { tool: 'bash', input: { command: `curl -H "${planted[2]?.[1]}" localhost` }, output: 'ok' }) }])
+    const rendered = renderSessions([sessionOf(walk(f), 'ses_a')])
+    const [stimulus] = rendered.scopes[0]?.stimuli ?? []
+    expect(stimulus?.text).toBe(SCRUB_PLACEHOLDER)
+    expect(stimulus?.traffic[0]).toContain(SCRUB_PLACEHOLDER)
+    expect(rendered.counters).toMatchObject({ scrubbedInputs: 1, scrubbedStimuli: 1 })
+    const shown = JSON.stringify(rendered)
+    for (const secret of [VALUE, BEARER]) expect(shown).not.toContain(secret)
+  })
+
+  test('a field name without a value, or a placeholder value, is not a finding', () => {
+    const f = fixture()
+    scoped(f.store, 'ses_a', [{ user: 'rotate the password and the token; max_tokens: 4096; author: a colleague; password: <redacted>; token=$TOKEN', turn: (a) => f.store.addTool(a, { tool: 'bash', input: { command: 'ls' }, output: 'PWD=/work/app' }) }])
+    const rendered = renderSessions([sessionOf(walk(f), 'ses_a')])
+    expect(rendered.scopes[0]?.stimuli[0]?.text).toContain('max_tokens: 4096')
+    expect(rendered.counters).toEqual({ scrubbedOutputs: 0, scrubbedInputs: 0, scrubbedStimuli: 0, redactedEmails: 0 })
+  })
+})
+
+describe('the scrub: absolute paths', () => {
+  const text = (id: string): string => {
+    const f = fixture()
+    scoped(f.store, 'ses_a', [
+      {
+        user: 'open /tmp/x/y and /Volumes/w/z and /home/other/a, then C:\\Users\\x\\notes.txt and ~/notes/a.md',
+        turn: (a) => f.store.addTool(a, { tool: 'read', input: { filePath: '/srv/data/file.txt' }, output: `<path>/srv/data/file.txt</path>\nsee https://example.invalid/a/b and src/lib/util.ts and ${id}` }),
+      },
+    ])
+    return everything(render(f, 'ses_a'))
+  }
+
+  test('a path outside the home is redacted wherever it is: POSIX, a drive path and a path under the home shorthand', () => {
+    const shown = text('x')
+    for (const path of ['/tmp/x/y', '/Volumes/w/z', '/home/other/a', 'C:\\Users\\x', '~/notes/a.md', '/srv/data/file.txt']) expect(shown).not.toContain(path)
+    expect(shown).not.toContain('notes.txt')
+    expect(shown).toContain(PATH_PLACEHOLDER)
+  })
+
+  test('a URL path, a relative path and a path under a placeholder are kept', () => {
+    const shown = text('<home>/work/app/a.ts')
+    expect(shown).toContain('https://example.invalid/a/b')
+    expect(shown).toContain('src/lib/util.ts')
+    expect(shown).toContain('<home>/work/app/a.ts')
+  })
+
+  test('a path in a tool input is redacted in its quoted JSON form', () => {
+    const f = fixture()
+    scoped(f.store, 'ses_a', [{ user: 'go', turn: (a) => f.store.addTool(a, { tool: 'bash', input: { command: 'ls /opt/data/logs', cwd: 'C:\\Users\\x\\proj' }, output: 'ok' }) }])
+    const traffic = render(f, 'ses_a').stimuli[0]?.traffic.join('\n') ?? ''
+    expect(traffic).not.toMatch(/\/opt\/data|Users/)
+    expect(traffic).toContain(`ls ${PATH_PLACEHOLDER}`)
   })
 })

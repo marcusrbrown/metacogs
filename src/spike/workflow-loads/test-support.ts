@@ -66,7 +66,10 @@ export interface SyntheticStore {
   db: Database
   /** `created` is epoch milliseconds or a `YYYY-MM-DD` day (noon UTC). */
   addSession(input: { id: string; created: string | number; directory?: string; parent?: string }): void
-  /** Appends a message to a session; ids and times only ever increase. `extra` adds keys to the stored message data (a model, say). */
+  /**
+   * Appends a message to a session; ids and times only ever increase. `extra` adds keys to the stored message data (a model, say).
+   * An assistant message is stored as finished (`time.completed` set) unless `extra.time` says otherwise.
+   */
   addMessage(session: string, role: 'user' | 'assistant', extra?: Record<string, unknown>): string
   /** Appends a part (its JSON `data`) to a message. */
   addPart(message: string, data: Record<string, unknown>): string
@@ -126,7 +129,8 @@ export function syntheticStore(options: { omitTable?: 'session' | 'message' | 'p
       const id = next('msg')
       sessionOfMessage.set(id, session)
       clock += 1
-      db.run('INSERT INTO message VALUES (?, ?, ?, ?, ?)', [id, session, clock, clock, JSON.stringify({ role, ...extra })])
+      const finished = role === 'assistant' ? { time: { created: clock, completed: clock } } : {}
+      db.run('INSERT INTO message VALUES (?, ?, ?, ?, ?)', [id, session, clock, clock, JSON.stringify({ role, ...finished, ...extra })])
       return id
     },
     addPart(message, data) {

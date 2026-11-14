@@ -17,6 +17,7 @@ import {
   readManifest,
   StoreError,
   walkManifest,
+  walkManifestEach,
   WORKFLOW_LOADS_SQL,
 } from './store'
 import { EXCLUDED_ROOT, gatedRepo, SAMPLE_SALT, SENTINEL, seedWorkflowSession, type SyntheticStore, syntheticStore } from './test-support'
@@ -121,7 +122,7 @@ describe('freezeManifest', () => {
     const s = simpleSession(f.store, 'ses_a')
     const { manifest, created } = freezeManifest(f.input)
     expect(created).toBe(true)
-    expect(manifest.sessions).toEqual([{ id: 'ses_a', last_message: { id: s.assistant2, time_created: messageTime(f.store, s.assistant2) } }])
+    expect(manifest.sessions).toEqual([{ id: 'ses_a', last_message: { id: s.assistant2, time_created: messageTime(f.store, s.assistant2) }, content_hash: expect.stringMatching(/^[0-9a-f]{64}$/) }])
     expect(manifest.slot).toBe('initial')
     expect(manifest.eligible).toBe(1)
     expect(manifest.considered).toBe(1)
@@ -176,8 +177,31 @@ describe('freezeManifest', () => {
     const { manifest } = freezeManifest(f.input)
     expect(manifest.sessions.map((s) => s.id).sort()).toEqual(['ses_ok', 'ses_ok_nested'])
     expect(manifest.considered).toBe(9)
-    expect(manifest.exclusions).toEqual({ child_session: 1, outside_window: 2, excluded_project_root: 2, no_workflow_load: 2, already_sampled: 0 })
+    expect(manifest.exclusions).toEqual({ child_session: 1, outside_window: 2, excluded_project_root: 2, no_workflow_load: 2, already_sampled: 0, unfinished: 0 })
     expect(manifest.eligible).toBe(2)
+  })
+
+  test('a session whose last assistant message is not finished at freeze is excluded as unfinished, not sampled', () => {
+    const f = fixture()
+    simpleSession(f.store, 'ses_done')
+    simpleSession(f.store, 'ses_running')
+    f.store.addText(f.store.addMessage('ses_running', 'assistant', { time: { created: 1 } }), 'still working')
+    const { manifest } = freezeManifest(f.input)
+    expect(manifest.sessions.map((s) => s.id)).toEqual(['ses_done'])
+    expect(manifest.exclusions.unfinished).toBe(1)
+    expect(manifest.eligible).toBe(1)
+    expect(manifest.considered).toBe(2)
+  })
+
+  test('a session that ends on a user message is finished; an unfinished one with no workflow load is counted as having none', () => {
+    const f = fixture()
+    seedWorkflowSession(f.store, { id: 'ses_user_last', created: '2026-01-15' })
+    f.store.addText(f.store.addMessage('ses_user_last', 'user'), 'one more thing')
+    f.store.addSession({ id: 'ses_plain_running', created: '2026-01-15' })
+    f.store.addText(f.store.addMessage('ses_plain_running', 'assistant', { time: { created: 1 } }), 'typing')
+    const { manifest } = freezeManifest(f.input)
+    expect(manifest.sessions.map((s) => s.id)).toEqual(['ses_user_last'])
+    expect(manifest.exclusions).toMatchObject({ unfinished: 0, no_workflow_load: 1 })
   })
 
   test('the window is inclusive UTC calendar days at both ends', () => {
@@ -348,6 +372,96 @@ describe('manifest integrity', () => {
     } catch (e) {
       expect((e as ManifestError).reason).toBe('manifest_missing')
     }
+  })
+})
+
+const manifestReasonOf = (fn: () => unknown): string => {
+  try {
+    fn()
+  } catch (e) {
+    if (e instanceof ManifestError) return e.reason
+    throw e
+  }
+  return 'no refusal'
+}
+
+describe('the rows of a sampled session are frozen with it', () => {
+  test('the manifest holds a content hash for each sampled session, and an unchanged session walks', () => {
+    const f = fixture()
+    simpleSession(f.store, 'ses_a')
+    simpleSession(f.store, 'ses_b')
+    const { manifest } = freezeManifest(f.input)
+    const hashes = manifest.sessions.map((s) => s.content_hash)
+    expect(hashes.every((hash) => /^[0-9a-f]{64}$/.test(hash))).toBe(true)
+    expect(new Set(hashes).size).toBe(2)
+    expect(walkManifest(walkInput(f))).toHaveLength(2)
+  })
+
+  test('a part added to the last message after freeze makes the next walk refuse', () => {
+    const f = fixture()
+    const s = simpleSession(f.store, 'ses_a')
+    freezeManifest(f.input)
+    f.store.addText(s.assistant2, 'a late addition')
+    expect(manifestReasonOf(() => walkManifest(walkInput(f)))).toBe('session_rows_changed')
+    expect(manifestReasonOf(() => walkManifest(walkInput(f, { only: ['ses_a'] })))).toBe('session_rows_changed')
+  })
+
+  test('a part of the last message updated after freeze makes the next walk refuse', () => {
+    const f = fixture()
+    const s = simpleSession(f.store, 'ses_a')
+    freezeManifest(f.input)
+    const part = f.store.db.query<{ id: string }, [string]>('SELECT id FROM part WHERE message_id = ?').get(s.assistant2)
+    f.store.db.run('UPDATE part SET data = ? WHERE id = ?', [JSON.stringify({ type: 'text', text: 'rewritten' }), part?.id ?? ''])
+    expect(manifestReasonOf(() => walkManifest(walkInput(f)))).toBe('session_rows_changed')
+  })
+
+  test('a part of an earlier message changed, or a message row changed, after freeze makes the next walk refuse', () => {
+    const f = fixture()
+    const s = simpleSession(f.store, 'ses_a')
+    freezeManifest(f.input)
+    const earlier = f.store.db.query<{ id: string }, [string]>('SELECT id FROM part WHERE message_id = ?').get(s.user)
+    f.store.db.run('UPDATE part SET data = ? WHERE id = ?', [JSON.stringify({ type: 'text', text: 'rewritten' }), earlier?.id ?? ''])
+    expect(manifestReasonOf(() => walkManifest(walkInput(f)))).toBe('session_rows_changed')
+    f.store.db.run('UPDATE part SET data = ? WHERE id = ?', [JSON.stringify({ type: 'text', text: 'start the workflow' }), earlier?.id ?? ''])
+    expect(manifestReasonOf(() => walkManifest(walkInput(f)))).toBe('no refusal')
+    f.store.db.run('UPDATE message SET data = ? WHERE id = ?', [JSON.stringify({ role: 'user', agent: 'other' }), s.user])
+    expect(manifestReasonOf(() => walkManifest(walkInput(f)))).toBe('session_rows_changed')
+  })
+
+  test('rows past the mark do not change the hash: a later message does not make the walk refuse', () => {
+    const f = fixture()
+    simpleSession(f.store, 'ses_a')
+    freezeManifest(f.input)
+    f.store.addText(f.store.addMessage('ses_a', 'user'), 'a later question')
+    expect(manifestReasonOf(() => walkManifest(walkInput(f)))).toBe('no refusal')
+  })
+
+  test('the refusal is per session and names neither a session nor any text', () => {
+    const f = fixture()
+    const a = simpleSession(f.store, 'ses_a')
+    simpleSession(f.store, 'ses_b')
+    freezeManifest(f.input)
+    f.store.addText(a.assistant2, 'LATE_TEXT_MARKER')
+    try {
+      walkManifest(walkInput(f))
+      throw new Error('expected a refusal')
+    } catch (e) {
+      expect(e).toBeInstanceOf(ManifestError)
+      expect((e as Error).message).not.toMatch(/ses_a|ses_b|LATE_TEXT_MARKER/)
+    }
+    // the other session still walks on its own
+    expect(walkManifest(walkInput(f, { only: ['ses_b'] })).map((s) => s.sessionId)).toEqual(['ses_b'])
+  })
+
+  test('the hash also guards the added slot', () => {
+    const f = fixture({ session_cap: 1 })
+    for (const id of ['ses_a', 'ses_b']) simpleSession(f.store, id)
+    freezeManifest(f.input)
+    recordDeviation({ git: f.repo.git, entry: { code: 'session_cap_raise', reason: 'more sessions', session_cap: 2 } })
+    const added = freezeManifest({ ...f.input, slot: 'added' }).manifest.sessions[0]
+    const last = f.store.db.query<{ id: string }, [string]>('SELECT id FROM message WHERE session_id = ? ORDER BY time_created DESC, id DESC LIMIT 1').get(added?.id ?? '')
+    f.store.addText(last?.id ?? '', 'late')
+    expect(manifestReasonOf(() => walkManifest(walkInput(f, { slot: 'added' })))).toBe('session_rows_changed')
   })
 })
 
@@ -706,16 +820,54 @@ describe('walkManifest: stimuli, scopes and intervals', () => {
     expect(session!.scopes[0]!.stimuli[0]!.loads.counterfactual).toMatchObject({ loaded: false, loadedEarlier: true })
   })
 
-  test('a stimulus that is itself a load is not counted in its own interval or as earlier for itself, only as earlier for the next stimulus', () => {
+  test('a call that loads a method is never a stimulus, whatever the declaration says: with read decision-bearing, a skill-file read is no stimulus and counts as earlier for the next one', () => {
     const f = fixture({ decision_bearing_tools: ['read'] })
     scene(f, 'ses_a', ({ assistant }) => {
       f.store.addRead(assistant, '/pkg/skills/synthesis/SKILL.md', BODIES.synthesis[0]!)
       f.store.addRead(assistant, '/pkg/notes.txt', 'plain notes')
     })
     const [session] = freezeAndWalk(f)
-    const [own, next] = session!.scopes[0]!.stimuli
-    expect(own!.loads.synthesis).toMatchObject({ loaded: false, loadedEarlier: false })
-    expect(next!.loads.synthesis).toMatchObject({ loaded: false, loadedEarlier: true })
+    const stimuli = session!.scopes[0]!.stimuli
+    expect(stimuli.map((s) => s.tool)).toEqual(['read'])
+    expect(stimuli[0]!.loads.synthesis).toMatchObject({ loaded: false, loadedEarlier: true })
+  })
+
+  test('with read decision-bearing, a direct skill-file read after a stimulus is a load in that stimulus\'s interval', () => {
+    const f = fixture({ decision_bearing_tools: ['read'] })
+    let notes = ''
+    let more = ''
+    let skillRead = ''
+    scene(f, 'ses_a', ({ assistant }) => {
+      notes = f.store.addRead(assistant, '/pkg/notes.txt', 'plain notes')
+      skillRead = f.store.addRead(assistant, '/pkg/skills/synthesis/SKILL.md', BODIES.synthesis[0]!)
+      more = f.store.addRead(assistant, '/pkg/more.txt', 'more notes')
+    })
+    const [session] = freezeAndWalk(f)
+    const [first, second] = session!.scopes[0]!.stimuli
+    expect(first!.partId).toBe(notes)
+    expect(second!.partId).toBe(more)
+    expect(first!.after.flatMap((e) => e.parts.map((p) => p.id))).toEqual([skillRead])
+    expect(first!.loads.synthesis).toMatchObject({ loaded: true, basis: 'direct_read', loadedEarlier: false })
+    expect(second!.loads.synthesis).toMatchObject({ loaded: false, loadedEarlier: true })
+  })
+
+  test('a skill call, a skill-file read by shell and a record-helper call are not stimuli either, with their tools declared decision-bearing', () => {
+    const f = fixture({ decision_bearing_tools: ['skill', 'systematic_skill', 'bash', 'read'] })
+    let first = ''
+    let last = ''
+    scene(f, 'ses_a', ({ assistant }) => {
+      first = f.store.addTool(assistant, { tool: 'bash', input: { command: 'ls src' }, output: 'a.ts' })
+      f.store.addSkillCall(assistant, 'counterfactual', { tool: 'systematic_skill' })
+      f.store.addTool(assistant, { tool: 'bash', input: { command: 'cat skills/synthesis/SKILL.md' }, output: 'body of synthesis' })
+      f.store.addTool(assistant, { tool: 'bash', input: { command: 'node skills/counterfactual/scripts/record.mjs < in.json' }, output: 'recorded' })
+      f.store.addTool(assistant, { tool: 'skill', input: { name: 'counterfactual' }, output: 'boom', status: 'error' })
+      last = f.store.addTool(assistant, { tool: 'bash', input: { command: 'ls docs' }, output: 'b.md' })
+    })
+    const [session] = freezeAndWalk(f)
+    const stimuli = session!.scopes[0]!.stimuli
+    expect(stimuli.map((s) => s.partId)).toEqual([first, last])
+    expect(stimuli[0]!.after).toHaveLength(4)
+    expect(stimuli[0]!.loads.counterfactual.loaded).toBe(true)
   })
 
   test('messages added to a session after the manifest was written are not read', () => {
@@ -808,6 +960,25 @@ describe('walkManifest: stimuli, scopes and intervals', () => {
     expect(() => walkManifest(walkInput(f))).toThrow(GateRefusal)
   })
 
+  test('rows whose data is not a JSON object are counted per session, a part and a message each', () => {
+    const f = fixture()
+    simpleSession(f.store, 'ses_clean')
+    simpleSession(f.store, 'ses_bad_part')
+    const textPart = f.store.addText(f.store.addMessage('ses_bad_part', 'assistant'), 'x')
+    f.store.db.run("UPDATE part SET data = '{broken' WHERE id = ?", [textPart])
+    simpleSession(f.store, 'ses_bad_message')
+    const bad = f.store.addMessage('ses_bad_message', 'user')
+    f.store.db.run("UPDATE message SET data = 'not json' WHERE id = ?", [bad])
+    simpleSession(f.store, 'ses_not_objects')
+    const tail = f.store.addMessage('ses_not_objects', 'assistant')
+    const [one, two] = [f.store.addText(tail, 'a'), f.store.addText(tail, 'b')]
+    f.store.db.run("UPDATE part SET data = 'null' WHERE id = ?", [one])
+    f.store.db.run("UPDATE part SET data = '[1]' WHERE id = ?", [two])
+    freezeManifest(f.input)
+    const unreadable = Object.fromEntries(walkManifest(walkInput(f)).map((s) => [s.sessionId, s.unreadableRows]))
+    expect(unreadable).toEqual({ ses_clean: 0, ses_bad_part: 1, ses_bad_message: 1, ses_not_objects: 2 })
+  })
+
   test('the walk covers the added manifest by slot', () => {
     const f = fixture({ session_cap: 1 })
     for (const id of ['ses_a', 'ses_b', 'ses_c']) simpleSession(f.store, id)
@@ -816,6 +987,105 @@ describe('walkManifest: stimuli, scopes and intervals', () => {
     const added = freezeManifest({ ...f.input, slot: 'added' }).manifest.sessions[0]!.id
     expect(walkManifest(walkInput(f)).map((s) => s.sessionId)).toEqual([first])
     expect(walkManifest(walkInput(f, { slot: 'added' })).map((s) => s.sessionId)).toEqual([added])
+  })
+})
+
+describe('eligibility is one existence query per candidate', () => {
+  const others = (f: Fixture, assistant: string, n: number): void => {
+    for (let i = 0; i < n; i++) f.store.addSkillCall(assistant, `ce:other-${i}`, { tool: i % 2 === 0 ? 'skill' : 'systematic_skill' })
+  }
+
+  test('a session with many skill parts is decided correctly wherever its workflow load sits', () => {
+    const f = fixture()
+    f.store.addSession({ id: 'ses_none', created: '2026-01-15' })
+    others(f, f.store.addMessage('ses_none', 'assistant'), 80)
+    for (const [id, before, after] of [['ses_first', 0, 80], ['ses_middle', 40, 40], ['ses_last', 80, 0]] as const) {
+      f.store.addSession({ id, created: '2026-01-15' })
+      const a = f.store.addMessage(id, 'assistant')
+      others(f, a, before)
+      f.store.addSkillCall(a, 'systematic:ce:review', { tool: 'systematic_skill' })
+      others(f, a, after)
+    }
+    const { manifest } = freezeManifest(f.input)
+    expect(manifest.sessions.map((s) => s.id).sort()).toEqual(['ses_first', 'ses_last', 'ses_middle'])
+    expect(manifest.exclusions.no_workflow_load).toBe(1)
+  })
+
+  test('a workflow name that is not exactly a workflow skill, a non-skill tool, an unfinished call and a malformed part decide nothing', () => {
+    const f = fixture()
+    const bare = (id: string): string => {
+      f.store.addSession({ id, created: '2026-01-15' })
+      return f.store.addMessage(id, 'assistant')
+    }
+    f.store.addSkillCall(bare('ses_prefix_twice'), 'systematic:systematic:ce:plan', { tool: 'systematic_skill' })
+    f.store.addSkillCall(bare('ses_longer_name'), 'ce:plan-extra')
+    f.store.addTool(bare('ses_other_tool'), { tool: 'read', input: { name: 'ce:plan' } })
+    f.store.addSkillCall(bare('ses_running'), 'ce:plan', { status: 'running' })
+    f.store.addTool(bare('ses_number_name'), { tool: 'skill', input: { name: 7 } })
+    f.store.db.run('UPDATE part SET data = ? WHERE id = ?', ['{"type":"tool","tool":"skill",', f.store.addText(bare('ses_malformed'), 'x')])
+    f.store.addSkillCall(bare('ses_ok'), 'ce:plan')
+    const { manifest } = freezeManifest(f.input)
+    expect(manifest.sessions.map((s) => s.id)).toEqual(['ses_ok'])
+    expect(manifest.exclusions.no_workflow_load).toBe(6)
+  })
+
+  test('a session with no workflow load has none of its parts read, and the statement used is on the allowlist and ends at the first row', () => {
+    const f = fixture()
+    f.store.addSession({ id: 'ses_many', created: '2026-01-15' })
+    others(f, f.store.addMessage('ses_many', 'assistant'), 60)
+    const { result, statements } = recordSql(() => recordRows(() => freezeManifest(f.input)))
+    expect(result.result.manifest.exclusions.no_workflow_load).toBe(1)
+    expect(result.rows.filter((row) => row.session_id === 'ses_many' || typeof row.message_id === 'string')).toEqual([])
+    expect(statements.has(WORKFLOW_LOADS_SQL.workflowLoad)).toBe(true)
+    expect(WORKFLOW_LOADS_SQL.workflowLoad).toMatch(/LIMIT 1$/)
+    expect(Object.keys(WORKFLOW_LOADS_SQL)).not.toContain('skillParts')
+  })
+})
+
+describe('walking one session at a time', () => {
+  test('the walk reads the rows of one session per step, in manifest order', () => {
+    const f = fixture()
+    for (const id of ['ses_a', 'ses_b', 'ses_c']) simpleSession(f.store, id)
+    const { manifest } = freezeManifest(f.input)
+    const walk = walkManifestEach(walkInput(f))
+    const { result: first, rows } = recordRows(() => walk.next())
+    expect(first.done).toBe(false)
+    expect(first.value?.sessionId).toBe(manifest.sessions[0]?.id)
+    const sessionsRead = new Set(rows.flatMap((row) => (typeof row.session_id === 'string' ? [row.session_id] : [])))
+    expect([...sessionsRead]).toEqual([manifest.sessions[0]?.id ?? ''])
+    expect(rows.length).toBeGreaterThan(0)
+    const rest = [...walk].map((s) => s.sessionId)
+    expect(rest).toEqual(manifest.sessions.slice(1).map((s) => s.id))
+    expect(walk.next().done).toBe(true)
+  })
+
+  test('the refusals that need no row come when the walk is asked for, not when it is first pulled', () => {
+    const f = fixture()
+    simpleSession(f.store, 'ses_a')
+    expect(() => walkManifestEach(walkInput(f))).toThrow(/manifest_missing/)
+    freezeManifest(f.input)
+    expect(() => walkManifestEach(walkInput(f, { only: ['ses_nope'] }))).toThrow(/ses_nope/)
+    writeFileSync(join(f.repo.dir, 'evals/spikes/workflow-loads/marking-rule.md'), 'changed rule\n')
+    expect(() => walkManifestEach(walkInput(f))).toThrow(GateRefusal)
+  })
+
+  test('a walk can be abandoned early, and a store error in the middle of one is a named error', () => {
+    const f = fixture()
+    for (const id of ['ses_a', 'ses_b']) simpleSession(f.store, id)
+    freezeManifest(f.input)
+    const walk = walkManifestEach(walkInput(f))
+    walk.next()
+    expect(walk.return(undefined).done).toBe(true)
+    // a new walk opens its own connection, and a column the reader needs having gone is a named error
+    f.store.db.run('ALTER TABLE part RENAME COLUMN data TO payload')
+    expect(() => [...walkManifestEach(walkInput(f))]).toThrow(StoreError)
+  })
+
+  test('walkManifest collects the same sessions the walk yields', () => {
+    const f = fixture()
+    for (const id of ['ses_a', 'ses_b']) simpleSession(f.store, id)
+    freezeManifest(f.input)
+    expect(JSON.stringify(walkManifest(walkInput(f)))).toBe(JSON.stringify([...walkManifestEach(walkInput(f))]))
   })
 })
 
