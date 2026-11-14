@@ -359,6 +359,19 @@ async function labelCommand(ctx: Ctx): Promise<number> {
 
 type Terminal = NonNullable<CliIo['terminal']>
 
+// Escape sequences, longest first: a string sequence (OSC, DCS, APC, PM, SOS) to its terminator or the end of the line, then CSI,
+// then any other two-character escape. The 8-bit forms of OSC and CSI are included.
+const ESCAPE_SEQUENCES = /\u001b[\]PX^_][^\u0007\u001b\u009c\n]*(?:\u0007|\u001b\\|\u009c)?|[\u009d\u0090\u0098\u009e\u009f][^\u0007\u001b\u009c\n]*(?:\u0007|\u001b\\|\u009c)?|(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]|\u001b[ -~]/g
+
+/**
+ * Text that came from a session or from the labeler, made safe to write to a terminal: escape sequences are removed whole, and any
+ * other control character but newline and tab is shown as caret notation (a carriage return as `^M`) instead of acting. Every
+ * `judge` write of such text goes through here.
+ */
+export function terminalSafe(text: string): string {
+  return text.replace(ESCAPE_SEQUENCES, '').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, (c) => `^${String.fromCharCode((c.charCodeAt(0) + 64) % 128)}`).replace(/[\u0080-\u009f]/g, (c) => `\\x${c.charCodeAt(0).toString(16)}`)
+}
+
 /** Reads the maintainer's answers one line at a time. A closed input ends as `null`. */
 function lineReader(input: NodeJS.ReadableStream): { next: () => Promise<string | null>; close: () => void } {
   const rl = createInterface({ input, crlfDelay: Number.POSITIVE_INFINITY })
@@ -413,7 +426,7 @@ async function judgeCommand(ctx: Ctx): Promise<number> {
     const scope = loaded.view.scopes.find((s) => s.sessionId === ref.sessionId && s.scopeIndex === ref.scopeIndex)
     const index = scope?.stimuli.findIndex((s) => s.id === ref.stimulusId) ?? -1
     if (!scope || index < 0) throw new Error('an item names a stimulus the view does not hold')
-    terminal.write(`${renderWithContext(scope.stimuli, index, contextK)}\n\n`)
+    terminal.write(`${terminalSafe(renderWithContext(scope.stimuli, index, contextK))}\n\n`)
   }
 
   let stopped = false
@@ -423,7 +436,7 @@ async function judgeCommand(ctx: Ctx): Promise<number> {
       terminal.write(`\n--- proposal ${items.indexOf(item) + 1} of ${items.length}\n`)
       show(item)
       // The judge sees the method and label proposed: that is the question being put, and it is shown on these lines only.
-      for (const entry of item.proposed) terminal.write(`proposal: ${item.method} · ${entry.label} · ${entry.reason}\n`)
+      for (const entry of item.proposed) terminal.write(`proposal: ${item.method} · ${entry.label} · ${terminalSafe(entry.reason)}\n`)
       const both = item.proposed.length === 2
       const choice = await choose<ProposalChoice>(reader, terminal, both ? '[f] expected_fire  [s] expected_silence  [r]eject  [q]uit > ' : '[a]ccept  [r]eject  re[l]abel  [q]uit > ', both ? BOTH_CHOICES : SINGLE_CHOICES)
       if (choice === 'quit') {

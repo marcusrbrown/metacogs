@@ -3,8 +3,9 @@
  * hash, checked by a strict schema on the way in and on the way out. No session id, stimulus id, message id, path, model id or
  * free text can be in it, and no date: the declared window is the declaration's to state.
  */
-import { mkdirSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { randomBytes } from 'node:crypto'
+import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
 import { z } from 'zod'
 
 import { BUCKETS, type CountReport, COVERAGE_NOTES, MODEL_FAMILIES, OUTCOMES } from './count'
@@ -104,12 +105,22 @@ export const projectionText = (projection: Projection): string => `${JSON.string
 
 /**
  * Writes the projection to `path` (parent directories created), and only there. The schema runs first, so an invalid projection
- * throws and nothing is written. Callers pass the path: tests use a temporary repository.
+ * throws and nothing is written. The text goes to a temporary file in the same directory and is renamed into place, so a failed
+ * write leaves an existing file as it was; the temporary file is removed on failure. Callers pass the path: tests use a temporary
+ * repository.
  */
 export function writeProjection(path: string, projection: Projection): void {
   const text = projectionText(projectionSchema.parse(projection))
-  mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, text)
+  const dir = dirname(path)
+  mkdirSync(dir, { recursive: true })
+  const temporary = join(dir, `.${basename(path)}.${randomBytes(6).toString('hex')}.tmp`)
+  try {
+    writeFileSync(temporary, text, { flag: 'wx' })
+    renameSync(temporary, path)
+  } catch (e) {
+    rmSync(temporary, { force: true })
+    throw e
+  }
 }
 
 // ── the table ──────────────────────────────────────────────────────────────

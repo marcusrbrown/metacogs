@@ -78,6 +78,33 @@ function recordSql<T>(fn: () => T): { result: T; statements: Set<string> } {
   }
 }
 
+/** Every row any statement returns to the callback, through `all` and `get`, as the reader sees it. */
+function recordRows<T>(fn: () => T): { result: T; rows: Record<string, unknown>[] } {
+  const rows: Record<string, unknown>[] = []
+  const proto = Database.prototype as unknown as Record<string, unknown>
+  const query = proto.query as (this: Database, ...args: unknown[]) => Record<string, unknown>
+  const wrapped = new WeakSet<object>()
+  proto.query = function (this: Database, ...args: unknown[]) {
+    const statement = query.apply(this, args)
+    if (wrapped.has(statement)) return statement
+    wrapped.add(statement)
+    for (const name of ['all', 'get']) {
+      const original = statement[name] as (...a: unknown[]) => unknown
+      statement[name] = (...a: unknown[]) => {
+        const returned = original.apply(statement, a)
+        for (const row of Array.isArray(returned) ? returned : [returned]) if (typeof row === 'object' && row !== null) rows.push(row as Record<string, unknown>)
+        return returned
+      }
+    }
+    return statement
+  }
+  try {
+    return { result: fn(), rows }
+  } finally {
+    proto.query = query
+  }
+}
+
 /** Seeds a session with a workflow load and one user message after it: one stimulus. */
 function simpleSession(store: SyntheticStore, id: string, created: string | number = '2026-01-15', extra: { directory?: string; skill?: string; tool?: 'skill' | 'systematic_skill' } = {}) {
   const seeded = seedWorkflowSession(store, { id, created, ...extra })
@@ -394,6 +421,40 @@ describe('the added manifest after a session-cap raise', () => {
   })
 })
 
+describe('a manifest in the wrong slot', () => {
+  const reasonOf = (fn: () => unknown): string => {
+    try {
+      fn()
+    } catch (e) {
+      if (e instanceof ManifestError) return e.reason
+      throw e
+    }
+    throw new Error('expected a ManifestError')
+  }
+
+  test('a valid manifest copied into the other slot\'s file is refused with a named reason, in both directions', () => {
+    const f = fixture({ session_cap: 1 })
+    for (const id of ['ses_a', 'ses_b']) simpleSession(f.store, id)
+    freezeManifest(f.input)
+    recordDeviation({ git: f.repo.git, entry: { code: 'session_cap_raise', reason: 'more sessions', session_cap: 2 } })
+    freezeManifest({ ...f.input, slot: 'added' })
+    // both files verify on their own: each is a manifest of the slot it names
+    expect(readManifest(f.privateRoot, 'initial')?.slot).toBe('initial')
+    expect(readManifest(f.privateRoot, 'added')?.slot).toBe('added')
+
+    const [initialPath, addedPath] = [manifestPath(f.privateRoot, 'initial'), manifestPath(f.privateRoot, 'added')]
+    const [initialText, addedText] = [readFileSync(initialPath, 'utf8'), readFileSync(addedPath, 'utf8')]
+    writeFileSync(initialPath, addedText)
+    writeFileSync(addedPath, initialText)
+    expect(reasonOf(() => readManifest(f.privateRoot, 'initial'))).toBe('manifest_slot_mismatch')
+    expect(reasonOf(() => readManifest(f.privateRoot, 'added'))).toBe('manifest_slot_mismatch')
+    // and no step takes the copy for the slot's own
+    expect(reasonOf(() => walkManifest(walkInput(f)))).toBe('manifest_slot_mismatch')
+    expect(reasonOf(() => walkManifest(walkInput(f, { slot: 'added' })))).toBe('manifest_slot_mismatch')
+    expect(reasonOf(() => freezeManifest(f.input))).toBe('manifest_slot_mismatch')
+  })
+})
+
 describe('private root', () => {
   test('defaults to a workflow-loads directory in the metacogs state directory, and an override moves it', () => {
     const dir = mkdtempSync(join(tmpdir(), 'metacogs-workflow-loads-state-'))
@@ -688,6 +749,32 @@ describe('walkManifest: stimuli, scopes and intervals', () => {
     expect(JSON.stringify(session)).not.toContain('later')
   })
 
+  test('no row the reader fetches belongs to a message past the mark, including one with the mark\'s own creation time and a later id', () => {
+    const f = fixture()
+    const s = simpleSession(f.store, 'ses_a')
+    const mark = freezeManifest(f.input).manifest.sessions[0]?.last_message
+    if (!mark) throw new Error('no mark')
+    expect(mark.id).toBe(s.assistant2)
+
+    const sameTime = f.store.addMessage('ses_a', 'user')
+    f.store.addText(sameTime, 'same time, later id')
+    f.store.db.run('UPDATE message SET time_created = ? WHERE id = ?', [mark.time_created, sameTime])
+    const later = f.store.addMessage('ses_a', 'assistant')
+    f.store.addSkillCall(later, 'counterfactual')
+    f.store.addText(f.store.addMessage('ses_a', 'user'), 'much later')
+    const pastMark = new Set<string>(f.store.db.query<{ id: string }, [number, number, string]>('SELECT id FROM message WHERE session_id = \'ses_a\' AND (time_created > ? OR (time_created = ? AND id > ?))').all(mark.time_created, mark.time_created, mark.id).map((row) => row.id))
+    expect(pastMark.has(sameTime)).toBe(true)
+    expect(pastMark.size).toBe(3)
+
+    const { rows } = recordRows(() => walkManifest(walkInput(f)))
+    const messageIds = rows.flatMap((row) => (typeof row.message_id === 'string' ? [row.message_id] : 'data' in row && 'session_id' in row && typeof row.id === 'string' ? [row.id] : []))
+    // the instrument sees the reader's rows: the mark's own message was fetched, so an empty list would prove nothing
+    expect(messageIds).toContain(mark.id)
+    expect(messageIds.filter((id) => pastMark.has(id))).toEqual([])
+    // and no part row names a message past the mark
+    expect(rows.filter((row) => typeof row.message_id === 'string' && pastMark.has(row.message_id))).toEqual([])
+  })
+
   test('re-running a step after the store has grown yields the same sessions, stimuli and intervals', () => {
     const f = fixture({ decision_bearing_tools: ['task'] })
     for (const id of ['ses_a', 'ses_b']) {
@@ -767,6 +854,48 @@ describe('read-only access', () => {
     walkManifest(walkInput(f))
     const row = f.store.db.query<{ n: number }, []>('SELECT count(*) AS n FROM account').get()
     expect(row?.n).toBe(1)
+  })
+
+  test('a write attempted through the connection the reader opens fails for an insert, an update and a delete, and leaves the database unchanged', () => {
+    const f = fixture()
+    simpleSession(f.store, 'ses_a')
+    freezeManifest(f.input)
+    const dump = (): string => JSON.stringify(['session', 'message', 'part', 'account'].map((table) => f.store.db.query(`SELECT * FROM ${table} ORDER BY id`).all()))
+    const before = dump()
+
+    const attempts = [
+      "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES ('msg_zz', 'ses_a', 1, 1, '{}')",
+      "UPDATE message SET data = '{\"role\":\"user\"}'",
+      'DELETE FROM part',
+    ]
+    // the reader's own connection: seen the first time it runs a query, after it was opened and configured
+    const proto = Database.prototype as unknown as Record<string, unknown>
+    const query = proto.query as (this: Database, ...args: unknown[]) => unknown
+    const run = proto.run as (this: Database, sql: string) => unknown
+    const connections = new Set<Database>()
+    const outcomes: string[] = []
+    proto.query = function (this: Database, ...args: unknown[]) {
+      if (!connections.has(this)) {
+        connections.add(this)
+        for (const sql of attempts) {
+          try {
+            run.call(this, sql)
+            outcomes.push('wrote')
+          } catch {
+            outcomes.push('refused')
+          }
+        }
+      }
+      return query.apply(this, args)
+    }
+    try {
+      walkManifest(walkInput(f))
+    } finally {
+      proto.query = query
+    }
+    expect(connections.size).toBe(1)
+    expect(outcomes).toEqual(['refused', 'refused', 'refused'])
+    expect(dump()).toBe(before)
   })
 
   test('the manifest and an unsampled session text never carry the excluded root, a directory or a title', () => {

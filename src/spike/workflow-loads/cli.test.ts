@@ -1,14 +1,16 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 
-import { type CliIo, main } from './cli'
-import { DECLARATION_PATH, type Declaration, recordDeviation } from './declaration'
+import { type CliIo, main, terminalSafe } from './cli'
+import { DECLARATION_PATH, type Declaration, recordDeviation, WORKFLOW_LOADS_DIR } from './declaration'
 import type { LabelerTransport } from './labeler'
 import { readLocks } from './marks'
 import { scanLeaks, viewPath } from './mask'
+import { projectionSchema } from './project'
 import { gatedRepo, seedWorkflowSession, syntheticStore } from './test-support'
 
 const ENDPOINT = 'https://proxy.example.invalid/v1'
@@ -76,6 +78,25 @@ async function run(f: Fixture, argv: string[], options: { input?: string; label?
     ...(options.label ? { label: options.label } : {}),
   })
   return { code, out, err, terminal: terminal.join('') }
+}
+
+/** Every file under `root` but `.git`'s, and every directory, by relative path: a hash of the content, or `dir`. Ignored files are included. */
+function snapshotTree(root: string, rel = ''): Record<string, string> {
+  const files: Record<string, string> = {}
+  for (const name of readdirSync(join(root, rel)).sort()) {
+    if (rel === '' && name === '.git') continue
+    const path = rel === '' ? name : `${rel}/${name}`
+    if (lstatSync(join(root, path)).isDirectory()) {
+      files[`${path}/`] = 'dir'
+      Object.assign(files, snapshotTree(root, path))
+    } else files[path] = createHash('sha256').update(readFileSync(join(root, path))).digest('hex')
+  }
+  return files
+}
+
+/** The paths added, removed or changed between two snapshots, directories left out. */
+function changedPaths(before: Record<string, string>, after: Record<string, string>): string[] {
+  return [...new Set([...Object.keys(before), ...Object.keys(after)])].filter((path) => !path.endsWith('/') && before[path] !== after[path]).sort()
 }
 
 /** The `key=value` fields of a status line. */
@@ -363,14 +384,32 @@ describe('guards', () => {
     expect(readdirSync(f.privateRoot)).toEqual([])
   })
 
-  test('nothing is written outside the private root', async () => {
+  test('no step writes into the repository but the counts projection, ignored files and every step through purge included', async () => {
     const f = fixture()
-    const before = f.repo.git.porcelain([])
-    await prepare(f)
-    await run(f, ['judge'], { input: PROPOSAL_ANSWERS + OMISSION_ANSWERS })
-    await run(f, ['lock'])
-    await run(f, ['status'])
-    expect(f.repo.git.porcelain([])).toBe(before)
+    // an ignore rule, so a stray file that `git status` would hide is still seen by the snapshot
+    f.repo.write('.gitignore', '*.log\nignored/\n')
+    const countsRel = `${WORKFLOW_LOADS_DIR}/counts.json`
+    const steps: { argv: string[]; options?: Parameters<typeof run>[2]; writes: string[] }[] = [
+      { argv: ['freeze'], writes: [] },
+      { argv: ['view'], writes: [] },
+      { argv: ['label'], options: { label: { transport: responder() } }, writes: [] },
+      { argv: ['judge'], options: { input: PROPOSAL_ANSWERS + OMISSION_ANSWERS }, writes: [] },
+      { argv: ['lock'], writes: [] },
+      { argv: ['status'], writes: [] },
+      { argv: ['count'], writes: [] },
+      { argv: ['project'], writes: [countsRel] },
+      { argv: ['purge'], writes: [] },
+    ]
+    let before = snapshotTree(f.repo.dir)
+    for (const step of steps) {
+      const result = await run(f, step.argv, step.options)
+      expect({ step: step.argv[0], code: result.code, err: result.err }).toEqual({ step: step.argv[0], code: 0, err: [] })
+      const after = snapshotTree(f.repo.dir)
+      expect({ step: step.argv[0], changed: changedPaths(before, after) }).toEqual({ step: step.argv[0], changed: step.writes })
+      before = after
+    }
+    // the one allowed write is the projection, and it parses against the schema
+    expect(projectionSchema.safeParse(JSON.parse(readFileSync(join(f.repo.dir, countsRel), 'utf8'))).success).toBe(true)
     expect(readdirSync(f.dir)).toEqual(['state'])
     expect(readFileSync(f.store.path).length).toBeGreaterThan(0)
   })
@@ -459,6 +498,74 @@ describe('label after judging has started', () => {
     await run(f, ['judge'], { input: 'a\nq\n' })
     writeFileSync(join(f.repo.dir, DECLARATION_PATH), '{}\n')
     expect((await run(f, ['label'], { label: { transport: responder() } })).err.join('\n')).toContain('declaration_modified')
+  })
+})
+
+describe('judge output', () => {
+  const ESC = String.fromCharCode(27)
+  const BEL = String.fromCharCode(7)
+  // an ANSI colour sequence, an OSC 52 clipboard write, and a bare carriage return
+  const hostile = `${ESC}[31mcolour${ESC}[0m ${ESC}]52;c;SGVsbG8=${BEL}clip then a\rb`
+  const CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/
+
+  /** A labeler whose reason carries terminal sequences, for the first stimulus of each chunk. */
+  function hostileResponder(): LabelerTransport {
+    return {
+      endpoint: ENDPOINT,
+      async complete(request) {
+        const [first] = (/^stimulus_ids: (.*)$/m.exec(request.user)?.[1] ?? '').split(', ').filter(Boolean)
+        const proposals = first ? [{ stimulus_id: first, method: 'counterfactual', label: 'expected_fire', reason: `because ${ESC}[1mbold${ESC}[0m ${ESC}]52;c;QUJD${BEL}end` }] : []
+        return { text: JSON.stringify({ proposals }) }
+      },
+    }
+  }
+
+  test('terminal control sequences in a stimulus and in the labeler reason never reach the terminal stream', async () => {
+    const f = fixture({}, { texts: (id, i) => `${hostile} ${TEXT_MARKER}_${id}_${i}` })
+    await run(f, ['freeze'])
+    expect((await run(f, ['view'])).code).toBe(0)
+    expect((await run(f, ['label'], { label: { transport: hostileResponder() } })).code).toBe(0)
+    // two proposal items, then four sampled stimuli with two answers each
+    const judged = await run(f, ['judge'], { input: `a\na\n${'n\n'.repeat(8)}` })
+    expect(judged.code).toBe(0)
+    expect(judged.terminal).toContain(TEXT_MARKER)
+    expect(judged.terminal).toContain('colour')
+    expect(judged.terminal).toContain('because')
+    expect(judged.terminal).not.toMatch(CONTROLS)
+    expect(judged.terminal).not.toContain('SGVsbG8=')
+    expect(judged.terminal).not.toContain('QUJD')
+    expect(judged.terminal).not.toContain('52;c')
+    // a stray control character is shown, not acted on
+    expect(judged.terminal).toContain('a^Mb')
+  })
+
+  test('terminalSafe removes whole sequences, shows stray controls, and keeps ordinary text, newlines and tabs', () => {
+    const ESC = String.fromCharCode(27)
+    const ST = `${ESC}\\`
+    const cases: [string, string][] = [
+      [`a${ESC}[1;31mb${ESC}[0mc`, 'abc'],
+      [`a${ESC}]0;title${String.fromCharCode(7)}b`, 'ab'],
+      [`a${ESC}]52;c;QUJD${ST}b`, 'ab'],
+      [`a${ESC}Pq data${ST}b`, 'ab'],
+      [`a${String.fromCharCode(0x9b)}31mb`, 'ab'],
+      [`a${String.fromCharCode(0x9d)}52;c;QUJD${String.fromCharCode(0x9c)}b`, 'ab'],
+      [`a${ESC}bc`, 'ac'],
+      [`a${ESC}`, 'a^['],
+      ['a\rb', 'a^Mb'],
+      [`a${String.fromCharCode(7)}b${String.fromCharCode(8)}c${String.fromCharCode(127)}`, 'a^Gb^Hc^?'],
+      [`a${String.fromCharCode(0x85)}b`, 'a\\x85b'],
+      ['line\n\ttabbed — ünïcode', 'line\n\ttabbed — ünïcode'],
+    ]
+    for (const [input, expected] of cases) expect(terminalSafe(input)).toBe(expected)
+  })
+
+  test('newlines and tabs in session text are kept', async () => {
+    const f = fixture({}, { texts: (id, i) => `first line\n\tindented ${TEXT_MARKER}_${id}_${i}` })
+    await run(f, ['freeze'])
+    await run(f, ['view'])
+    await run(f, ['label'], { label: { transport: responder() } })
+    const judged = await run(f, ['judge'], { input: PROPOSAL_ANSWERS + OMISSION_ANSWERS })
+    expect(judged.terminal).toContain('first line\n\tindented')
   })
 })
 

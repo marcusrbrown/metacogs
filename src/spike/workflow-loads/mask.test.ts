@@ -553,6 +553,43 @@ describe('building and writing a view', () => {
   })
 })
 
+describe('the dropped call leaves no trace wherever it stood', () => {
+  const calls = (a: string, store: SyntheticStore, retained: number, dropAt: number | null, drop: (a: string, store: SyntheticStore) => void): void => {
+    for (let i = 0; i <= retained; i++) {
+      if (i === dropAt) drop(a, store)
+      if (i < retained) store.addTool(a, { tool: 'bash', input: { command: `echo ${i}` }, output: `out ${i}` })
+    }
+  }
+  const drops: [string, (a: string, store: SyntheticStore) => void][] = [
+    ['a skill call', (a, store) => store.addSkillCall(a, 'counterfactual')],
+    ['a direct read of the skill file', (a, store) => store.addRead(a, '/pkg/skills/synthesis/SKILL.md', 'body of synthesis')],
+    ['a record-helper call', (a, store) => store.addTool(a, { tool: 'bash', input: { command: 'node /pkg/skills/counterfactual/scripts/record.mjs < in.json' }, output: 'HELPER_OUTPUT_MARKER' })],
+  ]
+  // one fewer than the cap, exactly the cap, and one more; and the call before, inside, at the cap boundary and after the retained calls
+  const retainedCounts = [RENDER_LIMITS.traffic - 1, RENDER_LIMITS.traffic, RENDER_LIMITS.traffic + 1]
+  const bare = (stimuli: RenderedStimulus[]) => stimuli.map(({ id: _id, ...rest }) => rest)
+
+  for (const [name, drop] of drops) {
+    for (const retained of retainedCounts) {
+      test(`${name}: the same rendered text and counters before, between and after ${retained} retained calls, at the cap boundary included`, () => {
+        const f = fixture()
+        const positions = [...new Set([0, 1, Math.floor(retained / 2), RENDER_LIMITS.traffic - 1, RENDER_LIMITS.traffic, retained])].filter((at) => at <= retained)
+        scoped(f.store, 'ses_none', [{ user: 'go', turn: (a) => calls(a, f.store, retained, null, drop) }])
+        for (const at of positions) scoped(f.store, `ses_at_${at}`, [{ user: 'go', turn: (a) => calls(a, f.store, retained, at, drop) }])
+        const sessions = walk(f)
+        const baseline = renderSessions([sessionOf(sessions, 'ses_none')])
+        expect(baseline.scopes[0]?.stimuli[0]?.traffic.length).toBeGreaterThan(0)
+        for (const at of positions) {
+          const rendered = renderSessions([sessionOf(sessions, `ses_at_${at}`)])
+          expect({ at, stimuli: bare(rendered.scopes[0]?.stimuli ?? []) }).toEqual({ at, stimuli: bare(baseline.scopes[0]?.stimuli ?? []) })
+          expect({ at, counters: rendered.counters }).toEqual({ at, counters: baseline.counters })
+          expect(everything(rendered.scopes[0] as HiddenScope)).not.toContain('HELPER_OUTPUT_MARKER')
+        }
+      })
+    }
+  }
+})
+
 describe('deleting the views', () => {
   test('removes every stored view and says how many files that was; nothing stored is nothing removed', () => {
     const f = fixture()

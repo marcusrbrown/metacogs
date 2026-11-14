@@ -145,7 +145,7 @@ const manifestSchema = z.strictObject({
 export type Manifest = z.infer<typeof manifestSchema>
 export type ManifestSession = Manifest['sessions'][number]
 
-export type ManifestReason = 'manifest_missing' | 'manifest_invalid' | 'manifest_tampered' | 'manifest_declaration_mismatch' | 'initial_manifest_missing' | 'session_cap_not_raised' | 'session_not_in_manifest'
+export type ManifestReason = 'manifest_missing' | 'manifest_invalid' | 'manifest_tampered' | 'manifest_declaration_mismatch' | 'manifest_slot_mismatch' | 'initial_manifest_missing' | 'session_cap_not_raised' | 'session_not_in_manifest'
 
 export class ManifestError extends Error {
   constructor(
@@ -163,7 +163,8 @@ const manifestHashOf = (manifest: Omit<Manifest, 'manifest_hash'>): string => sh
 
 /**
  * The manifest in a slot, verified: `undefined` when none was written yet; `manifest_invalid` when the file is not a manifest,
- * `manifest_tampered` when its content no longer hashes to its own hash, and, when `declarationHash` is given,
+ * `manifest_slot_mismatch` when the file holds the other slot's manifest, `manifest_tampered` when its content no longer hashes
+ * to its own hash, and, when `declarationHash` is given,
  * `manifest_declaration_mismatch` when it was frozen under another declaration.
  */
 export function readManifest(privateRoot: PrivateRoot, slot: ManifestSlot, declarationHash?: string): Manifest | undefined {
@@ -177,6 +178,8 @@ export function readManifest(privateRoot: PrivateRoot, slot: ManifestSlot, decla
   }
   const parsed = manifestSchema.safeParse(raw)
   if (!parsed.success) throw new ManifestError('manifest_invalid', `the ${slot} manifest does not have the manifest shape`)
+  // the slot is inside the hashed content, so a copy of the other slot's manifest still verifies: only this check tells them apart
+  if (parsed.data.slot !== slot) throw new ManifestError('manifest_slot_mismatch', `the ${slot} manifest file holds the ${parsed.data.slot} manifest`)
   const { manifest_hash: stored, ...rest } = parsed.data
   if (manifestHashOf(rest) !== stored) throw new ManifestError('manifest_tampered', `the ${slot} manifest was edited after it was written`)
   if (declarationHash !== undefined && parsed.data.declaration_hash !== declarationHash) {

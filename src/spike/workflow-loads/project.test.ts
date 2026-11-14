@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -278,6 +278,35 @@ describe('writing the projection', () => {
     const bad = { ...projectCounts(sampleReport()), extra: 'ses_123' } as unknown as Projection
     expect(() => writeProjection(join(dir, 'counts.json'), bad)).toThrow()
     expect(existsSync(join(dir, 'counts.json'))).toBe(false)
+  })
+
+  test.skipIf(process.getuid?.() === 0)('a write that fails leaves an existing counts file byte-identical and no temporary file behind', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'metacogs-workflow-loads-project-'))
+    cleanup.push(() => {
+      chmodSync(dir, 0o700)
+      rmSync(dir, { recursive: true, force: true })
+    })
+    const target = join(dir, 'counts.json')
+    const earlier = projectionText(projectCounts(sampleReport({ outcome: 'clean', notes: [], deviations: [] })))
+    writeFileSync(target, earlier)
+    // the file itself stays writable, so only a write that goes through a new file in the directory is stopped
+    chmodSync(dir, 0o500)
+    expect(() => writeProjection(target, projectCounts(sampleReport()))).toThrow()
+    chmodSync(dir, 0o700)
+    expect(readFileSync(target, 'utf8')).toBe(earlier)
+    expect(readdirSync(dir)).toEqual(['counts.json'])
+  })
+
+  test('a rename that fails removes the temporary file and leaves the target as it was', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'metacogs-workflow-loads-project-'))
+    cleanup.push(() => rmSync(dir, { recursive: true, force: true }))
+    // a directory where the file belongs: the projection is written, but cannot be renamed over it
+    mkdirSync(join(dir, 'counts.json'))
+    writeFileSync(join(dir, 'counts.json', 'keep'), 'kept')
+    expect(() => writeProjection(join(dir, 'counts.json'), projectCounts(sampleReport()))).toThrow()
+    expect(readdirSync(dir)).toEqual(['counts.json'])
+    expect(readdirSync(join(dir, 'counts.json'))).toEqual(['keep'])
+    expect(readFileSync(join(dir, 'counts.json', 'keep'), 'utf8')).toBe('kept')
   })
 
   test('the default path is the committed spike directory', () => {
