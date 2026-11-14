@@ -447,6 +447,22 @@ describe('walkManifest: stimuli, scopes and intervals', () => {
     expect(stimulus.entry.parts.map((p) => JSON.parse(p.data).text)).toEqual(['first answer', 'second part'])
   })
 
+  test('the first assistant message of the session is reported with its stored data, and none when there is none', () => {
+    const f = fixture()
+    scene(f, 'ses_a', () => undefined)
+    f.store.addSession({ id: 'ses_b', created: '2026-01-15' })
+    const first = f.store.addMessage('ses_b', 'assistant', { providerID: 'anthropic', modelID: 'claude-x' })
+    f.store.addSkillCall(first, 'ce:plan')
+    f.store.addMessage('ses_b', 'assistant', { providerID: 'openai', modelID: 'gpt-x' })
+    freezeManifest(f.input)
+    const sessions = walkManifest(walkInput(f))
+    const b = sessions.find((s) => s.sessionId === 'ses_b')
+    expect(b?.firstAssistant?.id).toBe(first)
+    expect(JSON.parse(b?.firstAssistant?.data ?? '{}')).toMatchObject({ role: 'assistant', providerID: 'anthropic' })
+    // a session's first assistant message is the one that loaded the workflow skill in the seeded scene
+    expect(sessions.find((s) => s.sessionId === 'ses_a')?.firstAssistant).not.toBeNull()
+  })
+
   test('the user message that came before the workflow load is not in scope', () => {
     const f = fixture()
     scene(f, 'ses_a', () => {})

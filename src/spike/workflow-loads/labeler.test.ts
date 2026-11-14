@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -14,6 +14,7 @@ import {
   deleteLabelerReplies,
   type LabelerRefusal,
   labelChunks,
+  labelingCoverage,
   type LabelerTransport,
   loadLabelerProposals,
   parseReply,
@@ -754,5 +755,63 @@ describe('the proxy key', () => {
       expect((error as LabelerRefusal).reason).toBe(reason)
       expect((error as Error).message).not.toContain('SENSITIVE_RESOLVER_TEXT')
     }
+  })
+})
+
+describe('labeling coverage', () => {
+  const ONE = () => 1
+
+  test('counts the current chunks by how each ended, and is complete only when every chunk is labeled', async () => {
+    const f = fixture({ spend_cap_usd: 2 })
+    const chunks = [chunkOf(['a1'], { sessionId: 's1' }), chunkOf(['b1'], { sessionId: 's2' })]
+    const run = await labelChunks(base(f, scripted([reply(), reply()]), chunks, { estimateUsd: ONE }))
+    // the cap is exactly spent, but no chunk was cut short by it
+    expect(labelingCoverage(f.privateRoot, chunks, run.declarationHash)).toEqual({ chunks: 2, labeled: 2, failed: 0, notAttempted: 0, spendCapReached: false })
+  })
+
+  test('a failed chunk and a chunk with no stored outcome are both incomplete; only a spend-cap stop sets the cap flag', async () => {
+    const f = fixture({ retry_count: 1 })
+    const chunks = [chunkOf(['a1'], { sessionId: 's1' }), chunkOf(['b1'], { sessionId: 's2' })]
+    const run = await labelChunks(base(f, scripted(['garbage', 'garbage']), [chunks[0] as Chunk]))
+    expect(run.results[0]?.outcome).toMatchObject({ status: 'failed', reason: 'invalid_json' })
+    expect(labelingCoverage(f.privateRoot, chunks, run.declarationHash)).toEqual({ chunks: 2, labeled: 0, failed: 1, notAttempted: 1, spendCapReached: false })
+  })
+
+  test('a chunk stopped by the spend cap, failed or not attempted, sets the flag', async () => {
+    const f = fixture({ spend_cap_usd: 1, retry_count: 3 })
+    const chunks = [chunkOf(['a1'], { sessionId: 's1' }), chunkOf(['b1'], { sessionId: 's2' })]
+    const run = await labelChunks(base(f, scripted(['garbage']), chunks, { estimateUsd: ONE }))
+    expect(labelingCoverage(f.privateRoot, chunks, run.declarationHash)).toEqual({ chunks: 2, labeled: 0, failed: 1, notAttempted: 1, spendCapReached: true })
+    // only the not-attempted one stopped by the cap
+    expect(labelingCoverage(f.privateRoot, [chunks[1] as Chunk], run.declarationHash)).toMatchObject({ notAttempted: 1, spendCapReached: true })
+  })
+
+  test('the newest outcome of a chunk counts, so a failed chunk that a later run labeled is labeled', async () => {
+    const f = fixture({ retry_count: 0 })
+    const chunk = chunkOf(['a1'])
+    await labelChunks(base(f, scripted(['garbage']), [chunk]))
+    const run = await labelChunks(base(f, scripted([reply({ stimulus_id: 'a1' })]), [chunk]))
+    expect(labelingCoverage(f.privateRoot, [chunk], run.declarationHash)).toEqual({ chunks: 1, labeled: 1, failed: 0, notAttempted: 0, spendCapReached: false })
+  })
+
+  test('outcomes stored for chunks that are not in the list, and for another declaration, add nothing', async () => {
+    const f = fixture()
+    const chunks = [chunkOf(['a1'], { sessionId: 's1' }), chunkOf(['b1'], { sessionId: 's2' })]
+    const run = await labelChunks(base(f, scripted([reply(), reply()]), chunks))
+    expect(labelingCoverage(f.privateRoot, [chunks[0] as Chunk], run.declarationHash)).toMatchObject({ chunks: 1, labeled: 1 })
+    expect(labelingCoverage(f.privateRoot, chunks, 'f'.repeat(64))).toEqual({ chunks: 2, labeled: 0, failed: 0, notAttempted: 2, spendCapReached: false })
+  })
+
+  test('no chunks is a zero count, not an error', () => {
+    const f = fixture()
+    expect(labelingCoverage(f.privateRoot, [], 'f'.repeat(64))).toEqual({ chunks: 0, labeled: 0, failed: 0, notAttempted: 0, spendCapReached: false })
+  })
+
+  test('an unreadable outcome file is refused, as it is for loading proposals', async () => {
+    const f = fixture()
+    const chunk = chunkOf(['a1'])
+    const run = await labelChunks(base(f, scripted([reply()]), [chunk]))
+    writeFileSync(join(outcomesDir(f), `${chunkKey(run.declarationHash, chunk)}.002.json`), 'not json')
+    expect(() => labelingCoverage(f.privateRoot, [chunk], run.declarationHash)).toThrow('outcomes_invalid')
   })
 })

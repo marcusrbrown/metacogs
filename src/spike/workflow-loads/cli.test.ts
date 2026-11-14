@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 
 import { type CliIo, main } from './cli'
-import { DECLARATION_PATH, type Declaration } from './declaration'
+import { DECLARATION_PATH, type Declaration, recordDeviation } from './declaration'
 import type { LabelerTransport } from './labeler'
 import { readLocks } from './marks'
 import { scanLeaks, viewPath } from './mask'
@@ -355,7 +355,7 @@ describe('guards', () => {
   test('every step is refused when the declaration gate fails, and writes nothing', async () => {
     const f = fixture()
     writeFileSync(join(f.repo.dir, DECLARATION_PATH), '{}\n')
-    for (const command of ['freeze', 'view', 'label', 'judge', 'lock', 'status']) {
+    for (const command of ['freeze', 'view', 'label', 'judge', 'lock', 'status', 'count', 'project', 'purge']) {
       const result = await run(f, [command], { label: { transport: responder() } })
       expect(result.code).toBe(1)
       expect(result.err.join('\n')).toContain('declaration_modified')
@@ -382,12 +382,11 @@ describe('guards', () => {
     expect(existsSync(join(f.repo.dir, 'private'))).toBe(false)
   })
 
-  test('usage errors exit 2: no command, an unknown one, the unbuilt counting steps, a bad slot', async () => {
+  test('usage errors exit 2: no command, an unknown one, a bad slot, an argument a command does not take', async () => {
     const f = fixture()
     expect((await run(f, [])).code).toBe(2)
     expect((await run(f, ['frobnicate'])).code).toBe(2)
-    expect((await run(f, ['count'])).code).toBe(2)
-    expect((await run(f, ['project'])).code).toBe(2)
+    expect((await run(f, ['count', 'extra'])).code).toBe(2)
     expect((await run(f, ['freeze', '--slot', 'third'])).code).toBe(2)
     expect((await run(f, ['status', 'extra'])).code).toBe(2)
   })
@@ -399,6 +398,190 @@ describe('status', () => {
     const status = await run(f, ['status'])
     expect(status.code).toBe(0)
     expect(fields(lineOf(status, 'status'))).toMatchObject({ manifest: 'absent', sessions: '0', view: 'absent', stimuli: '0', proposals: '0', judged: '0', omission_answered: '0', locks: '0' })
+  })
+})
+
+/** One session gives two proposal items (accept, then silence) and one unproposed stimulus (neither method). */
+const ONE_SESSION_ANSWERS = 'a\ns\nn\nn\n'
+
+/** Freeze, view, label, judge everything, lock: the stage up to counting. The fixture's stimuli carry no load. */
+async function lockedFixture(f: Fixture, answers = PROPOSAL_ANSWERS + OMISSION_ANSWERS): Promise<void> {
+  await prepare(f)
+  expect((await run(f, ['judge'], { input: answers })).code).toBe(0)
+  expect((await run(f, ['lock'])).code).toBe(0)
+}
+
+describe('label after judging has started', () => {
+  test('is refused with a named reason once a judgment is stored, and sends and stores nothing more', async () => {
+    const f = fixture()
+    await prepare(f)
+    expect((await run(f, ['judge'], { input: 'a\nq\n' })).code).toBe(0)
+    const outcomes = readdirSync(join(f.privateRoot, 'labeler', 'outcomes')).length
+    const chunking = readFileSync(join(f.privateRoot, 'marks', 'initial', 'chunking.json'), 'utf8')
+    const transport = responder()
+    const again = await run(f, ['label', '--budget', '300'], { label: { transport } })
+    expect(again.code).toBe(1)
+    expect(again.err.join('\n')).toContain('judging_started')
+    expect(transport.requests).toBe(0)
+    expect(readdirSync(join(f.privateRoot, 'labeler', 'outcomes')).length).toBe(outcomes)
+    expect(readFileSync(join(f.privateRoot, 'marks', 'initial', 'chunking.json'), 'utf8')).toBe(chunking)
+  })
+
+  test('is refused once an omission answer is stored', async () => {
+    const f = fixture()
+    await prepare(f)
+    // proposals are judged first; the input then answers one sampled stimulus and quits at the next
+    expect((await run(f, ['judge'], { input: `${PROPOSAL_ANSWERS}n\nn\nq\n` })).code).toBe(0)
+    const again = await run(f, ['label'], { label: { transport: responder() } })
+    expect(again.code).toBe(1)
+    expect(again.err.join('\n')).toContain('judging_started')
+  })
+
+  test('is refused after the lock', async () => {
+    const f = fixture()
+    await lockedFixture(f)
+    const again = await run(f, ['label'], { label: { transport: responder() } })
+    expect(again.code).toBe(1)
+    expect(again.err.join('\n')).toContain('judging_started')
+  })
+
+  test('is allowed again when a judge run was opened and quit with nothing stored', async () => {
+    const f = fixture()
+    await prepare(f)
+    expect((await run(f, ['judge'], { input: 'q\n' })).code).toBe(0)
+    const again = await run(f, ['label'], { label: { transport: responder() } })
+    expect(again.code).toBe(0)
+  })
+
+  test('the gate is checked first', async () => {
+    const f = fixture()
+    await prepare(f)
+    await run(f, ['judge'], { input: 'a\nq\n' })
+    writeFileSync(join(f.repo.dir, DECLARATION_PATH), '{}\n')
+    expect((await run(f, ['label'], { label: { transport: responder() } })).err.join('\n')).toContain('declaration_modified')
+  })
+})
+
+describe('count', () => {
+  test('is refused before any lock, with the named reason', async () => {
+    const f = fixture()
+    await prepare(f)
+    const counted = await run(f, ['count'])
+    expect(counted.code).toBe(1)
+    expect(counted.err.join('\n')).toContain('no_lock')
+  })
+
+  test('is refused while a frozen slot has no lock', async () => {
+    const f = fixture({ session_cap: 1 })
+    await lockedFixture(f, ONE_SESSION_ANSWERS)
+    recordDeviation({ git: f.repo.git, entry: { code: 'session_cap_raise', reason: 'too few marks', session_cap: 2 } })
+    expect((await run(f, ['freeze', '--slot', 'added'])).code).toBe(0)
+    const counted = await run(f, ['count'])
+    expect(counted.code).toBe(1)
+    expect(counted.err.join('\n')).toContain('slot_not_locked')
+  })
+
+  test('prints the outcome, the note codes and the bucket totals, as counts and fixed words', async () => {
+    const f = fixture()
+    await lockedFixture(f)
+    const counted = await run(f, ['count'])
+    expect(counted.code).toBe(0)
+    expect(fields(lineOf(counted, 'count'))).toMatchObject({ outcome: 'errors_observed', notes: 'minimum_unmet', slots: '1', sampled: '2', stimuli: '6', chunks: '2', failed: '0', not_attempted: '0', omission_sample: '2', omissions: '1' })
+    // three counterfactual expected-fire marks and no load anywhere: three misses; two synthesis expected-silence marks: two correct silences
+    expect(fields(lineOf(counted, 'counterfactual'))).toMatchObject({ fire_marks: '3', hit: '0', miss: '3', loaded_earlier: '0', silence_marks: '0', false_fire: '0', correct_silence: '0', hits_skill_call: '0', hits_direct_read: '0', unmarked_loads: '0' })
+    expect(fields(lineOf(counted, 'synthesis'))).toMatchObject({ fire_marks: '0', miss: '0', silence_marks: '2', correct_silence: '2', false_fire: '0', unmarked_loads: '0' })
+    expect([...counted.out, ...counted.err].join('\n')).not.toContain(TEXT_MARKER)
+    expect([...counted.out, ...counted.err].join('\n')).not.toContain('s1')
+  })
+
+  test('reads nothing but the stored state: it writes no file', async () => {
+    const f = fixture()
+    await lockedFixture(f)
+    const before = f.repo.git.porcelain([])
+    await run(f, ['count'])
+    expect(f.repo.git.porcelain([])).toBe(before)
+  })
+})
+
+describe('project', () => {
+  test('is refused before any lock and writes nothing', async () => {
+    const f = fixture()
+    await prepare(f)
+    const projected = await run(f, ['project'])
+    expect(projected.code).toBe(1)
+    expect(projected.err.join('\n')).toContain('no_lock')
+    expect(existsSync(join(f.repo.dir, 'evals', 'spikes', 'workflow-loads', 'counts.json'))).toBe(false)
+  })
+
+  test('writes counts.json under the repository spike directory and prints the table, with method names and no other leak', async () => {
+    const f = fixture()
+    await lockedFixture(f)
+    const projected = await run(f, ['project'])
+    expect(projected.code).toBe(0)
+    const file = join(f.repo.dir, 'evals', 'spikes', 'workflow-loads', 'counts.json')
+    expect(existsSync(file)).toBe(true)
+    const text = readFileSync(file, 'utf8')
+    expect(JSON.parse(text)).toMatchObject({ schema_version: 1, outcome: 'errors_observed', stimuli_in_scope: 6 })
+    const printed = projected.out.join('\n')
+    expect(printed).toContain('| counterfactual | expected_fire | 3 | 0 | 3 | 0 | – | – |')
+    expect(printed).not.toContain(TEXT_MARKER)
+    expect(printed).not.toContain(f.repo.dir)
+    expect(scanLeaks(printed).filter((hit) => hit.kind !== 'method')).toEqual([])
+    expect(scanLeaks(text).filter((hit) => hit.kind !== 'method')).toEqual([])
+  })
+
+  test('is refused when the declaration gate fails, and writes nothing', async () => {
+    const f = fixture()
+    await lockedFixture(f)
+    writeFileSync(join(f.repo.dir, DECLARATION_PATH), '{}\n')
+    expect((await run(f, ['project'])).code).toBe(1)
+    expect(existsSync(join(f.repo.dir, 'evals', 'spikes', 'workflow-loads', 'counts.json'))).toBe(false)
+  })
+})
+
+describe('purge', () => {
+  test('is refused until every frozen slot is locked, and deletes nothing', async () => {
+    const f = fixture()
+    await prepare(f)
+    const early = await run(f, ['purge'])
+    expect(early.code).toBe(1)
+    expect(early.err.join('\n')).toContain('no_lock')
+    expect(existsSync(join(f.privateRoot, 'views'))).toBe(true)
+    expect(existsSync(join(f.privateRoot, 'labeler', 'replies'))).toBe(true)
+  })
+
+  test('is refused while an added slot is frozen but not locked', async () => {
+    const f = fixture({ session_cap: 1 })
+    await lockedFixture(f, ONE_SESSION_ANSWERS)
+    recordDeviation({ git: f.repo.git, entry: { code: 'session_cap_raise', reason: 'too few marks', session_cap: 2 } })
+    await run(f, ['freeze', '--slot', 'added'])
+    const purged = await run(f, ['purge'])
+    expect(purged.code).toBe(1)
+    expect(purged.err.join('\n')).toContain('slot_not_locked')
+    expect(existsSync(join(f.privateRoot, 'views'))).toBe(true)
+  })
+
+  test('deletes the views and the raw replies, keeps the manifests, outcomes, judgments and locks, and prints how many files went', async () => {
+    const f = fixture()
+    await lockedFixture(f)
+    const outcomes = readdirSync(join(f.privateRoot, 'labeler', 'outcomes')).length
+    const judgments = readdirSync(join(f.privateRoot, 'marks', 'initial', 'judgments')).length
+    const purged = await run(f, ['purge'])
+    expect(purged.code).toBe(0)
+    expect(fields(lineOf(purged, 'purged'))).toMatchObject({ views: '1', replies: '2' })
+    expect(existsSync(join(f.privateRoot, 'views'))).toBe(false)
+    expect(existsSync(join(f.privateRoot, 'labeler', 'replies'))).toBe(false)
+    expect(existsSync(join(f.privateRoot, 'manifest-initial.json'))).toBe(true)
+    expect(existsSync(join(f.privateRoot, 'marks', 'lock-initial.json'))).toBe(true)
+    expect(readdirSync(join(f.privateRoot, 'labeler', 'outcomes')).length).toBe(outcomes)
+    expect(readdirSync(join(f.privateRoot, 'marks', 'initial', 'judgments')).length).toBe(judgments)
+    expect(existsSync(join(f.privateRoot, 'marks', 'initial', 'chunking.json'))).toBe(true)
+
+    // a second purge has nothing to remove, and counting after it names the missing view
+    expect(fields(lineOf(await run(f, ['purge']), 'purged'))).toMatchObject({ views: '0', replies: '0' })
+    const counted = await run(f, ['count'])
+    expect(counted.code).toBe(1)
+    expect(counted.err.join('\n')).toContain('view_missing')
   })
 })
 

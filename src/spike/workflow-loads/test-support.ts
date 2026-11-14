@@ -66,8 +66,8 @@ export interface SyntheticStore {
   db: Database
   /** `created` is epoch milliseconds or a `YYYY-MM-DD` day (noon UTC). */
   addSession(input: { id: string; created: string | number; directory?: string; parent?: string }): void
-  /** Appends a message to a session; ids and times only ever increase. */
-  addMessage(session: string, role: 'user' | 'assistant'): string
+  /** Appends a message to a session; ids and times only ever increase. `extra` adds keys to the stored message data (a model, say). */
+  addMessage(session: string, role: 'user' | 'assistant', extra?: Record<string, unknown>): string
   /** Appends a part (its JSON `data`) to a message. */
   addPart(message: string, data: Record<string, unknown>): string
   addText(message: string, text: string): string
@@ -122,11 +122,11 @@ export function syntheticStore(options: { omitTable?: 'session' | 'message' | 'p
     addSession({ id, created, directory = '/work/app', parent }) {
       db.run('INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [id, 'proj', parent ?? null, 'slug', directory, `title ${id}`, SENTINEL, SENTINEL, day(created), day(created)])
     },
-    addMessage(session, role) {
+    addMessage(session, role, extra = {}) {
       const id = next('msg')
       sessionOfMessage.set(id, session)
       clock += 1
-      db.run('INSERT INTO message VALUES (?, ?, ?, ?, ?)', [id, session, clock, clock, JSON.stringify({ role })])
+      db.run('INSERT INTO message VALUES (?, ?, ?, ?, ?)', [id, session, clock, clock, JSON.stringify({ role, ...extra })])
       return id
     },
     addPart(message, data) {
@@ -151,12 +151,12 @@ export function syntheticStore(options: { omitTable?: 'session' | 'message' | 'p
 /** A top-level session that loaded a workflow skill in its first assistant message, after one user message. */
 export function seedWorkflowSession(
   store: SyntheticStore,
-  input: { id: string; created: string | number; directory?: string; skill?: string; tool?: 'skill' | 'systematic_skill' },
+  input: { id: string; created: string | number; directory?: string; skill?: string; tool?: 'skill' | 'systematic_skill'; assistantData?: Record<string, unknown> },
 ): { user: string; assistant: string; load: string } {
   store.addSession({ id: input.id, created: input.created, ...(input.directory ? { directory: input.directory } : {}) })
   const user = store.addMessage(input.id, 'user')
   store.addText(user, 'start the workflow')
-  const assistant = store.addMessage(input.id, 'assistant')
+  const assistant = store.addMessage(input.id, 'assistant', input.assistantData)
   const load = store.addSkillCall(assistant, input.skill ?? 'ce:plan', { tool: input.tool ?? 'skill' })
   return { user, assistant, load }
 }

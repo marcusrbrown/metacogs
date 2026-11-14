@@ -323,6 +323,35 @@ export function loadLabelerProposals(privateRoot: PrivateRoot, chunks: readonly 
   return chunks.flatMap((chunk) => labeled.get(chunkKey(declarationHash, chunk)) ?? [])
 }
 
+/**
+ * How the current chunks ended. Every chunk is labeled, failed or not attempted; one with no stored outcome yet counts as not
+ * attempted. `spendCapReached` is true when a chunk's newest outcome was cut short by the spend cap.
+ */
+export interface LabelingCoverage {
+  chunks: number
+  labeled: number
+  failed: number
+  notAttempted: number
+  spendCapReached: boolean
+}
+
+/**
+ * The coverage of these chunks under this declaration, from the newest stored outcome of each. Outcomes of chunks that are no
+ * longer in the list, or that were stored under another declaration, are not counted. An unreadable outcome file is a refusal.
+ */
+export function labelingCoverage(privateRoot: PrivateRoot, chunks: readonly Chunk[], declarationHash: string): LabelingCoverage {
+  const latest = latestByKey(readRecords(privateRoot))
+  const coverage: LabelingCoverage = { chunks: chunks.length, labeled: 0, failed: 0, notAttempted: 0, spendCapReached: false }
+  for (const chunk of chunks) {
+    const outcome = latest.get(chunkKey(declarationHash, chunk))?.outcome
+    if (outcome?.status === 'labeled') coverage.labeled += 1
+    else if (outcome?.status === 'failed') coverage.failed += 1
+    else coverage.notAttempted += 1
+    if ((outcome?.status === 'failed' && outcome.reason === 'spend_cap') || outcome?.status === 'not_attempted') coverage.spendCapReached = true
+  }
+  return coverage
+}
+
 /** Deletes every stored raw reply and returns how many files that was. Outcome files stay. */
 export function deleteLabelerReplies(privateRoot: PrivateRoot): number {
   const dir = dirsOf(privateRoot).replies

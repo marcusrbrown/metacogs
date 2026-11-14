@@ -347,6 +347,8 @@ export interface WalkedSession {
   sessionId: string
   /** The manifest's mark: nothing after it was read. */
   lastMessage: Mark
+  /** The session's first assistant message up to the mark, with its stored data (it names the model); `null` when there is none. */
+  firstAssistant: RawMessage | null
   scopes: WalkedScope[]
 }
 
@@ -467,7 +469,7 @@ function walkSession(db: Database, declaration: Declaration, session: ManifestSe
     }
   }
   close('session_end')
-  return { sessionId: session.id, lastMessage: mark, scopes }
+  return { sessionId: session.id, lastMessage: mark, firstAssistant: entries.find((entry) => entry.role === 'assistant')?.message ?? null, scopes }
 }
 
 export interface WalkInput extends GateInput {

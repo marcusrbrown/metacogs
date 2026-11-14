@@ -10,6 +10,7 @@ import type { SkillBodies } from './loads'
 import {
   auditLeaks,
   buildHiddenView,
+  deleteHiddenViews,
   type Chunk,
   chunkScope,
   DEFAULT_CONTEXT,
@@ -549,6 +550,28 @@ describe('building and writing a view', () => {
     expect(() => writeHiddenView(inside, view, { repoRoot: f.repo.dir })).toThrow(CustodyError)
     expect(existsSync(join(f.repo.dir, 'private'))).toBe(false)
     expect(() => openPrivateRoot({ root: join(f.repo.dir, 'private'), repoRoot: f.repo.dir })).toThrow(CustodyError)
+  })
+})
+
+describe('deleting the views', () => {
+  test('removes every stored view and says how many files that was; nothing stored is nothing removed', () => {
+    const f = fixture()
+    expect(deleteHiddenViews(f.privateRoot)).toBe(0)
+    scoped(f.store, 'ses_a', [{ user: 'hello' }])
+    const view = buildHiddenView({ git: f.repo.git, sessions: walk(f) })
+    writeHiddenView(f.privateRoot, view, { slot: 'initial' })
+    writeHiddenView(f.privateRoot, view, { slot: 'added' })
+    expect(deleteHiddenViews(f.privateRoot)).toBe(2)
+    expect(existsSync(join(f.privateRoot.root, 'views'))).toBe(false)
+    expect(deleteHiddenViews(f.privateRoot)).toBe(0)
+  })
+
+  test('leaves the rest of the private root alone', () => {
+    const f = fixture()
+    scoped(f.store, 'ses_a', [{ user: 'hello' }])
+    writeHiddenView(f.privateRoot, buildHiddenView({ git: f.repo.git, sessions: walk(f) }))
+    deleteHiddenViews(f.privateRoot)
+    expect(existsSync(join(f.privateRoot.root, 'manifest-initial.json'))).toBe(true)
   })
 })
 

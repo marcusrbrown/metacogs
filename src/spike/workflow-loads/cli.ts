@@ -1,7 +1,7 @@
 /**
- * `bun run workflow-loads`: the history count's steps before counting. Every step goes through the declaration gate. Status lines
- * hold counts and fixed words, never session text; `judge` is the one place session-derived text is shown, and it goes only to
- * the terminal stream, where the maintainer reads it.
+ * `bun run workflow-loads`: the history count's steps, from freezing the sample to purging the private views. Every step goes
+ * through the declaration gate. Status lines hold counts and fixed words, never session text; `judge` is the one place
+ * session-derived text is shown, and it goes only to the terminal stream, where the maintainer reads it.
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -13,11 +13,13 @@ import { z } from 'zod'
 import { Git } from '../../runner/git'
 import { defaultDb } from '../feel-drugs/replay/world-cli'
 import { assertOutsideRepo, privateDir, writePrivate } from '../feel-drugs/replay/store'
+import { type CountReport, runCount, type SlotLabeling } from './count'
 import { assertGate, type GateInput, MARKING_RULE_PATH, METHODS, type Method } from './declaration'
-import { createLabelerTransport, labelChunks, type LabelerTransport, loadLabelerProposals, type Proposal, type ResolveKeyOptions, resolveLabelerKey } from './labeler'
+import { createLabelerTransport, deleteLabelerReplies, labelChunks, labelingCoverage, type LabelerTransport, loadLabelerProposals, type Proposal, type ResolveKeyOptions, resolveLabelerKey } from './labeler'
 import { collectSkillBodies } from './loads'
-import { MarksRefusal, answerOmission, judgeProposal, lockMarks, openMarking, type OmissionAnswer, pendingOmissions, pendingProposals, readLocks, type ProposalChoice, type StimulusRef } from './marks'
-import { auditLeaks, buildHiddenView, type Chunk, chunkScope, DEFAULT_CONTEXT, type HiddenView, type LeakKind, renderWithContext, viewPath, writeHiddenView } from './mask'
+import { answerOmission, assertJudgingNotStarted, judgeProposal, lockMarks, MarksRefusal, openMarking, type OmissionAnswer, pendingOmissions, pendingProposals, type ProposalChoice, readLocks, requireLocks, type StimulusRef } from './marks'
+import { auditLeaks, buildHiddenView, type Chunk, chunkScope, DEFAULT_CONTEXT, deleteHiddenViews, type HiddenView, type LeakKind, renderWithContext, viewPath, writeHiddenView } from './mask'
+import { COUNTS_PATH, projectCounts, renderProjection, writeProjection } from './project'
 import { EXCLUSION_REASONS, freezeManifest, MANIFEST_SLOTS, type ManifestSlot, openPrivateRoot, type PrivateRoot, readManifest, walkManifest } from './store'
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url)).replace(/\/$/, '')
@@ -43,7 +45,7 @@ export interface CliIo {
 }
 
 const USAGE = [
-  'usage: bun run workflow-loads freeze | view | label | judge | lock | status',
+  'usage: bun run workflow-loads freeze | view | label | judge | lock | status | count | project | purge',
   '                              [--slot initial|added] [--db <path>] [--private-root <dir>] [--repo-root <dir>]',
   '       bun run workflow-loads label [--budget <chars>] [--context <n>] [--auth-cliproxy <keyname>]',
   '',
@@ -53,6 +55,9 @@ const USAGE = [
   '  judge    judge each proposal, then the omission sample, at the prompt (a quit saves; a rerun resumes)',
   '  lock     lock the slot once every item is judged and answered',
   '  status   counts only',
+  '  count    count loads against the locked marks of every slot and print the outcome (needs every frozen slot locked)',
+  '  project  write evals/spikes/workflow-loads/counts.json and print the counts table (counts only; needs the views)',
+  '  purge    delete the hidden views and the raw labeler replies; manifests, outcomes, judgments and locks stay',
 ].join('\n')
 
 class UsageError extends Error {}
@@ -68,7 +73,7 @@ class StepRefusal extends Error {
   }
 }
 
-const COMMANDS = ['freeze', 'view', 'label', 'judge', 'lock', 'status'] as const
+const COMMANDS = ['freeze', 'view', 'label', 'judge', 'lock', 'status', 'count', 'project', 'purge'] as const
 type Command = (typeof COMMANDS)[number]
 
 function parse(argv: readonly string[]) {
@@ -145,6 +150,12 @@ export async function main(argv: readonly string[], io: Partial<CliIo> = {}): Pr
         return lockCommand(ctx)
       case 'status':
         return statusCommand(ctx)
+      case 'count':
+        return countCommand(ctx)
+      case 'project':
+        return projectCommand(ctx)
+      case 'purge':
+        return purgeCommand(ctx)
     }
   } catch (e) {
     if (e instanceof UsageError) {
@@ -220,6 +231,25 @@ function writeChunking(ctx: Ctx, chunking: Chunking): void {
 
 const chunksOf = (view: HiddenView, chunking: Chunking): Chunk[] => view.scopes.flatMap((scope) => chunkScope(scope, { budget: chunking.budget, contextK: chunking.contextK }))
 
+/**
+ * What the view and labeling steps left for the slot: the stored view, how it was cut, the chunks that cut gives and the proposals
+ * stored for them. Each part is absent until its step has run. `status`, `load` and the counting steps all read it, so they cannot
+ * disagree about which chunks are current.
+ */
+interface Labeling {
+  view: HiddenView | undefined
+  chunking: Chunking | undefined
+  chunks: Chunk[]
+  proposals: Proposal[]
+}
+
+function readLabeling(ctx: Ctx, declarationHash: string): Labeling {
+  const view = readView(ctx)
+  const chunking = readChunking(ctx)
+  const chunks = view && chunking ? chunksOf(view, chunking) : []
+  return { view, chunking, chunks, proposals: view && chunking ? loadLabelerProposals(ctx.privateRoot, chunks, declarationHash) : [] }
+}
+
 interface Loaded {
   declarationHash: string
   view: HiddenView
@@ -230,11 +260,10 @@ interface Loaded {
 /** The gate, the view, the labeling parameters and the stored proposals, or a refusal naming the step that is missing. */
 function load(ctx: Ctx): Loaded {
   const pass = assertGate(gateInput(ctx))
-  const view = readView(ctx)
+  const { view, chunking, proposals } = readLabeling(ctx, pass.declarationHash)
   if (!view) throw new StepRefusal('view_missing', 'build the view first')
-  const chunking = readChunking(ctx)
   if (!chunking) throw new StepRefusal('labeling_not_run', 'label the view first')
-  return { declarationHash: pass.declarationHash, view, chunking, proposals: loadLabelerProposals(ctx.privateRoot, chunksOf(view, chunking), pass.declarationHash) }
+  return { declarationHash: pass.declarationHash, view, chunking, proposals }
 }
 
 const markingInput = (ctx: Ctx, loaded: Loaded) => ({ git: ctx.git, privateRoot: ctx.privateRoot, slot: ctx.slot, proposals: loaded.proposals, view: loaded.view, repoRoot: ctx.repoRoot })
@@ -294,6 +323,8 @@ async function labelCommand(ctx: Ctx): Promise<number> {
   const budget = integerOption(ctx.values.budget, 'budget', 1, DEFAULT_BUDGET)
   const contextK = integerOption(ctx.values.context, 'context', 0, DEFAULT_CONTEXT)
   const pass = assertGate(gateInput(ctx))
+  // labeling again would change the proposals, and with them the omission sample, after judging began
+  assertJudgingNotStarted(ctx.privateRoot, ctx.slot)
   const view = readView(ctx)
   if (!view) throw new StepRefusal('view_missing', 'build the view first')
   const chunking: Chunking = { schemaVersion: 1, budget, contextK }
@@ -462,12 +493,10 @@ function lockCommand(ctx: Ctx): number {
 function statusCommand(ctx: Ctx): number {
   const pass = assertGate(gateInput(ctx))
   const manifest = readManifest(ctx.privateRoot, ctx.slot, pass.declarationHash)
-  const view = readView(ctx)
-  const chunking = readChunking(ctx)
+  const { view, chunking, proposals } = readLabeling(ctx, pass.declarationHash)
   const locks = readLocks(ctx.privateRoot, pass.declarationHash)
   const counts = { proposals: 0, items: 0, judged: 0, omission_sample: 0, omission_answered: 0 }
   if (view && chunking) {
-    const proposals = loadLabelerProposals(ctx.privateRoot, chunksOf(view, chunking), pass.declarationHash)
     const marking = openMarking({ ...markingInput(ctx, { declarationHash: pass.declarationHash, view, chunking, proposals }) })
     counts.items = marking.items.length
     counts.proposals = marking.items.reduce((sum, item) => sum + item.proposed.length, 0)
@@ -488,6 +517,82 @@ function statusCommand(ctx: Ctx): number {
       locks: locks.length,
     })}`,
   )
+  return 0
+}
+
+// ── count, project, purge ──────────────────────────────────────────────────
+
+/**
+ * The count over every locked slot, whatever `--slot` says. Each locked slot needs its stored view and labeling cut: its chunks
+ * give the labeling coverage, and its view the scrub counters. Refused with `view_missing` or `labeling_not_run` otherwise, which
+ * is why `purge` comes last.
+ */
+function countReport(ctx: Ctx): CountReport {
+  const pass = assertGate(gateInput(ctx))
+  const labeling: Partial<Record<ManifestSlot, SlotLabeling>> = {}
+  for (const lock of requireLocks(ctx.privateRoot, pass.declarationHash)) {
+    const slotCtx: Ctx = { ...ctx, slot: lock.slot }
+    const { view, chunking, chunks } = readLabeling(slotCtx, pass.declarationHash)
+    if (!view) throw new StepRefusal('view_missing', `the ${lock.slot} view is not stored; counting reads its coverage and scrub counters`)
+    if (!chunking) throw new StepRefusal('labeling_not_run', `the ${lock.slot} view was not labeled`)
+    if (view.declarationHash !== pass.declarationHash) throw new MarksRefusal('view_declaration_mismatch')
+    labeling[lock.slot] = { coverage: labelingCoverage(ctx.privateRoot, chunks, pass.declarationHash), counters: view.counters }
+  }
+  return runCount({ ...gateInput(ctx), db: ctx.db, privateRoot: ctx.privateRoot, skillBodies: collectSkillBodies(ctx.git, pass.declaration.window), labeling })
+}
+
+function countCommand(ctx: Ctx): number {
+  const report = countReport(ctx)
+  const { counts, coverage, sample, omissions } = report
+  ctx.io.out(
+    `count ${pairs({
+      outcome: report.outcome,
+      notes: report.notes.length > 0 ? report.notes.join(',') : 'none',
+      slots: report.slots.length,
+      sampled: sample.sampled,
+      stimuli: counts.stimuli,
+      chunks: coverage.chunks,
+      failed: coverage.failed,
+      not_attempted: coverage.notAttempted,
+      omission_sample: omissions.sampleSize,
+      omissions: omissions.found,
+    })}`,
+  )
+  for (const method of METHODS) {
+    const m = counts.methods[method]
+    ctx.io.out(
+      `${method} ${pairs({
+        fire_marks: m.accepted.expected_fire,
+        hit: m.buckets.hit,
+        miss: m.buckets.miss,
+        loaded_earlier: m.buckets.loaded_earlier,
+        silence_marks: m.accepted.expected_silence,
+        false_fire: m.buckets.false_fire,
+        correct_silence: m.buckets.correct_silence,
+        hits_skill_call: m.hitsByBasis.skill_call,
+        hits_direct_read: m.hitsByBasis.direct_read,
+        unmarked_loads: m.unmarkedLoads,
+      })}`,
+    )
+  }
+  return 0
+}
+
+/** Writes the projection into the repository's spike directory and prints the table. The leak scan runs before anything is written. */
+function projectCommand(ctx: Ctx): number {
+  const projection = projectCounts(countReport(ctx))
+  const { table } = renderProjection(projection)
+  writeProjection(join(ctx.repoRoot, COUNTS_PATH), projection)
+  ctx.io.out(`projected ${pairs({ file: COUNTS_PATH, outcome: projection.outcome, notes: projection.coverage_notes.length > 0 ? projection.coverage_notes.join(',') : 'none' })}`)
+  ctx.io.out(table)
+  return 0
+}
+
+/** Deletes the hidden views and the raw labeler replies, once every frozen slot is locked. Manifests, outcomes, judgments and locks stay. */
+function purgeCommand(ctx: Ctx): number {
+  const pass = assertGate(gateInput(ctx))
+  requireLocks(ctx.privateRoot, pass.declarationHash)
+  ctx.io.out(`purged ${pairs({ views: deleteHiddenViews(ctx.privateRoot), replies: deleteLabelerReplies(ctx.privateRoot) })}`)
   return 0
 }
 

@@ -42,6 +42,7 @@ export type MarksReason =
   | 'lock_manifest_mismatch'
   | 'no_lock'
   | 'slot_not_locked'
+  | 'judging_started'
 
 const REFUSAL_MESSAGE: Record<MarksReason, string> = {
   view_declaration_mismatch: 'the hidden view was built under a different declaration',
@@ -60,6 +61,7 @@ const REFUSAL_MESSAGE: Record<MarksReason, string> = {
   lock_manifest_mismatch: "a lock does not match its slot's manifest",
   no_lock: 'no lock exists, so there are no locked marks to count',
   slot_not_locked: 'a frozen slot has no lock yet',
+  judging_started: 'a judgment or an omission answer is stored for this slot, so the proposals can no longer change',
 }
 
 /** The marks step cannot proceed. The message is fixed per reason (plus counts, where given): it never carries session text. */
@@ -221,6 +223,20 @@ function readEvents(privateRoot: PrivateRoot, slot: ManifestSlot, declarationHas
     events.push(parsed.data)
   }
   return events
+}
+
+/** Any judgment or omission answer is stored for the slot, or the slot is locked. Judgments are never validated here: any file counts. */
+function judgingStarted(privateRoot: PrivateRoot, slot: ManifestSlot): boolean {
+  const dir = judgmentsDir(privateRoot, slot)
+  return existsSync(lockPath(privateRoot, slot)) || (existsSync(dir) && readdirSync(dir).some((name) => EVENT_FILE.test(name)))
+}
+
+/**
+ * Throws `judging_started` once a judgment, an omission answer or a lock is stored for the slot. Labeling again would change the
+ * proposals, and with them the omission sample, after the maintainer began judging. Other slots are not affected.
+ */
+export function assertJudgingNotStarted(privateRoot: PrivateRoot, slot: ManifestSlot): void {
+  if (judgingStarted(privateRoot, slot)) throw new MarksRefusal('judging_started')
 }
 
 function appendEvent(privateRoot: PrivateRoot, slot: ManifestSlot, event: StoredEvent): void {

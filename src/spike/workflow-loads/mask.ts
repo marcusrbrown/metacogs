@@ -12,6 +12,7 @@
  *   except that a text whose only finding is an email address keeps its text and loses the addresses. Then path redaction, then a
  *   length bound.
  */
+import { existsSync, readdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { scanText } from '../../scan/secrets'
@@ -243,6 +244,15 @@ export function buildHiddenView(input: BuildViewInput): HiddenView {
 // ── writing ────────────────────────────────────────────────────────────────
 
 export const viewPath = (privateRoot: PrivateRoot, slot: ManifestSlot): string => join(privateRoot.root, 'views', `view-${slot}.json`)
+
+/** Deletes every stored view and returns how many files that was. Nothing else under the private root is touched. */
+export function deleteHiddenViews(privateRoot: PrivateRoot): number {
+  const dir = join(privateRoot.root, 'views')
+  if (!existsSync(dir)) return 0
+  const files = readdirSync(dir).length
+  rmSync(dir, { recursive: true, force: true })
+  return files
+}
 
 /**
  * Writes a built view under the private root, owner-only, replacing an earlier view of the slot (a masking fix rebuilds it). The

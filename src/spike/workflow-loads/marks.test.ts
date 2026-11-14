@@ -10,6 +10,7 @@ import { type Declaration, DECLARATION_PATH, GateRefusal, type Label, type Metho
 import type { SkillBodies } from './loads'
 import {
   answerOmission,
+  assertJudgingNotStarted,
   judgeProposal,
   type Lock,
   lockMarks,
@@ -579,5 +580,76 @@ describe('refusals', () => {
     lockMarks(input)
     expect(f.repo.git.porcelain([])).toBe(before)
     expect(readdirSync(join(f.privateRoot.root, 'marks')).sort()).toEqual(['initial', 'lock-initial.json'])
+  })
+})
+
+describe('judging started', () => {
+  const started = (f: Fixture): MarksReason | 'not_started' => {
+    try {
+      assertJudgingNotStarted(f.privateRoot, 'initial')
+      return 'not_started'
+    } catch (e) {
+      if (e instanceof MarksRefusal) return e.reason
+      throw e
+    }
+  }
+
+  test('nothing stored is not started, with or without a private directory for the slot', () => {
+    const f = fixture()
+    expect(started(f)).toBe('not_started')
+    sixStimuli(f)
+    expect(started(f)).toBe('not_started')
+  })
+
+  test('one stored judgment is started', () => {
+    const f = fixture()
+    const { input } = sixStimuli(f)
+    const [item] = pendingProposals(openMarking(input))
+    if (!item) throw new Error('no item')
+    judgeProposal(input, item, { action: 'reject' })
+    expect(started(f)).toBe('judging_started')
+  })
+
+  test('one stored omission answer is started', () => {
+    const f = fixture()
+    const { input } = sixStimuli(f)
+    const [ref] = openMarking(input).sample
+    if (!ref) throw new Error('no sample')
+    answerOmission(input, ref, NEITHER)
+    expect(started(f)).toBe('judging_started')
+  })
+
+  test('a lock is started even when it holds no judgment', () => {
+    const f = fixture()
+    const view = f.build()
+    const input = f.marking(view, [])
+    for (const ref of pendingOmissions(openMarking(input))) answerOmission(input, ref, NEITHER)
+    lockMarks(input)
+    expect(started(f)).toBe('judging_started')
+  })
+
+  test('another slot is judged separately: judgments of the initial slot do not block the added one', () => {
+    const f = fixture()
+    const { input } = sixStimuli(f)
+    const [item] = pendingProposals(openMarking(input))
+    if (!item) throw new Error('no item')
+    judgeProposal(input, item, { action: 'reject' })
+    expect(() => assertJudgingNotStarted(f.privateRoot, 'added')).not.toThrow()
+  })
+
+  test('the refusal names its reason and carries no session text', () => {
+    const f = fixture()
+    const { input } = sixStimuli(f)
+    const [item] = pendingProposals(openMarking(input))
+    if (!item) throw new Error('no item')
+    judgeProposal(input, item, { action: 'reject' })
+    let message = ''
+    try {
+      assertJudgingNotStarted(f.privateRoot, 'initial')
+    } catch (e) {
+      message = e instanceof Error ? e.message : ''
+    }
+    expect(message).toStartWith('judging_started:')
+    expect(message).not.toContain('one')
   })
 })
