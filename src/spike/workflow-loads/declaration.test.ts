@@ -25,7 +25,9 @@ import {
   type NewDeviation,
   parseDeclaration,
   parseDeviations,
+  projectRootHash,
   recordDeviation,
+  underExcludedRoot,
 } from './declaration'
 import { gatedRepo, SAMPLE_RULE_TEXT, sampleDeclaration, writeDeclaration } from './test-support'
 import type { TestRepo } from '../../runner/test-support'
@@ -158,8 +160,11 @@ describe('declaration schema', () => {
       { decision_bearing_tools: [] },
       { decision_bearing_tools: ['task', 'task'] },
       { decision_bearing_tools: [''] },
-      { excluded_project_roots: [''] },
-      { excluded_project_roots: ['/a', '/a'] },
+      { excluded_project_root_hashes: [''] },
+      { excluded_project_root_hashes: ['abc'] },
+      { excluded_project_root_hashes: ['A'.repeat(64)] },
+      { excluded_project_root_hashes: ['a'.repeat(64), 'a'.repeat(64)] },
+      { excluded_project_roots: ['/a'] },
       { outcome_rule: 'anything-goes' },
       { labeler: { model_id: '', endpoint: 'https://proxy.example.invalid/v1' } },
       { labeler: { model_id: 'm', endpoint: 'not a url' } },
@@ -169,7 +174,13 @@ describe('declaration schema', () => {
   })
 
   test('an empty excluded-roots list is allowed', () => {
-    expect(() => parseDeclaration({ ...sampleDeclaration(), excluded_project_roots: [] })).not.toThrow()
+    expect(() => parseDeclaration({ ...sampleDeclaration(), excluded_project_root_hashes: [] })).not.toThrow()
+  })
+
+  test('excluded roots are held as salted hashes, so the declaration names no local path', () => {
+    const declaration = sampleDeclaration({ excluded_project_root_hashes: [projectRootHash('sample-salt', '/work/private-checkout')] })
+    expect(JSON.stringify(declaration)).not.toContain('private-checkout')
+    expect(declaration.excluded_project_root_hashes).toHaveLength(1)
   })
 
   test('a refusal names the field and never echoes the value', () => {
@@ -565,5 +576,36 @@ describe('deviation entry types', () => {
     const [entry] = parseDeviations(appendDeviationText(undefined, declaration, { code: 'session_cap_raise', reason: 'once', session_cap: 80 }), declaration)
     const expected: Deviation = { code: 'session_cap_raise', reason: 'once', prev: declarationHash(declaration), session_cap: 80 }
     expect(entry).toEqual(expected)
+  })
+})
+
+describe('excluded project roots', () => {
+  test('a root hashes to 64 hex digits, stably, and the salt and the path both change it', () => {
+    const hash = projectRootHash('salt-a', '/work/project')
+    expect(hash).toMatch(/^[0-9a-f]{64}$/)
+    expect(projectRootHash('salt-a', '/work/project')).toBe(hash)
+    expect(projectRootHash('salt-b', '/work/project')).not.toBe(hash)
+    expect(projectRootHash('salt-a', '/work/other')).not.toBe(hash)
+  })
+
+  test('spellings of one path hash alike: trailing slashes, doubled slashes and dot segments', () => {
+    const hash = projectRootHash('s', '/work/project')
+    for (const spelling of ['/work/project/', '/work//project', '/work/./project', '/work/other/../project//']) expect(projectRootHash('s', spelling)).toBe(hash)
+  })
+
+  test('a directory equal to a root, or anywhere under it, is excluded; siblings and parents are not', () => {
+    const declaration = sampleDeclaration({ excluded_project_root_hashes: [projectRootHash('sample-salt', '/work/project')] })
+    expect(underExcludedRoot(declaration, '/work/project')).toBe(true)
+    expect(underExcludedRoot(declaration, '/work/project/')).toBe(true)
+    expect(underExcludedRoot(declaration, '/work/project/packages/a')).toBe(true)
+    expect(underExcludedRoot(declaration, '/work/project-two')).toBe(false)
+    expect(underExcludedRoot(declaration, '/work')).toBe(false)
+    expect(underExcludedRoot(declaration, '/elsewhere/project')).toBe(false)
+  })
+
+  test('an empty list and an empty directory exclude nothing', () => {
+    expect(underExcludedRoot(sampleDeclaration({ excluded_project_root_hashes: [] }), '/work/project')).toBe(false)
+    const declaration = sampleDeclaration({ excluded_project_root_hashes: [projectRootHash('sample-salt', '/work/project')] })
+    expect(underExcludedRoot(declaration, '')).toBe(false)
   })
 })

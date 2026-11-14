@@ -7,12 +7,12 @@
  * that hash, stays valid.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, posix } from 'node:path'
 import { z } from 'zod'
 
 import { canonicalize } from '../../record/canonical'
 import type { Git } from '../../runner/git'
-import { canonicalizeText, preregCommitViolation } from '../../runner/prereg'
+import { canonicalizeText, preregCommitViolation, saltedHash } from '../../runner/prereg'
 import { sha256 } from '../../runner/workspace'
 
 // ── where the committed files live ─────────────────────────────────────────
@@ -69,8 +69,8 @@ const declarationSchema = z
     scope_message_cap: posInt,
     /** Mixed into every salted hash that orders or samples sessions and stimuli. */
     salt: nonEmpty,
-    /** Project roots whose sessions are left out. May be empty. */
-    excluded_project_roots: z.array(nonEmpty).refine(unique),
+    /** Project roots whose sessions are left out, held as `projectRootHash` values so this committed file names no local path. May be empty. */
+    excluded_project_root_hashes: z.array(hex64).refine(unique),
     /** Names of tools whose result counts as a stimulus. */
     decision_bearing_tools: z.array(nonEmpty).min(1).refine(unique),
     /** sha256 of the marking-rule file's canonical text (`markingRuleHash`). */
@@ -124,6 +124,41 @@ export function declarationHash(declaration: Declaration): string {
  */
 export function markingRuleHash(bytes: Uint8Array | string): string {
   return sha256(canonicalizeText(bytes))
+}
+
+// ── excluded project roots ─────────────────────────────────────────────────
+
+/** A path in the form that is hashed: dot segments and doubled or trailing slashes removed. */
+function normalizeRoot(path: string): string {
+  const normalized = posix.normalize(path)
+  return normalized.length > 1 ? normalized.replace(/\/+$/, '') : normalized
+}
+
+/**
+ * What an `excluded_project_root_hashes` entry is: `saltedHash` (sha256 of salt, NUL, text) over `project-root:` and the normalized
+ * path, using the declaration's own salt. The prefix keeps these hashes apart from the session-id hashes made with the same salt.
+ */
+export function projectRootHash(salt: string, root: string): string {
+  return saltedHash(salt, `project-root:${normalizeRoot(root)}`)
+}
+
+/** The directory and each of its ancestors, nearest first (`/a/b` gives `/a/b`, `/a`, `/`). */
+function directoryChain(directory: string): string[] {
+  const chain: string[] = []
+  let current = normalizeRoot(directory)
+  for (;;) {
+    chain.push(current)
+    const parent = posix.dirname(current)
+    if (parent === current) return chain
+    current = parent
+  }
+}
+
+/** Whether `directory` equals an excluded root or lies under one. An empty directory is under nothing. */
+export function underExcludedRoot(declaration: Declaration, directory: string): boolean {
+  if (directory === '' || declaration.excluded_project_root_hashes.length === 0) return false
+  const excluded = new Set(declaration.excluded_project_root_hashes)
+  return directoryChain(directory).some((candidate) => excluded.has(projectRootHash(declaration.salt, candidate)))
 }
 
 // ── deviations ─────────────────────────────────────────────────────────────
