@@ -28,7 +28,7 @@
   },
   "testedWith": {
     "opencode": "1.19.4",
-    "opencode-v2": "2.2.5"
+    "opencode-v2": "2.2.7"
   },
   "files": [
     "dist",
@@ -67,7 +67,7 @@
     "@changesets/cli": "3.0.3",
     "@modelcontextprotocol/sdk": "1.32.2",
     "@opencode-ai/plugin": "1.19.5",
-    "@opencode/plugin": "2.2.5",
+    "@opencode/plugin": "2.2.7",
     "@types/bun": "1.4.4",
     "typescript": "7.0.2",
     "zod": "4.6.7"
