@@ -20,7 +20,7 @@ import { redactPaths } from '../feel-drugs/sheet'
 import { assertOutsideRepo, privateDir, writePrivate } from '../feel-drugs/replay/store'
 import { assertGate, type GateInput, METHODS } from './declaration'
 import { type MethodCall, methodCallOf, nameRegex, type StoredToolUse, toolUseOfPart, type WorkflowSkill, wholeWordRegex } from './loads'
-import { EMAIL_ADDRESS, EMAIL_PLACEHOLDER, holdsSecret, inputHoldsSecret, redactAbsolutePaths, SCRUB_PLACEHOLDER, scrubFindings } from './scrub'
+import { EMAIL_ADDRESS, EMAIL_PLACEHOLDER, holdsSecret, inputHoldsSecret, redactAbsolutePaths, SCAN_TAIL, SCAN_WINDOW, SCRUB_LIMITS, SCRUB_PLACEHOLDER, scrubFindings } from './scrub'
 import type { ManifestSlot, PrivateRoot, StimulusKind, WalkedEntry, WalkedSession } from './store'
 
 // ── rules ──────────────────────────────────────────────────────────────────
@@ -103,10 +103,6 @@ interface Renderer {
 /** The current home first, then any other absolute path. */
 const redact = (text: string): string => redactAbsolutePaths(redactPaths(text, { workspaces: [], homes: [] }))
 
-function truncate(text: string, max: number): string {
-  return text.length <= max ? text : `${text.slice(0, Math.max(0, max - TRUNCATION_MARKER.length))}${TRUNCATION_MARKER}`
-}
-
 function tokenize(text: string, renderer: Renderer): string {
   if (renderer.off.has('tokenize_names')) return text
   return text.replace(HELPER_PATH, METHOD_TOKEN).replace(nameRegex(), METHOD_TOKEN)
@@ -114,19 +110,58 @@ function tokenize(text: string, renderer: Renderer): string {
 
 type Counter = keyof ViewCounters
 
+/** One escape, from its first backslash. */
+const ESCAPE_AT = /\\+(?:u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|[/bfnrt"])/y
+
+/** Whether cutting `text` at `cut` would leave part of an escape (`\u00` of `\u0040`) or a backslash that begins one. */
+function cutsEscape(text: string, cut: number): boolean {
+  if (text[cut - 1] === '\\') return true
+  // an escape is at most six characters after its backslashes, so one that spans the cut has a backslash within five characters before it
+  for (let start = Math.max(0, cut - 5); start < cut; start++) {
+    if (text[start] !== '\\') continue
+    ESCAPE_AT.lastIndex = start
+    const found = ESCAPE_AT.exec(text)
+    if (found && start + found[0].length > cut) return true
+  }
+  return false
+}
+
 /**
- * Scan, tokenize, redact paths, bound: in that order, so a secret is found in the whole text and a cut never half-hides one. Then
- * the result is checked as the labeler's guard checks what it is sent: whatever the guard would refuse (an address that was only
- * written with an escape and so was not replaced, say) is withheld here, so the view never holds text that cannot be sent.
+ * A text of the view, rendered: scanned, transformed, cut, and checked as the labeler's guard checks what it is sent.
+ *
+ * - A text over the hard bound is withheld without being scanned. A longer text than the window is scanned and transformed as
+ *   far as the window only, since only its start is kept; the cut then needs a tail past it in the scanned part, or the text is
+ *   withheld (it shrank too far in the transforms for the scan to have reached past what is kept).
+ * - Scan, then replace addresses, tokenize and redact paths, each followed by the guard: whatever the guard would refuse (an
+ *   address that was only written with an escape and so was not replaced, say) withholds the whole text, before it is cut. A cut
+ *   never falls inside an escape sequence: the text is withheld instead.
+ * - A kept text ends as the guard accepted it: the guard runs once more on the cut text.
  */
 function finish(text: string, counter: Counter, limit: number, renderer: Renderer): string {
-  const rules = scrubFindings(text)
+  if (text.length > SCRUB_LIMITS.chars) return withhold(counter, renderer)
+  const windowed = text.length > SCAN_WINDOW
+  const scanned = windowed ? text.slice(0, SCAN_WINDOW) : text
+  const rules = scrubFindings(scanned)
   // any finding but an address withholds the whole text; an address alone only loses the address
   if ([...rules].some((rule) => rule !== 'email')) return withhold(counter, renderer)
-  const body = rules.has('email') ? text.replace(EMAIL_ADDRESS, EMAIL_PLACEHOLDER) : text
-  const out = truncate(redact(tokenize(body, renderer)), limit)
+  const body = rules.has('email') ? scanned.replace(EMAIL_ADDRESS, EMAIL_PLACEHOLDER) : scanned
+  if (holdsSecret(body)) return withhold(counter, renderer)
+  const transformed = redact(tokenize(body, renderer))
+  if (holdsSecret(transformed)) return withhold(counter, renderer)
+  let out = transformed
+  if (transformed.length > limit) {
+    if (windowed && transformed.length < limit + SCAN_TAIL) return withhold(counter, renderer)
+    let cut = Math.max(0, limit - TRUNCATION_MARKER.length)
+    // not between the two halves of a surrogate pair
+    const before = transformed.charCodeAt(cut - 1)
+    if (before >= 0xd800 && before <= 0xdbff) cut -= 1
+    if (cutsEscape(transformed, cut)) return withhold(counter, renderer)
+    out = `${transformed.slice(0, cut)}${TRUNCATION_MARKER}`
+  } else if (windowed) {
+    return withhold(counter, renderer)
+  }
   if (holdsSecret(out)) return withhold(counter, renderer)
-  if (body !== text) renderer.counters.redactedEmails += 1
+  if (body !== scanned) renderer.counters.redactedEmails += 1
   return out
 }
 

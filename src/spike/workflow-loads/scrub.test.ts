@@ -1,9 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 
-import { inputHoldsSecret, MAX_SEPARATORS, PATH_PLACEHOLDER, redactAbsolutePaths, SCRUB_LIMITS, SCRUB_LIMIT_RULE, type ScrubLimits, scrubFindings, unescapeText } from './scrub'
+import { inputHoldsSecret, MAX_SEPARATORS, PATH_PLACEHOLDER, redactAbsolutePaths, SCAN_WINDOW, SCRUB_LIMITS, SCRUB_LIMIT_RULE, type ScrubLimits, scrubFindings, unescapeText } from './scrub'
 import { CREDENTIAL_TEXT_CASES, EMAIL_TEXT_CASES } from './scrub-cases'
 
 // Assembled at runtime so this file holds no credential-shaped literal.
+/** The default limits without the bounds on length, for the tests of how the rules scale. */
+const UNBOUNDED: ScrubLimits = { ...SCRUB_LIMITS, line: Number.POSITIVE_INFINITY, chars: Number.POSITIVE_INFINITY }
+
 const VALUE = ['v4lue', 'Of', 'Some', 'Length'].join('')
 
 const KEYS = ['password', 'passwd', 'pwd', 'secret', 'token', 'api_key', 'api-key', 'apikey', 'access_key', 'auth', 'authorization', 'cookie', 'db_password', 'X_AUTH_TOKEN', 'client_secret', 'private_key', 'credentials'] as const
@@ -138,7 +141,7 @@ describe('scrubFindings: the key next to an assignment', () => {
   })
 
   // small limits keep these cheap: the scanner's time grows with the square of a line's length
-  const SMALL: ScrubLimits = { decodeDepth: 3, containerDepth: 5, nodes: 20, chars: 500 }
+  const SMALL: ScrubLimits = { decodeDepth: 3, containerDepth: 5, nodes: 20, chars: 500, line: 500 }
   const limited = (text: string): boolean => scrubFindings(text, SMALL).has(SCRUB_LIMIT_RULE)
 
   test('a limit hit is a finding of its own: layers, containers, nodes, decoded size and a text too long to inspect', () => {
@@ -171,7 +174,7 @@ describe('scrubFindings: the key next to an assignment', () => {
     let ok = 'leaf'
     for (let i = 0; i < 4; i++) ok = JSON.stringify({ body: ok })
     expect(scrubFindings(ok).size).toBe(0)
-    expect(SCRUB_LIMITS).toEqual({ decodeDepth: 8, containerDepth: 64, nodes: 25_000, chars: 2_000_000 })
+    expect(SCRUB_LIMITS).toEqual({ decodeDepth: 8, containerDepth: 64, nodes: 25_000, chars: 1_000_000, line: 20_000 })
     expect(scrubFindings('x'.repeat(SCRUB_LIMITS.chars + 1)).has(SCRUB_LIMIT_RULE)).toBe(true)
   })
 })
@@ -229,7 +232,7 @@ describe('scrubFindings: text written with escapes', () => {
   })
 
   test('the passes are limited: a text that still changes after the last pass is a finding of its own', () => {
-    const small: ScrubLimits = { decodeDepth: 3, containerDepth: 5, nodes: 20, chars: 500 }
+    const small: ScrubLimits = { decodeDepth: 3, containerDepth: 5, nodes: 20, chars: 500, line: 500 }
     let text = '\\u0070lain'
     // `\u0070lain` is one pass, and each encoding adds one
     for (let i = 0; i < 2; i++) text = encode(text)
@@ -238,7 +241,7 @@ describe('scrubFindings: text written with escapes', () => {
   })
 
   test('the unescaped forms count toward the size limit, though the text itself is under it', () => {
-    const limits: ScrubLimits = { decodeDepth: 8, containerDepth: 5, nodes: 100, chars: 150 }
+    const limits: ScrubLimits = { decodeDepth: 8, containerDepth: 5, nodes: 100, chars: 150, line: 150 }
     let text = `\\u0070${'a'.repeat(40)}`
     for (let i = 0; i < 3; i++) text = encode(text)
     expect(text.length).toBeLessThanOrEqual(limits.chars)
@@ -262,8 +265,8 @@ describe('scrubFindings: text written with escapes', () => {
 
   test('long runs of backslashes stay linear', () => {
     const started = performance.now()
-    expect(scrubFindings('\\'.repeat(200_000) + 'u0070').size).toBe(0)
-    expect(scrubFindings('\\u00'.repeat(30_000)).size).toBe(0)
+    expect(scrubFindings('\\'.repeat(200_000) + 'u0070', UNBOUNDED).size).toBe(0)
+    expect(scrubFindings('\\u00'.repeat(30_000), UNBOUNDED).size).toBe(0)
     expect(performance.now() - started).toBeLessThan(2000)
   })
 })
@@ -272,6 +275,46 @@ describe('inputHoldsSecret: escaped text', () => {
   test('an email written with an escape is not a secret here, as a literal one is not: the serialized input decides', () => {
     expect(inputHoldsSecret({ to: 'someone\\u0040corp-mail.com' })).toBe(false)
     expect(inputHoldsSecret({ k: '\\u0070assword=x' })).toBe(true)
+  })
+})
+
+describe('scrubFindings: the cost of a long line', () => {
+  const quickly = (fn: () => unknown, ms = 2000): void => {
+    const started = performance.now()
+    fn()
+    expect(performance.now() - started).toBeLessThan(ms)
+  }
+
+  test('a line longer than the line bound is a limit finding, and costs nothing: the scanner is not run on it', () => {
+    quickly(() => {
+      for (const length of [SCRUB_LIMITS.line + 1, 100_000, 400_000, 2_000_000]) expect([length, scrubFindings('x'.repeat(length)).has(SCRUB_LIMIT_RULE)]).toEqual([length, true])
+    })
+  })
+
+  test('the bound is per line: many short lines of any total length up to the hard bound are scanned', () => {
+    const lines = Array.from({ length: 20_000 }, (_, i) => `line number ${i}`).join('\n')
+    expect(lines.length).toBeGreaterThan(SCRUB_LIMITS.line)
+    expect(scrubFindings(lines).size).toBe(0)
+    expect(scrubFindings(`${lines}\n${'x'.repeat(SCRUB_LIMITS.line + 1)}`).has(SCRUB_LIMIT_RULE)).toBe(true)
+    expect(scrubFindings('x'.repeat(SCRUB_LIMITS.line)).has(SCRUB_LIMIT_RULE)).toBe(false)
+  })
+
+  test('a text over the hard bound is a limit finding whatever its lines are', () => {
+    const lines = 'short line\n'.repeat(Math.ceil(SCRUB_LIMITS.chars / 11) + 1)
+    expect(lines.length).toBeGreaterThan(SCRUB_LIMITS.chars)
+    quickly(() => expect(scrubFindings(lines).has(SCRUB_LIMIT_RULE)).toBe(true))
+  })
+
+  test('a string in a structured input longer than the hard bound is a limit finding, not a prefix scan', () => {
+    expect(inputHoldsSecret({ content: 'x'.repeat(SCRUB_LIMITS.chars + 1) })).toBe(true)
+    expect(inputHoldsSecret({ content: 'x'.repeat(SCRUB_LIMITS.chars) })).toBe(false)
+  })
+
+  test('a string in a structured input is inspected only as far as the window: a secret beyond it is not what the view keeps', () => {
+    const key = ['sk', 'ant', 'abcdefghijklmnopqrstuvwx'].join('-')
+    const filler = 'ab cd '.repeat(Math.ceil((SCAN_WINDOW + 100) / 6))
+    expect(inputHoldsSecret({ content: `${filler}${key}` })).toBe(false)
+    expect(inputHoldsSecret({ content: `${filler.slice(0, SCAN_WINDOW - 100)}${key}` })).toBe(true)
   })
 })
 
@@ -306,16 +349,17 @@ describe('inputHoldsSecret', () => {
     for (let i = 0; i < SCRUB_LIMITS.containerDepth + 5; i++) deep = { a: deep }
     expect(inputHoldsSecret(deep)).toBe(true)
     expect(inputHoldsSecret(Array.from({ length: SCRUB_LIMITS.nodes + 1 }, () => 'x'))).toBe(true)
-    expect(inputHoldsSecret(Array.from({ length: 10 }, () => 'x'), { decodeDepth: 3, containerDepth: 5, nodes: 5, chars: 500 })).toBe(true)
+    expect(inputHoldsSecret(Array.from({ length: 10 }, () => 'x'), { decodeDepth: 3, containerDepth: 5, nodes: 5, chars: 500, line: 500 })).toBe(true)
   })
 
   test('a deeply wrapped assignment is a secret, however deep', () => {
     let nested: unknown = `password\t=\t${V}`
     for (let i = 0; i < SCRUB_LIMITS.containerDepth + 40; i++) nested = { body: nested }
     expect(inputHoldsSecret({ content: nested })).toBe(true)
+    // layers of JSON strings grow by about half again each time, so the layers the default limit allows are longer than the window
     let wrapped = `password\t=\t${V}`
-    for (let i = 0; i < SCRUB_LIMITS.decodeDepth + 5; i++) wrapped = JSON.stringify({ body: wrapped })
-    expect(inputHoldsSecret({ content: wrapped })).toBe(true)
+    for (let i = 0; i < 8; i++) wrapped = JSON.stringify({ body: wrapped })
+    expect(inputHoldsSecret({ content: wrapped }, { ...SCRUB_LIMITS, decodeDepth: 3 })).toBe(true)
   })
 })
 
@@ -377,10 +421,10 @@ describe('the scrub rules on long text', () => {
     expect(redactAbsolutePaths(`/${'a'.repeat(200_000)}`)).toBe(`/${'a'.repeat(200_000)}`)
     expect(redactAbsolutePaths('/'.repeat(100_000))).toBe('/'.repeat(100_000))
     expect(redactAbsolutePaths('/a'.repeat(50_000))).toBe(PATH_PLACEHOLDER)
-    expect(scrubFindings(`${'token '.repeat(50_000)}`).size).toBe(0)
+    expect(scrubFindings(`${'token '.repeat(50_000)}`, UNBOUNDED).size).toBe(0)
     expect(scrubFindings(`${'password:\n'.repeat(20_000)}`).has('credential-field')).toBe(true)
-    expect(scrubFindings(`${'password '.repeat(50_000)}`).size).toBe(0)
-    expect(scrubFindings(`${'\\'.repeat(200_000)}`).size).toBe(0)
+    expect(scrubFindings(`${'password '.repeat(50_000)}`, UNBOUNDED).size).toBe(0)
+    expect(scrubFindings(`${'\\'.repeat(200_000)}`, UNBOUNDED).size).toBe(0)
     expect(performance.now() - started).toBeLessThan(2000)
   })
 })

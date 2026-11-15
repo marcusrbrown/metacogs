@@ -3,20 +3,12 @@
  * an assignment is withheld from the view, and a chunk that still holds one is never sent. Each case runs through both.
  */
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 
-import { gatedRepo, seedWorkflowSession, syntheticStore } from './test-support'
-import { type CompleteRequest } from '../feel-drugs/replay/judge'
-import { type LabelerTransport, labelChunks } from './labeler'
-import { type Chunk, chunkScope, renderSessions, renderStimulusBlock, SCRUB_PLACEHOLDER } from './mask'
+import { chunkScope, SCRUB_PLACEHOLDER } from './mask'
 import { holdsSecret, SCRUB_LIMITS } from './scrub'
 import { CREDENTIAL_TEXT_CASES, EMAIL_TEXT_CASES } from './scrub-cases'
-import { freezeManifest, openPrivateRoot, walkManifest } from './store'
-import { SAMPLE_RULE_TEXT } from './test-support'
+import { assertViewAccepted, chunkWith, cleanup, fixture, sendChunk, viewOf } from './view-support'
 
-const cleanup: (() => void)[] = []
 afterEach(() => {
   for (const fn of cleanup.splice(0).reverse()) fn()
 })
@@ -80,50 +72,6 @@ const CASES: Case[] = [
   { name: 'an escaped form feed after a key with a doubled backslash', secret: HARBOR, text: `{"body":{"${PASSWORD}\\\\f":"${HARBOR}"},"body":null}` },
   { name: 'a placeholder value with its key', secret: '<redacted>', input: { env: { [PASSWORD]: '<redacted>' } } },
 ]
-
-function fixture() {
-  const { repo, declaration } = gatedRepo()
-  const store = syntheticStore()
-  const dir = mkdtempSync(join(tmpdir(), 'metacogs-workflow-loads-credentials-'))
-  const privateRoot = openPrivateRoot({ root: join(dir, 'state') })
-  cleanup.push(() => {
-    store.destroy()
-    repo.destroy()
-    rmSync(dir, { recursive: true, force: true })
-  })
-  return { repo, declaration, store, privateRoot }
-}
-
-/** The view of a one-stimulus workflow session whose assistant turn made one tool call. */
-function viewOf(call: { input?: Record<string, unknown>; output?: string; tool?: string }) {
-  const f = fixture()
-  seedWorkflowSession(f.store, { id: 'ses_a', created: '2026-01-15' })
-  f.store.addText(f.store.addMessage('ses_a', 'user'), 'go on')
-  f.store.addTool(f.store.addMessage('ses_a', 'assistant'), { tool: call.tool ?? (call.input ? 'write' : 'bash'), input: call.input ?? { command: 'cat f' }, output: call.output ?? 'ok' })
-  const input = { git: f.repo.git, db: f.store.path, privateRoot: f.privateRoot }
-  freezeManifest(input)
-  return { f, rendered: renderSessions(walkManifest({ ...input, skillBodies: { counterfactual: ['body of counterfactual'], synthesis: ['body of synthesis'] } })) }
-}
-
-function scriptedTransport(): LabelerTransport & { requests: CompleteRequest[] } {
-  const requests: CompleteRequest[] = []
-  return {
-    endpoint: 'https://proxy.example.invalid/v1',
-    requests,
-    async complete(request) {
-      requests.push(request)
-      return { text: JSON.stringify({ proposals: [] }) }
-    },
-  }
-}
-
-async function sendChunk(f: ReturnType<typeof fixture>, chunks: readonly Chunk[]) {
-  const transport = scriptedTransport()
-  const run = await labelChunks({ git: f.repo.git, privateRoot: f.privateRoot, chunks, ruleText: SAMPLE_RULE_TEXT, transport, nonce: () => 'n0nce', sessionId: () => 's', retryDelayMs: 0 })
-  return { transport, run }
-}
-
-const chunkWith = (text: string): Chunk => ({ sessionId: 'ses_1', scopeIndex: 0, ids: ['a1'], contextIds: [], text: renderStimulusBlock({ id: 'a1', kind: 'user_message', text, traffic: [] }, 'stimulus'), oversize: false })
 
 /** What the host's text for a tool call looks like once rendered unscrubbed: the call, then its output. */
 const callText = (c: Case): string => (c.input ? `[tool] write ${JSON.stringify(c.input)}` : `[tool] bash {"command":"cat f"}\n[output] ${c.text}`)
@@ -278,36 +226,16 @@ describe('an address written out and the same one written with an escape', () =>
 })
 
 describe('whatever the view renders, the guard accepts', () => {
-  /** Every string the view holds for the scope, and every chunk text the labeler would be sent, for a range of budgets and contexts. */
-  async function assertAccepted(call: { input?: Record<string, unknown>; output?: string }, label: string) {
-    const { f, rendered } = viewOf(call)
-    for (const scope of rendered.scopes) {
-      for (const stimulus of scope.stimuli) {
-        for (const text of [stimulus.text, ...stimulus.traffic]) expect([label, text, holdsSecret(text)]).toEqual([label, text, false])
-      }
-      for (const budget of [150, 600, 100_000]) {
-        for (const contextK of [0, 1, 3]) {
-          for (const chunk of chunkScope(scope, { budget, contextK })) expect([label, holdsSecret(chunk.text)]).toEqual([label, false])
-        }
-      }
-    }
-    const scope = rendered.scopes[0]
-    if (!scope) throw new Error('no scope')
-    const { transport, run } = await sendChunk(f, chunkScope(scope, { budget: 100_000 }))
-    expect([label, run.results.map((r) => r.outcome.status)]).toEqual([label, run.results.map(() => 'labeled')])
-    expect(transport.requests.length).toBeGreaterThan(0)
-  }
-
   test('every credential text of the shared table, as a tool output', async () => {
-    for (const text of CREDENTIAL_TEXT_CASES) await assertAccepted({ output: text }, text.slice(0, 40))
+    for (const text of CREDENTIAL_TEXT_CASES) await assertViewAccepted({ output: text }, text.slice(0, 40))
   }, 60_000)
 
   test('every address text of the shared table, as a tool output', async () => {
-    for (const text of EMAIL_TEXT_CASES) await assertAccepted({ output: text }, text.slice(0, 40))
+    for (const text of EMAIL_TEXT_CASES) await assertViewAccepted({ output: text }, text.slice(0, 40))
   }, 60_000)
 
   test('every case of this file, as a tool input or an output', async () => {
-    for (const c of CASES) await assertAccepted(c.input ? { input: c.input } : { output: c.text ?? '' }, c.name)
+    for (const c of CASES) await assertViewAccepted(c.input ? { input: c.input } : { output: c.text ?? '' }, c.name)
   }, 60_000)
 })
 
