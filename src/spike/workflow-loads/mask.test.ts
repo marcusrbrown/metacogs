@@ -977,12 +977,19 @@ describe('the scrub: credential fields', () => {
     for (const secret of [VALUE, BEARER]) expect(shown).not.toContain(secret)
   })
 
-  test('a field name without a value, or a placeholder value, is not a finding', () => {
+  test('a key name with no assignment next to it is kept; one with an assignment is withheld whatever follows it', () => {
     const f = fixture()
-    scoped(f.store, 'ses_a', [{ user: 'rotate the password and the token; max_tokens: 4096; author: a colleague; password: <redacted>; token=$TOKEN', turn: (a) => f.store.addTool(a, { tool: 'bash', input: { command: 'ls' }, output: 'PWD=/work/app' }) }])
-    const rendered = renderSessions([sessionOf(walk(f), 'ses_a')])
-    expect(rendered.scopes[0]?.stimuli[0]?.text).toContain('max_tokens: 4096')
-    expect(rendered.counters).toEqual({ scrubbedOutputs: 0, scrubbedInputs: 0, scrubbedStimuli: 0, redactedEmails: 0 })
+    scoped(f.store, 'ses_a', [{ user: 'rotate the password and the token; the token expired; max_tokens: 4096; author: a colleague', turn: (a) => f.store.addTool(a, { tool: 'bash', input: { command: 'ls' }, output: 'list ok' }) }])
+    const kept = renderSessions([sessionOf(walk(f), 'ses_a')])
+    expect(kept.scopes[0]?.stimuli[0]?.text).toContain('max_tokens: 4096')
+    expect(kept.counters).toEqual({ scrubbedOutputs: 0, scrubbedInputs: 0, scrubbedStimuli: 0, redactedEmails: 0 })
+
+    for (const text of ['password: <redacted>', 'token=$TOKEN', 'PWD=/work/app', 'cookie:']) {
+      const g = fixture()
+      scoped(g.store, 'ses_a', [{ user: 'go', turn: (a) => g.store.addTool(a, { tool: 'bash', input: { command: 'env' }, output: text }) }])
+      const rendered = renderSessions([sessionOf(walk(g), 'ses_a')])
+      expect([text, rendered.counters.scrubbedOutputs]).toEqual([text, 1])
+    }
   })
 })
 
@@ -1027,8 +1034,11 @@ describe('the scrub: JSON text inside a tool input', () => {
     }
   })
 
-  test('a placeholder value, a field with no value and ordinary JSON text are not withheld', () => {
-    const rendered = withInput({ filePath: 'config.json', content: JSON.stringify({ db: { password: '${DB_PASSWORD}', name: 'app', max_tokens: 4096 } }), env: { TOKEN: '', password: '<redacted>' } })
+  test('a placeholder value or an empty one is withheld with its key; ordinary JSON text is not', () => {
+    for (const input of [{ content: JSON.stringify({ db: { password: '${DB_PASSWORD}' } }) }, { env: { TOKEN: '' } }, { env: { password: '<redacted>' } }]) {
+      expect([JSON.stringify(input), withInput(input).counters.scrubbedInputs]).toEqual([JSON.stringify(input), 1])
+    }
+    const rendered = withInput({ filePath: 'config.json', content: JSON.stringify({ db: { name: 'app', max_tokens: 4096 } }), note: 'the token expired' })
     expect(rendered.counters.scrubbedInputs).toBe(0)
     expect(rendered.scopes[0]?.stimuli[0]?.traffic[0]).toContain('config.json')
   })

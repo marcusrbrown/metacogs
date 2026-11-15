@@ -2,8 +2,15 @@
  * What the hidden view and the labeler's pre-send check treat as a secret or a local path. One list serves both, so the check
  * before a request cannot be weaker than the scrub that built the text.
  *
- * - `scrubFindings` is the secret scanner's stricter rule set plus a rule for credential fields (`password=…`, `"token": "…"`,
- *   `Authorization: …`, `Cookie: …`), which the scanner leaves alone unless the value is quoted and long.
+ * - `scrubFindings` is the secret scanner's stricter rule set plus one rule for credential keys: a credential key name next to an
+ *   assignment (`password=…`, `"token": …`, `Authorization: …`). The rule never reads the value, so a value that is a placeholder,
+ *   a list, an object or empty is withheld like any other, and nothing after a placeholder can slip through behind it. A key name
+ *   with no assignment next to it (`the token expired`) is prose and is kept. The cost: `token: ${GH_TOKEN}` is withheld too.
+ * - The rules run on the text and on every layer of JSON inside it: a string that parses as a JSON string, object or array is
+ *   decoded, and each string value inside is checked again, within fixed limits (`SCRUB_LIMITS`). A limit that is reached is a
+ *   finding of its own (`SCRUB_LIMIT_RULE`): what could not be inspected is not trusted.
+ * - `inputHoldsSecret` walks a structured tool input the same way, and also takes any object key that is a credential key name as a
+ *   finding, whatever the value under it.
  * - `redactAbsolutePaths` replaces every absolute path, not only those under the current home.
  *
  * The scanner itself (`src/scan/secrets.ts`) is not changed: its rules guard committed files, and these guard session text.
@@ -12,115 +19,148 @@ import { scanText } from '../../scan/secrets'
 
 /** What an absolute path becomes. */
 export const PATH_PLACEHOLDER = '<abs-path>'
-/** The rule name a credential field reports under. */
-export const CREDENTIAL_FIELD_RULE = 'credential-field'
-
-// ── credential fields ──────────────────────────────────────────────────────
-
 /** What a text with a secret finding becomes in the view. */
 export const SCRUB_PLACEHOLDER = '[withheld: secret pattern found]'
 /** What each email address becomes when an address is a text's only finding. */
 export const EMAIL_PLACEHOLDER = '[email]'
+/** The rule name a credential key next to an assignment reports under. */
+export const CREDENTIAL_FIELD_RULE = 'credential-field'
+/** The rule name a reached limit reports under. */
+export const SCRUB_LIMIT_RULE = 'scrub-limit'
 
-/** Names that mark the value after them as a credential. As the end of a longer name (`db_password`, `X_AUTH_TOKEN`) they count too. */
+// ── credential keys ────────────────────────────────────────────────────────
+
+/** Names that mark a field as a credential. As the end of a longer name (`db_password`, `X_AUTH_TOKEN`) they count too. */
 const CREDENTIAL_KEY = '(?:pass(?:word|wd|phrase)|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credentials?|auth(?:orization)?|cookie)'
+
+/** The most separators (quotes, brackets, backslashes, whitespace, or the two-character escapes `\t` `\n` `\r`) allowed between a key and its `:` or `=`. */
+export const MAX_SEPARATORS = 16
+/** One separator: a run of backslashes ending in `t`, `n` or `r` is one (an escaped tab, at any depth of escaping), or one quote, bracket, backslash or whitespace character. */
+const SEPARATOR = /(?:\\+[tnr]|[\s"'`\\[\]{}()])/.source
+/** A credential key, then a short run of separators, then an assignment. Not global, so `test` keeps no state. */
+const CREDENTIAL_ASSIGNMENT = new RegExp(`${CREDENTIAL_KEY}${SEPARATOR}{0,${MAX_SEPARATORS}}[:=]`, 'i')
+/** An object key that is a credential name, with at most quotes and spaces around it. */
+const CREDENTIAL_KEY_NAME = new RegExp(`${CREDENTIAL_KEY}[\\s"']*$`, 'i')
+
+// ── limits ─────────────────────────────────────────────────────────────────
+
 /**
- * A value: quoted (any length, spaces allowed); or one token that starts with `$`, `<`, `[` or `{` (a placeholder is exempted
- * afterwards, as a whole, by `isPlaceholder`); or a run of at least three characters that is not punctuation or a bracket.
- * `$` comes before the plain run so `$name` is taken whole, and a bracket token stops at a parenthesis so `(token=<x>)` does.
+ * What the inspection of one text, or one structured input, may spend. `decodeDepth`: JSON layers decoded one inside another.
+ * `containerDepth`: arrays and objects inside one another. `nodes`: values visited. `chars`: the total length of decoded text
+ * (the first text is not counted), and also the longest text that is inspected at all. The limits are a parameter so a test can use
+ * small ones.
  */
-const CREDENTIAL_VALUE = `(?:"[^"\\n]+"|'[^'\\n]+'|\\$(?:\\{[^\\s"',;{}]+\\}|[^\\s"'<>,;&|(){}\\[\\]]{2,})|[<\\[{][^\\s"',;()]{2,}|[^\\s"'<>,;&|(){}\\[\\]]{3,})`
-/** `key=value`, `key: value`, and `"key": "value"`, on one line. Group 1 is the key, group 2 the value. */
-const CREDENTIAL_FIELD = new RegExp(`(${CREDENTIAL_KEY})["']?[ \\t]*[:=][ \\t]*(${CREDENTIAL_VALUE})`, 'gi')
-/** An unquoted word that says there is no value. */
-const LITERAL_VALUE = /^(?:true|false|null|none|nil|undefined)$/i
-/** A working directory, which `PWD=…` holds in any shell's environment dump, is no password. */
-const PATH_VALUE = /^(?:[/~.]|[A-Za-z]:[\\/])/
-/** `[REDACTED]`, `[MASKED_VALUE]`, `[WITHHELD SECRET]`: brackets around upper-case words. */
-const BRACKETED_CAPS = /^\[[A-Z][A-Z0-9_-]*(?: [A-Z][A-Z0-9_-]*)*\]$/
-/** The whole of a value that stands for a secret instead of holding one. Anything longer, or any other shape, is taken for the secret. */
-const PLACEHOLDER_VALUES = [
-  // an environment variable reference: upper case, digits and underscores, with or without braces
-  /^\$[A-Z_][A-Z0-9_]*$/,
-  /^\$\{[A-Z_][A-Z0-9_]*\}$/,
-  // <placeholder>: angle brackets around one word, no spaces
-  /^<[^\s<>]+>$/,
-  // [REDACTED], [MASKED_VALUE]: brackets around upper-case words
-  BRACKETED_CAPS,
-  /^\*{3,}$/,
-]
-/** The view's own placeholders, which a rendered text may hold after a field name. They may contain spaces, so they are matched as a prefix. */
-const OWN_PLACEHOLDERS = [SCRUB_PLACEHOLDER, EMAIL_PLACEHOLDER, PATH_PLACEHOLDER]
+export const SCRUB_LIMITS = { decodeDepth: 8, containerDepth: 64, nodes: 25_000, chars: 2_000_000 }
+export type ScrubLimits = typeof SCRUB_LIMITS
 
-/** A whole value with no quotes around it stands for a secret instead of holding one. */
-const isPlaceholderText = (bare: string): boolean => PLACEHOLDER_VALUES.some((shape) => shape.test(bare)) || OWN_PLACEHOLDERS.includes(bare)
-
-/** A value as the pattern found it, quotes included, is a placeholder only as a whole. */
-function isPlaceholder(value: string): boolean {
-  const quoted = value.length >= 2 && (value.startsWith('"') || value.startsWith("'"))
-  return isPlaceholderText(quoted ? value.slice(1, -1) : value)
+interface Walk {
+  limits: ScrubLimits
+  rules: Set<string>
+  nodes: number
+  chars: number
+  limit: boolean
 }
 
-/** Whether a field's value, given as the JSON value it is, is a secret: any non-placeholder string, and a longer number or boolean. */
-function holdsCredentialValue(value: unknown): boolean {
-  if (typeof value === 'string') return value !== '' && !isPlaceholderText(value)
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value).length >= 3 && !LITERAL_VALUE.test(String(value))
-  return false
+const newWalk = (limits: ScrubLimits): Walk => ({ limits, rules: new Set(), nodes: 0, chars: 0, limit: false })
+
+/** A text that could be a JSON string, object or array. */
+const looksLikeJson = (text: string): boolean => {
+  const first = text.trimStart()[0]
+  return first === '"' || first === '{' || first === '['
 }
 
-const CREDENTIAL_KEY_END = new RegExp(`${CREDENTIAL_KEY}$`, 'i')
-
-/** One level of JSON escaping of quotes removed, at any depth: `\"` and `\\\"` both become `"`. */
-const unescapeQuotes = (text: string): string => text.replace(/\\+(["'])/g, '$1')
-
-function holdsCredentialField(text: string): boolean {
-  for (const match of text.matchAll(CREDENTIAL_FIELD)) {
-    const [whole = '', key = '', value = ''] = match
-    const quoted = value.startsWith('"') || value.startsWith("'")
-    if (!quoted && LITERAL_VALUE.test(value)) continue
-    if (!quoted && /^pwd$/i.test(key) && PATH_VALUE.test(value)) continue
-    if (isPlaceholder(value)) continue
-    // a placeholder that holds spaces, which the value pattern stops at: the view's own, or bracketed upper-case words
-    const rest = text.slice((match.index ?? 0) + whole.length - value.length)
-    if (value.startsWith('[') && BRACKETED_CAPS.test(/^\[[^\]\n]*\]/.exec(rest)?.[0] ?? '')) continue
-    if (OWN_PLACEHOLDERS.some((own) => rest.startsWith(own) || rest.startsWith(`"${own}`) || rest.startsWith(`'${own}`))) continue
-    return true
+function decodeJson(text: string): { value: unknown } | undefined {
+  try {
+    return { value: JSON.parse(text) }
+  } catch {
+    return undefined
   }
-  return false
 }
 
-const MAX_INPUT_DEPTH = 50
+/** Runs the rules on one text, then on whatever JSON it decodes to. `layer` counts the decodes so far. */
+function inspectText(text: string, layer: number, walk: Walk): void {
+  if (walk.limit) return
+  walk.nodes += 1
+  if (layer > 0) walk.chars += text.length
+  // checked before anything is run on the text: the scanner's time grows with the square of a line's length
+  if (walk.nodes > walk.limits.nodes || walk.chars > walk.limits.chars || text.length > walk.limits.chars) {
+    walk.limit = true
+    return
+  }
+  for (const finding of scanText('view', text, 'fixture')) walk.rules.add(finding.rule)
+  if (CREDENTIAL_ASSIGNMENT.test(text)) walk.rules.add(CREDENTIAL_FIELD_RULE)
+  const whole = looksLikeJson(text) ? decodeJson(text) : undefined
+  if (whole) return decodeInto(whole.value, layer, walk)
+  // a rendered line such as `[tool] write {"a":…}` or `[output] {…}` holds JSON after a label: the first `{` of each line to its end
+  if (!text.includes('{')) return
+  for (const line of text.split('\n')) {
+    const at = line.indexOf('{')
+    if (at < 0) continue
+    const embedded = decodeJson(line.slice(at))
+    if (embedded) decodeInto(embedded.value, layer, walk)
+    if (walk.limit) return
+  }
+}
 
-/**
- * Whether a structured tool input holds a secret, found before the input is serialized: serializing escapes the quotes of any
- * JSON text held in a string (`{"password":"x"}` becomes `{\"password\":\"x\"}`), which would hide it from the text rules.
- * Every string value is scanned as the text it is, and every field whose key ends in a credential name is checked as a pair.
- * A scan finding that is only an email address is not a secret here; the serialized text is scanned afterwards as before.
- */
-export function inputHoldsSecret(value: unknown, depth = 0): boolean {
-  if (depth > MAX_INPUT_DEPTH) return false
-  if (typeof value === 'string') return [...scrubFindings(value)].some((rule) => rule !== 'email')
-  if (Array.isArray(value)) return value.some((entry) => inputHoldsSecret(entry, depth + 1))
-  if (typeof value !== 'object' || value === null) return false
+/** The value one more JSON layer down, unless the layers are used up. */
+function decodeInto(value: unknown, layer: number, walk: Walk): void {
+  if (layer >= walk.limits.decodeDepth) {
+    walk.limit = true
+    return
+  }
+  inspectValue(value, layer + 1, 0, walk)
+}
+
+/** Walks a value: every string through `inspectText`, every object key that names a credential as a finding. */
+function inspectValue(value: unknown, layer: number, container: number, walk: Walk): void {
+  if (walk.limit) return
+  if (typeof value === 'string') return inspectText(value, layer, walk)
+  walk.nodes += 1
+  if (walk.nodes > walk.limits.nodes) {
+    walk.limit = true
+    return
+  }
+  if (typeof value !== 'object' || value === null) return
+  if (container >= walk.limits.containerDepth) {
+    walk.limit = true
+    return
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) inspectValue(entry, layer, container + 1, walk)
+    return
+  }
   for (const [key, entry] of Object.entries(value)) {
-    if (CREDENTIAL_KEY_END.test(key) && holdsCredentialValue(entry)) return true
-    if (inputHoldsSecret(entry, depth + 1)) return true
+    if (CREDENTIAL_KEY_NAME.test(key) || CREDENTIAL_ASSIGNMENT.test(key)) walk.rules.add(CREDENTIAL_FIELD_RULE)
+    inspectValue(entry, layer, container + 1, walk)
   }
-  return false
+}
+
+const findingsOf = (walk: Walk): Set<string> => {
+  const rules = new Set(walk.rules)
+  rules.delete('home-path')
+  if (walk.limit) rules.add(SCRUB_LIMIT_RULE)
+  return rules
+}
+
+/**
+ * Whether a structured tool input holds a secret, found before the input is serialized: serializing escapes the quotes, tabs and
+ * newlines of any text held in a string. Every string is checked as the text it is, with the JSON layers inside it; any object key
+ * that is a credential name counts whatever its value; a limit that is reached counts. An email address alone is not a secret here.
+ */
+export function inputHoldsSecret(input: unknown, limits: ScrubLimits = SCRUB_LIMITS): boolean {
+  const walk = newWalk(limits)
+  inspectValue(input, 0, 0, walk)
+  return [...findingsOf(walk)].some((rule) => rule !== 'email')
 }
 
 /**
  * The names of the rules that fire on a text, other than a home path (path redaction handles that one without losing the text).
  * Never the matched text.
  */
-export function scrubFindings(text: string): Set<string> {
-  const rules = new Set(scanText('view', text, 'fixture').map((finding): string => finding.rule))
-  rules.delete('home-path')
-  if (holdsCredentialField(text)) rules.add(CREDENTIAL_FIELD_RULE)
-  // JSON text inside a JSON string carries its quotes escaped; the rules above need them plain
-  const decoded = text.includes('\\') ? unescapeQuotes(text) : text
-  if (decoded !== text && holdsCredentialField(decoded)) rules.add(CREDENTIAL_FIELD_RULE)
-  return rules
+export function scrubFindings(text: string, limits: ScrubLimits = SCRUB_LIMITS): Set<string> {
+  const walk = newWalk(limits)
+  inspectText(text, 0, walk)
+  return findingsOf(walk)
 }
 
 // ── absolute paths ─────────────────────────────────────────────────────────

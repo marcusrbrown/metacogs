@@ -869,17 +869,20 @@ describe('what reaches the model: credential fields', () => {
     expect(JSON.stringify(run)).not.toContain(VALUE)
   })
 
-  test('a quoted value that starts with $, <, [ or { is never sent, and a whole placeholder value is', async () => {
+  test('a quoted value that starts with $, <, [ or { is never sent, and nor is a placeholder one', async () => {
     for (const value of [['$', 'uperSecret42'].join(''), ['<', 'uperSecret42'].join(''), ['[', 'uperSecret42]'].join(''), ['{', 'uperSecret42}'].join('')]) {
       const f = fixture()
       const transport = scripted([])
       const run = await labelChunks(base(f, transport, [chunkOf(['a1'], { text: `set password="${value}"` })]))
       expect([value, transport.requests.length, run.results[0]?.outcome]).toEqual([value, 0, { status: 'failed', attempts: 0, reason: 'unscrubbed_input' }])
     }
-    const f = fixture()
-    const transport = scripted([reply({ stimulus_id: 'a1' })])
-    await labelChunks(base(f, transport, [chunkOf(['a1'], { text: 'set password="${DB_PASSWORD}" and token=<redacted> and secret: [REDACTED] and auth=***' })]))
-    expect(transport.requests).toHaveLength(1)
+    // no value is inspected: a placeholder after a credential key is withheld like any other value
+    for (const text of ['set password="${DB_PASSWORD}"', 'token=<redacted>', 'secret: [REDACTED]', 'auth=***']) {
+      const f = fixture()
+      const transport = scripted([])
+      const run = await labelChunks(base(f, transport, [chunkOf(['a1'], { text })]))
+      expect([text, transport.requests.length, run.results[0]?.outcome.status]).toEqual([text, 0, 'failed'])
+    }
   })
 
   test('a tool input with JSON text in a string reaches the transport as the placeholder, not as its escaped text', async () => {

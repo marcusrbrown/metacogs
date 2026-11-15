@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { EMAIL_PLACEHOLDER, SCRUB_PLACEHOLDER } from './mask'
-import { PATH_PLACEHOLDER, redactAbsolutePaths, scrubFindings } from './scrub'
+import { inputHoldsSecret, MAX_SEPARATORS, PATH_PLACEHOLDER, redactAbsolutePaths, SCRUB_LIMITS, SCRUB_LIMIT_RULE, type ScrubLimits, scrubFindings } from './scrub'
 
 // Assembled at runtime so this file holds no credential-shaped literal.
 const VALUE = ['v4lue', 'Of', 'Some', 'Length'].join('')
@@ -45,30 +44,31 @@ describe('scrubFindings: credential fields', () => {
     expect(scrubFindings(['x-api', '-key: abcdefgh12345678'].join('')).size).toBeGreaterThan(0)
   })
 
+  // a key name with no assignment next to it is prose
   const quiet = [
     'the password and the token',
+    'the token expired',
+    'rotate the password',
     'max_tokens: 4096',
     'tokens=12',
     'author: a colleague',
     'authored by someone',
-    'password: <redacted>',
-    'password: [REDACTED]',
-    'token=$TOKEN',
-    'token="${TOKEN}"',
-    'secret: {{ secret }}',
-    'PWD=/work/app',
-    'pwd=/home/me',
-    'pwd=~/work',
-    'cookie:',
-    'auth: ',
-    'token:\n',
     'passed: 3',
-    'password = ',
+    'password reset email sent',
     'a nice sentence about authorization, cookies and secrets',
+    'token (see below) and secret (see above)',
   ]
   for (const text of quiet) {
     test(`no finding in ${JSON.stringify(text)}`, () => {
       expect([...scrubFindings(text)].filter((rule) => rule !== 'home-path')).toEqual([])
+    })
+  }
+
+  // no value is inspected: an empty value, a placeholder and a path are withheld like any other
+  const assigned = ['password: <redacted>', 'password: [REDACTED]', 'token=$TOKEN', 'token: ${GH_TOKEN}', 'token="${TOKEN}"', 'secret: {{ secret }}', 'PWD=/work/app', 'pwd=/home/me', 'pwd=~/work', 'cookie:', 'auth: ', 'token:\n', 'password = ', 'password=***', 'password="[email]"']
+  for (const text of assigned) {
+    test(`a finding in ${JSON.stringify(text)}, whatever the value`, () => {
+      expect(scrubFindings(text).has('credential-field')).toBe(true)
     })
   }
 
@@ -77,60 +77,145 @@ describe('scrubFindings: credential fields', () => {
   })
 })
 
-describe('scrubFindings: a real value is not taken for a placeholder', () => {
+describe('scrubFindings: the key next to an assignment', () => {
   // Assembled at runtime so this file holds no credential-shaped literal.
-  const REAL = [
-    ['$', 'uperSecret42'].join(''),
-    ['${', 'uperSecret42}'].join(''),
-    ['<', 'uperSecret42'].join(''),
-    ['<', 'uper Secret 42>'].join(''),
-    ['[', 'uperSecret42]'].join(''),
-    ['{', 'uperSecret42}'].join(''),
-  ]
-  const forms: [string, (value: string) => string][] = [
-    ['double-quoted', (v) => `password="${v}"`],
-    ['single-quoted', (v) => `password='${v}'`],
-    ['unquoted', (v) => `password=${v}`],
-    ['with a colon', (v) => `password: ${v}`],
-    ['quoted JSON', (v) => `{"password": "${v}"}`],
-  ]
-  for (const [formName, form] of forms) {
-    test(`a value that starts with $, <, [ or { is a finding when ${formName}`, () => {
-      for (const value of REAL) expect([value, scrubFindings(form(value)).has('credential-field')]).toEqual([value, true])
-    })
-  }
+  const V = ['harbor', 'Moon42'].join('')
+  const hit = (text: string): boolean => scrubFindings(text).has('credential-field')
 
-  const PLACEHOLDERS = ['${TOKEN}', '$TOKEN', '$DB_PASSWORD', '<placeholder>', '<redacted>', '<abs-path>', '<method>', '[REDACTED]', '[MASKED_VALUE]', '[WITHHELD SECRET]', '***', SCRUB_PLACEHOLDER, EMAIL_PLACEHOLDER]
-  for (const [formName, form] of forms) {
-    test(`a whole placeholder value is no finding when ${formName}`, () => {
-      for (const value of PLACEHOLDERS) expect([value, [...scrubFindings(form(value))].filter((rule) => rule !== 'home-path')]).toEqual([value, []])
-    })
-  }
-
-  test('a placeholder is exempt only as the whole value: a longer value that starts like one is a finding', () => {
-    for (const value of ['$TOKEN_and_more_text', '<redacted> plus a real one', '[REDACTED]x', '***abc', '${TOKEN}tail', '<a b>']) {
-      expect([value, scrubFindings(`password="${value}"`).has('credential-field')]).toEqual([value, true])
-    }
+  test('separators between the key and the assignment: quotes, brackets, backslashes, spaces, tabs and the escapes \\t \\n \\r \\"', () => {
+    const forms = [
+      `password=${V}`,
+      `password : ${V}`,
+      `"password":"${V}"`,
+      `password\t=\t${V}`,
+      `password\\t=\\t${V}`,
+      `password\\\\\\t= ${V}`,
+      `password\n=${V}`,
+      `password\r\n: ${V}`,
+      `\\"password\\":\\"${V}\\"`,
+      `[password]=${V}`,
+      `password[]=${V}`,
+      `{password:["${V}"]}`,
+      `(token)=${V}`,
+      `password\t\t  \t=${V}`,
+    ]
+    for (const form of forms) expect([form, hit(form)]).toEqual([form, true])
   })
 
-  test('lowercase names after $ are a finding: a variable reference is upper case, a password is not', () => {
-    expect(scrubFindings(`password="${['$', 'uperSecret42'].join('')}"`).has('credential-field')).toBe(true)
-    expect(scrubFindings('password="$TOKEN"').has('credential-field')).toBe(false)
+  test('the run of separators is short: the limit is exact', () => {
+    expect(hit(`password${' '.repeat(MAX_SEPARATORS)}=${V}`)).toBe(true)
+    expect(hit(`password${' '.repeat(MAX_SEPARATORS + 1)}=${V}`)).toBe(false)
+  })
+
+  test('a word character between the key and the assignment ends the match', () => {
+    for (const text of ['password_x=1', 'passwords=1', 'token2: a', 'tokenize: yes', 'secretary: Jo']) expect([text, hit(text)]).toEqual([text, false])
+  })
+
+  test('a placeholder prefix does not exempt the value after it', () => {
+    for (const text of [`password="[email]${V}"`, `password=[REDACTED]${V}`, `password="[withheld: secret pattern found]${V}"`, `password=<redacted>${V}`, `password=\${TOKEN}${V}`]) expect([text, hit(text)]).toEqual([text, true])
+  })
+
+  test('JSON text is decoded: a key written with unicode escapes is found, and so is one inside a string inside a string', () => {
+    expect(hit(JSON.stringify({ ['\u0070assword']: V }).replace('"password"', '"\\u0070assword"'))).toBe(true)
+    expect(hit(JSON.stringify({ payload: JSON.stringify({ body: JSON.stringify({ ['pass' + 'word']: [V] }) }) }))).toBe(true)
+    expect(hit(JSON.stringify(JSON.stringify({ body: `password\t=\t${V}` })))).toBe(true)
+  })
+
+  test('JSON after a label on a rendered line is decoded too: the first brace of each line to its end', () => {
+    expect(hit(`### [stimulus] a1\n[tool] write ${JSON.stringify({ ['\u0070assword']: [V] }).replace('"password"', '"\\u0070assword"')}`)).toBe(true)
+    expect(hit(`[tool] bash (error) {"command":"ls"}\n[output] {"a":{"${['to', 'ken'].join('')}":[1]}}`)).toBe(true)
+    expect(hit('[tool] bash {"command":"ls"}\n[output] fine {"a":1} and more')).toBe(false)
+  })
+
+  test('a credential key in a decoded object is a finding whatever its value is', () => {
+    for (const value of [`["${V}"]`, `{"value":"${V}"}`, '"x"', '5', 'true', 'null', '[]', '{}']) {
+      const text = JSON.stringify({ ['api' + '_key']: JSON.parse(value) })
+      expect([text, hit(text)]).toEqual([text, true])
+    }
+    // the same key as a plain word, with no assignment, is not
+    expect(hit(JSON.stringify({ note: 'the token expired', max_tokens: 5 }))).toBe(false)
+  })
+
+  // small limits keep these cheap: the scanner's time grows with the square of a line's length
+  const SMALL: ScrubLimits = { decodeDepth: 3, containerDepth: 5, nodes: 20, chars: 500 }
+  const limited = (text: string): boolean => scrubFindings(text, SMALL).has(SCRUB_LIMIT_RULE)
+
+  test('a limit hit is a finding of its own: layers, containers, nodes, decoded size and a text too long to inspect', () => {
+    const wrap = (n: number): string => {
+      let text = 'leaf'
+      for (let i = 0; i < n; i++) text = JSON.stringify({ body: text })
+      return text
+    }
+    const nest = (n: number): unknown => {
+      let value: unknown = 'leaf'
+      for (let i = 0; i < n; i++) value = [value]
+      return value
+    }
+    expect(limited(wrap(SMALL.decodeDepth + 1))).toBe(true)
+    expect(limited(wrap(SMALL.decodeDepth))).toBe(false)
+    expect(limited(JSON.stringify(nest(SMALL.containerDepth + 1)))).toBe(true)
+    expect(limited(JSON.stringify(nest(SMALL.containerDepth)))).toBe(false)
+    expect(limited(JSON.stringify(Array.from({ length: SMALL.nodes + 1 }, () => 0)))).toBe(true)
+    expect(limited(JSON.stringify(Array.from({ length: SMALL.nodes - 3 }, () => 0)))).toBe(false)
+    // two decoded layers whose sizes add up past the limit, each under it
+    const half = 'y'.repeat(Math.floor(SMALL.chars / 2) + 10)
+    expect(limited(JSON.stringify({ a: JSON.stringify({ b: half }) }))).toBe(true)
+    expect(limited(JSON.stringify({ a: half }))).toBe(false)
+    // a plain text over the size limit is not inspected, so it is not trusted
+    expect(limited('z'.repeat(SMALL.chars + 1))).toBe(true)
+    expect(limited('z'.repeat(SMALL.chars))).toBe(false)
+  })
+
+  test('a limit hit has no effect on text under the limits, and the limits in force are the documented ones', () => {
+    let ok = 'leaf'
+    for (let i = 0; i < 4; i++) ok = JSON.stringify({ body: ok })
+    expect(scrubFindings(ok).size).toBe(0)
+    expect(SCRUB_LIMITS).toEqual({ decodeDepth: 8, containerDepth: 64, nodes: 25_000, chars: 2_000_000 })
+    expect(scrubFindings('x'.repeat(SCRUB_LIMITS.chars + 1)).has(SCRUB_LIMIT_RULE)).toBe(true)
   })
 })
 
-describe('scrubFindings: JSON text that was escaped by a second JSON layer', () => {
-  const VALUE = ['v4lue', 'Of', 'Some', 'Length'].join('')
+describe('inputHoldsSecret', () => {
+  const V = ['harbor', 'Moon42'].join('')
 
-  test('an escaped quoted field is found, at any depth of escaping', () => {
-    expect(scrubFindings(`{"content":"{\\"password\\":\\"${VALUE}\\"}"}`).has('credential-field')).toBe(true)
-    expect(scrubFindings(`{"a":"{\\"b\\":\\"{\\\\\\"token\\\\\\":\\\\\\"${VALUE}\\\\\\"}\\"}"}`).has('credential-field')).toBe(true)
-    expect(scrubFindings(`[tool] write {"content":"{\\"Authorization\\": \\"Bearer ${VALUE}\\"}"}`).has('credential-field')).toBe(true)
+  test('a credential key holds a secret whatever its value: array, object, string, number, boolean, null, empty', () => {
+    for (const value of [[V], { value: V }, V, 12345678, true, null, '', [], {}]) {
+      const input = { nested: { ['pass' + 'word']: value } }
+      expect([JSON.stringify(input), inputHoldsSecret(input)]).toEqual([JSON.stringify(input), true])
+    }
+    expect(inputHoldsSecret({ headers: { 'X-AUTH-TOKEN': 'x' } })).toBe(true)
+    expect(inputHoldsSecret({ db_password: 'x' })).toBe(true)
   })
 
-  test('an escaped placeholder, and escaped text with no credential field, are no finding', () => {
-    expect(scrubFindings('{"content":"{\\"password\\":\\"${TOKEN}\\"}"}').size).toBe(0)
-    expect(scrubFindings('{"content":"{\\"name\\":\\"value\\"}"}').size).toBe(0)
+  test('a string value is checked as text, in every decoded layer', () => {
+    expect(inputHoldsSecret({ content: `password\t=\t${V}` })).toBe(true)
+    expect(inputHoldsSecret({ payload: JSON.stringify({ body: `password\t=\t${V}` }) })).toBe(true)
+    expect(inputHoldsSecret({ list: [{ a: JSON.stringify({ ['to' + 'ken']: { v: V } }) }] })).toBe(true)
+  })
+
+  test('ordinary input is not a secret, and an email address alone is not one here', () => {
+    expect(inputHoldsSecret({ filePath: 'a.ts', content: 'the token expired; rotate the password', max_tokens: 5, tags: ['a', 'b'] })).toBe(false)
+    expect(inputHoldsSecret({ to: ['someone', 'corp-mail.com'].join('@') })).toBe(false)
+    expect(inputHoldsSecret(undefined)).toBe(false)
+    expect(inputHoldsSecret(null)).toBe(false)
+    expect(inputHoldsSecret(7)).toBe(false)
+  })
+
+  test('an input that exceeds a limit is a secret: too deep, or with too many nodes', () => {
+    let deep: unknown = 'leaf'
+    for (let i = 0; i < SCRUB_LIMITS.containerDepth + 5; i++) deep = { a: deep }
+    expect(inputHoldsSecret(deep)).toBe(true)
+    expect(inputHoldsSecret(Array.from({ length: SCRUB_LIMITS.nodes + 1 }, () => 'x'))).toBe(true)
+    expect(inputHoldsSecret(Array.from({ length: 10 }, () => 'x'), { decodeDepth: 3, containerDepth: 5, nodes: 5, chars: 500 })).toBe(true)
+  })
+
+  test('a deeply wrapped assignment is a secret, however deep', () => {
+    let nested: unknown = `password\t=\t${V}`
+    for (let i = 0; i < SCRUB_LIMITS.containerDepth + 40; i++) nested = { body: nested }
+    expect(inputHoldsSecret({ content: nested })).toBe(true)
+    let wrapped = `password\t=\t${V}`
+    for (let i = 0; i < SCRUB_LIMITS.decodeDepth + 5; i++) wrapped = JSON.stringify({ body: wrapped })
+    expect(inputHoldsSecret({ content: wrapped })).toBe(true)
   })
 })
 
@@ -193,7 +278,9 @@ describe('the scrub rules on long text', () => {
     expect(redactAbsolutePaths('/'.repeat(100_000))).toBe('/'.repeat(100_000))
     expect(redactAbsolutePaths('/a'.repeat(50_000))).toBe(PATH_PLACEHOLDER)
     expect(scrubFindings(`${'token '.repeat(50_000)}`).size).toBe(0)
-    expect(scrubFindings(`${'password:\n'.repeat(20_000)}`).size).toBe(0)
+    expect(scrubFindings(`${'password:\n'.repeat(20_000)}`).has('credential-field')).toBe(true)
+    expect(scrubFindings(`${'password '.repeat(50_000)}`).size).toBe(0)
+    expect(scrubFindings(`${'\\'.repeat(200_000)}`).size).toBe(0)
     expect(performance.now() - started).toBeLessThan(2000)
   })
 })
