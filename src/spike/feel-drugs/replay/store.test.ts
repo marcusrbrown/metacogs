@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
-import { CustodyError } from '../../../runner/workspace'
+import { CustodyError, sha256 } from '../../../runner/workspace'
 import {
   approveFixture,
   buildExport,
@@ -19,6 +19,7 @@ import {
   parseSpec,
   type SessionExport,
   saveRaw,
+  skillPlaceholders,
   SpecError,
   type Store,
 } from './store'
@@ -171,6 +172,253 @@ describe('workflow fixtures', () => {
     const seeded = parseSpec(workflow({ turns: [{ role: 'user', text: 'Plan it.' }, { role: 'assistant', text: 'Loading.', tools: [{ callID: 'call_p', tool: 'systematic_skill', input: { name: 'ce:plan' }, output: '<skill_content name="systematic:ce:plan">x</skill_content>' }] }] }))
     const tool = buildExport(seeded).messages[1]!.parts.find((p) => p.type === 'tool')
     expect(tool).toMatchObject({ tool: 'systematic_skill', state: { input: { name: 'ce:plan' }, output: '<skill_content name="systematic:ce:plan">x</skill_content>' } })
+  })
+})
+
+describe('skill-text placeholders', () => {
+  const PLAN_SKILL = '---\nname: ce:plan\ndescription: plan things\n---\n\n# Plan\n\nFeature: #$ARGUMENTS\n'
+  const SKILL_BASE = '/workspace/.systematic/skills'
+
+  /** A tiny stand-in for an extracted Systematic package: the skills the fixtures name, with one reference file and one script. */
+  function skillTree(over: { plan?: string; version?: string; without?: string } = {}): string {
+    const root = tmp('systematic-tree-')
+    const put = (rel: string, text: string): void => {
+      if (rel === over.without) return
+      mkdirSync(dirname(join(root, rel)), { recursive: true })
+      writeFileSync(join(root, rel), text)
+    }
+    put('package.json', JSON.stringify({ name: '@fro.bot/systematic', version: over.version ?? '3.33.2' }))
+    put('skills/ce-plan/SKILL.md', over.plan ?? PLAN_SKILL)
+    put('skills/ce-plan/references/deepening-workflow.md', '# Deepening\n\nSecond line.\n')
+    put('skills/ce-review/SKILL.md', '---\nname: ce:review\ndescription: review things\n---\n\n# Review\n\nParse `$ARGUMENTS` for tokens.\n')
+    put('skills/ce-review/scripts/helper.mjs', '// helper\n')
+    return root
+  }
+
+  const withPlaceholders = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    ...spec({ id: 'plan-claim', kind: 'workflow', somewhere: '' }),
+    expected: 'fire',
+    methods: ['counterfactual'],
+    turns: [
+      { role: 'user', text: 'Plan it.' },
+      {
+        role: 'assistant',
+        text: 'Loaded the workflow.',
+        tools: [
+          { callID: 'call_s', tool: 'systematic_skill', input: { name: 'ce:plan', arguments: 'docs/brainstorms/x.md' }, output: '{{systematic-skill:ce-plan}}' },
+          { callID: 'call_r', tool: 'read', input: { filePath: `${SKILL_BASE}/ce-plan/references/deepening-workflow.md` }, output: '{{systematic-file:ce-plan/references/deepening-workflow.md}}' },
+        ],
+      },
+      { role: 'user', text: 'Go on.' },
+      { role: 'assistant', text: 'Ready.' },
+    ],
+    ...over,
+  })
+  const canonicalText = (input: unknown): string => `${JSON.stringify(parseSpec(input), null, 2)}\n`
+  const outputsOf = (store: Store, id = 'plan-claim'): string[] => (loadFrozen(store, id).spec.turns[1] as { tools: { output: string }[] }).tools.map((t) => t.output)
+  const frozen = (store: Store, input: unknown, tree: string): ReturnType<typeof buildFixture> => {
+    const entry = buildFixture(store, input, { systematicTree: tree })
+    freezeFixture(store, (input as { id: string }).id)
+    approveFixture(store, (input as { id: string }).id)
+    return entry
+  }
+
+  test('building fills a skill placeholder with the host output of that skill, and the arguments replace $ARGUMENTS', () => {
+    const store = newStore()
+    frozen(store, withPlaceholders(), skillTree())
+    const [skill] = outputsOf(store)
+    expect(skill!.startsWith('<skill_content name="ce:plan">\n# Skill: ce:plan\n\n')).toBe(true)
+    expect(skill).toContain('Feature: #docs/brainstorms/x.md')
+    expect(skill).not.toContain('$ARGUMENTS')
+    expect(skill).toContain(`Base directory for this skill: ${SKILL_BASE}/ce-plan/\nFile references (@path) in this skill are relative to this directory.`)
+    expect(skill).toContain(`Base directory for this skill: file://${SKILL_BASE}/ce-plan\nRelative paths in this skill (e.g., scripts/, reference/) are relative to this base directory.\nNote: file list is sampled.`)
+    expect(skill).toContain(`<skill_files>\n  <file>${SKILL_BASE}/ce-plan/references/deepening-workflow.md</file>\n</skill_files>\n</skill_content>`)
+    expect(skill).not.toContain('description: plan things')
+  })
+
+  test('a file placeholder renders in the read tool format, with numbered lines', () => {
+    const store = newStore()
+    frozen(store, withPlaceholders(), skillTree())
+    expect(outputsOf(store)[1]).toBe(`<path>${SKILL_BASE}/ce-plan/references/deepening-workflow.md</path>\n<type>file</type>\n<content>\n1: # Deepening\n2: \n3: Second line.\n\n(End of file - total 3 lines)\n</content>`)
+  })
+
+  test('the export a run imports carries the filled text, and the manifest records what each placeholder became', () => {
+    const store = newStore()
+    const entry = frozen(store, withPlaceholders(), skillTree({ version: '3.33.2' })) as { render?: { template_sha256: string; systematic_version: string; skill_text: Record<string, string>; home_path_rewrites: number } }
+    const loaded = loadFrozen(store, 'plan-claim')
+    const [skill, file] = outputsOf(store)
+    const exported = loaded.export.messages[1]!.parts.filter((p) => p.type === 'tool').map((p) => p.state!.output)
+    expect(exported).toEqual([skill!, file!])
+    expect(entry.render).toEqual({
+      template_sha256: sha256(canonicalText(withPlaceholders())),
+      systematic_version: '3.33.2',
+      skill_text: { 'systematic-skill:ce-plan': sha256(skill!), 'systematic-file:ce-plan/references/deepening-workflow.md': sha256(file!) },
+      home_path_rewrites: 0,
+    })
+    expect(loaded.entry.render).toEqual(entry.render)
+  })
+
+  test('the template hash ignores the tree, and the skill-text hash follows the text of the tree the build read', () => {
+    const a = newStore()
+    const b = newStore()
+    const first = frozen(a, withPlaceholders(), skillTree()) as { render: { template_sha256: string; skill_text: Record<string, string> } }
+    const second = frozen(b, withPlaceholders(), skillTree({ plan: PLAN_SKILL.replace('# Plan', '# Plan, revised') })) as { render: { template_sha256: string; skill_text: Record<string, string> } }
+    expect(second.render.template_sha256).toBe(first.render.template_sha256)
+    expect(second.render.skill_text['systematic-skill:ce-plan']).not.toBe(first.render.skill_text['systematic-skill:ce-plan'])
+    expect(second.render.skill_text['systematic-file:ce-plan/references/deepening-workflow.md']).toBe(first.render.skill_text['systematic-file:ce-plan/references/deepening-workflow.md'])
+  })
+
+  test('a home-path example in a skill text is rewritten so the fixture scan accepts it, and the rewrite is counted', () => {
+    const store = newStore()
+    const plan = PLAN_SKILL.replace('# Plan', `# Plan\n\nNever write an absolute path like \`/${'Users'}/name/Code/app/src/a.ts\` or \`/${'home'}/dev/app\`.`)
+    const entry = frozen(store, withPlaceholders(), skillTree({ plan })) as { render: { home_path_rewrites: number } }
+    const [skill] = outputsOf(store)
+    expect(skill).toContain('`/Users/<name>/Code/app/src/a.ts` or `/home/<dev>/app`')
+    expect(skill).not.toMatch(/\/(Users|home)\/[A-Za-z]/)
+    expect(entry.render.home_path_rewrites).toBe(2)
+  })
+
+  test('a tree with no SKILL.md for a named skill fails with the missing path named, and writes nothing', () => {
+    const store = newStore()
+    const tree = skillTree({ without: 'skills/ce-plan/SKILL.md' })
+    expect(() => buildFixture(store, withPlaceholders(), { systematicTree: tree })).toThrow(/skills\/ce-plan\/SKILL\.md/)
+    expect(listFixtures(store)).toEqual([])
+    const noFile = skillTree({ without: 'skills/ce-plan/references/deepening-workflow.md' })
+    expect(() => buildFixture(store, withPlaceholders(), { systematicTree: noFile })).toThrow(/skills\/ce-plan\/references\/deepening-workflow\.md/)
+  })
+
+  test('a spec with placeholders and no tree is refused, naming the placeholder', () => {
+    const store = newStore()
+    expect(() => buildFixture(store, withPlaceholders())).toThrow(/systematic-skill:ce-plan/)
+    expect(listFixtures(store)).toEqual([])
+  })
+
+  test('a placeholder on the wrong tool call is refused: the call must be the one the text belongs to', () => {
+    const store = newStore()
+    const tree = skillTree()
+    const turns = (tool: Record<string, unknown>): unknown[] => [{ role: 'user', text: 'Plan it.' }, { role: 'assistant', text: 'Loaded.', tools: [tool] }]
+    const wrongSkill = { callID: 'call_s', tool: 'systematic_skill', input: { name: 'ce:review' }, output: '{{systematic-skill:ce-plan}}' }
+    const wrongTool = { callID: 'call_s', tool: 'read', input: { name: 'ce:plan' }, output: '{{systematic-skill:ce-plan}}' }
+    const wrongPath = { callID: 'call_r', tool: 'read', input: { filePath: `${SKILL_BASE}/ce-plan/SKILL.md` }, output: '{{systematic-file:ce-plan/references/deepening-workflow.md}}' }
+    const embedded = { callID: 'call_s', tool: 'systematic_skill', input: { name: 'ce:plan' }, output: 'text then {{systematic-skill:ce-plan}}' }
+    for (const tool of [wrongSkill, wrongTool, wrongPath]) expect(() => buildFixture(store, withPlaceholders({ turns: turns(tool) }), { systematicTree: tree })).toThrow(SpecError)
+    // A placeholder that is not the whole output is plain text.
+    buildFixture(store, withPlaceholders({ turns: turns(embedded) }), { systematicTree: tree })
+    expect(listFixtures(store)).toHaveLength(1)
+  })
+
+  test('a file placeholder with a ".." segment is refused, and no file outside the skills directory is read', () => {
+    const store = newStore()
+    const tree = skillTree()
+    const sentinel = 'OUTSIDE-THE-TREE-SENTINEL'
+    const outside = join(dirname(tree), `outside-${process.pid}.txt`)
+    writeFileSync(outside, sentinel)
+    cleanup.push(() => rmSync(outside, { force: true }))
+    // Each path resolves to a real file. The call's filePath matches the placeholder, so only the ".." guard stands in the way.
+    for (const rel of [`ce-plan/../../../${outside.split('/').at(-1)}`, 'ce-plan/../../package.json', 'ce-plan/../ce-review/SKILL.md']) {
+      const turns = [{ role: 'user', text: 'Plan it.' }, { role: 'assistant', text: 'Loaded.', tools: [{ callID: 'call_r', tool: 'read', input: { filePath: `${SKILL_BASE}/${rel}` }, output: `{{systematic-file:${rel}}}` }] }]
+      let message = ''
+      try {
+        buildFixture(store, withPlaceholders({ turns }), { systematicTree: tree })
+      } catch (e) {
+        expect(e).toBeInstanceOf(SpecError)
+        message = (e as Error).message
+      }
+      expect(message).toBe('spec.turns[1].tools[0]: expected a placeholder path with no ".." segment')
+      expect(message).not.toContain(sentinel)
+    }
+    expect(listFixtures(store)).toEqual([])
+  })
+
+  test('a spec with no placeholders builds the same bytes with or without a tree, and records no render', () => {
+    const a = newStore()
+    const b = newStore()
+    const plain = withPlaceholders({ turns: [{ role: 'user', text: 'Plan it.' }, { role: 'assistant', text: 'Ready.' }] })
+    const without = buildFixture(a, plain) as { spec_sha256: string; export_sha256: string; render?: unknown }
+    const withTree = buildFixture(b, plain, { systematicTree: skillTree() }) as { spec_sha256: string; export_sha256: string; render?: unknown }
+    expect(withTree.spec_sha256).toBe(without.spec_sha256)
+    expect(withTree.export_sha256).toBe(without.export_sha256)
+    expect(without.render).toBeUndefined()
+    expect(withTree.render).toBeUndefined()
+  })
+
+  test('rebuilding against a changed tree returns a frozen fixture to draft; the same tree changes nothing', () => {
+    const store = newStore()
+    const tree = skillTree()
+    frozen(store, withPlaceholders(), tree)
+    expect(buildFixture(store, withPlaceholders(), { systematicTree: tree }).status).toBe('frozen')
+    const changed = skillTree({ plan: PLAN_SKILL.replace('# Plan', '# Plan, revised') })
+    expect(buildFixture(store, withPlaceholders(), { systematicTree: changed }).status).toBe('draft')
+    expect(() => loadFrozen(store, 'plan-claim')).toThrow(FixtureRefusal)
+  })
+})
+
+describe('the committed tuning fixtures', () => {
+  const dir = join(import.meta.dir, '../../../../evals/spikes/systematic-reflection')
+  const TREE = process.env.METACOGS_SYSTEMATIC_TREE ?? ''
+  const files = (): string[] => readdirSync(join(dir, 'fixtures', 'tune')).filter((f) => f.endsWith('.json')).sort()
+  const bytesOf = (file: string): string => readFileSync(join(dir, 'fixtures', 'tune', file), 'utf8')
+  const prereg = (): {
+    fixture_hashes: { tune: Record<string, string> }
+    fixtures: Record<string, { expected: 'fire' | 'silence'; methods: ('counterfactual' | 'synthesis')[]; skill: string; rendered_skill_text_sha256: Record<string, string> }>
+    systematic: { pin: string }
+  } => JSON.parse(readFileSync(join(dir, 'prereg.json'), 'utf8'))
+  /** Everything the model is shown, and the notes beside it. The `methods` field names the expected method by design. */
+  const visibleText = (text: string): string => JSON.stringify({ ...JSON.parse(text), methods: undefined })
+  const KNOWN_PLACEHOLDERS = ['systematic-skill:ce-plan', 'systematic-skill:ce-review', 'systematic-file:ce-plan/references/deepening-workflow.md']
+  const SEEDED_TOOLS = ['systematic_skill', 'read', 'grep', 'glob', 'bash', 'task']
+
+  test('the prereg lists exactly the committed fixtures, and each hash is the sha256 of the committed bytes', () => {
+    const hashes = prereg().fixture_hashes.tune
+    expect(Object.keys(hashes).sort()).toEqual(files().map((f) => f.replace(/\.json$/, '')))
+    expect(files()).toHaveLength(7)
+    for (const f of files()) expect(sha256(bytesOf(f))).toBe(hashes[f.replace(/\.json$/, '')]!)
+  })
+
+  test('each parses as a workflow spec in canonical form, with the expectation and methods the prereg records', () => {
+    for (const f of files()) {
+      const spec = parseSpec(JSON.parse(bytesOf(f)))
+      expect(`${JSON.stringify(spec, null, 2)}\n`).toBe(bytesOf(f))
+      expect(f).toBe(`${spec.id}.json`)
+      expect(spec.kind).toBe('workflow')
+      const row = prereg().fixtures[spec.id]!
+      expect(spec.expected).toBe(row.expected)
+      expect(spec.methods ?? []).toEqual(row.methods)
+    }
+  })
+
+  test('a fixture names neither method nor metacogs, and no seeded tool call comes from outside the trimmed stack', () => {
+    for (const f of files()) {
+      expect(visibleText(bytesOf(f))).not.toMatch(/counterfactual|synthes|metacog/i)
+      const spec = parseSpec(JSON.parse(bytesOf(f)))
+      const tools = spec.turns.flatMap((t) => (t.role === 'assistant' ? (t.tools ?? []).map((c) => c.tool) : []))
+      for (const name of tools) expect(SEEDED_TOOLS).toContain(name)
+    }
+  })
+
+  test('every placeholder is a known skill text on the right call, and a fixture ends on an assistant message with text', () => {
+    for (const f of files()) {
+      const spec = parseSpec(JSON.parse(bytesOf(f)))
+      const found = skillPlaceholders(spec)
+      for (const key of found) expect(KNOWN_PLACEHOLDERS).toContain(key)
+      expect(found.length).toBeGreaterThan(0)
+      expect(found[0]).toBe(prereg().fixtures[spec.id]!.skill === 'ce:plan' ? 'systematic-skill:ce-plan' : 'systematic-skill:ce-review')
+      expect(spec.turns.at(-1)).toMatchObject({ role: 'assistant' })
+      expect((spec.turns.at(-1) as { text: string }).text.trim()).not.toBe('')
+    }
+  })
+
+  test.skipIf(!TREE)('built from the pinned Systematic tree, each fixture freezes clean and its skill texts hash as the prereg records', () => {
+    const version = (JSON.parse(readFileSync(join(TREE, 'package.json'), 'utf8')) as { version: string }).version
+    expect(`@fro.bot/systematic@${version}`).toBe(prereg().systematic.pin)
+    const store = newStore()
+    for (const f of files()) {
+      const spec = parseSpec(JSON.parse(bytesOf(f)))
+      const entry = buildFixture(store, JSON.parse(bytesOf(f)), { systematicTree: TREE }) as { render: { template_sha256: string; skill_text: Record<string, string> } }
+      expect(entry.render.template_sha256).toBe(prereg().fixture_hashes.tune[spec.id]!)
+      expect(entry.render.skill_text).toEqual(prereg().fixtures[spec.id]!.rendered_skill_text_sha256)
+      freezeFixture(store, spec.id)
+    }
   })
 })
 

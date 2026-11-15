@@ -1,6 +1,6 @@
 /** Private replay store: raw extracts, authored fixture specs, built session exports, and the freeze manifest. */
 import { createHash } from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -183,6 +183,153 @@ function parseWorkflow(o: Record<string, unknown>): Pick<FixtureSpec, 'expected'
   return { expected: 'fire', methods }
 }
 
+// ── skill-text placeholders ────────────────────────────────────────────────
+
+/** Where a rendered skill says it lives. A seeded session names no real machine path. */
+export const SKILLS_BASE = '/workspace/.systematic/skills'
+
+const SKILL_PLACEHOLDER = /^\{\{(systematic-skill:([a-z0-9-]+))\}\}$/
+const FILE_PLACEHOLDER = /^\{\{(systematic-file:([a-z0-9-]+\/[A-Za-z0-9_./-]+))\}\}$/
+
+/** What a build did with the skill-text placeholders: the hash of the unrendered fixture, the Systematic release read, and the hash of each text the model sees. */
+export interface RenderRecord {
+  template_sha256: string
+  systematic_version: string
+  skill_text: Record<string, string>
+  /** How many home-path examples in the skill texts were rewritten so the fixture scan accepts them. */
+  home_path_rewrites: number
+}
+
+function treeText(tree: string, rel: string): string {
+  const path = join(tree, rel)
+  if (!existsSync(path)) throw new SpecError(`systematic tree: ${rel} is missing`)
+  return readFileSync(path, 'utf8')
+}
+
+/** The same split the plugin makes: a leading `---` block, then the body. The name is the block's `name:` line. */
+function skillSource(text: string, rel: string): { name: string; body: string } {
+  const match = text.match(/^---\r?\n((?:[\s\S]*?\r?\n)?)---\r?\n([\s\S]*)$/)
+  const name = match?.[1]?.match(/^name:\s*["']?([^"'\r\n]+?)["']?\s*$/m)?.[1]
+  if (!match || !name) throw new SpecError(`systematic tree: ${rel} has no frontmatter name`)
+  return { name, body: match[2] ?? '' }
+}
+
+/** The plugin's argument substitution: `$1..$N`, then `$ARGUMENTS`, else the text appended. */
+function substituteArguments(body: string, raw: string): string {
+  const numbers = [...body.matchAll(/\$(\d+)/g)].map((m) => Number(m[1]))
+  let out = body
+  if (numbers.length > 0) {
+    const last = Math.max(...numbers)
+    const args = (raw.match(/(?:\[Image\s+\d+\]|"[^"]*"|'[^']*'|[^\s"']+)/gi) ?? []).map((t) => t.replace(/^["']|["']$/g, ''))
+    out = out.replace(/\$(\d+)/g, (_m, n: string) => (Number(n) - 1 >= args.length ? '' : Number(n) === last ? args.slice(Number(n) - 1).join(' ') : (args[Number(n) - 1] ?? '')))
+  }
+  out = out.replaceAll('$ARGUMENTS', raw)
+  return numbers.length === 0 && !body.includes('$ARGUMENTS') && raw.trim().length > 0 ? `${out}\n\n${raw}` : out
+}
+
+/** Up to ten files beside `SKILL.md`, depth first in name order, as the plugin lists them. */
+function sampledFiles(dir: string, rel: string, found: string[] = []): string[] {
+  for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
+    if (found.length >= 10) break
+    if (entry.isDirectory()) {
+      if (entry.name !== '.git') sampledFiles(join(dir, entry.name), `${rel}/${entry.name}`, found)
+    } else if (entry.name !== 'SKILL.md') found.push(`${SKILLS_BASE}/${rel}/${entry.name}`)
+  }
+  return found
+}
+
+/** The text the plugin's skill tool returns for one skill: the same wrapper, base-directory notes and sampled file list. */
+function skillToolOutput(tree: string, dirName: string, args: string | undefined): { name: string; output: string } {
+  const rel = `skills/${dirName}/SKILL.md`
+  const { name, body } = skillSource(treeText(tree, rel), rel)
+  const dir = `${SKILLS_BASE}/${dirName}`
+  const lead = `Base directory for this skill: ${dir}/\nFile references (@path) in this skill are relative to this directory.\n\n${body.trim()}`.trim()
+  const prefixed = name.includes(':') ? name : `systematic:${name}`
+  const files = sampledFiles(join(tree, 'skills', dirName), dirName)
+  const lines = [`<skill_content name="${prefixed}">`, `# Skill: ${prefixed}`, '', args === undefined ? lead : substituteArguments(lead, args), '', `Base directory for this skill: file://${dir}`, 'Relative paths in this skill (e.g., scripts/, reference/) are relative to this base directory.', 'Note: file list is sampled.']
+  if (files.length > 0) lines.push('', '<skill_files>', files.map((f) => `  <file>${f}</file>`).join('\n'), '</skill_files>')
+  lines.push('</skill_content>')
+  return { name, output: lines.join('\n') }
+}
+
+/** The text the read tool returns for a file: its path, numbered lines and a line count. */
+function readToolOutput(path: string, text: string): string {
+  const lines = text.split('\n')
+  if (lines.at(-1) === '') lines.pop()
+  return `<path>${path}</path>\n<type>file</type>\n<content>\n${lines.map((l, i) => `${i + 1}: ${l}`).join('\n')}\n\n(End of file - total ${lines.length} lines)\n</content>`
+}
+
+/**
+ * The fixture scan refuses a home path, and the shipped skill texts use `/Users/name/...` as an example of a path never to write.
+ * The example keeps its shape with the name in angle brackets. Every arm's text gets the same rewrite, and the count is recorded.
+ */
+function neutralizeHomePaths(text: string): { text: string; count: number } {
+  let count = 0
+  const out = text.replace(/(?<![\w.-])\/(Users|home)\/([A-Za-z0-9._-]+)/g, (_m, root: string, name: string) => ((count += 1), `/${root}/<${name}>`))
+  return { text: out, count }
+}
+
+/** Placeholder names, in order of appearance. A placeholder is a whole tool output and nothing else. */
+export function skillPlaceholders(spec: FixtureSpec): string[] {
+  const found: string[] = []
+  for (const turn of spec.turns) {
+    if (turn.role !== 'assistant') continue
+    for (const call of turn.tools ?? []) {
+      const key = (SKILL_PLACEHOLDER.exec(call.output) ?? FILE_PLACEHOLDER.exec(call.output))?.[1]
+      if (key) found.push(key)
+    }
+  }
+  return found
+}
+
+/**
+ * Fills each skill-text placeholder from a Systematic package tree (the directory that holds `skills/`). The call that holds a
+ * placeholder must be the one the text belongs to, so a seeded history cannot name one skill and show another.
+ */
+export function renderSkillText(spec: FixtureSpec, tree: string): { spec: FixtureSpec; skillText: Record<string, string>; homePathRewrites: number } {
+  const skillText: Record<string, string> = {}
+  let homePathRewrites = 0
+  const settle = (rendered: string): string => {
+    const { text, count } = neutralizeHomePaths(rendered)
+    homePathRewrites += count
+    return text
+  }
+  const turns = spec.turns.map((turn, n): Turn => {
+    if (turn.role !== 'assistant' || !turn.tools) return turn
+    const tools = turn.tools.map((call, t): ToolCall => {
+      const path = `spec.turns[${n}].tools[${t}]`
+      const skill = SKILL_PLACEHOLDER.exec(call.output)
+      const file = skill ? null : FILE_PLACEHOLDER.exec(call.output)
+      if (skill) {
+        const given = call.input.arguments
+        const args = given === undefined || typeof given === 'string' ? given : fail(`${path}.input.arguments`, 'a string')
+        const { name, output: raw } = skillToolOutput(tree, skill[2]!, args)
+        const output = settle(raw)
+        if (call.tool !== 'systematic_skill' || typeof call.input.name !== 'string' || call.input.name.replace(/^systematic:/, '') !== name) fail(path, `a systematic_skill call for the skill the placeholder names`)
+        skillText[skill[1]!] = sha256(output)
+        return { ...call, output }
+      }
+      if (file) {
+        const rel = file[2]!
+        if (rel.split('/').includes('..')) fail(path, 'a placeholder path with no ".." segment')
+        const filePath = `${SKILLS_BASE}/${rel}`
+        if (call.tool !== 'read' || call.input.filePath !== filePath) fail(path, 'a read call for the file the placeholder names')
+        const output = settle(readToolOutput(filePath, treeText(tree, `skills/${rel}`)))
+        skillText[file[1]!] = sha256(output)
+        return { ...call, output }
+      }
+      return call
+    })
+    return { ...turn, tools }
+  })
+  return { spec: { ...spec, turns }, skillText, homePathRewrites }
+}
+
+function systematicVersion(tree: string): string {
+  const version = (JSON.parse(treeText(tree, 'package.json')) as { version?: unknown }).version
+  return typeof version === 'string' && version !== '' ? version : fail('systematic tree: package.json version', 'a non-empty string')
+}
+
 // ── the export builder ─────────────────────────────────────────────────────
 
 export const HOST_VERSION = '1.19.5+harness.bf7f7dfe'
@@ -361,8 +508,8 @@ export interface ScanReport {
   findings: Finding[]
 }
 export type ManifestEntry =
-  | { status: 'draft'; spec_sha256: string; export_sha256: string; last_scan: ScanReport | null; review: Review; updated_at: string }
-  | { status: 'frozen'; spec_sha256: string; export_sha256: string; stamp: FixtureStamp; review: Review; updated_at: string }
+  | { status: 'draft'; spec_sha256: string; export_sha256: string; last_scan: ScanReport | null; render?: RenderRecord; review: Review; updated_at: string }
+  | { status: 'frozen'; spec_sha256: string; export_sha256: string; stamp: FixtureStamp; render?: RenderRecord; review: Review; updated_at: string }
   | { status: 'excluded'; spec_sha256: string; reason: string; review: Review; updated_at: string }
 type Frozen = Extract<ManifestEntry, { status: 'frozen' }>
 
@@ -430,9 +577,27 @@ function intact(store: Store, id: string, entry: Frozen): boolean {
   return sha256(spec) === entry.spec_sha256 && sha256(built) === entry.export_sha256 && verifyStamp(dir, entry.stamp)
 }
 
-/** Writes the spec and its export and records a draft. The same bytes again change nothing; different bytes drop any freeze and review. */
-export function buildFixture(store: Store, input: unknown): ManifestEntry {
-  const spec = parseSpec(input)
+export interface BuildFixtureOptions {
+  /** A Systematic package tree (the directory that holds `skills/`). Needed when the spec holds skill-text placeholders. */
+  systematicTree?: string
+}
+
+/**
+ * Writes the spec and its export and records a draft. The same bytes again change nothing; different bytes drop any freeze and review.
+ * A spec with skill-text placeholders is filled from the tree first: the stored spec is the filled one, and the manifest records the hash
+ * of the unrendered spec and of each filled text.
+ */
+export function buildFixture(store: Store, input: unknown, options: BuildFixtureOptions = {}): ManifestEntry {
+  const template = parseSpec(input)
+  const placeholders = skillPlaceholders(template)
+  let spec = template
+  let render: RenderRecord | undefined
+  if (placeholders.length > 0) {
+    if (!options.systematicTree) throw new SpecError(`spec has skill-text placeholders (${placeholders.join(', ')}); building it needs a Systematic tree`)
+    const filled = renderSkillText(template, options.systematicTree)
+    spec = filled.spec
+    render = { template_sha256: sha256(canonical(template)), systematic_version: systematicVersion(options.systematicTree), skill_text: filled.skillText, home_path_rewrites: filled.homePathRewrites }
+  }
   const dir = fixtureDir(store, spec.id)
   privateDir(dir)
   const specText = canonical(spec)
@@ -450,7 +615,7 @@ export function buildFixture(store: Store, input: unknown): ManifestEntry {
   const exportHash = sha256(exportText)
   writePrivate(exportPath, exportText)
   if (prior?.status === 'frozen' && prior.spec_sha256 === specHash && prior.export_sha256 === exportHash) return prior
-  return putEntry(store, spec.id, { status: 'draft', spec_sha256: specHash, export_sha256: exportHash, last_scan: null, review: UNREVIEWED, updated_at: now })
+  return putEntry(store, spec.id, { status: 'draft', spec_sha256: specHash, export_sha256: exportHash, last_scan: null, ...(render ? { render } : {}), review: UNREVIEWED, updated_at: now })
 }
 
 /** Scans the fixture directory in fixture mode and, only if it is clean, stamps it. Any finding leaves the fixture draft. */
@@ -468,10 +633,10 @@ export function freezeFixture(store: Store, id: string): Frozen {
   const now = store.now().toISOString()
   const findings = scanRepo({ root: dir, mode: 'fixture' })
   if (findings.length > 0) {
-    putEntry(store, id, { status: 'draft', spec_sha256: sha256(specText), export_sha256: sha256(exportText), last_scan: { clean: false, findings }, review: UNREVIEWED, updated_at: now })
+    putEntry(store, id, { status: 'draft', spec_sha256: sha256(specText), export_sha256: sha256(exportText), last_scan: { clean: false, findings }, ...(entry.status === 'draft' && entry.render ? { render: entry.render } : {}), review: UNREVIEWED, updated_at: now })
     throw new FreezeError(id, findings)
   }
-  const frozen: Frozen = { status: 'frozen', spec_sha256: sha256(specText), export_sha256: sha256(exportText), stamp: stampFixture(dir), review: UNREVIEWED, updated_at: now }
+  const frozen: Frozen = { status: 'frozen', spec_sha256: sha256(specText), export_sha256: sha256(exportText), stamp: stampFixture(dir), ...(entry.render ? { render: entry.render } : {}), review: UNREVIEWED, updated_at: now }
   putEntry(store, id, frozen)
   return frozen
 }

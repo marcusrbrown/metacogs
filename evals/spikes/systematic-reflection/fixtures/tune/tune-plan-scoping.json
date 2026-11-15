@@ -1,0 +1,103 @@
+{
+  "id": "tune-plan-scoping",
+  "kind": "workflow",
+  "provenance": {
+    "project": "synthetic",
+    "source_session": "synthetic",
+    "cutoff_message": "synthetic",
+    "date": "2026-11-15"
+  },
+  "expected_outcome_ref": "Silence fixture: a single-source request for an additive flag; the scope summary is composed from the request and its answers.",
+  "turns": [
+    {
+      "role": "user",
+      "text": "Plan adding an NDJSON output mode to the ledger export command: `ledger export --format ndjson`."
+    },
+    {
+      "role": "assistant",
+      "text": "The command is small: `runExport` in `src/cli/export.ts` builds CSV with `toCsv` and writes it to a file or stdout, and `parseExportArgs` accepts `--format` against a one-entry list. No requirements document covers this, so I am planning from your request.\n\nTwo scope questions before I go further: should `--format ndjson` work with `--stdout` as well as the file output, and does CSV stay the default?",
+      "tools": [
+        {
+          "callID": "call_JQK8n5NinqkXZSIWIZiQLZG6",
+          "tool": "systematic_skill",
+          "input": {
+            "name": "ce:plan",
+            "arguments": "Add an NDJSON output mode to the ledger export command: ledger export --format ndjson"
+          },
+          "output": "{{systematic-skill:ce-plan}}",
+          "title": "Loaded skill: ce:plan"
+        },
+        {
+          "callID": "call_eIN08Yu4ElUOIt2EKt8cPZHE",
+          "tool": "glob",
+          "input": {
+            "pattern": "docs/brainstorms/*-requirements.md"
+          },
+          "output": "docs/brainstorms/2026-10-14-statement-export-requirements.md\ndocs/brainstorms/2026-09-22-tenant-audit-log-requirements.md",
+          "title": "docs/brainstorms/*-requirements.md"
+        },
+        {
+          "callID": "call_pocixrgZbGhw3B41vTU2Kjnv",
+          "tool": "grep",
+          "input": {
+            "pattern": "runExport|parseExportArgs",
+            "path": ".",
+            "include": "*.ts"
+          },
+          "output": "Found 4 matches\nsrc/cli/export.ts:\n  Line 16: export async function runExport(ledger: Ledger, options: ExportOptions): Promise<number> {\n\nsrc/cli/args.ts:\n  Line 5: export function parseExportArgs(argv: string[]): ExportOptions {\n\nsrc/cli/index.ts:\n  Line 22: case 'export': return runExport(ledger, parseExportArgs(rest))\n\ntest/cli/export.test.ts:\n  Line 3: import { runExport } from '../../src/cli/export.js'",
+          "title": "export command usage"
+        },
+        {
+          "callID": "call_8LxNUczeape4fyBbjDoWDZko",
+          "tool": "read",
+          "input": {
+            "filePath": "/workspace/src/cli/export.ts"
+          },
+          "output": "<path>/workspace/src/cli/export.ts</path>\n<type>file</type>\n<content>\n1: import { writeFile } from 'node:fs/promises'\n2: \n3: import type { Ledger } from '../ledger/types.js'\n4: import { toCsv } from './csv.js'\n5: \n6: export type ExportFormat = 'csv'\n7: \n8: export interface ExportOptions {\n9:   format: ExportFormat\n10:   out?: string\n11:   stdout: boolean\n12:   since?: string\n13: }\n14: \n15: /** Writes ledger entries to a file or stdout and returns the number of rows written. */\n16: export async function runExport(ledger: Ledger, options: ExportOptions): Promise<number> {\n17:   const rows = await ledger.entries({ since: options.since })\n18:   const text = toCsv(rows)\n19:   if (options.stdout) {\n20:     process.stdout.write(text)\n21:     return rows.length\n22:   }\n23:   await writeFile(options.out ?? 'ledger-export.csv', text)\n24:   return rows.length\n25: }\n\n(End of file - total 25 lines)\n</content>",
+          "title": "cli/export.ts"
+        },
+        {
+          "callID": "call_ZNAnNSCDnnqfAquW62wiq3Mk",
+          "tool": "read",
+          "input": {
+            "filePath": "/workspace/src/cli/args.ts"
+          },
+          "output": "<path>/workspace/src/cli/args.ts</path>\n<type>file</type>\n<content>\n1: import type { ExportFormat, ExportOptions } from './export.js'\n2: \n3: const FORMATS: readonly ExportFormat[] = ['csv']\n4: \n5: export function parseExportArgs(argv: string[]): ExportOptions {\n6:   const options: ExportOptions = { format: 'csv', stdout: false }\n7:   for (let i = 0; i < argv.length; i += 1) {\n8:     const arg = argv[i]!\n9:     if (arg === '--stdout') options.stdout = true\n10:     else if (arg === '--out') options.out = argv[++i]\n11:     else if (arg === '--since') options.since = argv[++i]\n12:     else if (arg === '--format') {\n13:       const value = argv[++i] as ExportFormat\n14:       if (!FORMATS.includes(value)) throw new Error(`unknown format: ${value}`)\n15:       options.format = value\n16:     } else throw new Error(`unknown argument: ${arg}`)\n17:   }\n18:   return options\n19: }\n\n(End of file - total 19 lines)\n</content>",
+          "title": "cli/args.ts"
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "text": "Both file output and --stdout. CSV stays the default."
+    },
+    {
+      "role": "assistant",
+      "text": "That settles the request. Nothing in the repo or in `docs/brainstorms/` covers it, the questions are answered, and nothing blocks planning. The change is additive: one new format value, one serializer, and the existing CSV path and its nightly script stay as they are. I am treating it as a Lightweight plan.",
+      "tools": [
+        {
+          "callID": "call_E0G8THdSEFmGSdxhTBRGSLQu",
+          "tool": "read",
+          "input": {
+            "filePath": "/workspace/test/cli/export.test.ts"
+          },
+          "output": "<path>/workspace/test/cli/export.test.ts</path>\n<type>file</type>\n<content>\n1: import { describe, expect, test } from 'bun:test'\n2: \n3: import { runExport } from '../../src/cli/export.js'\n4: \n5: describe('runExport', () => {\n6:   test('writes one csv row per entry and returns the count', async () => {\n7:     const chunks: string[] = []\n8:     const original = process.stdout.write.bind(process.stdout)\n9:     process.stdout.write = ((chunk: string) => (chunks.push(chunk), true)) as typeof process.stdout.write\n10:     try {\n11:       const ledger = { entries: async () => [{ id: 'e1', amountMinor: 1200, currency: 'EUR', postedAt: '2026-11-01' }] }\n12:       expect(await runExport(ledger, { format: 'csv', stdout: true })).toBe(1)\n13:     } finally {\n14:       process.stdout.write = original\n15:     }\n16:     expect(chunks.join('')).toContain('e1,1200,EUR,2026-11-01')\n17:   })\n18: })\n\n(End of file - total 18 lines)\n</content>",
+          "title": "cli/export.test.ts"
+        },
+        {
+          "callID": "call_cq5HGcPTTWHdxTLmaPi8Ra7d",
+          "tool": "grep",
+          "input": {
+            "pattern": "ledger export",
+            "path": "scripts",
+            "include": "*"
+          },
+          "output": "Found 1 matches\nscripts/nightly-export.sh:\n  Line 8: ledger export --stdout --since \"$SINCE\" | gzip > \"$OUT_DIR/ledger-$DATE.csv.gz\"",
+          "title": "ledger export in scripts"
+        }
+      ]
+    }
+  ],
+  "somewhere": "",
+  "expected": "silence"
+}

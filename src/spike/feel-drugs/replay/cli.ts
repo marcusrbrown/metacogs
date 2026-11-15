@@ -23,7 +23,7 @@ export interface CliIo {
 
 const USAGE = [
   'usage: bun run replay extract --db <path> --session <id> --cutoff <msgid> [--window N] --out <raw-name>',
-  '       bun run replay build <spec.json> | freeze <id> | approve <id> | list',
+  '       bun run replay build <spec.json> [--systematic-tree <dir>] | freeze <id> | approve <id> | list',
   '       bun run replay campaign --name <n> --models <list> --arms <list|all> --fixtures <list|all> --cap <usd>',
   '                              [--provider scripted|cliproxy] [--auth-cliproxy <keyname>] [--attempt-estimate <usd>]',
   '                              [--timeout-ms N] [--again] [--expect-host-version <v>] [--world real]',
@@ -113,9 +113,10 @@ function run(argv: readonly string[], log: Pick<CliIo, 'out' | 'err'>, io: Parti
       } catch {
         throw new Error('the spec file is not readable JSON')
       }
-      const entry = buildFixture(store, json)
+      const entry = buildFixture(store, json, values['systematic-tree'] ? { systematicTree: resolve(values['systematic-tree']) } : {})
       const id = (json as { id: string }).id
-      log.out(entry.status === 'excluded' ? `built ${id} status=excluded reason=${entry.reason}` : `built ${id} status=${entry.status} export_sha256=${entry.export_sha256.slice(0, 12)}`)
+      const rendered = entry.status !== 'excluded' && entry.render ? ` skill_texts=${Object.keys(entry.render.skill_text).length} template_sha256=${entry.render.template_sha256.slice(0, 12)}` : ''
+      log.out(entry.status === 'excluded' ? `built ${id} status=excluded reason=${entry.reason}` : `built ${id} status=${entry.status} export_sha256=${entry.export_sha256.slice(0, 12)}${rendered}`)
       return 0
     }
     case 'freeze': {
@@ -179,6 +180,7 @@ function parse(argv: readonly string[]) {
       'timeout-ms': { type: 'string' },
       'expect-host-version': { type: 'string' },
       'attempts-per-cell': { type: 'string' },
+      'systematic-tree': { type: 'string' },
       replacements: { type: 'string' },
       again: { type: 'boolean' },
       world: { type: 'string' },

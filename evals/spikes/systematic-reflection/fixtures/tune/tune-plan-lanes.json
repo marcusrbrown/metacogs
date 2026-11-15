@@ -1,0 +1,107 @@
+{
+  "id": "tune-plan-lanes",
+  "kind": "workflow",
+  "provenance": {
+    "project": "synthetic",
+    "source_session": "synthetic",
+    "cutoff_message": "synthetic",
+    "date": "2026-11-15"
+  },
+  "expected_outcome_ref": "Fire fixture: two research lanes return opposed recommendations on the dedupe store, and both treat the provider retry window as the whole redelivery story.",
+  "turns": [
+    {
+      "role": "user",
+      "text": "Deepen the webhook dedupe plan, docs/plans/2026-11-09-001-feat-payment-webhook-dedupe-plan.md. I'll go through the findings with you."
+    },
+    {
+      "role": "assistant",
+      "text": "Deepening pass on the payment webhook dedupe plan, interactive mode.\n\nThe plan is `status: active` with Standard depth and a payments topic, so the deepening gate passes. Sections selected: Key Technical Decisions (one store chosen, no rejected alternatives) and Risks & Dependencies (Redis-outage behavior unset).\n\nBoth targeted-research lanes have returned: `best-practices-researcher` on the dedupe-store decision and `architecture-strategist` on the same section against the repo's architecture. Direct mode, no artifact files.",
+      "tools": [
+        {
+          "callID": "call_bLocKBiqBWiOi7hYokuVyaIO",
+          "tool": "systematic_skill",
+          "input": {
+            "name": "ce:plan",
+            "arguments": "deepen docs/plans/2026-11-09-001-feat-payment-webhook-dedupe-plan.md"
+          },
+          "output": "{{systematic-skill:ce-plan}}",
+          "title": "Loaded skill: ce:plan"
+        },
+        {
+          "callID": "call_O5jKAgfF0nozqLaag5Sa6BcS",
+          "tool": "glob",
+          "input": {
+            "pattern": "docs/plans/*webhook*"
+          },
+          "output": "docs/plans/2026-11-09-001-feat-payment-webhook-dedupe-plan.md",
+          "title": "docs/plans/*webhook*"
+        },
+        {
+          "callID": "call_193L3fGRXjc3crOQezanlAok",
+          "tool": "read",
+          "input": {
+            "filePath": "/workspace/docs/plans/2026-11-09-001-feat-payment-webhook-dedupe-plan.md"
+          },
+          "output": "<path>/workspace/docs/plans/2026-11-09-001-feat-payment-webhook-dedupe-plan.md</path>\n<type>file</type>\n<content>\n1: ---\n2: title: \"feat: dedupe inbound payment-provider webhooks\"\n3: type: feat\n4: status: active\n5: date: 2026-11-09\n6: origin: docs/brainstorms/2026-11-05-webhook-dedupe-requirements.md\n7: ---\n8: \n9: # feat: dedupe inbound payment-provider webhooks\n10: \n11: ## Overview\n12: \n13: The payment provider delivers each event at least once and retries an unacknowledged event with backoff for up to 72 hours. Today `POST /webhooks/payments` applies every delivery, so a retried `invoice.paid` marks an invoice paid twice and posts its ledger entry twice. This plan adds an event-id dedupe step in front of the handler.\n14: \n15: ## Problem Frame\n16: \n17: Duplicate deliveries are rare but not exotic: the provider retries whenever our response takes longer than 10 seconds, and deploys restart the process mid-request. Support has cleaned up four double-posted ledger entries since August (see origin).\n18: \n19: ## Requirements Trace\n20: \n21: - R1. A delivery whose provider event id was already applied is acknowledged with a 2xx and not applied again.\n22: - R2. Dedupe state survives a deploy or process restart.\n23: - R3. A delivery that fails part-way through is retried by the provider and applied exactly once in total.\n24: - R4. The dedupe check adds under 5 ms at p95 to the webhook handler.\n25: \n26: ## Scope Boundaries\n27: \n28: - Outbound webhooks are untouched.\n29: - The provider's dashboard resend tool is not changed by this plan.\n30: - No change to the ledger schema beyond what R3 needs.\n31: \n32: ## Context & Research\n33: \n34: ### Relevant Code and Patterns\n35: \n36: - `src/webhooks/payments.ts`: the handler. It verifies the signature, parses the event and calls `applyEvent()`.\n37: - `src/ledger/post.ts`: `postEntry()` writes ledger rows inside a Postgres transaction.\n38: - `src/infra/redis.ts`: a shared Redis client, used today for rate limiting.\n39: \n40: ### External References\n41: \n42: - Provider webhook documentation: delivery guarantees, retry schedule and event ids (`https://docs.example-pay.test/webhooks`).\n43: \n44: ## Key Technical Decisions\n45: \n46: - **Dedupe store: Redis.** Record each applied event id with `SET key 1 NX EX 259200` (72 hours, the provider's retry window) before calling `applyEvent()`. Sub-millisecond, no migration, and the TTL matches the retry window.\n47: - **Acknowledge after the ledger commit.** Return 2xx only once `postEntry()` has committed, so a failed apply is retried by the provider.\n48: \n49: ## Implementation Units\n50: \n51: - U1. **Dedupe guard**\n52:   - Files: `src/webhooks/dedupe.ts`, `test/webhooks/dedupe.test.ts`\n53:   - Approach: `claimEvent(eventId)` wraps `SET NX EX` and returns `claimed | duplicate`.\n54: - U2. **Wire the guard into the handler**\n55:   - Files: `src/webhooks/payments.ts`, `test/webhooks/payments.test.ts`\n56:   - Approach: call `claimEvent()` after signature verification; on `duplicate`, return 200 without applying.\n57: - U3. **Release the claim when the apply fails**\n58:   - Files: `src/webhooks/payments.ts`\n59:   - Approach: delete the claim key when `applyEvent()` throws, so the provider's retry is applied.\n60: \n61: ## System-Wide Impact\n62: \n63: - Redis becomes part of the webhook request path. Its client already has a 200 ms command timeout.\n64: \n65: ## Risks & Dependencies\n66: \n67: - If Redis is unreachable the guard cannot decide. Behavior is not yet chosen.\n68: \n69: ## Sources & References\n70: \n71: - Origin: `docs/brainstorms/2026-11-05-webhook-dedupe-requirements.md`\n72: - Provider docs: `https://docs.example-pay.test/webhooks`\n\n(End of file - total 72 lines)\n</content>",
+          "title": "plans/2026-11-09-001-feat-payment-webhook-dedupe-plan.md"
+        },
+        {
+          "callID": "call_RgY0cOcxcgmqmQyYhtaez6M0",
+          "tool": "read",
+          "input": {
+            "filePath": "/workspace/.systematic/skills/ce-plan/references/deepening-workflow.md"
+          },
+          "output": "{{systematic-file:ce-plan/references/deepening-workflow.md}}",
+          "title": "deepening-workflow.md"
+        },
+        {
+          "callID": "call_ACiDRNx6856PKXDfRTdhwBcC",
+          "tool": "grep",
+          "input": {
+            "pattern": "redis",
+            "path": "src",
+            "include": "*.ts"
+          },
+          "output": "Found 3 matches\nsrc/infra/redis.ts:\n  Line 3: import { createClient } from 'redis'\n  Line 9: commandTimeout: 200,\n\nsrc/http/rate-limit.ts:\n  Line 6: import { redis } from '../infra/redis.js'",
+          "title": "redis usage"
+        },
+        {
+          "callID": "call_EWCWWAlYMetiKjaShWQPruHN",
+          "tool": "read",
+          "input": {
+            "filePath": "/workspace/infra/redis/redis.conf"
+          },
+          "output": "<path>/workspace/infra/redis/redis.conf</path>\n<type>file</type>\n<content>\n1: # redis.conf used by the shared cache cluster (managed by platform, mirrored here for reference)\n2: maxmemory 512mb\n3: maxmemory-policy allkeys-lru\n4: appendonly no\n5: save \"\"\n\n(End of file - total 5 lines)\n</content>",
+          "title": "redis/redis.conf"
+        },
+        {
+          "callID": "call_Z08f1nzTEUzENprhnb38QmAk",
+          "tool": "task",
+          "input": {
+            "description": "Strengthen the dedupe-store decision with external guidance",
+            "prompt": "Plan summary: dedupe inbound payment-provider webhooks by provider event id. Plan depth: Standard. Topic risk: payments (high).\n\nWhy this section was selected: Key Technical Decisions states one store (Redis) with no rejected alternatives; Risks & Dependencies leaves the Redis-outage behavior open.\n\nSection text:\n- **Dedupe store: Redis.** Record each applied event id with `SET key 1 NX EX 259200` (72 hours, the provider's retry window) before calling `applyEvent()`. Sub-millisecond, no migration, and the TTL matches the retry window.\n- **Acknowledge after the ledger commit.** Return 2xx only once `postEntry()` has committed.\n\nQuestion to answer: is this the right dedupe store for R1-R4?\n\nReturn findings that change planning quality, stronger rationale, sequencing, verification, risk treatment or references. No implementation code, no shell commands.",
+            "subagent_type": "best-practices-researcher"
+          },
+          "output": "<task id=\"ses_XRaDY5EemolCHFsHFObHg6mYB6\" state=\"completed\">\n<task_result>\nTarget section: Key Technical Decisions (dedupe store). Findings that change planning quality:\n\n1. Dedupe by provider event id with a retention at least as long as the provider's retry window is the standard approach, and the provider's webhook guide recommends exactly that (\"store processed event ids for at least as long as we keep retrying\"). Retries stop after 72 hours, so a 72-hour retention covers every automatic redelivery.\n2. `SET key 1 NX EX <seconds>` is the common implementation for this: one round trip, atomic claim, no cleanup job. Benchmarks in the guide and in two widely cited write-ups put the check at 0.3-0.8 ms, which is well inside R4's 5 ms budget. A Postgres unique-index insert is the stronger alternative but adds a write to the hot path and a retention job for old rows.\n3. Release the claim when processing fails (U3), and make the ledger write idempotent as a second line of defense. Both are already in the plan.\n\nPlanning changes implied:\n- Keep Redis with a 72-hour TTL as the dedupe store. Add a \"Alternatives considered\" line: Postgres unique index, rejected for the extra hot-path write and the retention job.\n- Under Risks & Dependencies, choose fail-open on Redis outage (apply the event, rely on ledger idempotency) and say so.\n\nSources: provider webhook guide (retries and dedupe section), the repo's existing Redis client in `src/infra/redis.ts`.\n</task_result>\n</task>",
+          "title": "Strengthen the dedupe-store decision with external guidance"
+        },
+        {
+          "callID": "call_yFQ1nXCWbsccJ8I9EvqjdjRw",
+          "tool": "task",
+          "input": {
+            "description": "Review the dedupe-store decision against the architecture",
+            "prompt": "Plan summary: dedupe inbound payment-provider webhooks by provider event id. Plan depth: Standard. Topic risk: payments (high).\n\nWhy this section was selected: Key Technical Decisions states one store (Redis) with no rejected alternatives; Risks & Dependencies leaves the Redis-outage behavior open.\n\nSection text:\n- **Dedupe store: Redis.** Record each applied event id with `SET key 1 NX EX 259200` (72 hours, the provider's retry window) before calling `applyEvent()`. Sub-millisecond, no migration, and the TTL matches the retry window.\n- **Acknowledge after the ledger commit.** Return 2xx only once `postEntry()` has committed.\n\nQuestion to answer: is this the right dedupe store for R1-R4?\n\nReturn findings that change planning quality, stronger rationale, sequencing, verification, risk treatment or references. No implementation code, no shell commands.",
+            "subagent_type": "architecture-strategist"
+          },
+          "output": "<task id=\"ses_vABKYanTwuqC0X6HPhlmQZGw0d\" state=\"completed\">\n<task_result>\nTarget section: Key Technical Decisions and System-Wide Impact. Findings that change planning quality:\n\n1. R2 and R3 ask for state that survives restarts and applies each event exactly once in total. The shared Redis cluster runs with `maxmemory-policy allkeys-lru`, `appendonly no` and `save \"\"` (`infra/redis/redis.conf`, mirrored from the platform team's config). Under memory pressure any key can be evicted before its TTL, and a Redis restart drops every key. Either case lets a retried delivery be applied a second time with no error anywhere, which is the failure the plan exists to prevent.\n2. Rate-limit counters already compete for the same 512 MB. The dedupe keys are only 8 bytes of value, but eviction is by recency across all keys, so the dedupe keys are exactly the ones that go cold between a delivery and its retry.\n3. `postEntry()` already runs in a Postgres transaction. A unique index on `provider_event_id` written in that same transaction gives atomic dedupe and posting: a duplicate delivery fails the insert and rolls back nothing that was applied. That also removes U3, because a failed apply leaves no claim behind.\n4. A Postgres insert on an indexed text column is typically 1-3 ms at this table size, inside the R4 budget.\n\nPlanning changes implied:\n- Replace the Redis claim with a `webhook_events(provider_event_id unique, received_at)` table claimed inside the ledger transaction. Drop U3.\n- Under Risks & Dependencies, state that Postgres being down already fails the handler, so no new failure mode is added.\n\nSources: `infra/redis/redis.conf`, `src/ledger/post.ts`, `src/infra/redis.ts`.\n</task_result>\n</task>",
+          "title": "Review the dedupe-store decision against the architecture"
+        }
+      ]
+    }
+  ],
+  "somewhere": "",
+  "expected": "fire",
+  "methods": [
+    "synthesis"
+  ]
+}

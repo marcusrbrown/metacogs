@@ -1,0 +1,126 @@
+{
+  "id": "tune-plan-claim",
+  "kind": "workflow",
+  "provenance": {
+    "project": "synthetic",
+    "source_session": "synthetic",
+    "cutoff_message": "synthetic",
+    "date": "2026-11-15"
+  },
+  "expected_outcome_ref": "Fire fixture: the choice to delete the old renderer in the same release rests on a service capability that the origin document only relays from a meeting, and no seeded source checks it.",
+  "turns": [
+    {
+      "role": "user",
+      "text": "Plan the invoice rendering cutover. The requirements are in docs/brainstorms/2026-11-02-invoice-render-service-requirements.md."
+    },
+    {
+      "role": "assistant",
+      "text": "Research is consolidated for the invoice rendering cutover.\n\nOrigin: the requirements document is the source of truth, and R1-R6, the scope boundaries and the three deferred questions carry forward.\n\nWhat the repo shows:\n- `renderInvoicePdf(invoice, locale)` in `src/invoices/render/index.ts` has one implementation, the pdfkit-based renderer. The 11 layouts are TypeScript drawing code, not HTML.\n- Statements already render through docrender with a typed client (`src/statements/docrender-client.ts`), HTML templates and an `x-request-id` header. That is the pattern to follow.\n- Six locales are issued. Two are right-to-left (`ar`, `he`), about 26% of Q3 invoices, and their only test coverage is the 14 snapshots in `test/invoices/rtl.snapshot.test.ts`, produced by the fork.\n- The fork is what blocks the Node 22 upgrade (an active solution doc records the Node 20 pin).\n\nExternal research is skipped: docrender is internal, the client wrapper already exists, and the origin document is specific about the service.\n\nPlanning questions for Phase 2:\n1. How the 11 layouts move to docrender: convert each to an HTML template, or keep the drawing code behind an adapter for some of them.\n2. Rollout: gate the cutover per tenant, or flip it globally.\n3. Whether the fork and its tests are deleted in the same release as the cutover (R6), or after one release.\n4. Where the visual regression check for R2 runs in CI.",
+      "tools": [
+        {
+          "callID": "call_c25KlaWgqCvlKBTThhEOydQ7",
+          "tool": "systematic_skill",
+          "input": {
+            "name": "ce:plan",
+            "arguments": "docs/brainstorms/2026-11-02-invoice-render-service-requirements.md"
+          },
+          "output": "{{systematic-skill:ce-plan}}",
+          "title": "Loaded skill: ce:plan"
+        },
+        {
+          "callID": "call_zzch3hL0epY7lRySPGnHTwvU",
+          "tool": "glob",
+          "input": {
+            "pattern": "docs/brainstorms/*-requirements.md"
+          },
+          "output": "docs/brainstorms/2026-11-02-invoice-render-service-requirements.md\ndocs/brainstorms/2026-10-14-statement-export-requirements.md\ndocs/brainstorms/2026-09-22-tenant-audit-log-requirements.md",
+          "title": "docs/brainstorms/*-requirements.md"
+        },
+        {
+          "callID": "call_Pnc1paCz0YjmuQoQniS72rwR",
+          "tool": "read",
+          "input": {
+            "filePath": "/workspace/docs/brainstorms/2026-11-02-invoice-render-service-requirements.md"
+          },
+          "output": "<path>/workspace/docs/brainstorms/2026-11-02-invoice-render-service-requirements.md</path>\n<type>file</type>\n<content>\n1: ---\n2: date: 2026-11-02\n3: topic: invoice-render-service\n4: ---\n5: \n6: # Move invoice PDF rendering to the docrender service\n7: \n8: ## Problem Frame\n9: \n10: Invoice PDFs are rendered in-process with a vendored fork of pdfkit (`third_party/pdfkit-fork`). The fork trails upstream by 14 months, blocks the Node 22 upgrade, and has an open font-embedding bug for ligatures. The platform team runs `docrender`, an internal HTML-to-PDF service that statements and receipts already use.\n11: \n12: ## Requirements\n13: \n14: - R1. Invoice PDFs are produced by calling docrender instead of the in-process renderer.\n15: - R2. Output keeps the current page layout for all 11 invoice templates, within a visual-diff tolerance of 0.5%.\n16: - R3. Rendering failures surface as the existing `INVOICE_RENDER_FAILED` error with the request id attached.\n17: - R4. The p95 render time for a single-page invoice stays under 1.5 seconds.\n18: - R5. The Node 22 upgrade is unblocked.\n19: - R6. `third_party/pdfkit-fork` and its tests are deleted in the same release as the cutover. No flag-gated fallback ships.\n20: \n21: ## Key Decisions\n22: \n23: - Use docrender rather than upgrading to upstream pdfkit. Upstream pdfkit still lacks bidirectional text shaping, which our `ar` and `he` invoices need.\n24: - docrender handles right-to-left layout and Arabic shaping natively, so none of the RTL drawing code in the fork is carried over (docrender team, platform sync on Oct 28).\n25: - No fallback renderer (R6). Keeping two renderers doubles the regression surface for a release that is meant to retire the fork.\n26: \n27: ## Scope Boundaries\n28: \n29: - Receipts and statements are untouched.\n30: - No change to the invoice data model or the `/invoices/:id/pdf` route contract.\n31: \n32: ## Outstanding Questions\n33: \n34: ### Resolve Before Planning\n35: \n36: (none)\n37: \n38: ### Deferred to Planning\n39: \n40: - Which of the 11 templates need markup changes to render as HTML?\n41: - Roll out per tenant, or flip globally?\n42: - Where does the visual regression check run in CI?\n\n(End of file - total 42 lines)\n</content>",
+          "title": "brainstorms/2026-11-02-invoice-render-service-requirements.md"
+        },
+        {
+          "callID": "call_ZOVbo3gDogt3EYLcvYqevTwk",
+          "tool": "glob",
+          "input": {
+            "pattern": "docs/plans/*"
+          },
+          "output": "docs/plans/2026-10-20-001-feat-statement-export-plan.md\ndocs/plans/2026-09-30-001-feat-tenant-audit-log-plan.md",
+          "title": "docs/plans/*"
+        },
+        {
+          "callID": "call_S7E716EMEjGZqpVfDHcJdNWO",
+          "tool": "task",
+          "input": {
+            "description": "Map invoice rendering and docrender usage",
+            "prompt": "Scope: technology, architecture, patterns, prior-art\n\nPlanning context: Replace the in-process pdfkit-fork invoice renderer with calls to the internal docrender service, keeping layouts for 11 invoice templates and the INVOICE_RENDER_FAILED error contract. Origin document: docs/brainstorms/2026-11-02-invoice-render-service-requirements.md.\n\nPrior-art scope: the independently stated concern is invoice PDF generation and its render path; plan depth: Standard.",
+            "subagent_type": "repo-research-analyst"
+          },
+          "output": "<task id=\"ses_YFQSgbAPefiZI3YvZ1sdXXFsbX\" state=\"completed\">\n<task_result>\n## Technology & Infrastructure\n\n- Language and runtime: TypeScript 5.6 strict, Bun 1.4 for tests and scripts, Node 20 in production images (Node 22 upgrade tracked in docs/ops/node-upgrade.md and blocked on the pdfkit fork).\n- HTTP: Fastify 5. Storage: Postgres 16 through a small query layer in `src/store/`.\n- Deployment: container images built in CI, rolled out by the platform team's pipeline. Tenant-level feature flags live in `src/flags/` and are read per request.\n\n## Architecture & Patterns\n\n- Invoice rendering sits behind `src/invoices/render/index.ts`, which exports `renderInvoicePdf(invoice, locale)`. The only implementation is `pdfkit-renderer.ts`, which draws each layout with pdfkit calls.\n- The 11 layouts are TypeScript modules in `src/invoices/layouts/` (`standard.ts`, `compact.ts`, `credit-note.ts`, and so on). Locale variants for `ar` and `he` set `dir: 'rtl'` and pass shaped text through the fork's `shapeBidi()` helper.\n- Statements already render through docrender: `src/statements/docrender-client.ts` posts HTML to `/v2/render`, and `src/statements/templates/` holds HTML templates. Its client types the locale as `'en' | 'de' | 'fr' | 'es'`.\n- Errors cross module boundaries as result objects. `INVOICE_RENDER_FAILED` is built in `src/invoices/errors.ts`.\n\n## Tests\n\n- `test/invoices/pdfkit-renderer.test.ts` covers layout selection and page counts.\n- `test/invoices/rtl.snapshot.test.ts` holds 14 snapshots of `ar` and `he` invoices produced by the fork. It is the only RTL coverage in the repo.\n- `test/statements/docrender-client.test.ts` stubs `fetch`. There is no test against a running docrender.\n\n## Prior-Art Survey\n\n{\"schema_version\":2,\"verdict\":\"extend\",\"scope\":\"src/invoices, src/statements, third_party; lexical and symbol search\",\"candidates\":[{\"path_or_symbol\":\"src/statements/docrender-client.ts\",\"description\":\"Existing docrender client used by statements\",\"disposition\":\"extend\"},{\"path_or_symbol\":\"src/invoices/render/pdfkit-renderer.ts\",\"description\":\"Current in-process invoice renderer\",\"disposition\":\"replace\"}]}\n</task_result>\n</task>",
+          "title": "Map invoice rendering and docrender usage"
+        },
+        {
+          "callID": "call_moxqsykB1rpEdlxcuY74VMlD",
+          "tool": "task",
+          "input": {
+            "description": "Find past work on invoice rendering",
+            "prompt": "scope: past-work\nexclude: docs/brainstorms/2026-11-02-invoice-render-service-requirements.md\n\nPlanning context: Replace the in-process pdfkit-fork invoice renderer with calls to the internal docrender service. Look for earlier plans, brainstorms and solutions touching invoice rendering, pdfkit, docrender or the Node 22 upgrade.",
+            "subagent_type": "learnings-researcher"
+          },
+          "output": "<task id=\"ses_wO5fxOfbnLqGa8R2LRVCboK5Wh\" state=\"completed\">\n<task_result>\nNo directly overlapping past work found.\n\nRelated, lower relevance:\n- docs/solutions/build-errors/pdfkit-fork-node22-resolution-failure-2026-08-14.md (status: active). The Node 22 install fails on the fork's postinstall script. The recorded workaround pins Node 20 for the invoice image.\n- docs/plans/2026-10-20-001-feat-statement-export-plan.md (status: completed). Moved statement PDFs to docrender; its Key Technical Decisions describe the client wrapper and the per-request `x-request-id` header.\n</task_result>\n</task>",
+          "title": "Find past work on invoice rendering"
+        },
+        {
+          "callID": "call_sRsRyG4zQigpoKdqzN7uZXs1",
+          "tool": "read",
+          "input": {
+            "filePath": "/workspace/src/statements/docrender-client.ts"
+          },
+          "output": "<path>/workspace/src/statements/docrender-client.ts</path>\n<type>file</type>\n<content>\n1: import type { Logger } from '../log.js'\n2: \n3: /** Locales the statements flow sends to docrender. Statements are issued in these four. */\n4: export const SUPPORTED_LOCALES = ['en', 'de', 'fr', 'es'] as const\n5: export type StatementLocale = (typeof SUPPORTED_LOCALES)[number]\n6: \n7: export interface RenderRequest {\n8:   html: string\n9:   locale: StatementLocale\n10:   requestId: string\n11: }\n12: \n13: export interface DocrenderClient {\n14:   render(request: RenderRequest): Promise<Uint8Array>\n15: }\n16: \n17: export function createDocrenderClient(baseUrl: string, log: Logger): DocrenderClient {\n18:   return {\n19:     async render({ html, locale, requestId }) {\n20:       const response = await fetch(`${baseUrl}/v2/render`, {\n21:         method: 'POST',\n22:         headers: { 'content-type': 'application/json', 'x-request-id': requestId },\n23:         body: JSON.stringify({ html, locale, format: 'pdf' }),\n24:       })\n25:       if (!response.ok) {\n26:         log.warn({ requestId, status: response.status }, 'docrender request failed')\n27:         throw new Error(`docrender responded ${response.status}`)\n28:       }\n29:       return new Uint8Array(await response.arrayBuffer())\n30:     },\n31:   }\n32: }\n\n(End of file - total 32 lines)\n</content>",
+          "title": "statements/docrender-client.ts"
+        },
+        {
+          "callID": "call_onMmYGoMEeYJnBhXo5wxnhWO",
+          "tool": "grep",
+          "input": {
+            "pattern": "dir: 'rtl'|shapeBidi",
+            "path": "src",
+            "include": "*.ts"
+          },
+          "output": "Found 5 matches\nsrc/invoices/layouts/standard.ts:\n  Line 41: const direction = locale === 'ar' || locale === 'he' ? 'rtl' : 'ltr'\n  Line 58: doc.text(shapeBidi(invoice.customer.name), { align: direction === 'rtl' ? 'right' : 'left' })\n\nsrc/invoices/layouts/compact.ts:\n  Line 37: const direction = locale === 'ar' || locale === 'he' ? 'rtl' : 'ltr'\n\nsrc/invoices/layouts/credit-note.ts:\n  Line 44: const direction = locale === 'ar' || locale === 'he' ? 'rtl' : 'ltr'\n\nsrc/invoices/render/bidi.ts:\n  Line 12: export function shapeBidi(text: string): string {",
+          "title": "src invoice RTL handling"
+        },
+        {
+          "callID": "call_CESMPMWRZAHUHalFKExNwiOJ",
+          "tool": "read",
+          "input": {
+            "filePath": "/workspace/docs/ops/invoice-volume-2026q3.md"
+          },
+          "output": "<path>/workspace/docs/ops/invoice-volume-2026q3.md</path>\n<type>file</type>\n<content>\n1: # Invoice volume, Q3 2026\n2: \n3: Source: billing warehouse export, 2026-10-05.\n4: \n5: | Locale | Invoices issued | Share |\n6: |--------|-----------------|-------|\n7: | en | 41,902 | 52% |\n8: | de | 9,114 | 11% |\n9: | fr | 5,308 | 7% |\n10: | es | 3,577 | 4% |\n11: | ar | 12,260 | 15% |\n12: | he | 8,509 | 11% |\n13: \n14: Total: 80,670. Right-to-left locales (ar, he) are 26% of issued invoices.\n\n(End of file - total 14 lines)\n</content>",
+          "title": "ops/invoice-volume-2026q3.md"
+        },
+        {
+          "callID": "call_n7RD11ZJzlHcQCrI3bHKxgdS",
+          "tool": "bash",
+          "input": {
+            "command": "ls src/invoices/layouts | wc -l && ls third_party/pdfkit-fork | head -5",
+            "description": "Count layouts and list the fork"
+          },
+          "output": "11\nLICENSE\nREADME.md\nlib\npackage.json\npatches",
+          "title": "Count layouts and list the fork"
+        }
+      ]
+    }
+  ],
+  "somewhere": "",
+  "expected": "fire",
+  "methods": [
+    "counterfactual"
+  ]
+}

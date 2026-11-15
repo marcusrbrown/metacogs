@@ -1,0 +1,229 @@
+{
+  "schema_version": 1,
+  "spike": "systematic-reflection",
+  "stage": "baseline",
+  "question": "Does the counterfactual or synthesis method load at the chosen ce:plan and ce:review decision points on the shipped Systematic, with metacogs installed and guidance on, and does it stay silent at the controls?",
+  "hashing": {
+    "algorithm": "sha256",
+    "tuning": "The sha256 of the committed fixture file bytes. A committed file is the canonical JSON of its spec, so this is the hash of the unrendered fixture: skill-text placeholders unfilled.",
+    "heldout": "sha256 of the salt followed by the bytes of a held-out twin. Twins are written only after a recorded miss, kept outside the working tree and read once.",
+    "salt": "c199f16871e909e859b5076515c88426"
+  },
+  "fixture_hashes": {
+    "tune": {
+      "tune-plan-claim": "b838bbe561fbb64da9b97326d682f62337f59afa755a83511ce4ba6e3a41a1ed",
+      "tune-plan-lanes": "930f71c15306dd27de69ae39a1fdb28f05b62daf3efe292cf27761da4bcd47e8",
+      "tune-plan-scoping": "4aafc54832a654c440b706c41ec9b0eeb292154db0a76203cf53c2c21b4eafb8",
+      "tune-review-dedup": "b144e20eea3e7152f6e58eda48260e7e3e3cbea55b2c83d668a0956ddea1eed4",
+      "tune-review-disagree": "a1af783160f90a4b8fa39b0d27db1b709725c6687bbc701d4fd942e3c5592ab1",
+      "tune-review-validator": "d5cdd05bad52d5b27ce4511dc48a52be387bc3a53ca009ce600619ef03a71217",
+      "tune-review-verdict": "fb14fea95bc1e8d7b8d7c8246da9f3abeb3224c863c83b5cf9e439ed37066c4d"
+    }
+  },
+  "fixtures": {
+    "tune-plan-claim": {
+      "skill": "ce:plan",
+      "decision_point": "resolve planning questions (Phase 2)",
+      "mode": "interactive",
+      "wiring_point": "skills/ce-plan/SKILL.md, Phase 2: Resolve Planning Questions",
+      "neighbour_controls": [
+        "tune-plan-scoping"
+      ],
+      "expected": "fire",
+      "methods": [
+        "counterfactual"
+      ],
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-plan": "387e0c0d3a8a16db4b78ca49089e1fe4a8a261730a2cc22d74847fec507327e3"
+      },
+      "home_path_rewrites": 2
+    },
+    "tune-plan-lanes": {
+      "skill": "ce:plan",
+      "decision_point": "deepening, conflicting agent outputs (5.3.6)",
+      "mode": "interactive",
+      "wiring_point": "skills/ce-plan/references/deepening-workflow.md, 5.3.6 \"If agent outputs conflict\"",
+      "neighbour_controls": [
+        "tune-plan-scoping"
+      ],
+      "expected": "fire",
+      "methods": [
+        "synthesis"
+      ],
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-plan": "fbe58b67221aa567e1d16827ba9151ae3c913c2461dab805d06d9319f478d24a",
+        "systematic-file:ce-plan/references/deepening-workflow.md": "2d169cc408f11798a837f166b245f4057bf322cf58b4c3e7d933a31e01e6fc24"
+      },
+      "home_path_rewrites": 2
+    },
+    "tune-plan-scoping": {
+      "skill": "ce:plan",
+      "decision_point": "Phase 0.7 solo-mode scoping synthesis",
+      "mode": "interactive",
+      "wiring_point": null,
+      "neighbour_controls": [],
+      "expected": "silence",
+      "methods": [],
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-plan": "7f90645f4416ef121c75811d975c03217a959d942cb3cb590037c74cd32fe3b0"
+      },
+      "home_path_rewrites": 2
+    },
+    "tune-review-dedup": {
+      "skill": "ce:review",
+      "decision_point": "Stage 5 candidate-group adjudication",
+      "mode": "autofix",
+      "wiring_point": null,
+      "neighbour_controls": [],
+      "expected": "silence",
+      "methods": [],
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-review": "a1e4d4df57bca15a44c2e363516454d5251dc80444f5dea9cb22d955098af330"
+      },
+      "home_path_rewrites": 0
+    },
+    "tune-review-disagree": {
+      "skill": "ce:review",
+      "decision_point": "Stage 5 candidate-group adjudication",
+      "mode": "autofix",
+      "wiring_point": "skills/ce-review/SKILL.md, Stage 5 step 3 \"Adjudicate every candidate group\"",
+      "neighbour_controls": [
+        "tune-review-dedup",
+        "tune-review-validator",
+        "tune-review-verdict"
+      ],
+      "expected": "fire",
+      "methods": [
+        "synthesis"
+      ],
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-review": "a1e4d4df57bca15a44c2e363516454d5251dc80444f5dea9cb22d955098af330"
+      },
+      "home_path_rewrites": 0
+    },
+    "tune-review-validator": {
+      "skill": "ce:review",
+      "decision_point": "Stage 5b validator dispositions",
+      "mode": "autofix",
+      "wiring_point": null,
+      "neighbour_controls": [],
+      "expected": "silence",
+      "methods": [],
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-review": "a1e4d4df57bca15a44c2e363516454d5251dc80444f5dea9cb22d955098af330"
+      },
+      "home_path_rewrites": 0
+    },
+    "tune-review-verdict": {
+      "skill": "ce:review",
+      "decision_point": "Stage 6 synthesize and present",
+      "mode": "autofix",
+      "wiring_point": null,
+      "neighbour_controls": [],
+      "expected": "silence",
+      "methods": [],
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-review": "a1e4d4df57bca15a44c2e363516454d5251dc80444f5dea9cb22d955098af330"
+      },
+      "home_path_rewrites": 0
+    }
+  },
+  "systematic": {
+    "pin": "@fro.bot/systematic@3.33.2",
+    "newest_at_prereg": {
+      "checked": "2026-11-15",
+      "npm_view_version": "3.33.2",
+      "dist_tag_latest": "3.33.2",
+      "published": "2026-11-14T16:27:31.238Z"
+    },
+    "decision": "Keep 3.33.2: it is the newest published release on the day of the prereg, so the baseline is the shipped skill text.",
+    "tarball": {
+      "sha1": "5b0b1558b88429638874ab58b5e91ed90ed24303",
+      "sha256": "5da735ed727b9f303d5fb54d56faa37c2be536880d1cc0433ef1788742bfd31b",
+      "integrity": "sha512-EyPbr71Avs5WwE6/6nim0+EnOaLLAaO0lhvxsPJLE8XZ12rxA7aqotKiTX61tD9VhzEtEBZbXKZniglB+Q1GuQ=="
+    },
+    "tree_source": "npm pack @fro.bot/systematic@3.33.2 into scratch, extracted there. The skills directory is byte-identical to the host registry install the stack loads (diff -r clean).",
+    "skill_files": {
+      "skills/ce-plan/SKILL.md": "3a22aafb3aadfcca6eda4a6f79b25b2836e933859a312f63d7d89f0f04c66459",
+      "skills/ce-plan/references/deepening-workflow.md": "b4b5556ae9fd77f90f881a988b97708747077bd9b2ecc5f743b09c24a1b47fa4",
+      "skills/ce-review/SKILL.md": "02d134b5f9e66219dd68feaa7f1cada19d435f812013fb6bbb2bfa41816ec4eb",
+      "skills/ce-review/scripts/validate-review.mjs": "bf26587f313f1048484fe8423a0ca5981418b96d7a72b618031adfd4aa54bf00"
+    },
+    "config": "The owner systematic.jsonc with the search switch applied, read-only. Its hash is recorded on every attempt, and every arm must show the same one."
+  },
+  "metacogs": {
+    "arm": "the local checkout packed the way the harness packs it today",
+    "version": "0.4.1",
+    "checkout_commit": "a29c406d20b5833e1953f5de3c063b6d91972e79",
+    "packed_tarball_sha256": "d05a037dbe407b70cea5a50eb1facc5915f106d006499844a91cade6185c9b4d",
+    "published": {
+      "version": "0.4.1",
+      "tarball_sha256": "d05a037dbe407b70cea5a50eb1facc5915f106d006499844a91cade6185c9b4d",
+      "shasum_sha1": "2622bdc8614c3ece6b27d3795085df19860ec23b",
+      "integrity": "sha512-vztJHFEfxprMJCCDwJVqiPbaLmFg/h2ZOnRUSVFZtN+GxknA2fDnIWatp+BxMiH+vx3ykrAIiKXAqAdIPZIe/g=="
+    },
+    "decision": "The packed checkout and the published 0.4.1 tarball are byte-identical (same sha256, diff -r clean over every file), so the local pack is what a user installs from npm.",
+    "guidance": "on"
+  },
+  "host": {
+    "version": "1.19.5+harness.bf7f7dfe"
+  },
+  "model": "openai/gpt-6-luna",
+  "stack": {
+    "profile": "workflow",
+    "plugins": [
+      "@fro.bot/systematic@3.33.2",
+      "metacogs (packed)"
+    ],
+    "denied_tools": [
+      "question",
+      "task"
+    ],
+    "agent": "build"
+  },
+  "arms": [
+    "baseline"
+  ],
+  "arm_message": "Continue.",
+  "attempts_per_cell": 3,
+  "counted_attempts": 21,
+  "order": "sequential",
+  "hit_bar": {
+    "applies_to": "fire fixtures",
+    "hit": "at least 2 of 3 counted attempts complete a load of a method in the fixture methods, through the host skill tool or systematic_skill",
+    "miss": "1 or fewer of 3"
+  },
+  "wrong_method": "A load of the other method on a fire fixture is tallied and is neither a hit nor a false fire.",
+  "false_fire": {
+    "applies_to": "silence fixtures",
+    "definition": "Any load of either method, or any open of either method SKILL.md.",
+    "max": 0,
+    "scope": "all silence attempts in every arm"
+  },
+  "exclusion_rule": {
+    "replace": "A gate-excluded attempt is replaced once per cell (replacements: 1) and never counted as an outcome.",
+    "stage_stops_when": "More than a quarter of a stage attempts are excluded. The harness is then fixed first."
+  },
+  "stop_rule": {
+    "scope": "Applied to the counted baseline attempts, positives and negatives reported separately with denominators.",
+    "all_fire_hit_and_no_false_fire": "Stop. Record the learning. No Systematic change and no held-out set is read.",
+    "all_fire_hit_and_a_control_fired": "Stop. Record the learning, with the control fire as a finding for metacogs. No Systematic change.",
+    "a_fire_fixture_missed": "Its point is eligible for wiring, unless a neighbour control fired at baseline. A fired neighbour control means that point is not wired and is recorded as a finding for metacogs. The other missed points continue.",
+    "neighbour_controls": "ce:plan points: tune-plan-scoping. ce:review point: tune-review-dedup, tune-review-validator and tune-review-verdict. A fire in any of a point neighbour controls blocks the point.",
+    "treatment_text": "A treatment text may be revised once, on tuning fixtures only, then freezes before the single held-out read.",
+    "heldout": "Twins exist only for points with a recorded miss, are hashed before the treatment run, and are read once. Any skill-text edit after a held-out read voids the read."
+  },
+  "spend": {
+    "campaign": "systematic-reflection",
+    "cap_usd": 10,
+    "attempt_estimate_usd": 0.1,
+    "note": "One ledger across every stage. The harness stops before an attempt whose estimate would pass the cap, so the cap is an estimate-based stop, not a hard guarantee."
+  },
+  "model_visible_text_notes": [
+    "Each seeded skill text is the output the pinned plugin returns for that skill, rendered from the pinned tree. The base directory it reports is a neutral path under /workspace, not a real machine path.",
+    "The sampled file list at the end of a skill text follows the order the filesystem lists the directory. For ce-review, whose directory holds more than ten files, which ten appear can differ from a host install.",
+    "The shipped ce-plan text holds two example paths that the fixture scan refuses as home paths. The example keeps its shape with the name in angle brackets. The count per fixture is recorded as home_path_rewrites. Every arm gets the same rewrite.",
+    "Reviewer and validator returns, and the screen, prepare, merge and finalize outputs in the review fixtures, come from running the pinned validator on the authored returns. One disposition reason in tune-review-verdict was reworded from \"passed synthesis\" to \"passed the merge phase\" so no fixture carries a method name."
+  ],
+  "limits": "OpenCode only, one model, 3 attempts per cell, synthetic seeds, a trimmed stack without slim, magic-context and aft, ce:plan interactive and ce:review autofix modes only. Counts and denominators are reported. No rates or intervals are claimed."
+}
