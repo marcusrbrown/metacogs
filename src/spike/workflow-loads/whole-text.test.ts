@@ -9,23 +9,13 @@ import { afterEach, describe, expect, test } from 'bun:test'
 
 import { RENDER_LIMITS, SCRUB_PLACEHOLDER } from './mask'
 import { inputHoldsSecret, SCRUB_LIMITS, SCRUB_LIMIT_RULE, scrubFindings } from './scrub'
-import { assertWithheld, cleanup, viewOf } from './view-support'
+import { assertWithheld, cleanup, randomText, viewOf } from './view-support'
 
 afterEach(() => {
   for (const fn of cleanup.splice(0).reverse()) fn()
 })
 
-const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-/** Characters from a fixed seed: no run repeats, so a 16-character run names its place in the secret. */
-function random(length: number, seed: number): string {
-  let state = seed
-  let out = ''
-  for (let i = 0; i < length; i++) {
-    state = (state * 1_103_515_245 + 12_345) & 0x7f_ff_ff_ff
-    out += ALPHABET[state % ALPHABET.length]
-  }
-  return out
-}
+const random = randomText
 
 /** The old scan boundary: a secret that starts before it and ends after it was cut by a window there. */
 const OLD_BOUNDARY = 8192

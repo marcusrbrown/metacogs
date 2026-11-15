@@ -7,20 +7,18 @@ import { afterEach, describe, expect, test } from 'bun:test'
 
 import { chunkScope, RENDER_LIMITS, SCRUB_PLACEHOLDER } from './mask'
 import { holdsSecret, scrubFindings, SCRUB_LIMIT_RULE } from './scrub'
-import { CREDENTIAL_TEXT_CASES, EMAIL_TEXT_CASES } from './scrub-cases'
-import { assertNoFragments, assertViewAccepted, assertWithheld, cleanup, sendChunk, viewOf } from './view-support'
+import { CREDENTIAL_TEXT_CASES, EMAIL_ADDRESS_FORMS, EMAIL_PARTS, EMAIL_TEXT_CASES } from './scrub-cases'
+import { assertNoFragments, assertViewAccepted, assertWithheld, cleanup, findFragment, renderedStrings, requestStrings, sendChunk, viewOf } from './view-support'
 
 afterEach(() => {
   for (const fn of cleanup.splice(0).reverse()) fn()
 })
 
 // Assembled at runtime so this file holds no credential-shaped literal.
-const USER = ['zq8', 'user'].join('')
-const DOMAIN = ['corp', 'mail.com'].join('-')
-const LITERAL = `${USER}@${DOMAIN}`
-const ENCODED = `${USER}\\u0040${DOMAIN}`
+// The address is the one the shared email cases hold, so what is checked for is what the cases contain. Its forms are 21, 26 and 24
+// characters, each with distinguishing runs of 16; the local part (7) and the domain (13) are shorter than a run and are checked whole.
+const [LITERAL = '', ENCODED = ''] = EMAIL_ADDRESS_FORMS
 const KEY = ['sk', 'ant', 'abcdefghijklmnopqrstuvwx'].join('-')
-const FRAGMENTS = [USER, 'corp-mail', 'u0040']
 
 const MARKER_LENGTH = '[… truncated]'.length
 
@@ -62,15 +60,14 @@ describe('no fragment of an address survives the cut', () => {
         const length = (kind === 'input' ? JSON.stringify(piece).length - 2 : piece.length) + 1
         for (const start of [cut - length - 2, cut - length, cut - length + 1, cut - Math.floor(length / 2), cut - 3, cut - 1, cut, cut + 1, cut + 40]) {
           const { f, rendered } = viewOfKind(kind, placed(kind, piece, start))
-          const shown = allText(rendered)
-          for (const fragment of FRAGMENTS) expect([kind, name, start, fragment, shown.includes(fragment)]).toEqual([kind, name, start, fragment, false])
+          // every rendered string, read directly, in the forms a fragment can take there
+          expect([kind, name, start, findFragment(renderedStrings(rendered), EMAIL_ADDRESS_FORMS, EMAIL_PARTS)]).toEqual([kind, name, start, undefined])
           for (const scope of rendered.scopes) for (const stimulus of scope.stimuli) for (const text of [stimulus.text, ...stimulus.traffic]) expect([start, holdsSecret(text)]).toEqual([start, false])
           const scope = rendered.scopes[0]
           if (!scope) throw new Error('no scope')
           const { transport, run } = await sendChunk(f, chunkScope(scope, { budget: 100_000 }))
           expect([kind, name, start, run.coverageComplete]).toEqual([kind, name, start, true])
-          const sent = transport.requests.map((r) => `${r.system}\n${r.user}`).join('\n')
-          for (const fragment of FRAGMENTS) expect([kind, name, start, fragment, sent.includes(fragment)]).toEqual([kind, name, start, fragment, false])
+          expect([kind, name, start, findFragment(requestStrings(transport), EMAIL_ADDRESS_FORMS, EMAIL_PARTS)]).toEqual([kind, name, start, undefined])
         }
       }, 120_000)
     }
@@ -217,6 +214,23 @@ describe('a very long line is withheld without being scanned', () => {
   }, 30_000)
 })
 
+describe('the address the checks look for is the one the cases hold', () => {
+  const ADDRESS_IN_TEXT = /[A-Za-z0-9]+(?:@|\\u0040|\\x40)[A-Za-z0-9.-]+\.com/g
+
+  test('every address written in an email case is one of the forms, and every form is written in some case', () => {
+    const found = EMAIL_TEXT_CASES.flatMap((text) => text.match(ADDRESS_IN_TEXT) ?? [])
+    expect(found.length).toBeGreaterThan(EMAIL_TEXT_CASES.length)
+    for (const address of found) expect([address, EMAIL_ADDRESS_FORMS.includes(address)]).toEqual([address, true])
+    for (const form of EMAIL_ADDRESS_FORMS) expect([form, found.includes(form)]).toEqual([form, true])
+  })
+
+  test('each form has a distinguishing run of 16, and the parts are shorter than one and are checked whole', () => {
+    for (const form of EMAIL_ADDRESS_FORMS) expect(form.length).toBeGreaterThanOrEqual(16)
+    for (const part of EMAIL_PARTS) expect(part.length).toBeLessThan(16)
+    for (const part of EMAIL_PARTS) expect(EMAIL_TEXT_CASES.some((text) => text.includes(part))).toBe(true)
+  })
+})
+
 describe('whatever crosses the cut, the view withholds it or holds none of it, and no request does', () => {
   const cut = LIMIT.output - MARKER_LENGTH
   const placedAtCut = (text: string): string => `${filler(cut - Math.min(text.length - 1, 12))}${text} ${filler(3000)}`
@@ -225,18 +239,21 @@ describe('whatever crosses the cut, the view withholds it or holds none of it, a
     for (const text of CREDENTIAL_TEXT_CASES) await assertWithheld({ output: placedAtCut(text) }, [text], text.slice(0, 40))
   }, 300_000)
 
-  test('every address text of the shared table, placed so the cut falls inside it, leaves no fragment of the address in the view or a request', async () => {
-    const forms = [LITERAL, ENCODED]
+  test('every address text of the shared table, placed so the cut falls inside it, leaves no fragment of the address, in any form, in the view or a request', async () => {
     for (const text of EMAIL_TEXT_CASES) {
-      await assertNoFragments({ output: placedAtCut(text) }, forms, text.slice(0, 40))
+      await assertNoFragments({ output: placedAtCut(text) }, EMAIL_ADDRESS_FORMS, text.slice(0, 40), { parts: EMAIL_PARTS })
       await assertViewAccepted({ output: placedAtCut(text) }, text.slice(0, 40))
     }
   }, 300_000)
 
   test('the same, as a stimulus and as a tool input', async () => {
-    for (const text of [...CREDENTIAL_TEXT_CASES.slice(0, 12), ...EMAIL_TEXT_CASES.slice(2, 5)]) {
-      await assertNoFragments({ user: placedAtCut(text) }, [text, LITERAL, ENCODED], text.slice(0, 40))
-      await assertNoFragments({ input: { content: placedAtCut(text) } }, [text, LITERAL, ENCODED], text.slice(0, 40))
+    for (const text of CREDENTIAL_TEXT_CASES.slice(0, 12)) {
+      await assertNoFragments({ user: placedAtCut(text) }, [text], text.slice(0, 40))
+      await assertNoFragments({ input: { content: placedAtCut(text) } }, [text], text.slice(0, 40))
+    }
+    for (const text of EMAIL_TEXT_CASES) {
+      await assertNoFragments({ user: placedAtCut(text) }, EMAIL_ADDRESS_FORMS, text.slice(0, 40), { parts: EMAIL_PARTS })
+      await assertNoFragments({ input: { content: placedAtCut(text) } }, EMAIL_ADDRESS_FORMS, text.slice(0, 40), { parts: EMAIL_PARTS })
     }
   }, 300_000)
 })
