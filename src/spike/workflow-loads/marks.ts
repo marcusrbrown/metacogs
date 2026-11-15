@@ -6,8 +6,9 @@
  *   proposed both labels for it, the item takes a pick between them or a reject.
  * - The omission sample is the declared number of stimuli with no proposal for either method, ranked by a salted hash with its own
  *   prefix. Each answer per method other than `neither` adds a mark and counts as one omission.
- * - Every stored judgment, answer and lock is bound to the declaration hash and the manifest hash of its slot. After a slot's lock
- *   exists nothing more is accepted for that slot. The other slot's lock is never touched.
+ * - Every stored judgment, answer and lock is bound to the declaration hash and the manifest hash of its slot, and to the digest of
+ *   the hidden view it was made on: a view that differs from that one is refused, so a judgment never rests on text the maintainer
+ *   did not see. After a slot's lock exists nothing more is accepted for that slot. The other slot's lock is never touched.
  * - Nothing here prints; a refusal names a reason and carries no session text.
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
@@ -18,7 +19,7 @@ import { canonicalize } from '../../record/canonical'
 import { saltedHash } from '../../runner/prereg'
 import { sha256 } from '../../runner/workspace'
 import { assertOutsideRepo, privateDir, writePrivate } from '../feel-drugs/replay/store'
-import { assertGate, type Declaration, type GateInput, LABELS, type Label, METHODS, type Method } from './declaration'
+import { assertGate, type Declaration, type GateInput, type GatePass, LABELS, type Label, METHODS, type Method } from './declaration'
 import type { Proposal } from './labeler'
 import type { HiddenView } from './mask'
 import { MANIFEST_SLOTS, ManifestError, type ManifestSlot, type PrivateRoot, readManifest } from './store'
@@ -43,6 +44,7 @@ export type MarksReason =
   | 'no_lock'
   | 'slot_not_locked'
   | 'judging_started'
+  | 'view_changed'
 
 const REFUSAL_MESSAGE: Record<MarksReason, string> = {
   view_declaration_mismatch: 'the hidden view was built under a different declaration',
@@ -62,6 +64,7 @@ const REFUSAL_MESSAGE: Record<MarksReason, string> = {
   no_lock: 'no lock exists, so there are no locked marks to count',
   slot_not_locked: 'a frozen slot has no lock yet',
   judging_started: 'a judgment or an omission answer is stored for this slot, so the proposals can no longer change',
+  view_changed: 'the hidden view differs from the one the stored judgments or the lock were made on',
 }
 
 /** The marks step cannot proceed. The message is fixed per reason (plus counts, where given): it never carries session text. */
@@ -153,7 +156,7 @@ export type OmissionAnswers = Record<Method, OmissionAnswer>
 const hex64 = z.string().regex(/^[0-9a-f]{64}$/)
 const slotSchema = z.enum(MANIFEST_SLOTS)
 const labelSchema = z.enum(LABELS)
-const eventBase = { schemaVersion: z.literal(1), slot: slotSchema, declarationHash: hex64, manifestHash: hex64, at: z.string().min(1), sessionId: z.string().min(1), scopeIndex: z.number().int().nonnegative(), stimulusId: z.string().min(1) }
+const eventBase = { schemaVersion: z.literal(1), slot: slotSchema, declarationHash: hex64, manifestHash: hex64, viewDigest: hex64, at: z.string().min(1), sessionId: z.string().min(1), scopeIndex: z.number().int().nonnegative(), stimulusId: z.string().min(1) }
 
 const eventSchema = z.discriminatedUnion('kind', [
   z.strictObject({
@@ -185,6 +188,8 @@ const lockSchema = z.strictObject({
   slot: slotSchema,
   declarationHash: hex64,
   manifestHash: hex64,
+  /** The digest of the hidden view the marks were judged on. */
+  viewDigest: hex64,
   lockedAt: z.string().min(1),
   marks: z.array(markSchema),
   /** The stimuli actually sampled: the declared size, or all of them when fewer were unproposed. */
@@ -197,6 +202,21 @@ const lockSchema = z.strictObject({
 
 /** What the counting step reads: the accepted marks of one slot, the hashes they are bound to, and the omission counts. */
 export type Lock = z.infer<typeof lockSchema>
+
+/** JSON with the keys of every object sorted, so a view read back from its file digests as the view that was written. */
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.entries(value)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
+/** What a judgment or a lock is bound to: the sha256 of the view's content, however the file spells it. */
+export const viewDigest = (view: HiddenView): string => sha256(stableJson(view))
 
 // ── the private files ──────────────────────────────────────────────────────
 
@@ -278,10 +298,16 @@ export function readLocks(privateRoot: PrivateRoot, declarationHash: string): Lo
 /**
  * The locks counting needs. Throws `no_lock` when none exists, and `slot_not_locked` when a slot has a frozen manifest but no
  * lock (a raised session cap, with its added sessions not yet judged), so marks are never counted over a partly judged sample.
+ * Given a slot's current view, throws `view_changed` when it differs from the view that slot was locked on.
  */
-export function requireLocks(privateRoot: PrivateRoot, declarationHash: string): Lock[] {
+export function requireLocks(privateRoot: PrivateRoot, declarationHash: string, views: Partial<Record<ManifestSlot, HiddenView>> = {}): Lock[] {
   const locks = readLocks(privateRoot, declarationHash)
   if (locks.length === 0) throw new MarksRefusal('no_lock')
+  // a slot whose view is not given is not checked here: the caller names the missing view
+  for (const lock of locks) {
+    const view = views[lock.slot]
+    if (view && viewDigest(view) !== lock.viewDigest) throw new MarksRefusal('view_changed', lock.slot)
+  }
   for (const slot of MANIFEST_SLOTS) {
     if (!locks.some((lock) => lock.slot === slot) && readManifest(privateRoot, slot, declarationHash) !== undefined) throw new MarksRefusal('slot_not_locked', slot)
   }
@@ -300,6 +326,8 @@ export interface MarkingInput extends GateInput {
   view: HiddenView
   /** The repository the private root must lie outside of. Default: the repository the gate reads, `git.repo`. */
   repoRoot?: string
+  /** A gate pass the caller just obtained, so the gate is not run again. Default: the gate is checked. */
+  pass?: GatePass
 }
 
 export interface Marking {
@@ -307,6 +335,8 @@ export interface Marking {
   declaration: Declaration
   declarationHash: string
   manifestHash: string
+  /** The digest of the view this state was read against. */
+  viewDigest: string
   items: ProposalItem[]
   /** Valid judgments by item. */
   judgments: ReadonlyMap<string, Judgment>
@@ -323,11 +353,12 @@ const judgmentOf = (event: Extract<StoredEvent, { kind: 'proposal' }>): Judgment
  * repository; the slot's manifest exists; the view was built under this declaration and holds only this slot's sessions; every
  * proposal names a stimulus in the view; every stored judgment is bound to this declaration and manifest. A judgment or answer for
  * an item that is no longer one (its proposed labels changed, or it left the omission sample) does not count and is not an error.
+ * Every stored judgment and the lock were made on one view: a view with another digest is refused (`view_changed`).
  */
 export function openMarking(input: MarkingInput): Marking {
   const slot = input.slot ?? 'initial'
   assertOutsideRepo(input.privateRoot.root, input.repoRoot ?? input.git.repo)
-  const pass = assertGate(input)
+  const pass = input.pass ?? assertGate(input)
   const manifest = readManifest(input.privateRoot, slot, pass.declarationHash)
   if (!manifest) throw new ManifestError('manifest_missing', `the ${slot} manifest has not been written`)
   if (input.view.declarationHash !== pass.declarationHash) throw new MarksRefusal('view_declaration_mismatch')
@@ -343,7 +374,9 @@ export function openMarking(input: MarkingInput): Marking {
 
   const judgments = new Map<string, Judgment>()
   const answers = new Map<string, OmissionAnswers>()
+  const digest = viewDigest(input.view)
   for (const event of readEvents(input.privateRoot, slot, pass.declarationHash, manifest.manifest_hash)) {
+    if (event.viewDigest !== digest) throw new MarksRefusal('view_changed')
     if (event.kind === 'proposal') {
       const key = itemKey(event)
       const item = itemsByKey.get(key)
@@ -354,7 +387,9 @@ export function openMarking(input: MarkingInput): Marking {
       if (sampled.has(key) && !answers.has(key)) answers.set(key, event.answers)
     }
   }
-  return { slot, declaration: pass.declaration, declarationHash: pass.declarationHash, manifestHash: manifest.manifest_hash, items, judgments, sample, answers, lock: readLock(input.privateRoot, slot, pass.declarationHash) }
+  const lock = readLock(input.privateRoot, slot, pass.declarationHash)
+  if (lock && lock.viewDigest !== digest) throw new MarksRefusal('view_changed')
+  return { slot, declaration: pass.declaration, declarationHash: pass.declarationHash, manifestHash: manifest.manifest_hash, viewDigest: digest, items, judgments, sample, answers, lock }
 }
 
 /** The items not yet judged, in order: a resumed session starts at the first. */
@@ -381,57 +416,70 @@ function decide(item: ProposalItem, choice: ProposalChoice): Judgment {
 }
 
 /**
- * Stores the judgment of one proposal item and returns it. Refused when the gate fails, the slot is locked (`slot_locked`), the item
- * is not one (`unknown_item`), it is already judged (`already_judged`) or the choice does not fit its labels (`choice_invalid`).
+ * One run of judging: the state is read once, after one gate check, and each stored judgment or answer is added to it in memory, so
+ * a long session does not run the gate or read the whole log again for every item. The lock is still looked for at every write.
+ * `marking` is that live state: its maps follow each write.
  */
-export function judgeProposal(input: MarkingInput, target: ProposalTarget, choice: ProposalChoice): Judgment {
-  const marking = openMarking(input)
-  if (marking.lock) throw new MarksRefusal('slot_locked')
-  const item = marking.items.find((candidate) => itemKey(candidate) === itemKey(target))
-  if (!item) throw new MarksRefusal('unknown_item')
-  if (marking.judgments.has(itemKey(item))) throw new MarksRefusal('already_judged')
-  const decision = decide(item, choice)
-  appendEvent(input.privateRoot, marking.slot, {
+export interface JudgingSession {
+  readonly marking: Marking
+  /** Stores the judgment of one proposal item and returns it. Refused with `slot_locked`, `unknown_item`, `already_judged` or `choice_invalid`. */
+  judge: (target: ProposalTarget, choice: ProposalChoice) => Judgment
+  /** Stores the answers for one sampled stimulus and returns them. Refused as `judge` is, with `already_answered` for a second answer. */
+  answer: (target: StimulusRef, answers: OmissionAnswers) => OmissionAnswers
+}
+
+export function openJudging(input: MarkingInput): JudgingSession {
+  const opened = openMarking(input)
+  const judgments = new Map(opened.judgments)
+  const answers = new Map(opened.answers)
+  const marking: Marking = { ...opened, judgments, answers }
+  const base = (): Omit<StoredEvent & { kind: 'omission' }, 'kind' | 'sessionId' | 'scopeIndex' | 'stimulusId' | 'answers'> => ({
     schemaVersion: 1,
     slot: marking.slot,
     declarationHash: marking.declarationHash,
     manifestHash: marking.manifestHash,
+    viewDigest: marking.viewDigest,
     at: input.privateRoot.now().toISOString(),
-    kind: 'proposal',
-    sessionId: item.sessionId,
-    scopeIndex: item.scopeIndex,
-    stimulusId: item.stimulusId,
-    method: item.method,
-    proposed: item.proposed.map((entry) => entry.label),
-    decision,
   })
-  return decision
+  // a lock written since the state was read stops the session at its next write
+  const assertOpen = (): void => {
+    if (marking.lock || existsSync(lockPath(input.privateRoot, marking.slot))) throw new MarksRefusal('slot_locked')
+  }
+  return {
+    marking,
+    judge(target, choice) {
+      assertOpen()
+      const item = marking.items.find((candidate) => itemKey(candidate) === itemKey(target))
+      if (!item) throw new MarksRefusal('unknown_item')
+      if (judgments.has(itemKey(item))) throw new MarksRefusal('already_judged')
+      const decision = decide(item, choice)
+      appendEvent(input.privateRoot, marking.slot, { ...base(), kind: 'proposal', sessionId: item.sessionId, scopeIndex: item.scopeIndex, stimulusId: item.stimulusId, method: item.method, proposed: item.proposed.map((entry) => entry.label), decision })
+      judgments.set(itemKey(item), decision)
+      return decision
+    },
+    answer(target, given) {
+      assertOpen()
+      const ref = marking.sample.find((candidate) => stimulusKey(candidate) === stimulusKey(target))
+      if (!ref) throw new MarksRefusal('unknown_item')
+      if (answers.has(stimulusKey(ref))) throw new MarksRefusal('already_answered')
+      appendEvent(input.privateRoot, marking.slot, { ...base(), kind: 'omission', sessionId: ref.sessionId, scopeIndex: ref.scopeIndex, stimulusId: ref.stimulusId, answers: given })
+      answers.set(stimulusKey(ref), given)
+      return given
+    },
+  }
 }
+
+/**
+ * Stores the judgment of one proposal item and returns it. Refused when the gate fails, the slot is locked (`slot_locked`), the item
+ * is not one (`unknown_item`), it is already judged (`already_judged`) or the choice does not fit its labels (`choice_invalid`).
+ */
+export const judgeProposal = (input: MarkingInput, target: ProposalTarget, choice: ProposalChoice): Judgment => openJudging(input).judge(target, choice)
 
 /**
  * Stores the answers for one sampled stimulus, one per method, and returns them. Refused as `judgeProposal` is, with
  * `unknown_item` for a stimulus outside the sample and `already_answered` for a second answer.
  */
-export function answerOmission(input: MarkingInput, target: StimulusRef, answers: OmissionAnswers): OmissionAnswers {
-  const marking = openMarking(input)
-  if (marking.lock) throw new MarksRefusal('slot_locked')
-  const ref = marking.sample.find((candidate) => stimulusKey(candidate) === stimulusKey(target))
-  if (!ref) throw new MarksRefusal('unknown_item')
-  if (marking.answers.has(stimulusKey(ref))) throw new MarksRefusal('already_answered')
-  appendEvent(input.privateRoot, marking.slot, {
-    schemaVersion: 1,
-    slot: marking.slot,
-    declarationHash: marking.declarationHash,
-    manifestHash: marking.manifestHash,
-    at: input.privateRoot.now().toISOString(),
-    kind: 'omission',
-    sessionId: ref.sessionId,
-    scopeIndex: ref.scopeIndex,
-    stimulusId: ref.stimulusId,
-    answers,
-  })
-  return answers
-}
+export const answerOmission = (input: MarkingInput, target: StimulusRef, answers: OmissionAnswers): OmissionAnswers => openJudging(input).answer(target, answers)
 
 /**
  * Locks the slot: writes the accepted marks (accepted, relabeled and picked proposals, then the omission answers other than
@@ -466,6 +514,7 @@ export function lockMarks(input: MarkingInput): Lock {
     slot: marking.slot,
     declarationHash: marking.declarationHash,
     manifestHash: marking.manifestHash,
+    viewDigest: marking.viewDigest,
     lockedAt: input.privateRoot.now().toISOString(),
     marks,
     omissionSampleSize: marking.sample.length,

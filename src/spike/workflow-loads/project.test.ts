@@ -488,7 +488,7 @@ describe('end to end: freeze, view, label, judge, lock, count, project, purge', 
     const run = async (argv: string[], options: { input?: string; transport?: LabelerTransport } = {}): Promise<number> => {
       const input = new PassThrough()
       input.end(options.input ?? '')
-      return main([...argv, ...flags], { out: (l) => out.push(l), err: (l) => err.push(l), input, terminal: { write: () => undefined }, git: repo.git, env: {}, ...(options.transport ? { label: { transport: options.transport } } : {}) })
+      return main([...argv, ...flags], { out: (l) => out.push(l), err: (l) => err.push(l), input, terminal: { write: () => undefined }, allowNonTerminal: true, git: repo.git, env: {}, ...(options.transport ? { label: { transport: options.transport } } : {}) })
     }
 
     expect(await run(['freeze'])).toBe(0)

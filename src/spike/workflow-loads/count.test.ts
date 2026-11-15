@@ -76,7 +76,7 @@ function walked(sessionId: string, stimuli: WalkedStimulus[], firstAssistant: Ra
 const mark = (sessionId: string, stimulusId: string, method: Method, label: Label, source: 'proposal' | 'omission' = 'proposal') => ({ sessionId, scopeIndex: 0, stimulusId, method, label, source })
 
 function lockOf(slot: 'initial' | 'added', marks: ReturnType<typeof mark>[], extra: Partial<Pick<Lock, 'omissionSampleSize' | 'omissionsFound'>> = {}): Lock {
-  return { schemaVersion: 1, slot, declarationHash: HASH, manifestHash: HASH, lockedAt: '2026-01-01T00:00:00.000Z', marks, omissionSampleSize: 0, omissionsFound: 0, lockHash: HASH, ...extra }
+  return { schemaVersion: 1, slot, declarationHash: HASH, manifestHash: HASH, viewDigest: HASH, lockedAt: '2026-01-01T00:00:00.000Z', marks, omissionSampleSize: 0, omissionsFound: 0, lockHash: HASH, ...extra }
 }
 
 const reasonOf = (fn: () => unknown): string => {

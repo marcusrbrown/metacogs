@@ -291,6 +291,23 @@ export function renderWithContext(stimuli: readonly RenderedStimulus[], index: n
   return joinBlocks([...context.map((s) => renderStimulusBlock(s, 'context')), renderStimulusBlock(target, 'stimulus')])
 }
 
+/**
+ * One stimulus with the context the labeler had for it: the chunk's own context stimuli, then the chunk's covered stimuli before it,
+ * each as its own block, oldest first. A chunk whose budget trimmed earlier context therefore shows less than `renderWithContext`
+ * would, which is what the labeler saw. Throws `RangeError` when the chunk does not cover `stimulusId` or a block is not in `stimuli`.
+ */
+export function renderForChunk(stimuli: readonly RenderedStimulus[], chunk: Pick<Chunk, 'ids' | 'contextIds'>, stimulusId: string): string {
+  const at = chunk.ids.indexOf(stimulusId)
+  if (at < 0) throw new RangeError(`the chunk does not cover stimulus ${stimulusId}`)
+  const byId = new Map(stimuli.map((s) => [s.id, s]))
+  const block = (id: string, role: 'stimulus' | 'context'): string => {
+    const found = byId.get(id)
+    if (!found) throw new RangeError(`no stimulus ${id} in the scope`)
+    return renderStimulusBlock(found, role)
+  }
+  return joinBlocks([...[...chunk.contextIds, ...chunk.ids.slice(0, at)].map((id) => block(id, 'context')), block(stimulusId, 'stimulus')])
+}
+
 // ── chunks ─────────────────────────────────────────────────────────────────
 
 export interface Chunk {

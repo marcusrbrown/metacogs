@@ -2,6 +2,8 @@
  * `bun run workflow-loads`: the history count's steps, from freezing the sample to purging the private views. Every step goes
  * through the declaration gate. Status lines hold counts and fixed words, never session text; `judge` is the one place
  * session-derived text is shown, and it goes only to the terminal stream, where the maintainer reads it.
+ *
+ * The usage text (`--help`) is the reference for every command, option, default and exit code, and ends with the known limits.
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -14,11 +16,11 @@ import { Git } from '../../runner/git'
 import { defaultDb } from '../feel-drugs/replay/world-cli'
 import { assertOutsideRepo, privateDir, writePrivate } from '../feel-drugs/replay/store'
 import { type CountReport, runCount, type SlotLabeling } from './count'
-import { assertGate, type GateInput, MARKING_RULE_PATH, METHODS, type Method } from './declaration'
+import { assertGate, type GateInput, type GatePass, MARKING_RULE_PATH, METHODS, type Method } from './declaration'
 import { createLabelerTransport, deleteLabelerReplies, labelChunks, labelingCoverage, type LabelerTransport, loadLabelerProposals, type Proposal, type ResolveKeyOptions, resolveLabelerKey } from './labeler'
 import { collectSkillBodies } from './loads'
-import { answerOmission, assertJudgingNotStarted, judgeProposal, lockMarks, MarksRefusal, openMarking, type OmissionAnswer, pendingOmissions, pendingProposals, type ProposalChoice, readLocks, requireLocks, type StimulusRef } from './marks'
-import { auditRendered, buildHiddenView, type Chunk, chunkScope, DEFAULT_CONTEXT, deleteHiddenViews, type HiddenView, type LeakKind, renderWithContext, viewPath, writeHiddenView } from './mask'
+import { assertJudgingNotStarted, lockMarks, MarksRefusal, openJudging, openMarking, type OmissionAnswer, pendingOmissions, pendingProposals, type ProposalChoice, readLocks, requireLocks, type StimulusRef } from './marks'
+import { auditRendered, buildHiddenView, type Chunk, chunkScope, DEFAULT_CONTEXT, deleteHiddenViews, type HiddenView, type LeakKind, renderForChunk, renderWithContext, viewPath, writeHiddenView } from './mask'
 import { COUNTS_PATH, projectCounts, renderProjection, writeProjection } from './project'
 import { EXCLUSION_REASONS, freezeManifest, MANIFEST_SLOTS, type ManifestSlot, openPrivateRoot, type PrivateRoot, readManifest, type WalkedSession, walkManifestEach } from './store'
 
@@ -35,7 +37,12 @@ export interface CliIo {
   /** Where `judge` reads the maintainer's answers, one line each. Default: standard input. A closed input counts as `quit`. */
   input?: NodeJS.ReadableStream
   /** Where `judge` shows session text and its prompts. Default: standard output. Nothing else is ever written here. */
-  terminal?: { write: (text: string) => unknown }
+  terminal?: { write: (text: string) => unknown; isTTY?: boolean }
+  /**
+   * Test seam: lets `judge` run on streams that are not terminals. Without it `judge` refuses unless both its input and its output
+   * stream are terminals, injected streams included, so session text is never piped anywhere by accident.
+   */
+  allowNonTerminal?: boolean
   /** The repository holding the committed files, when the test supplies a hermetic one. Default: a `Git` over `--repo-root`. */
   git?: Git
   env?: Record<string, string | undefined>
@@ -45,19 +52,49 @@ export interface CliIo {
 }
 
 const USAGE = [
-  'usage: bun run workflow-loads freeze | view | label | judge | lock | status | count | project | purge',
-  '                              [--slot initial|added] [--db <path>] [--private-root <dir>] [--repo-root <dir>]',
-  '       bun run workflow-loads label [--budget <chars>] [--context <n>] [--auth-cliproxy <keyname>]',
+  'usage: bun run workflow-loads <command> [options]',
+  '       bun run workflow-loads --help          (or: <command> --help) print this text and exit 0',
   '',
-  '  freeze   freeze the manifest of the sample (the added slot needs a recorded session-cap raise)',
-  '  view     build the hidden view, audit it for leaks, write it (a failed audit writes nothing and exits 1)',
-  '  label    send the view to the labeler in chunks and store its proposals',
-  '  judge    judge each proposal, then the omission sample, at the prompt (a quit saves; a rerun resumes)',
+  'commands:',
+  '  freeze   freeze the manifest of the sample: the sessions that hold a workflow load, each with a content hash of the rows the later',
+  '           steps read; a session whose last message was still unfinished is left out (the added slot needs a recorded session-cap raise)',
+  '  view     build the hidden view, audit it for leaks, write it (a failed audit writes nothing and exits 1; refused once a judgment, an',
+  '           omission answer or a lock is stored for the slot)',
+  '  label    send the view to the labeler in chunks and store its proposals (stops at the spend cap or after repeated proxy failures and',
+  '           exits 3; refused once judging has started)',
+  '  judge    judge each proposal, then the omission sample, at the prompt (a quit saves; a rerun resumes); needs a terminal on both',
+  '           standard input and standard output',
   '  lock     lock the slot once every item is judged and answered',
   '  status   counts only',
-  '  count    count loads against the locked marks of every slot and print the outcome (needs every frozen slot locked)',
-  '  project  write evals/spikes/workflow-loads/counts.json and print the counts table (counts only; needs the views)',
+  '  count    count loads against the locked marks of every slot and print the outcome (needs every frozen slot locked and its stored view',
+  '           unchanged since it was judged)',
+  '  project  write evals/spikes/workflow-loads/counts.json and print the counts table (counts only; needs the views, as count does)',
   '  purge    delete the hidden views and the raw labeler replies; manifests, outcomes, judgments and locks stay',
+  '',
+  'options (every command accepts all of them; a command that has no use for one ignores it):',
+  '  --slot initial|added     the slot to work on (default: initial); count, project and purge cover every slot whatever this says',
+  '  --db <path>              the OpenCode session store to read (default: ~/.local/share/opencode/opencode.db, the real store)',
+  '  --private-root <dir>     where the manifests, views, labeler records, judgments and locks are kept (default:',
+  '                           $XDG_STATE_HOME/metacogs/workflow-loads, or ~/.local/state/metacogs/workflow-loads); refused inside the repository',
+  '  --repo-root <dir>        the repository holding the committed declaration, marking rule and deviations (default: this repository)',
+  `  --budget <chars>         label: characters per labeler chunk (default: ${DEFAULT_BUDGET})`,
+  `  --context <n>            label: stimuli of context before a chunk's first stimulus (default: ${DEFAULT_CONTEXT})`,
+  '  --auth-cliproxy <name>   label: the CLIProxy key name (default: the METACOGS_AUTH_CLIPROXY environment variable)',
+  '  --help, -h               print this text and exit 0, before anything is opened',
+  '',
+  'exit codes:',
+  '  0  done (judge: every item for the slot is answered; label: every chunk labeled; --help)',
+  '  1  refused or failed (a failed gate, a step that needs an earlier one, a changed view, a failed leak audit)',
+  '  2  usage error',
+  '  3  label finished with chunks unlabeled (a failed chunk, the spend cap or a proxy outage)',
+  '  4  judge stopped with items remaining to judge or answer',
+  '',
+  'Known limits:',
+  '  - manifest and lock hashes are not anchored outside the private store, so a deliberate edit that recomputes them passes',
+  '  - two commands run at the same time on one private root can overwrite each other\'s record',
+  '  - a symlinked labeler subdirectory is not checked',
+  '  - options are accepted by subcommands that ignore them',
+  '  - a bare command reads the real session store by default (see --db)',
 ].join('\n')
 
 class UsageError extends Error {}
@@ -65,7 +102,7 @@ class UsageError extends Error {}
 /** A step that needs an earlier one. The message is fixed text. */
 class StepRefusal extends Error {
   constructor(
-    readonly reason: 'view_missing' | 'labeling_not_run',
+    readonly reason: 'view_missing' | 'labeling_not_run' | 'judge_needs_terminal',
     message: string,
   ) {
     super(`${reason}: ${message}`)
@@ -88,6 +125,7 @@ function parse(argv: readonly string[]) {
       budget: { type: 'string' },
       context: { type: 'string' },
       'auth-cliproxy': { type: 'string' },
+      help: { type: 'boolean', short: 'h' },
     },
   })
 }
@@ -109,7 +147,7 @@ interface Ctx {
   values: ReturnType<typeof parse>['values']
 }
 
-/** Exit 0 done, 1 refused or failed (a failed audit included), 2 usage, 3 `label` left chunks unlabeled. */
+/** Exit 0 done, 1 refused or failed (a failed audit included), 2 usage, 3 `label` left chunks unlabeled, 4 `judge` stopped with items left. */
 export async function main(argv: readonly string[], io: Partial<CliIo> = {}): Promise<number> {
   const out = io.out ?? ((line: string) => console.log(line))
   const err = io.err ?? ((line: string) => console.error(line))
@@ -119,6 +157,11 @@ export async function main(argv: readonly string[], io: Partial<CliIo> = {}): Pr
       parsed = parse(argv)
     } catch (e) {
       throw new UsageError(e instanceof Error ? e.message : 'bad arguments')
+    }
+    // help comes first: nothing is opened, read or checked for it
+    if (parsed.values.help) {
+      out(USAGE)
+      return 0
     }
     const [command, ...extra] = parsed.positionals
     if (command === undefined) throw new UsageError('no command given')
@@ -243,14 +286,15 @@ interface Labeling {
   proposals: Proposal[]
 }
 
-function readLabeling(ctx: Ctx, declarationHash: string): Labeling {
-  const view = readView(ctx)
+function readLabeling(ctx: Ctx, declarationHash: string, view: HiddenView | undefined = readView(ctx)): Labeling {
   const chunking = readChunking(ctx)
   const chunks = view && chunking ? chunksOf(view, chunking) : []
   return { view, chunking, chunks, proposals: view && chunking ? loadLabelerProposals(ctx.privateRoot, chunks, declarationHash) : [] }
 }
 
 interface Loaded {
+  /** The one gate check of the command; the marking steps reuse it. */
+  pass: GatePass
   declarationHash: string
   view: HiddenView
   chunking: Chunking
@@ -263,10 +307,10 @@ function load(ctx: Ctx): Loaded {
   const { view, chunking, proposals } = readLabeling(ctx, pass.declarationHash)
   if (!view) throw new StepRefusal('view_missing', 'build the view first')
   if (!chunking) throw new StepRefusal('labeling_not_run', 'label the view first')
-  return { declarationHash: pass.declarationHash, view, chunking, proposals }
+  return { pass, declarationHash: pass.declarationHash, view, chunking, proposals }
 }
 
-const markingInput = (ctx: Ctx, loaded: Loaded) => ({ git: ctx.git, privateRoot: ctx.privateRoot, slot: ctx.slot, proposals: loaded.proposals, view: loaded.view, repoRoot: ctx.repoRoot })
+const markingInput = (ctx: Ctx, loaded: Loaded) => ({ git: ctx.git, pass: loaded.pass, privateRoot: ctx.privateRoot, slot: ctx.slot, proposals: loaded.proposals, view: loaded.view, repoRoot: ctx.repoRoot })
 
 // ── freeze, view, label ────────────────────────────────────────────────────
 
@@ -287,6 +331,8 @@ function freezeCommand(ctx: Ctx): number {
 
 function viewCommand(ctx: Ctx): number {
   const pass = assertGate(gateInput(ctx))
+  // a rebuilt view could differ from the one the judgments were made on
+  assertJudgingNotStarted(ctx.privateRoot, ctx.slot)
   const skillBodies = collectSkillBodies(ctx.git, pass.declaration.window)
   // the walk is read once, a session at a time: its raw rows are rendered and dropped before the next session is read
   let sessionCount = 0
@@ -420,29 +466,40 @@ const BOTH_CHOICES: Readonly<Record<string, ProposalChoice>> = {
 }
 const OMISSION_CHOICES: Readonly<Record<string, OmissionAnswer>> = { f: 'expected_fire', fire: 'expected_fire', s: 'expected_silence', silence: 'expected_silence', n: 'neither', neither: 'neither' }
 
-async function judgeCommand(ctx: Ctx): Promise<number> {
-  const loaded = load(ctx)
-  const input = markingInput(ctx, loaded)
-  const opened = openMarking(input)
-  if (opened.lock) throw new MarksRefusal('slot_locked')
-  const terminal: Terminal = ctx.io.terminal ?? process.stdout
-  const reader = lineReader(ctx.io.input ?? process.stdin)
-  const contextK = loaded.chunking.contextK
+const isTerminal = (stream: unknown): boolean => typeof stream === 'object' && stream !== null && (stream as { isTTY?: unknown }).isTTY === true
 
-  /** The stimulus with its preceding stimuli, as the labeler saw it. */
-  const show = (ref: StimulusRef): void => {
+async function judgeCommand(ctx: Ctx): Promise<number> {
+  const input = ctx.io.input ?? process.stdin
+  const terminal: Terminal = ctx.io.terminal ?? process.stdout
+  // session text goes to the terminal stream only: with a pipe on either side it could land in a file or another program
+  if (!ctx.io.allowNonTerminal && !(isTerminal(input) && isTerminal(terminal))) throw new StepRefusal('judge_needs_terminal', 'run judge in a terminal; it shows session text on the screen and reads your answers from the keyboard')
+  const loaded = load(ctx)
+  // one gate check and one read of the stored judgments for the whole session; each write updates this state in memory
+  const session = openJudging(markingInput(ctx, loaded))
+  const { marking } = session
+  if (marking.lock) throw new MarksRefusal('slot_locked')
+  const reader = lineReader(input)
+  const contextK = loaded.chunking.contextK
+  const chunks = chunksOf(loaded.view, loaded.chunking)
+
+  /**
+   * The stimulus with its preceding stimuli. A proposal is shown with the context of the chunk that carried it, which the budget may
+   * have trimmed, so the judge sees what the labeler saw; an omission stimulus carried no proposal and gets the configured context.
+   */
+  const show = (ref: StimulusRef, proposed: boolean): void => {
     const scope = loaded.view.scopes.find((s) => s.sessionId === ref.sessionId && s.scopeIndex === ref.scopeIndex)
     const index = scope?.stimuli.findIndex((s) => s.id === ref.stimulusId) ?? -1
     if (!scope || index < 0) throw new Error('an item names a stimulus the view does not hold')
-    terminal.write(`${terminalSafe(renderWithContext(scope.stimuli, index, contextK))}\n\n`)
+    const chunk = proposed ? chunks.find((c) => c.sessionId === ref.sessionId && c.scopeIndex === ref.scopeIndex && c.ids.includes(ref.stimulusId)) : undefined
+    terminal.write(`${terminalSafe(chunk ? renderForChunk(scope.stimuli, chunk, ref.stimulusId) : renderWithContext(scope.stimuli, index, contextK))}\n\n`)
   }
 
   let stopped = false
   try {
-    const items = opened.items
-    for (const item of pendingProposals(opened)) {
+    const items = marking.items
+    for (const item of pendingProposals(marking)) {
       terminal.write(`\n--- proposal ${items.indexOf(item) + 1} of ${items.length}\n`)
-      show(item)
+      show(item, true)
       // The judge sees the method and label proposed: that is the question being put, and it is shown on these lines only.
       for (const entry of item.proposed) terminal.write(`proposal: ${item.method} · ${entry.label} · ${terminalSafe(entry.reason)}\n`)
       const both = item.proposed.length === 2
@@ -451,13 +508,13 @@ async function judgeCommand(ctx: Ctx): Promise<number> {
         stopped = true
         break
       }
-      judgeProposal(input, item, choice)
+      session.judge(item, choice)
     }
     if (!stopped) {
-      const sample = opened.sample
-      for (const ref of pendingOmissions(openMarking(input))) {
+      const sample = marking.sample
+      for (const ref of pendingOmissions(marking)) {
         terminal.write(`\n--- omission ${sample.findIndex((s) => s.sessionId === ref.sessionId && s.scopeIndex === ref.scopeIndex && s.stimulusId === ref.stimulusId) + 1} of ${sample.length}\n`)
-        show(ref)
+        show(ref, false)
         const answers: Partial<Record<Method, OmissionAnswer>> = {}
         for (const method of METHODS) {
           const answer = await choose<OmissionAnswer>(reader, terminal, `${method}: [f] expected_fire  [s] expected_silence  [n] neither  [q]uit > `, OMISSION_CHOICES)
@@ -469,26 +526,26 @@ async function judgeCommand(ctx: Ctx): Promise<number> {
         }
         if (stopped) break
         // one answer per method, stored together: a quit part-way through a stimulus stores nothing for it
-        answerOmission(input, ref, Object.fromEntries(METHODS.map((method) => [method, answers[method] ?? 'neither'])) as Record<Method, OmissionAnswer>)
+        session.answer(ref, Object.fromEntries(METHODS.map((method) => [method, answers[method] ?? 'neither'])) as Record<Method, OmissionAnswer>)
       }
     }
   } finally {
     reader.close()
   }
-  const after = openMarking(input)
-  const pendingNow = pendingProposals(after).length + pendingOmissions(after).length
+  const pendingNow = pendingProposals(marking).length + pendingOmissions(marking).length
   ctx.io.out(
     `judge ${pairs({
       slot: ctx.slot,
-      proposals_judged: after.judgments.size,
-      proposals_total: after.items.length,
-      omission_answered: after.answers.size,
-      omission_total: after.sample.length,
+      proposals_judged: marking.judgments.size,
+      proposals_total: marking.items.length,
+      omission_answered: marking.answers.size,
+      omission_total: marking.sample.length,
       ready_to_lock: pendingNow === 0 ? 'yes' : 'no',
       stopped: stopped ? 'yes' : 'no',
     })}`,
   )
-  return 0
+  // 4: stopped with items left, so a script can tell a finished session from a saved one
+  return pendingNow === 0 ? 0 : 4
 }
 
 // ── lock and status ────────────────────────────────────────────────────────
@@ -518,7 +575,7 @@ function statusCommand(ctx: Ctx): number {
   const locks = readLocks(ctx.privateRoot, pass.declarationHash)
   const counts = { proposals: 0, items: 0, judged: 0, omission_sample: 0, omission_answered: 0 }
   if (view && chunking) {
-    const marking = openMarking({ ...markingInput(ctx, { declarationHash: pass.declarationHash, view, chunking, proposals }) })
+    const marking = openMarking({ ...markingInput(ctx, { pass, declarationHash: pass.declarationHash, view, chunking, proposals }) })
     counts.items = marking.items.length
     counts.proposals = marking.items.reduce((sum, item) => sum + item.proposed.length, 0)
     counts.judged = marking.judgments.size
@@ -551,9 +608,15 @@ function statusCommand(ctx: Ctx): number {
 function countReport(ctx: Ctx): CountReport {
   const pass = assertGate(gateInput(ctx))
   const labeling: Partial<Record<ManifestSlot, SlotLabeling>> = {}
-  for (const lock of requireLocks(ctx.privateRoot, pass.declarationHash)) {
+  // the marks were judged on the stored views: a view that changed since is refused before anything is counted
+  const views: Partial<Record<ManifestSlot, HiddenView>> = {}
+  for (const slot of MANIFEST_SLOTS) {
+    const view = readView({ ...ctx, slot })
+    if (view) views[slot] = view
+  }
+  for (const lock of requireLocks(ctx.privateRoot, pass.declarationHash, views)) {
     const slotCtx: Ctx = { ...ctx, slot: lock.slot }
-    const { view, chunking, chunks } = readLabeling(slotCtx, pass.declarationHash)
+    const { view, chunking, chunks } = readLabeling(slotCtx, pass.declarationHash, views[lock.slot])
     if (!view) throw new StepRefusal('view_missing', `the ${lock.slot} view is not stored; counting reads its coverage and scrub counters`)
     if (!chunking) throw new StepRefusal('labeling_not_run', `the ${lock.slot} view was not labeled`)
     if (view.declarationHash !== pass.declarationHash) throw new MarksRefusal('view_declaration_mismatch')

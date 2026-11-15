@@ -6,10 +6,10 @@ import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 
 import { type CliIo, main, terminalSafe } from './cli'
-import { DECLARATION_PATH, type Declaration, recordDeviation, WORKFLOW_LOADS_DIR } from './declaration'
+import { assertGate, DECLARATION_PATH, type Declaration, recordDeviation, WORKFLOW_LOADS_DIR } from './declaration'
 import type { LabelerTransport } from './labeler'
 import { readLocks } from './marks'
-import { scanLeaks, viewPath } from './mask'
+import { chunkScope, type HiddenView, scanLeaks, viewPath } from './mask'
 import { projectionSchema } from './project'
 import { gatedRepo, seedWorkflowSession, syntheticStore } from './test-support'
 
@@ -62,7 +62,7 @@ interface Run {
   terminal: string
 }
 
-async function run(f: Fixture, argv: string[], options: { input?: string; label?: CliIo['label']; flags?: string[] } = {}): Promise<Run> {
+async function run(f: Fixture, argv: string[], options: { input?: string; label?: CliIo['label']; flags?: string[]; git?: CliIo['git']; io?: Partial<CliIo> } = {}): Promise<Run> {
   const out: string[] = []
   const err: string[] = []
   const terminal: string[] = []
@@ -73,9 +73,12 @@ async function run(f: Fixture, argv: string[], options: { input?: string; label?
     err: (line) => err.push(line),
     input,
     terminal: { write: (text) => terminal.push(text) },
-    git: f.repo.git,
+    // these injected streams are not terminals, so `judge` needs the explicit test option
+    allowNonTerminal: true,
+    git: options.git ?? f.repo.git,
     env: {},
     ...(options.label ? { label: options.label } : {}),
+    ...options.io,
   })
   return { code, out, err, terminal: terminal.join('') }
 }
@@ -273,7 +276,7 @@ describe('judge', () => {
     const f = fixture()
     await prepare(f)
     const first = await run(f, ['judge'], { input: 'a\nq\n' })
-    expect(first.code).toBe(0)
+    expect(first.code).toBe(4)
     expect(fields(lineOf(first, 'judge'))).toMatchObject({ proposals_judged: '1', proposals_total: '4', stopped: 'yes', ready_to_lock: 'no' })
 
     const second = await run(f, ['judge'], { input: 's\na\ns\n' + OMISSION_ANSWERS })
@@ -288,7 +291,7 @@ describe('judge', () => {
     const f = fixture()
     await prepare(f)
     const first = await run(f, ['judge'], { input: PROPOSAL_ANSWERS + 'f\n' })
-    expect(first.code).toBe(0)
+    expect(first.code).toBe(4)
     expect(fields(lineOf(first, 'judge'))).toMatchObject({ proposals_judged: '4', omission_answered: '0', stopped: 'yes' })
     const second = await run(f, ['judge'], { input: OMISSION_ANSWERS })
     expect(fields(lineOf(second, 'judge'))).toMatchObject({ omission_answered: '2', ready_to_lock: 'yes' })
@@ -454,7 +457,7 @@ describe('label after judging has started', () => {
   test('is refused with a named reason once a judgment is stored, and sends and stores nothing more', async () => {
     const f = fixture()
     await prepare(f)
-    expect((await run(f, ['judge'], { input: 'a\nq\n' })).code).toBe(0)
+    expect((await run(f, ['judge'], { input: 'a\nq\n' })).code).toBe(4)
     const outcomes = readdirSync(join(f.privateRoot, 'labeler', 'outcomes')).length
     const chunking = readFileSync(join(f.privateRoot, 'marks', 'initial', 'chunking.json'), 'utf8')
     const transport = responder()
@@ -470,7 +473,7 @@ describe('label after judging has started', () => {
     const f = fixture()
     await prepare(f)
     // proposals are judged first; the input then answers one sampled stimulus and quits at the next
-    expect((await run(f, ['judge'], { input: `${PROPOSAL_ANSWERS}n\nn\nq\n` })).code).toBe(0)
+    expect((await run(f, ['judge'], { input: `${PROPOSAL_ANSWERS}n\nn\nq\n` })).code).toBe(4)
     const again = await run(f, ['label'], { label: { transport: responder() } })
     expect(again.code).toBe(1)
     expect(again.err.join('\n')).toContain('judging_started')
@@ -487,7 +490,7 @@ describe('label after judging has started', () => {
   test('is allowed again when a judge run was opened and quit with nothing stored', async () => {
     const f = fixture()
     await prepare(f)
-    expect((await run(f, ['judge'], { input: 'q\n' })).code).toBe(0)
+    expect((await run(f, ['judge'], { input: 'q\n' })).code).toBe(4)
     const again = await run(f, ['label'], { label: { transport: responder() } })
     expect(again.code).toBe(0)
   })
@@ -699,3 +702,294 @@ function lockDeclarationHash(f: Fixture): string {
   if (!first) throw new Error('no lock file')
   return (JSON.parse(readFileSync(join(f.privateRoot, 'marks', first), 'utf8')) as { declarationHash: string }).declarationHash
 }
+
+/** Rewrites the first stimulus text of the stored view, as an edit to the file on disk would. */
+function editStoredView(f: Fixture): void {
+  const path = viewPath({ root: f.privateRoot, now: () => new Date() }, 'initial')
+  const view = JSON.parse(readFileSync(path, 'utf8')) as HiddenView
+  const stimulus = view.scopes[0]?.stimuli[0]
+  if (!stimulus) throw new Error('no stimulus to edit')
+  stimulus.text = `${stimulus.text} edited`
+  writeFileSync(path, `${JSON.stringify(view, null, 2)}\n`)
+}
+
+describe('the view after judging has started', () => {
+  const storedView = (f: Fixture): string => readFileSync(viewPath({ root: f.privateRoot, now: () => new Date() }, 'initial'), 'utf8')
+
+  test('view is refused once a judgment is stored, and the stored view stays as it was', async () => {
+    const f = fixture()
+    await prepare(f)
+    expect((await run(f, ['judge'], { input: 'a\nq\n' })).code).toBe(4)
+    const before = storedView(f)
+    const rebuilt = await run(f, ['view'])
+    expect(rebuilt.code).toBe(1)
+    expect(rebuilt.err.join('\n')).toContain('judging_started')
+    expect(storedView(f)).toBe(before)
+  })
+
+  test('view is refused once the slot is locked', async () => {
+    const f = fixture()
+    await lockedFixture(f)
+    const before = storedView(f)
+    const rebuilt = await run(f, ['view'])
+    expect(rebuilt.code).toBe(1)
+    expect(rebuilt.err.join('\n')).toContain('judging_started')
+    expect(storedView(f)).toBe(before)
+  })
+
+  test('view is still allowed after a judge run that stored nothing', async () => {
+    const f = fixture()
+    await prepare(f)
+    expect((await run(f, ['judge'], { input: 'q\n' })).code).toBe(4)
+    expect((await run(f, ['view'])).code).toBe(0)
+  })
+
+  test('a view file altered on disk after judging makes judging refuse', async () => {
+    const f = fixture()
+    await prepare(f)
+    expect((await run(f, ['judge'], { input: 'a\nq\n' })).code).toBe(4)
+    editStoredView(f)
+    const again = await run(f, ['judge'], { input: 'a\na\na\n' })
+    expect(again.code).toBe(1)
+    expect(again.err.join('\n')).toContain('view_changed')
+    expect(readdirSync(join(f.privateRoot, 'marks', 'initial', 'judgments'))).toHaveLength(1)
+  })
+
+  test('a view file altered on disk after the lock makes locking, counting and projecting refuse', async () => {
+    const f = fixture()
+    await lockedFixture(f)
+    editStoredView(f)
+    for (const command of ['count', 'project']) {
+      const result = await run(f, [command])
+      expect({ command, code: result.code }).toEqual({ command, code: 1 })
+      expect(result.err.join('\n')).toContain('view_changed')
+    }
+    expect(existsSync(join(f.repo.dir, 'evals', 'spikes', 'workflow-loads', 'counts.json'))).toBe(false)
+    expect((await run(f, ['status'])).err.join('\n')).toContain('view_changed')
+  })
+
+  test('an unaltered view still counts after judging', async () => {
+    const f = fixture()
+    await lockedFixture(f)
+    expect((await run(f, ['count'])).code).toBe(0)
+  })
+})
+
+describe('the context the judge sees', () => {
+  const CONTEXT_K = 2
+  const contextIdsOf = (block: string): string[] => [...block.matchAll(/^### \[context\] (\S+) /gm)].map((m) => m[1] ?? '')
+  const blockOf = (terminal: string, id: string): string => terminal.split('\n--- ').find((block) => block.includes(`### [stimulus] ${id} `)) ?? ''
+
+  /** A budget at which some chunk starts mid-scope with only part of the context the size asks for. */
+  function trimmingBudget(view: HiddenView): number {
+    for (let budget = 100; budget < 3000; budget += 5) {
+      const trimmed = view.scopes.some((scope) =>
+        chunkScope(scope, { budget, contextK: CONTEXT_K }).some((chunk) => {
+          const first = scope.stimuli.findIndex((s) => s.id === chunk.ids[0])
+          return first > 0 && chunk.contextIds.length > 0 && chunk.contextIds.length < Math.min(CONTEXT_K, first)
+        }),
+      )
+      if (trimmed) return budget
+    }
+    throw new Error('no budget trims the context')
+  }
+
+  test('a proposal from a chunk that trimmed its context is shown with the same trimmed context', async () => {
+    const f = fixture({}, { texts: (id, i) => `ordinary text number ${i} of ${id} with some padding to give each stimulus weight ${TEXT_MARKER}` })
+    await run(f, ['freeze'])
+    await run(f, ['view'])
+    const view = JSON.parse(readFileSync(viewPath({ root: f.privateRoot, now: () => new Date() }, 'initial'), 'utf8')) as HiddenView
+    const budget = trimmingBudget(view)
+    expect((await run(f, ['label', '--budget', String(budget), '--context', String(CONTEXT_K)], { label: { transport: responder() } })).code).toBe(0)
+    const judged = await run(f, ['judge'], { input: 'r\n'.repeat(40) })
+
+    let checked = 0
+    for (const scope of view.scopes) {
+      for (const chunk of chunkScope(scope, { budget, contextK: CONTEXT_K })) {
+        const first = scope.stimuli.findIndex((s) => s.id === chunk.ids[0])
+        const id = chunk.ids[0]
+        if (!id || first === 0) continue
+        // the responder proposes for the first stimulus of every chunk, so each of these is judged
+        expect(contextIdsOf(blockOf(judged.terminal, id))).toEqual(chunk.contextIds)
+        if (chunk.contextIds.length < Math.min(CONTEXT_K, first)) checked += 1
+      }
+    }
+    expect(checked).toBeGreaterThan(0)
+  })
+
+  test('an omission item keeps the configured context', async () => {
+    const f = fixture()
+    await prepare(f)
+    const judged = await run(f, ['judge'], { input: PROPOSAL_ANSWERS + OMISSION_ANSWERS })
+    const omissions = judged.terminal.split('\n--- omission').slice(1)
+    expect(omissions).toHaveLength(2)
+    // each session's third stimulus is the unproposed one, with the two before it as context
+    for (const block of omissions) expect(contextIdsOf(block)).toHaveLength(2)
+  })
+})
+
+describe('judge and the terminal', () => {
+  const tty = (input: string): { input: PassThrough; terminal: { write: (text: string) => void; isTTY: boolean } } => {
+    const stream = Object.assign(new PassThrough(), { isTTY: true })
+    stream.end(input)
+    return { input: stream, terminal: { write: () => undefined, isTTY: true } }
+  }
+
+  test('with streams that are not terminals it refuses, names the reason, reads nothing and stores nothing', async () => {
+    const f = fixture()
+    await prepare(f)
+    const refused = await run(f, ['judge'], { input: 'a\n', io: { allowNonTerminal: false } })
+    expect(refused.code).toBe(1)
+    expect(refused.err.join('\n')).toContain('judge_needs_terminal')
+    expect(refused.err.join('\n')).toContain('terminal')
+    expect(refused.terminal).toBe('')
+    expect(existsSync(join(f.privateRoot, 'marks', 'initial', 'judgments'))).toBe(false)
+  })
+
+  test('it refuses when only one of the two streams is a terminal', async () => {
+    const f = fixture()
+    await prepare(f)
+    const { input } = tty('a\n')
+    const piped = await run(f, ['judge'], { io: { input, terminal: { write: () => undefined }, allowNonTerminal: false } })
+    expect(piped.code).toBe(1)
+    expect(piped.err.join('\n')).toContain('judge_needs_terminal')
+    const { terminal } = tty('')
+    const pipedIn = await run(f, ['judge'], { io: { input: new PassThrough(), terminal, allowNonTerminal: false } })
+    expect(pipedIn.code).toBe(1)
+    expect(pipedIn.err.join('\n')).toContain('judge_needs_terminal')
+  })
+
+  test('streams that are terminals pass without the test option', async () => {
+    const f = fixture()
+    await prepare(f)
+    const { input, terminal } = tty('q\n')
+    const result = await run(f, ['judge'], { io: { input, terminal, allowNonTerminal: false } })
+    expect(result.err).toEqual([])
+    expect(result.code).toBe(4)
+  })
+
+  test('the option is off by default: a bare call with injected plain streams is refused', async () => {
+    const f = fixture()
+    await prepare(f)
+    const out: string[] = []
+    const err: string[] = []
+    const code = await main(['judge', ...f.flags], { out: (l) => out.push(l), err: (l) => err.push(l), input: new PassThrough(), terminal: { write: () => undefined }, git: f.repo.git, env: {} })
+    expect(code).toBe(1)
+    expect(err.join('\n')).toContain('judge_needs_terminal')
+  })
+})
+
+describe('judge and the gate', () => {
+  /** A git handle that counts every call made through it. */
+  function counted(git: Fixture['repo']['git']): { git: Fixture['repo']['git']; calls: () => number } {
+    let n = 0
+    const proxy = new Proxy(git, {
+      get(target, prop) {
+        const value = Reflect.get(target, prop)
+        return typeof value === 'function'
+          ? (...args: unknown[]) => {
+              n += 1
+              return value.apply(target, args)
+            }
+          : value
+      },
+    })
+    return { git: proxy, calls: () => n }
+  }
+
+  test('a session of many judgments runs the git-backed gate once', async () => {
+    const f = fixture()
+    await prepare(f)
+    const gate = counted(f.repo.git)
+    assertGate({ git: gate.git })
+    const onePass = gate.calls()
+    expect(onePass).toBeGreaterThan(0)
+
+    const spy = counted(f.repo.git)
+    const judged = await run(f, ['judge'], { input: PROPOSAL_ANSWERS + OMISSION_ANSWERS, git: spy.git })
+    expect(fields(lineOf(judged, 'judge'))).toMatchObject({ proposals_judged: '4', omission_answered: '2' })
+    expect(spy.calls()).toBe(onePass)
+  })
+
+  test('what a session stored still resumes: the in-memory state matches the log', async () => {
+    const f = fixture()
+    await prepare(f)
+    expect((await run(f, ['judge'], { input: 'a\ns\nq\n' })).code).toBe(4)
+    const resumed = await run(f, ['judge'], { input: 'a\ns\n' + OMISSION_ANSWERS })
+    expect(resumed.terminal).not.toContain('--- proposal 1 of 4')
+    expect(resumed.terminal).not.toContain('--- proposal 2 of 4')
+    expect(fields(lineOf(resumed, 'judge'))).toMatchObject({ proposals_judged: '4', ready_to_lock: 'yes' })
+  })
+})
+
+describe('help and usage', () => {
+  const COMMAND_WORDS = ['freeze', 'view', 'label', 'judge', 'lock', 'status', 'count', 'project', 'purge']
+  const OPTION_WORDS = ['--slot', '--db', '--private-root', '--repo-root', '--budget', '--context', '--auth-cliproxy', '--help']
+
+  test('--help prints the usage and exits 0 before any private root is opened', async () => {
+    const f = fixture()
+    const helped = await run(f, ['--help'])
+    expect(helped.code).toBe(0)
+    expect(helped.err).toEqual([])
+    const text = helped.out.join('\n')
+    for (const command of COMMAND_WORDS) expect(text).toContain(`  ${command} `)
+    for (const option of OPTION_WORDS) expect(text).toContain(option)
+    // the defaults, including the real session store
+    expect(text).toContain('opencode.db')
+    expect(text).toContain('24000')
+    expect(text).toContain('initial')
+    expect(text).toContain('workflow-loads')
+    expect(existsSync(f.privateRoot)).toBe(false)
+  })
+
+  test('the usage names every exit code', async () => {
+    const f = fixture()
+    const text = (await run(f, ['--help'])).out.join('\n')
+    for (const line of ['0 ', '1 ', '2 ', '3 ', '4 ']) expect(text).toMatch(new RegExp(`^\\s+${line}`, 'm'))
+    expect(text).toContain('items remain')
+  })
+
+  test('<command> --help prints the same usage, whatever the gate or the arguments say', async () => {
+    const f = fixture()
+    const reference = (await run(f, ['--help'])).out.join('\n')
+    writeFileSync(join(f.repo.dir, DECLARATION_PATH), '{}\n')
+    for (const command of COMMAND_WORDS) {
+      const result = await run(f, [command, '--help'])
+      expect({ command, code: result.code, text: result.out.join('\n'), err: result.err }).toEqual({ command, code: 0, text: reference, err: [] })
+    }
+    expect(existsSync(f.privateRoot)).toBe(false)
+  })
+
+  test('a usage error prints the same usage with exit 2', async () => {
+    const f = fixture()
+    const bad = await run(f, ['frobnicate'])
+    expect(bad.code).toBe(2)
+    expect(bad.err.join('\n')).toContain('opencode.db')
+  })
+
+  test('the usage states the known limits plainly', async () => {
+    const f = fixture()
+    const text = (await run(f, ['--help'])).out.join('\n')
+    expect(text).toContain('Known limits')
+    for (const limit of ['not anchored outside the private store', 'at the same time on one private root', 'symlinked labeler subdirectory', 'options are accepted by subcommands that ignore them', 'reads the real session store']) expect(text).toContain(limit)
+  })
+})
+
+describe('judge exit codes', () => {
+  test('0 only when every item for the slot is answered', async () => {
+    const f = fixture()
+    await prepare(f)
+    expect((await run(f, ['judge'], { input: PROPOSAL_ANSWERS + OMISSION_ANSWERS })).code).toBe(0)
+  })
+
+  test('4 when it stopped with proposals left, and again with omission items left', async () => {
+    const f = fixture()
+    await prepare(f)
+    const early = await run(f, ['judge'], { input: 'a\nq\n' })
+    expect(early.code).toBe(4)
+    expect(fields(lineOf(early, 'judge'))).toMatchObject({ ready_to_lock: 'no', stopped: 'yes' })
+    const late = await run(f, ['judge'], { input: 's\na\ns\n' })
+    expect(late.code).toBe(4)
+    expect(fields(lineOf(late, 'judge'))).toMatchObject({ ready_to_lock: 'no' })
+  })
+})

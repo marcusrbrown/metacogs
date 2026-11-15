@@ -23,6 +23,7 @@ import {
   PATH_PLACEHOLDER,
   RENDER_LIMITS,
   type RenderedStimulus,
+  renderForChunk,
   renderSessions,
   renderStimulusBlock,
   renderWithContext,
@@ -668,6 +669,40 @@ describe('rendering one stimulus with context', () => {
     expect(block).toContain('user message')
     expect(block).toContain('text c')
     expect(block).toContain('[tool] bash {}')
+  })
+})
+
+describe('rendering one stimulus as the labeler saw it', () => {
+  const stimuli: RenderedStimulus[] = ['a', 'b', 'c', 'd', 'e'].map((x) => ({ id: `id_${x}`, kind: 'user_message', text: `text ${x}`, traffic: [] }))
+  const headings = (text: string): string[] => [...text.matchAll(/^### \[(context|stimulus)\] (\S+)/gm)].map((m) => `${m[1]}:${m[2]}`)
+
+  test('shows the chunk context, then the chunk stimuli before the target, then the target', () => {
+    const chunk = { ids: ['id_c', 'id_d', 'id_e'], contextIds: ['id_b'] }
+    expect(headings(renderForChunk(stimuli, chunk, 'id_c'))).toEqual(['context:id_b', 'stimulus:id_c'])
+    expect(headings(renderForChunk(stimuli, chunk, 'id_e'))).toEqual(['context:id_b', 'context:id_c', 'context:id_d', 'stimulus:id_e'])
+  })
+
+  test('a chunk whose context was trimmed shows less than the configured size would', () => {
+    // a size of 3 would show a, b and c before d; the chunk held only c
+    const chunk = { ids: ['id_d', 'id_e'], contextIds: ['id_c'] }
+    expect(headings(renderForChunk(stimuli, chunk, 'id_d'))).toEqual(['context:id_c', 'stimulus:id_d'])
+    expect(headings(renderWithContext(stimuli, 3, 3))).toEqual(['context:id_a', 'context:id_b', 'context:id_c', 'stimulus:id_d'])
+  })
+
+  test('a chunk with no context shows the target alone', () => {
+    expect(headings(renderForChunk(stimuli, { ids: ['id_a'], contextIds: [] }, 'id_a'))).toEqual(['stimulus:id_a'])
+  })
+
+  test('refuses a stimulus the chunk does not cover, and a chunk naming a stimulus the scope lacks', () => {
+    expect(() => renderForChunk(stimuli, { ids: ['id_d'], contextIds: [] }, 'id_a')).toThrow(RangeError)
+    expect(() => renderForChunk(stimuli, { ids: ['id_d'], contextIds: ['id_zz'] }, 'id_d')).toThrow(RangeError)
+  })
+
+  test('agrees with chunkScope: each covered stimulus renders with exactly what its chunk text held before it', () => {
+    const scope: HiddenScope = { sessionId: 's', scopeIndex: 0, workflow: 'ce:plan', stimuli }
+    for (const chunk of chunkScope(scope, { budget: 120, contextK: 2 })) {
+      for (const id of chunk.ids) expect(chunk.text).toContain(renderForChunk(stimuli, chunk, id).split('\n\n').at(-1) ?? '')
+    }
   })
 })
 

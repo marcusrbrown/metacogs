@@ -3,7 +3,9 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, w
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { canonicalize } from '../../record/canonical'
 import { saltedHash } from '../../runner/prereg'
+import { sha256 } from '../../runner/workspace'
 import { CustodyError } from '../../runner/workspace'
 import type { Proposal } from './labeler'
 import { type Declaration, DECLARATION_PATH, GateRefusal, type Label, type Method, recordDeviation } from './declaration'
@@ -19,6 +21,7 @@ import {
   MarksRefusal,
   type MarksReason,
   omissionSample,
+  openJudging,
   openMarking,
   pendingOmissions,
   pendingProposals,
@@ -26,6 +29,7 @@ import {
   readLocks,
   requireLocks,
   type StimulusRef,
+  viewDigest,
 } from './marks'
 import { buildHiddenView, type HiddenView } from './mask'
 import { freezeManifest, openPrivateRoot, readManifest, walkManifest } from './store'
@@ -651,5 +655,172 @@ describe('judging started', () => {
     }
     expect(message).toStartWith('judging_started:')
     expect(message).not.toContain('one')
+  })
+})
+
+/** The same view with the first stimulus text changed, as an edit to the stored view file would leave it. */
+function altered(view: HiddenView): HiddenView {
+  const [scope, ...rest] = view.scopes
+  const [stimulus, ...others] = scope?.stimuli ?? []
+  if (!scope || !stimulus) throw new Error('no stimulus to alter')
+  return { ...view, scopes: [{ ...scope, stimuli: [{ ...stimulus, text: `${stimulus.text} edited` }, ...others] }, ...rest] }
+}
+
+describe('the view the judgments rest on', () => {
+  const firstEvent = (f: Fixture): { viewDigest?: string } => {
+    const dir = join(f.privateRoot.root, 'marks', 'initial', 'judgments')
+    const [name] = readdirSync(dir).sort()
+    return JSON.parse(readFileSync(join(dir, name ?? ''), 'utf8'))
+  }
+
+  test('the digest is a hash of the view content, the same after a round trip through JSON', () => {
+    const f = fixture()
+    const { view } = sixStimuli(f)
+    expect(viewDigest(view)).toMatch(/^[0-9a-f]{64}$/)
+    expect(viewDigest(JSON.parse(JSON.stringify(view)))).toBe(viewDigest(view))
+    expect(viewDigest(altered(view))).not.toBe(viewDigest(view))
+  })
+
+  test('every stored judgment and omission answer carries the digest of the view it was made on', () => {
+    const f = fixture()
+    const { view, input } = sixStimuli(f)
+    const [item] = pendingProposals(openMarking(input))
+    if (!item) throw new Error('no item')
+    judgeProposal(input, item, { action: 'reject' })
+    expect(firstEvent(f).viewDigest).toBe(viewDigest(view))
+    const [ref] = openMarking(input).sample
+    if (!ref) throw new Error('no sample')
+    answerOmission(input, ref, NEITHER)
+    const dir = join(f.privateRoot.root, 'marks', 'initial', 'judgments')
+    for (const name of readdirSync(dir)) expect(JSON.parse(readFileSync(join(dir, name), 'utf8')).viewDigest).toBe(viewDigest(view))
+  })
+
+  test('the lock carries the digest and is bound to it by its hash', () => {
+    const f = fixture()
+    const { view, input } = sixStimuli(f)
+    for (const item of pendingProposals(openMarking(input))) judgeProposal(input, item, item.proposed.length === 2 ? { action: 'pick', label: FIRE } : { action: 'accept' })
+    for (const ref of pendingOmissions(openMarking(input))) answerOmission(input, ref, NEITHER)
+    const lock = lockMarks(input)
+    expect(lock.viewDigest).toBe(viewDigest(view))
+    const path = lockPath(f.privateRoot, 'initial')
+    writeFileSync(path, JSON.stringify({ ...lock, viewDigest: 'c'.repeat(64) }))
+    expect(refusal(() => readLocks(f.privateRoot, lock.declarationHash))).toBe('lock_tampered')
+  })
+
+  test('once a judgment is stored, a view that differs is refused by opening, judging and locking, and nothing is written', () => {
+    const f = fixture()
+    const { view, proposals, input } = sixStimuli(f)
+    const [item, second] = pendingProposals(openMarking(input))
+    if (!item || !second) throw new Error('no items')
+    judgeProposal(input, item, { action: 'reject' })
+    const other = f.marking(altered(view), proposals)
+    const before = readdirSync(join(f.privateRoot.root, 'marks', 'initial', 'judgments')).length
+    expect(refusal(() => openMarking(other))).toBe('view_changed')
+    expect(refusal(() => judgeProposal(other, second, { action: 'reject' }))).toBe('view_changed')
+    expect(refusal(() => answerOmission(other, openMarking(input).sample[0] ?? { sessionId: '', scopeIndex: 0, stimulusId: '' }, NEITHER))).toBe('view_changed')
+    expect(refusal(() => lockMarks(other))).toBe('view_changed')
+    expect(readdirSync(join(f.privateRoot.root, 'marks', 'initial', 'judgments')).length).toBe(before)
+    // the view the judgment was made on is still accepted
+    expect(() => openMarking(input)).not.toThrow()
+  })
+
+  test('a lock made on another view is refused even when its own hash is right and every judgment matches the current view', () => {
+    const f = fixture()
+    const { input } = sixStimuli(f)
+    for (const item of pendingProposals(openMarking(input))) judgeProposal(input, item, item.proposed.length === 2 ? { action: 'pick', label: FIRE } : { action: 'accept' })
+    for (const ref of pendingOmissions(openMarking(input))) answerOmission(input, ref, NEITHER)
+    const { lockHash: _dropped, ...body } = lockMarks(input)
+    const forged = { ...body, viewDigest: 'c'.repeat(64) }
+    writeFileSync(lockPath(f.privateRoot, 'initial'), JSON.stringify({ ...forged, lockHash: sha256(canonicalize(forged)) }))
+    expect(refusal(() => openMarking(input))).toBe('view_changed')
+  })
+
+  test('with no judgment stored, any view is accepted: the slot has nothing resting on it', () => {
+    const f = fixture()
+    const { view, proposals } = sixStimuli(f)
+    expect(() => openMarking(f.marking(altered(view), proposals))).not.toThrow()
+  })
+
+  test('once locked, a view that differs is refused, and counting is refused with the same reason', () => {
+    const f = fixture()
+    const { view, proposals, input } = sixStimuli(f)
+    for (const item of pendingProposals(openMarking(input))) judgeProposal(input, item, item.proposed.length === 2 ? { action: 'pick', label: FIRE } : { action: 'accept' })
+    for (const ref of pendingOmissions(openMarking(input))) answerOmission(input, ref, NEITHER)
+    const lock = lockMarks(input)
+    expect(refusal(() => openMarking(f.marking(altered(view), proposals)))).toBe('view_changed')
+    expect(refusal(() => requireLocks(f.privateRoot, lock.declarationHash, { initial: altered(view) }))).toBe('view_changed')
+    expect(requireLocks(f.privateRoot, lock.declarationHash, { initial: view })).toEqual([lock])
+    // a slot whose view is not given is not checked here: the caller names the missing view
+    expect(requireLocks(f.privateRoot, lock.declarationHash, {})).toEqual([lock])
+  })
+})
+
+describe('a judging session', () => {
+  /** A git handle that counts every call made through it. */
+  function counted(git: Fixture['repo']['git']): { git: Fixture['repo']['git']; calls: () => number } {
+    let n = 0
+    const proxy = new Proxy(git, {
+      get(target, prop) {
+        const value = Reflect.get(target, prop)
+        return typeof value === 'function'
+          ? (...args: unknown[]) => {
+              n += 1
+              return value.apply(target, args)
+            }
+          : value
+      },
+    })
+    return { git: proxy, calls: () => n }
+  }
+
+  test('opens the state once: later judgments and answers neither re-run the gate nor re-read the stored judgments', () => {
+    const f = fixture()
+    const { input } = sixStimuli(f)
+    const spy = counted(f.repo.git)
+    const session = openJudging({ ...input, git: spy.git })
+    const afterOpen = spy.calls()
+    expect(afterOpen).toBeGreaterThan(0)
+    for (const item of pendingProposals(session.marking)) session.judge(item, item.proposed.length === 2 ? { action: 'pick', label: FIRE } : { action: 'accept' })
+    for (const ref of pendingOmissions(session.marking)) session.answer(ref, NEITHER)
+    expect(spy.calls()).toBe(afterOpen)
+    // the in-memory state followed every append, and the stored log agrees with it
+    expect(pendingProposals(session.marking)).toEqual([])
+    expect(pendingOmissions(session.marking)).toEqual([])
+    const fresh = openMarking(input)
+    expect(fresh.judgments.size).toBe(session.marking.judgments.size)
+    expect(fresh.answers.size).toBe(session.marking.answers.size)
+    expect(fresh.judgments.size).toBeGreaterThan(1)
+  })
+
+  test('refuses a second judgment of the same item and a stranger, from its own state', () => {
+    const f = fixture()
+    const { input } = sixStimuli(f)
+    const session = openJudging(input)
+    const [item] = pendingProposals(session.marking)
+    if (!item) throw new Error('no item')
+    session.judge(item, { action: 'reject' })
+    expect(refusal(() => session.judge(item, { action: 'reject' }))).toBe('already_judged')
+    expect(refusal(() => session.judge({ ...item, stimulusId: 'absent' }, { action: 'reject' }))).toBe('unknown_item')
+  })
+
+  test('checks for a lock at each write: a lock written after the session opened stops it', () => {
+    const f = fixture()
+    const { input } = sixStimuli(f)
+    const session = openJudging(input)
+    for (const item of pendingProposals(session.marking)) judgeProposal(input, item, item.proposed.length === 2 ? { action: 'pick', label: FIRE } : { action: 'accept' })
+    for (const ref of pendingOmissions(openMarking(input))) answerOmission(input, ref, NEITHER)
+    lockMarks(input)
+    const [item] = session.marking.items
+    if (!item) throw new Error('no item')
+    expect(refusal(() => session.judge(item, { action: 'reject' }))).toBe('slot_locked')
+  })
+
+  test('a lock that exists when the session opens is on its marking', () => {
+    const f = fixture()
+    const view = f.build()
+    const input = f.marking(view, [])
+    for (const ref of pendingOmissions(openMarking(input))) answerOmission(input, ref, NEITHER)
+    lockMarks(input)
+    expect(openJudging(input).marking.lock).toBeDefined()
   })
 })
