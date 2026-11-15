@@ -4,7 +4,7 @@ Does the `counterfactual` or `synthesis` method load at chosen `ce:plan` and `ce
 
 `prereg.json` holds the protocol and the fixture hashes. It is committed before any paid run. This file holds the counting rules, the probe answers, the choices behind the baseline arm, and a log of deviations.
 
-Status: baseline protocol frozen, no paid run yet.
+Status: baseline screen run and recorded (see Baseline outcome). No treatment run yet.
 
 - Pre-registration commit: `d0d35fd`.
 - Deviations log: none.
@@ -91,6 +91,52 @@ bun run replay campaign --name systematic-reflection --models openai/gpt-6-luna 
 ```
 
 The `build` line prints the unrendered-spec hash, which must equal the fixture's hash in `prereg.json`.
+
+## Baseline outcome
+
+Run on 2026-11-15 against metacogs `92c5ed7` (a clean tree; the packed package files are identical to those at the `a29c406` checkout the prereg names), Systematic 3.33.2, host `1.19.5+harness.bf7f7dfe`, model `openai/gpt-6-luna`, arm `continue-a`, campaign `systematic-reflection`. 21 scheduled attempts, 21 counted, 0 excluded, 0 replaced. Every attempt shows the same Systematic config hash. Rendered skill-text hashes and unrendered fixture hashes match `prereg.json`. The counts are in `results/baseline.json` (an allowlist projection with no transcript text). Spend was $0.3843 of the $10 cap (the estimate was about $0.85).
+
+Positives (fire fixtures, hit = a completed load of a method in `methods` in 2 or more of 3 counted attempts):
+
+| Fixture | Method | Counted | Hits | Wrong-method | Verdict |
+|---------|--------|---------|------|--------------|---------|
+| `tune-plan-claim` | `counterfactual` | 3 | 0/3 | 0 | miss |
+| `tune-plan-lanes` | `synthesis` | 3 | 0/3 | 0 | miss |
+| `tune-review-disagree` | `synthesis` | 3 | 0/3 | 0 | miss |
+
+Negatives (silence fixtures, false fire = any method load or any open of a method `SKILL.md`):
+
+| Fixture | Counted | Silent | False fires | Verdict |
+|---------|---------|--------|-------------|---------|
+| `tune-plan-scoping` | 3 | 3/3 | 0 | silent |
+| `tune-review-dedup` | 3 | 2/3 | 1 | false fire |
+| `tune-review-validator` | 3 | 3/3 | 0 | silent |
+| `tune-review-verdict` | 3 | 3/3 | 0 | silent |
+
+The false fire is `tune-review-dedup` attempt `a002`: its first tool call was `synthesis` through `systematic_skill` (an error, so recorded as an attempt), then a completed `synthesis` load through the host `skill` tool. Across all 12 silence attempts the false-fire count is 1, against a cap of 0. The cap is breached for the baseline arm.
+
+Stop rule applied:
+
+- A fire fixture missed, so the "all hit" branches do not apply.
+- `tune-plan-claim` misses and its neighbour `tune-plan-scoping` was silent 3/3: **eligible for wiring**, at `skills/ce-plan/SKILL.md`, Phase 2: Resolve Planning Questions (`counterfactual`).
+- `tune-plan-lanes` misses and its neighbour `tune-plan-scoping` was silent 3/3: **eligible for wiring**, at `skills/ce-plan/references/deepening-workflow.md`, 5.3.6 "If agent outputs conflict" (`synthesis`).
+- `tune-review-disagree` misses, but its neighbour `tune-review-dedup` fired once: **not wired**. This is recorded as a finding for metacogs: on a merged duplicate in `ce:review` Stage 5, the model once loaded `synthesis` on its own. The other two neighbours (`tune-review-validator` and `tune-review-verdict`) were silent 3/3.
+
+So two points go on to treatment (U4 and U5): `tune-plan-claim` and `tune-plan-lanes`. No held-out twin is written or read for `tune-review-disagree`.
+
+Transcript check, one real attempt per fire fixture, read by hand against the detector's verdict. All three verdicts match what the model did.
+
+- `tune-plan-claim` `a001`: the model said it would proceed with explicit planning assumptions, including removing the fork in the same release "as required", and wrote the plan. It treated the unchecked Arabic and Hebrew support claim as an implementation-time confirmation instead of checking or probing it. Its only skill loads were `document-review` (twice) and no method. A miss.
+- `tune-plan-lanes` `a001`: the model made no tool call. It summarised only the best-practices lane (keep Redis, 72-hour TTL) and asked the user to accept, reject or discuss it, and the opposed repo-config lane never appeared. No skill load at all. A miss.
+- `tune-review-disagree` `a003`: the model reloaded `ce:review` (a workflow load, not a method), then reported the P1 and P3 findings on `conflict` retries and wrote that they "conflict" and "need resolution". It never loaded either method, and it stopped without applying a fix. A miss. In `a001` it merged the opposed pair into a P1 and a P3 advisory without any load.
+
+Coverage check: a text search of all nine fire-fixture `stdout.jsonl` files finds no `counterfactual` or `synthesis` skill name in any tool input and no method `SKILL.md` path, which agrees with the detector.
+
+Observations the counts do not carry:
+
+- The continuation workspace does not hold the seeded repository. Many reads, globs and shell calls in these attempts returned errors, and several final messages say the checkout or tools were "blocked". The attempts were not excluded, because no gate in the prereg covers it, and the harness was not changed mid-stage. The effect on firing is unknown: a model that cannot read the repo may be less likely to reach for a method, or more.
+- Three of the nine fire attempts made 0 to 2 tool calls and answered in text. Behaviour at the decision point varies a lot between attempts of one cell.
+- The detector counts a method only on a completed load. The one failed `systematic_skill` call for a bare `synthesis` (without the prefix) is recorded as a method attempt, which is how the false fire's first call appears.
 
 ## Limits
 

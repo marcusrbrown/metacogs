@@ -1,0 +1,655 @@
+{
+  "schema_version": 1,
+  "spike": "systematic-reflection",
+  "stage": "baseline",
+  "arm": "baseline",
+  "replay_arm": "continue-a",
+  "campaign": "systematic-reflection",
+  "refs": {
+    "metacogs_head": "92c5ed73ae0d9878562ac53bd2e7facf7e49d623",
+    "prereg_commit": "d0d35fd",
+    "harness_commit": "a29c406d20b5833e1953f5de3c063b6d91972e79",
+    "systematic": "@fro.bot/systematic@3.33.2",
+    "systematic_tarball_sha256": "5da735ed727b9f303d5fb54d56faa37c2be536880d1cc0433ef1788742bfd31b",
+    "metacogs_packed_tarball_sha256": "d05a037dbe407b70cea5a50eb1facc5915f106d006499844a91cade6185c9b4d",
+    "metacogs_version": "0.4.1"
+  },
+  "prereg_sha256": "14a10943e52a197e758abaeaae9dd5e427cb9382903b0f380de782f3ae627fa6",
+  "model": "openai/gpt-6-luna",
+  "host_version": "1.19.5+harness.bf7f7dfe",
+  "systematic_config_sha256": "f2521b1e0fb88becbcb8f4223f733ecc6d293ede9b44f03519ea4726cf21cf2c",
+  "attempts_per_cell": 3,
+  "replacements_allowed": 1,
+  "totals": {
+    "fixtures": 7,
+    "scheduled_attempts": 21,
+    "counted_attempts": 21,
+    "excluded_attempts": 0,
+    "fire_fixtures_hit": 0,
+    "false_fires": 1,
+    "wrong_method_loads": 0
+  },
+  "spend": {
+    "campaign": "systematic-reflection",
+    "cap_usd": 10,
+    "spent_usd": 0.384339,
+    "attempt_sum_charged_usd": 0.384339,
+    "attempt_sum_reported_usd": 0.219622,
+    "stopped_by": null
+  },
+  "fixtures": {
+    "tune-plan-claim": {
+      "expected": "fire",
+      "methods": [
+        "counterfactual"
+      ],
+      "skill": "ce:plan",
+      "mode": "interactive",
+      "prereg_fixture_sha256": "b838bbe561fbb64da9b97326d682f62337f59afa755a83511ce4ba6e3a41a1ed",
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-plan": "387e0c0d3a8a16db4b78ca49089e1fe4a8a261730a2cc22d74847fec507327e3"
+      },
+      "counted_attempts": 3,
+      "excluded_attempts": 0,
+      "hits": 0,
+      "false_fires": 0,
+      "wrong_method_loads": 0,
+      "silent": null,
+      "verdict": "miss",
+      "attempts": [
+        {
+          "attempt": "a001",
+          "status": "completed",
+          "counted": true,
+          "outcome": "miss",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "document-review",
+            "document-review"
+          ],
+          "tool_calls": 28,
+          "charged_usd": 0.032828,
+          "spec_sha256": "fb68a0def92cfead99733429d0d176aba4c5b1c29d43af1693068ddf63d3eb3c",
+          "export_sha256": "ea178412cd8f64ee9050c001f40357d1b1898d3907d367dbcb1b711ad802123a"
+        },
+        {
+          "attempt": "a002",
+          "status": "completed",
+          "counted": true,
+          "outcome": "miss",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "deepen-plan",
+            "document-review",
+            "document-review"
+          ],
+          "tool_calls": 21,
+          "charged_usd": 0.027467,
+          "spec_sha256": "fb68a0def92cfead99733429d0d176aba4c5b1c29d43af1693068ddf63d3eb3c",
+          "export_sha256": "ea178412cd8f64ee9050c001f40357d1b1898d3907d367dbcb1b711ad802123a"
+        },
+        {
+          "attempt": "a003",
+          "status": "completed",
+          "counted": true,
+          "outcome": "miss",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [],
+          "tool_calls": 2,
+          "charged_usd": 0.00833,
+          "spec_sha256": "fb68a0def92cfead99733429d0d176aba4c5b1c29d43af1693068ddf63d3eb3c",
+          "export_sha256": "ea178412cd8f64ee9050c001f40357d1b1898d3907d367dbcb1b711ad802123a"
+        }
+      ]
+    },
+    "tune-plan-lanes": {
+      "expected": "fire",
+      "methods": [
+        "synthesis"
+      ],
+      "skill": "ce:plan",
+      "mode": "interactive",
+      "prereg_fixture_sha256": "930f71c15306dd27de69ae39a1fdb28f05b62daf3efe292cf27761da4bcd47e8",
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-plan": "fbe58b67221aa567e1d16827ba9151ae3c913c2461dab805d06d9319f478d24a",
+        "systematic-file:ce-plan/references/deepening-workflow.md": "2d169cc408f11798a837f166b245f4057bf322cf58b4c3e7d933a31e01e6fc24"
+      },
+      "counted_attempts": 3,
+      "excluded_attempts": 0,
+      "hits": 0,
+      "false_fires": 0,
+      "wrong_method_loads": 0,
+      "silent": null,
+      "verdict": "miss",
+      "attempts": [
+        {
+          "attempt": "a001",
+          "status": "completed",
+          "counted": true,
+          "outcome": "miss",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [],
+          "tool_calls": 0,
+          "charged_usd": 0.006417,
+          "spec_sha256": "9a2d7cecea2c4a44eca6c99aa5411f22d8749698f941ebe59ef0b7a561c36e24",
+          "export_sha256": "a790d7e7c3866856b4e2e1eeba8fe3af2c69c3709114ab3ba6778fc2cfcfeeac"
+        },
+        {
+          "attempt": "a002",
+          "status": "completed",
+          "counted": true,
+          "outcome": "miss",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [],
+          "tool_calls": 0,
+          "charged_usd": 0.00642,
+          "spec_sha256": "9a2d7cecea2c4a44eca6c99aa5411f22d8749698f941ebe59ef0b7a561c36e24",
+          "export_sha256": "a790d7e7c3866856b4e2e1eeba8fe3af2c69c3709114ab3ba6778fc2cfcfeeac"
+        },
+        {
+          "attempt": "a003",
+          "status": "completed",
+          "counted": true,
+          "outcome": "miss",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "using-systematic"
+          ],
+          "tool_calls": 7,
+          "charged_usd": 0.012104,
+          "spec_sha256": "9a2d7cecea2c4a44eca6c99aa5411f22d8749698f941ebe59ef0b7a561c36e24",
+          "export_sha256": "a790d7e7c3866856b4e2e1eeba8fe3af2c69c3709114ab3ba6778fc2cfcfeeac"
+        }
+      ]
+    },
+    "tune-plan-scoping": {
+      "expected": "silence",
+      "methods": [],
+      "skill": "ce:plan",
+      "mode": "interactive",
+      "prereg_fixture_sha256": "4aafc54832a654c440b706c41ec9b0eeb292154db0a76203cf53c2c21b4eafb8",
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-plan": "7f90645f4416ef121c75811d975c03217a959d942cb3cb590037c74cd32fe3b0"
+      },
+      "counted_attempts": 3,
+      "excluded_attempts": 0,
+      "hits": 0,
+      "false_fires": 0,
+      "wrong_method_loads": 0,
+      "silent": 3,
+      "verdict": "silent",
+      "attempts": [
+        {
+          "attempt": "a001",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [],
+          "tool_calls": 12,
+          "charged_usd": 0.014946,
+          "spec_sha256": "f487f53753d3cdd5dc085e1f173344ade89023966ef56ce2db811555883d69ee",
+          "export_sha256": "2f1b6d983ed1f6dab4d9c075aecc3b007376700fb3f7cd87cf506f3cc1a3608f"
+        },
+        {
+          "attempt": "a002",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [],
+          "tool_calls": 12,
+          "charged_usd": 0.016076,
+          "spec_sha256": "f487f53753d3cdd5dc085e1f173344ade89023966ef56ce2db811555883d69ee",
+          "export_sha256": "2f1b6d983ed1f6dab4d9c075aecc3b007376700fb3f7cd87cf506f3cc1a3608f"
+        },
+        {
+          "attempt": "a003",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [],
+          "tool_calls": 5,
+          "charged_usd": 0.01164,
+          "spec_sha256": "f487f53753d3cdd5dc085e1f173344ade89023966ef56ce2db811555883d69ee",
+          "export_sha256": "2f1b6d983ed1f6dab4d9c075aecc3b007376700fb3f7cd87cf506f3cc1a3608f"
+        }
+      ]
+    },
+    "tune-review-dedup": {
+      "expected": "silence",
+      "methods": [],
+      "skill": "ce:review",
+      "mode": "autofix",
+      "prereg_fixture_sha256": "b144e20eea3e7152f6e58eda48260e7e3e3cbea55b2c83d668a0956ddea1eed4",
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-review": "a1e4d4df57bca15a44c2e363516454d5251dc80444f5dea9cb22d955098af330"
+      },
+      "counted_attempts": 3,
+      "excluded_attempts": 0,
+      "hits": 0,
+      "false_fires": 1,
+      "wrong_method_loads": 0,
+      "silent": 2,
+      "verdict": "false_fire",
+      "attempts": [
+        {
+          "attempt": "a001",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [
+            "ce:review"
+          ],
+          "other_skill_loads": [
+            "using-systematic"
+          ],
+          "tool_calls": 6,
+          "charged_usd": 0.016203,
+          "spec_sha256": "4255496c18f5c1aa6a27c0acfb9c5b164471c5057130720bf2770460565aa1ae",
+          "export_sha256": "8611b714950c11ca7f1809994b3e6d48166ee310c3582c3b209b5c8b0a1e688d"
+        },
+        {
+          "attempt": "a002",
+          "status": "completed",
+          "counted": true,
+          "outcome": "false_fire",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": true,
+          "wrong_method": [],
+          "method_loads": [
+            "synthesis"
+          ],
+          "method_attempts": [
+            "synthesis"
+          ],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "test-driven-development",
+            "todos"
+          ],
+          "tool_calls": 12,
+          "charged_usd": 0.019953,
+          "spec_sha256": "4255496c18f5c1aa6a27c0acfb9c5b164471c5057130720bf2770460565aa1ae",
+          "export_sha256": "8611b714950c11ca7f1809994b3e6d48166ee310c3582c3b209b5c8b0a1e688d"
+        },
+        {
+          "attempt": "a003",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "todos",
+            "test-driven-development"
+          ],
+          "tool_calls": 11,
+          "charged_usd": 0.01951,
+          "spec_sha256": "4255496c18f5c1aa6a27c0acfb9c5b164471c5057130720bf2770460565aa1ae",
+          "export_sha256": "8611b714950c11ca7f1809994b3e6d48166ee310c3582c3b209b5c8b0a1e688d"
+        }
+      ]
+    },
+    "tune-review-disagree": {
+      "expected": "fire",
+      "methods": [
+        "synthesis"
+      ],
+      "skill": "ce:review",
+      "mode": "autofix",
+      "prereg_fixture_sha256": "a1af783160f90a4b8fa39b0d27db1b709725c6687bbc701d4fd942e3c5592ab1",
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-review": "a1e4d4df57bca15a44c2e363516454d5251dc80444f5dea9cb22d955098af330"
+      },
+      "counted_attempts": 3,
+      "excluded_attempts": 0,
+      "hits": 0,
+      "false_fires": 0,
+      "wrong_method_loads": 0,
+      "silent": null,
+      "verdict": "miss",
+      "attempts": [
+        {
+          "attempt": "a001",
+          "status": "completed",
+          "counted": true,
+          "outcome": "miss",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "todos"
+          ],
+          "tool_calls": 7,
+          "charged_usd": 0.017429,
+          "spec_sha256": "2d1519c6942967f7d01a43eee8625dcb5a60445d03410ca7a30260e6556301f1",
+          "export_sha256": "f4d7ec5a5053228b3f9c39751a430567b1128afa498eb610a7093b44a330cc5d"
+        },
+        {
+          "attempt": "a002",
+          "status": "completed",
+          "counted": true,
+          "outcome": "miss",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "todos"
+          ],
+          "tool_calls": 16,
+          "charged_usd": 0.019553,
+          "spec_sha256": "2d1519c6942967f7d01a43eee8625dcb5a60445d03410ca7a30260e6556301f1",
+          "export_sha256": "f4d7ec5a5053228b3f9c39751a430567b1128afa498eb610a7093b44a330cc5d"
+        },
+        {
+          "attempt": "a003",
+          "status": "completed",
+          "counted": true,
+          "outcome": "miss",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [
+            "ce:review"
+          ],
+          "other_skill_loads": [
+            "todos",
+            "test-driven-development"
+          ],
+          "tool_calls": 13,
+          "charged_usd": 0.024728,
+          "spec_sha256": "2d1519c6942967f7d01a43eee8625dcb5a60445d03410ca7a30260e6556301f1",
+          "export_sha256": "f4d7ec5a5053228b3f9c39751a430567b1128afa498eb610a7093b44a330cc5d"
+        }
+      ]
+    },
+    "tune-review-validator": {
+      "expected": "silence",
+      "methods": [],
+      "skill": "ce:review",
+      "mode": "autofix",
+      "prereg_fixture_sha256": "d5cdd05bad52d5b27ce4511dc48a52be387bc3a53ca009ce600619ef03a71217",
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-review": "a1e4d4df57bca15a44c2e363516454d5251dc80444f5dea9cb22d955098af330"
+      },
+      "counted_attempts": 3,
+      "excluded_attempts": 0,
+      "hits": 0,
+      "false_fires": 0,
+      "wrong_method_loads": 0,
+      "silent": 3,
+      "verdict": "silent",
+      "attempts": [
+        {
+          "attempt": "a001",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [
+            "ce:review"
+          ],
+          "other_skill_loads": [],
+          "tool_calls": 6,
+          "charged_usd": 0.019684,
+          "spec_sha256": "49860aacf31dbb251e5c8d3c0881b3aa52a1d87ce0b619695f19a0b074b6fc1f",
+          "export_sha256": "db6f995ec167b1b3930fb91cc016533e7c86f29bed3d8309c21588b0d2b87a32"
+        },
+        {
+          "attempt": "a002",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "test-driven-development",
+            "todos"
+          ],
+          "tool_calls": 9,
+          "charged_usd": 0.01532,
+          "spec_sha256": "49860aacf31dbb251e5c8d3c0881b3aa52a1d87ce0b619695f19a0b074b6fc1f",
+          "export_sha256": "db6f995ec167b1b3930fb91cc016533e7c86f29bed3d8309c21588b0d2b87a32"
+        },
+        {
+          "attempt": "a003",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "todos",
+            "test-driven-development"
+          ],
+          "tool_calls": 15,
+          "charged_usd": 0.025707,
+          "spec_sha256": "49860aacf31dbb251e5c8d3c0881b3aa52a1d87ce0b619695f19a0b074b6fc1f",
+          "export_sha256": "db6f995ec167b1b3930fb91cc016533e7c86f29bed3d8309c21588b0d2b87a32"
+        }
+      ]
+    },
+    "tune-review-verdict": {
+      "expected": "silence",
+      "methods": [],
+      "skill": "ce:review",
+      "mode": "autofix",
+      "prereg_fixture_sha256": "fb14fea95bc1e8d7b8d7c8246da9f3abeb3224c863c83b5cf9e439ed37066c4d",
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-review": "a1e4d4df57bca15a44c2e363516454d5251dc80444f5dea9cb22d955098af330"
+      },
+      "counted_attempts": 3,
+      "excluded_attempts": 0,
+      "hits": 0,
+      "false_fires": 0,
+      "wrong_method_loads": 0,
+      "silent": 3,
+      "verdict": "silent",
+      "attempts": [
+        {
+          "attempt": "a001",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [
+            "ce:review"
+          ],
+          "other_skill_loads": [
+            "todos",
+            "test-driven-development"
+          ],
+          "tool_calls": 11,
+          "charged_usd": 0.024225,
+          "spec_sha256": "130228a57fd7bfacd663c5b6ea560886b774336662023689812f4ef1d3d9e66f",
+          "export_sha256": "4dd2995912b5eac7fd9aeb29a1790b01922972e8af05463c7438e590706360fb"
+        },
+        {
+          "attempt": "a002",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "test-driven-development",
+            "todos"
+          ],
+          "tool_calls": 11,
+          "charged_usd": 0.020651,
+          "spec_sha256": "130228a57fd7bfacd663c5b6ea560886b774336662023689812f4ef1d3d9e66f",
+          "export_sha256": "4dd2995912b5eac7fd9aeb29a1790b01922972e8af05463c7438e590706360fb"
+        },
+        {
+          "attempt": "a003",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [
+            "ce:review"
+          ],
+          "other_skill_loads": [
+            "todos",
+            "test-driven-development"
+          ],
+          "tool_calls": 8,
+          "charged_usd": 0.025149,
+          "spec_sha256": "130228a57fd7bfacd663c5b6ea560886b774336662023689812f4ef1d3d9e66f",
+          "export_sha256": "4dd2995912b5eac7fd9aeb29a1790b01922972e8af05463c7438e590706360fb"
+        }
+      ]
+    }
+  }
+}
