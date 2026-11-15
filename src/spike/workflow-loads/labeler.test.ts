@@ -20,6 +20,8 @@ import {
   parseReply,
   REASON_MAX,
   resolveLabelerKey,
+  TRANSPORT_OUTAGE_THRESHOLD,
+  TRANSPORT_RETRY_DELAY_MS,
 } from './labeler'
 import { type Chunk, chunkScope, renderStimulusBlock, SCRUB_PLACEHOLDER, renderSessions } from './mask'
 import { freezeManifest, openPrivateRoot, walkManifest } from './store'
@@ -97,10 +99,12 @@ const base = (f: Fixture, transport: LabelerTransport, chunks: readonly Chunk[],
   transport,
   nonce: () => NONCE,
   sessionId: () => 'header-session',
+  retryDelayMs: 0,
   ...extra,
 })
 
 const outcomesDir = (f: Fixture) => join(f.privateRoot.root, 'labeler', 'outcomes')
+const attemptsDir = (f: Fixture) => join(f.privateRoot.root, 'labeler', 'attempts')
 const repliesDir = (f: Fixture) => join(f.privateRoot.root, 'labeler', 'replies')
 
 describe('the prompt', () => {
@@ -408,6 +412,32 @@ describe('spend', () => {
     expect(run.coverageComplete).toBe(false)
   })
 
+  test('a call is refused when the spend so far plus its own estimate would pass the cap', async () => {
+    const f = fixture({ spend_cap_usd: 1.5 })
+    const chunks = [chunkOf(['a1'], { sessionId: 's1' }), chunkOf(['b1'], { sessionId: 's2' })]
+    const transport = scripted([reply(), reply()])
+    const run = await labelChunks(base(f, transport, chunks, { estimateUsd: ONE }))
+    expect(transport.requests).toHaveLength(1)
+    expect(run.results.map((r) => r.outcome)).toEqual([expect.objectContaining({ status: 'labeled' }), { status: 'not_attempted', reason: 'spend_cap' }])
+    expect(run.totals.spendUsd).toBe(1)
+  })
+
+  test('a retry whose estimate would pass the cap ends the chunk as failed with the spend cap', async () => {
+    const f = fixture({ spend_cap_usd: 1.5, retry_count: 3 })
+    const transport = scripted(['garbage', 'garbage'])
+    const run = await labelChunks(base(f, transport, [chunkOf(['a1'])], { estimateUsd: ONE }))
+    expect(transport.requests).toHaveLength(1)
+    expect(run.results[0]?.outcome).toEqual({ status: 'failed', attempts: 1, reason: 'spend_cap' })
+  })
+
+  test('a call that lands exactly on the cap is allowed', async () => {
+    const f = fixture({ spend_cap_usd: 2 })
+    const transport = scripted([reply(), reply()])
+    const run = await labelChunks(base(f, transport, [chunkOf(['a1'], { sessionId: 's1' }), chunkOf(['b1'], { sessionId: 's2' })], { estimateUsd: ONE }))
+    expect(transport.requests).toHaveLength(2)
+    expect(run.totals.spendUsd).toBe(2)
+  })
+
   test('spend already recorded by an earlier run counts toward the cap', async () => {
     const f = fixture({ spend_cap_usd: 2 })
     const chunks = [chunkOf(['a1'], { sessionId: 's1' }), chunkOf(['b1'], { sessionId: 's2' }), chunkOf(['c1'], { sessionId: 's3' })]
@@ -417,6 +447,184 @@ describe('spend', () => {
     expect(second.requests).toHaveLength(1)
     expect(run.priorSpendUsd).toBe(1)
     expect(run.results.map((r) => r.outcome.status)).toEqual(['labeled', 'labeled', 'not_attempted'])
+  })
+})
+
+describe('spend records', () => {
+  const ONE = () => 1
+  const records = (f: Fixture): Record<string, unknown>[] => readdirSync(attemptsDir(f)).sort().map((name) => JSON.parse(readFileSync(join(attemptsDir(f), name), 'utf8')) as Record<string, unknown>)
+
+  test('an attempt record is on disk before the request goes out, and a completion record with the actual cost follows the response', async () => {
+    const f = fixture({ spend_cap_usd: 5 })
+    const during: Record<string, unknown>[][] = []
+    const transport = scripted([{ text: reply(), inputTokens: 1_000_000, outputTokens: 0 }])
+    const inner = transport.complete.bind(transport)
+    transport.complete = (request) => {
+      during.push(existsSync(attemptsDir(f)) ? records(f) : [])
+      return inner(request)
+    }
+    await labelChunks(base(f, transport, [chunkOf(['a1'])], { estimateUsd: () => 0.25 }))
+    expect(during[0]).toEqual([expect.objectContaining({ kind: 'attempt', estimateUsd: 0.25 })])
+    expect(records(f).map((r) => r.kind)).toEqual(['attempt', 'completion'])
+    expect(records(f)[1]).toMatchObject({ kind: 'completion', costUsd: 5 })
+    expect(records(f)[1]?.attemptId).toBe(records(f)[0]?.attemptId)
+    expect(statSync(attemptsDir(f)).mode & 0o777).toBe(0o700)
+    for (const name of readdirSync(attemptsDir(f))) expect(statSync(join(attemptsDir(f), name)).mode & 0o777).toBe(0o600)
+  })
+
+  test('prior spend is the sum over attempts: a completion replaces its estimate, and an attempt with no completion stays at its estimate', async () => {
+    const f = fixture({ spend_cap_usd: 100, retry_count: 0 })
+    const chunk = chunkOf(['a1'])
+    await labelChunks(base(f, scripted([{ text: 'garbage', inputTokens: 1_000_000, outputTokens: 0 }]), [chunk], { estimateUsd: () => 0.25 }))
+    const second = await labelChunks(base(f, scripted([reply()]), [chunk], { estimateUsd: () => 0.25 }))
+    expect(second.priorSpendUsd).toBe(5)
+    const third = await labelChunks(base(f, scripted([]), [chunk]))
+    expect(third.priorSpendUsd).toBe(5.25)
+  })
+
+  test('an attempt that never finished, as after a crash, still counts toward the cap in a later run', async () => {
+    const f = fixture({ spend_cap_usd: 1.5, retry_count: 0 })
+    let crashed = false
+    f.privateRoot.now = () => {
+      if (crashed) throw new Error('process died')
+      return new Date()
+    }
+    const dying = scripted([new Error('connection lost after the request was sent')])
+    const inner = dying.complete.bind(dying)
+    dying.complete = (request) => {
+      crashed = true
+      return inner(request)
+    }
+    await expect(labelChunks(base(f, dying, [chunkOf(['a1'])], { estimateUsd: ONE }))).rejects.toThrow('process died')
+    expect(existsSync(outcomesDir(f))).toBe(false)
+
+    crashed = false
+    const transport = scripted([reply()])
+    const run = await labelChunks(base(f, transport, [chunkOf(['a1'])], { estimateUsd: ONE }))
+    expect(run.priorSpendUsd).toBe(1)
+    expect(transport.requests).toHaveLength(0)
+    expect(run.results[0]?.outcome).toEqual({ status: 'not_attempted', reason: 'spend_cap' })
+  })
+
+  test('an attempt record that does not parse stops the run before any call', async () => {
+    const f = fixture()
+    await labelChunks(base(f, scripted([reply()]), [chunkOf(['a1'])]))
+    const [name] = readdirSync(attemptsDir(f))
+    writeFileSync(join(attemptsDir(f), name as string), '{"not":"a record"}')
+    const transport = scripted([reply()])
+    const error = await labelChunks(base(f, transport, [chunkOf(['b1'], { sessionId: 's2' })])).catch((e: unknown) => e)
+    expect((error as LabelerRefusal).reason).toBe('outcomes_invalid')
+    expect(transport.requests).toHaveLength(0)
+  })
+})
+
+describe('a proxy outage', () => {
+  const failures = (n: number): Script[] => Array.from({ length: n }, () => new TransportError('down'))
+  const chunksOf = (n: number): Chunk[] => Array.from({ length: n }, (_, i) => chunkOf([`st_${i}`], { sessionId: `s${i}` }))
+
+  test('the threshold is a small named constant', () => {
+    expect(TRANSPORT_OUTAGE_THRESHOLD).toBe(3)
+  })
+
+  test('after the threshold of consecutive transport failures across chunks, the rest are not attempted with the outage reason', async () => {
+    const f = fixture({ retry_count: 0 })
+    const transport = scripted(failures(5))
+    const run = await labelChunks(base(f, transport, chunksOf(5)))
+    expect(transport.requests).toHaveLength(TRANSPORT_OUTAGE_THRESHOLD)
+    expect(run.results.map((r) => r.outcome)).toEqual([
+      { status: 'failed', attempts: 1, reason: 'transport' },
+      { status: 'failed', attempts: 1, reason: 'transport' },
+      { status: 'failed', attempts: 1, reason: 'transport' },
+      { status: 'not_attempted', reason: 'transport_outage' },
+      { status: 'not_attempted', reason: 'transport_outage' },
+    ])
+    expect(run.totals).toMatchObject({ calls: 3, failed: 3, notAttempted: 2 })
+    expect(run.coverageComplete).toBe(false)
+  })
+
+  test('an answer between failures resets the count', async () => {
+    const f = fixture({ retry_count: 0 })
+    const transport = scripted([...failures(2), reply(), ...failures(2), reply()])
+    const run = await labelChunks(base(f, transport, chunksOf(6)))
+    expect(transport.requests).toHaveLength(6)
+    expect(run.results.some((r) => r.outcome.status === 'not_attempted')).toBe(false)
+  })
+
+  test('a reply that does not parse is an answer and resets the count', async () => {
+    const f = fixture({ retry_count: 0 })
+    const transport = scripted([...failures(2), 'garbage', ...failures(2), reply()])
+    const run = await labelChunks(base(f, transport, chunksOf(6)))
+    expect(transport.requests).toHaveLength(6)
+    expect(run.results.some((r) => r.outcome.status === 'not_attempted')).toBe(false)
+  })
+
+  test('replies that do not parse never count as an outage', async () => {
+    const f = fixture({ retry_count: 0 })
+    const transport = scripted(['garbage', 'garbage', 'garbage', 'garbage'])
+    const run = await labelChunks(base(f, transport, chunksOf(4)))
+    expect(transport.requests).toHaveLength(4)
+    expect(run.results.every((r) => r.outcome.status === 'failed')).toBe(true)
+  })
+
+  test('retries inside one chunk count too: the chunk stops retrying and ends failed with the outage reason', async () => {
+    const f = fixture({ retry_count: 5 })
+    const transport = scripted(failures(6))
+    const run = await labelChunks(base(f, transport, chunksOf(2)))
+    expect(transport.requests).toHaveLength(TRANSPORT_OUTAGE_THRESHOLD)
+    expect(run.results.map((r) => r.outcome)).toEqual([{ status: 'failed', attempts: 3, reason: 'transport_outage' }, { status: 'not_attempted', reason: 'transport_outage' }])
+  })
+
+  test('a chunk that holds a secret is still recorded without a call during an outage', async () => {
+    const f = fixture({ retry_count: 0 })
+    const transport = scripted(failures(3))
+    const run = await labelChunks(base(f, transport, [...chunksOf(3), chunkOf(['leaky'], { sessionId: 'sx', text: `leftover ${PLANTED}` })]))
+    expect(run.results[3]?.outcome).toEqual({ status: 'failed', attempts: 0, reason: 'unscrubbed_input' })
+  })
+
+  test('a later run tries the chunks the outage left, and coverage names the outage', async () => {
+    const f = fixture({ retry_count: 0 })
+    const chunks = chunksOf(5)
+    const first = await labelChunks(base(f, scripted(failures(3)), chunks))
+    expect(labelingCoverage(f.privateRoot, chunks, first.declarationHash)).toEqual({ chunks: 5, labeled: 0, failed: 3, notAttempted: 2, spendCapReached: false, transportOutage: 2 })
+    const transport = scripted(chunks.map(() => reply()))
+    const again = await labelChunks(base(f, transport, chunks))
+    expect(transport.requests).toHaveLength(5)
+    expect(again.coverageComplete).toBe(true)
+    expect(labelingCoverage(f.privateRoot, chunks, first.declarationHash)).toMatchObject({ labeled: 5, transportOutage: 0 })
+  })
+
+  test('an outage is not the spend cap, and the spend cap is not an outage', async () => {
+    const f = fixture({ retry_count: 0, spend_cap_usd: 1 })
+    const chunks = chunksOf(2)
+    const run = await labelChunks(base(f, scripted([reply()]), chunks, { estimateUsd: () => 1 }))
+    expect(labelingCoverage(f.privateRoot, chunks, run.declarationHash)).toMatchObject({ spendCapReached: true, transportOutage: 0 })
+    const g = fixture({ retry_count: 0 })
+    const gchunks = chunksOf(4)
+    const outage = await labelChunks(base(g, scripted(failures(3)), gchunks))
+    expect(labelingCoverage(g.privateRoot, gchunks, outage.declarationHash)).toMatchObject({ spendCapReached: false, transportOutage: 1 })
+  })
+
+  test('a pause separates retries after a transport failure, and only those', async () => {
+    const f = fixture({ retry_count: 3 })
+    const pauses: number[] = []
+    const transport = scripted([new TransportError('down'), 'garbage', new TransportError('down'), reply()])
+    await labelChunks(base(f, transport, [chunkOf(['a1'])], { retryDelayMs: 25, sleep: async (ms: number) => void pauses.push(ms) }))
+    expect(transport.requests).toHaveLength(4)
+    expect(pauses).toEqual([25, 25])
+  })
+
+  test('no pause follows the last attempt of a chunk or the failure that trips the outage', async () => {
+    const f = fixture({ retry_count: 0 })
+    const pauses: number[] = []
+    await labelChunks(base(f, scripted(failures(3)), chunksOf(3), { retryDelayMs: 25, sleep: async (ms: number) => void pauses.push(ms) }))
+    expect(pauses).toEqual([])
+    const g = fixture({ retry_count: 5 })
+    await labelChunks(base(g, scripted(failures(3)), chunksOf(1), { retryDelayMs: 25, sleep: async (ms: number) => void pauses.push(ms) }))
+    expect(pauses).toEqual([25, 25])
+  })
+
+  test('the default pause is a fixed constant', () => {
+    expect(TRANSPORT_RETRY_DELAY_MS).toBeGreaterThan(0)
   })
 })
 
@@ -739,6 +947,52 @@ describe('the real transport', () => {
     expect(seen).toHaveLength(0)
   })
 
+  describe('redirects', () => {
+    const redirecting = (seen: { url: string; init: RequestInit }[], spies: { reads: number }, status = 307): typeof fetch =>
+      (async (url: string | URL | Request, init?: RequestInit) => {
+        seen.push({ url: String(url), init: init ?? {} })
+        const read = () => {
+          spies.reads += 1
+          return Promise.resolve('LOCATION_BODY_MARKER')
+        }
+        return { status, ok: false, type: 'basic', headers: new Headers({ location: 'https://elsewhere.invalid/v1/chat/completions' }), body: null, text: read, json: read, arrayBuffer: read } as unknown as Response
+      }) as unknown as typeof fetch
+
+    test('a 3xx answer is not followed: one request, sent with redirects off, and the failure is a fixed reason with the body unread', async () => {
+      const f = fixture({ retry_count: 0 })
+      const seen: { url: string; init: RequestInit }[] = []
+      const spies = { reads: 0 }
+      const transport = createLabelerTransport({ declaration: f.declaration, key: 'proxy-key-value', baseUrl: ENDPOINT, fetch: redirecting(seen, spies) })
+      const error = await transport.complete({ model: 'm', system: 's', user: 'u', sessionId: 'x' }).catch((e: unknown) => e)
+      expect(error).toBeInstanceOf(TransportError)
+      expect((error as Error).message).toContain('redirect refused')
+      expect((error as Error).message).not.toContain('elsewhere')
+      expect((error as Error).message).not.toContain('LOCATION_BODY_MARKER')
+      expect(seen).toHaveLength(1)
+      expect(seen[0]?.init.redirect).toBe('manual')
+      expect(spies.reads).toBe(0)
+
+      const run = await labelChunks(base(f, transport, [chunkOf(['a1'])]))
+      expect(seen.every((s) => s.url === `${ENDPOINT}/chat/completions`)).toBe(true)
+      expect(run.results[0]?.outcome).toEqual({ status: 'failed', attempts: 1, reason: 'transport' })
+      expect(JSON.stringify(run)).not.toContain('elsewhere')
+    })
+
+    test('every 3xx status is refused, and a 2xx answer passes through untouched', async () => {
+      const f = fixture({ retry_count: 0 })
+      for (const status of [301, 302, 303, 307, 308]) {
+        const seen: { url: string; init: RequestInit }[] = []
+        const transport = createLabelerTransport({ declaration: f.declaration, key: 'proxy-key-value', baseUrl: ENDPOINT, fetch: redirecting(seen, { reads: 0 }, status) })
+        await expect(transport.complete({ model: 'm', system: 's', user: 'u', sessionId: 'x' })).rejects.toThrow('redirect refused')
+        expect(seen).toHaveLength(1)
+      }
+      const seen: { url: string; init: RequestInit }[] = []
+      const ok = createLabelerTransport({ declaration: f.declaration, key: 'proxy-key-value', baseUrl: ENDPOINT, fetch: fakeFetch([completion(reply())], seen) })
+      expect((await ok.complete({ model: 'm', system: 's', user: 'u', sessionId: 'x' })).text).toBe(reply())
+      expect(seen[0]?.init.redirect).toBe('manual')
+    })
+  })
+
   test('a transport failure message does not carry the key', async () => {
     const f = fixture({ retry_count: 0 })
     const failing = (async () => {
@@ -809,7 +1063,7 @@ describe('labeling coverage', () => {
     const chunks = [chunkOf(['a1'], { sessionId: 's1' }), chunkOf(['b1'], { sessionId: 's2' })]
     const run = await labelChunks(base(f, scripted([reply(), reply()]), chunks, { estimateUsd: ONE }))
     // the cap is exactly spent, but no chunk was cut short by it
-    expect(labelingCoverage(f.privateRoot, chunks, run.declarationHash)).toEqual({ chunks: 2, labeled: 2, failed: 0, notAttempted: 0, spendCapReached: false })
+    expect(labelingCoverage(f.privateRoot, chunks, run.declarationHash)).toEqual({ chunks: 2, labeled: 2, failed: 0, notAttempted: 0, spendCapReached: false, transportOutage: 0 })
   })
 
   test('a failed chunk and a chunk with no stored outcome are both incomplete; only a spend-cap stop sets the cap flag', async () => {
@@ -817,16 +1071,16 @@ describe('labeling coverage', () => {
     const chunks = [chunkOf(['a1'], { sessionId: 's1' }), chunkOf(['b1'], { sessionId: 's2' })]
     const run = await labelChunks(base(f, scripted(['garbage', 'garbage']), [chunks[0] as Chunk]))
     expect(run.results[0]?.outcome).toMatchObject({ status: 'failed', reason: 'invalid_json' })
-    expect(labelingCoverage(f.privateRoot, chunks, run.declarationHash)).toEqual({ chunks: 2, labeled: 0, failed: 1, notAttempted: 1, spendCapReached: false })
+    expect(labelingCoverage(f.privateRoot, chunks, run.declarationHash)).toEqual({ chunks: 2, labeled: 0, failed: 1, notAttempted: 1, spendCapReached: false, transportOutage: 0 })
   })
 
   test('a chunk stopped by the spend cap, failed or not attempted, sets the flag', async () => {
     const f = fixture({ spend_cap_usd: 1, retry_count: 3 })
     const chunks = [chunkOf(['a1'], { sessionId: 's1' }), chunkOf(['b1'], { sessionId: 's2' })]
     const run = await labelChunks(base(f, scripted(['garbage']), chunks, { estimateUsd: ONE }))
-    expect(labelingCoverage(f.privateRoot, chunks, run.declarationHash)).toEqual({ chunks: 2, labeled: 0, failed: 1, notAttempted: 1, spendCapReached: true })
+    expect(labelingCoverage(f.privateRoot, chunks, run.declarationHash)).toEqual({ chunks: 2, labeled: 0, failed: 1, notAttempted: 1, spendCapReached: true, transportOutage: 0 })
     // only the not-attempted one stopped by the cap
-    expect(labelingCoverage(f.privateRoot, [chunks[1] as Chunk], run.declarationHash)).toMatchObject({ notAttempted: 1, spendCapReached: true })
+    expect(labelingCoverage(f.privateRoot, [chunks[1] as Chunk], run.declarationHash)).toMatchObject({ notAttempted: 1, spendCapReached: true, transportOutage: 0 })
   })
 
   test('the newest outcome of a chunk counts, so a failed chunk that a later run labeled is labeled', async () => {
@@ -834,7 +1088,7 @@ describe('labeling coverage', () => {
     const chunk = chunkOf(['a1'])
     await labelChunks(base(f, scripted(['garbage']), [chunk]))
     const run = await labelChunks(base(f, scripted([reply({ stimulus_id: 'a1' })]), [chunk]))
-    expect(labelingCoverage(f.privateRoot, [chunk], run.declarationHash)).toEqual({ chunks: 1, labeled: 1, failed: 0, notAttempted: 0, spendCapReached: false })
+    expect(labelingCoverage(f.privateRoot, [chunk], run.declarationHash)).toEqual({ chunks: 1, labeled: 1, failed: 0, notAttempted: 0, spendCapReached: false, transportOutage: 0 })
   })
 
   test('outcomes stored for chunks that are not in the list, and for another declaration, add nothing', async () => {
@@ -842,12 +1096,12 @@ describe('labeling coverage', () => {
     const chunks = [chunkOf(['a1'], { sessionId: 's1' }), chunkOf(['b1'], { sessionId: 's2' })]
     const run = await labelChunks(base(f, scripted([reply(), reply()]), chunks))
     expect(labelingCoverage(f.privateRoot, [chunks[0] as Chunk], run.declarationHash)).toMatchObject({ chunks: 1, labeled: 1 })
-    expect(labelingCoverage(f.privateRoot, chunks, 'f'.repeat(64))).toEqual({ chunks: 2, labeled: 0, failed: 0, notAttempted: 2, spendCapReached: false })
+    expect(labelingCoverage(f.privateRoot, chunks, 'f'.repeat(64))).toEqual({ chunks: 2, labeled: 0, failed: 0, notAttempted: 2, spendCapReached: false, transportOutage: 0 })
   })
 
   test('no chunks is a zero count, not an error', () => {
     const f = fixture()
-    expect(labelingCoverage(f.privateRoot, [], 'f'.repeat(64))).toEqual({ chunks: 0, labeled: 0, failed: 0, notAttempted: 0, spendCapReached: false })
+    expect(labelingCoverage(f.privateRoot, [], 'f'.repeat(64))).toEqual({ chunks: 0, labeled: 0, failed: 0, notAttempted: 0, spendCapReached: false, transportOutage: 0 })
   })
 
   test('an unreadable outcome file is refused, as it is for loading proposals', async () => {

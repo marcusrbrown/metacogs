@@ -53,7 +53,7 @@ function sampleReport(overrides: Partial<CountReport> = {}): CountReport {
     },
     sample: { considered: 120, eligible: 41, sampled: 40, exclusions: { child_session: 30, outside_window: 12, excluded_project_root: 4, already_sampled: 0, no_workflow_load: 33, unfinished: 2 } },
     unreadableRows: 3,
-    coverage: { chunks: 30, labeled: 29, failed: 1, notAttempted: 0, spendCapReached: false },
+    coverage: { chunks: 30, labeled: 29, failed: 1, notAttempted: 0, spendCapReached: false, transportOutage: 0 },
     scrubbed: { scrubbedOutputs: 5, scrubbedInputs: 2, scrubbedStimuli: 1, redactedEmails: 3 },
     omissions: { sampleSize: 20, found: 1 },
     slots: ['initial'],
@@ -110,7 +110,7 @@ describe('projectCounts: the fixed-key projection', () => {
         google: { counterfactual: zero(), synthesis: zero() },
         other: { counterfactual: zero(), synthesis: zero() },
       },
-      labeling: { chunks: 30, failed: 1, not_attempted: 0 },
+      labeling: { chunks: 30, failed: 1, not_attempted: 0, transport_outage: 0 },
       scrubbed: { outputs: 5, inputs: 2, stimuli: 1, redacted_emails: 3 },
       omissions: { sample_size: 20, found: 1 },
       deviations: ['masking_fix', 'session_cap_raise'],
@@ -258,6 +258,22 @@ describe('the projection schema', () => {
     expect(projectionSchema.safeParse(noted).success).toBe(true)
   })
 
+  test('rejects chunks stopped by a proxy outage with no note to say so: the count and its note go together', () => {
+    const silent = withAt(withAt(valid(), ['coverage_notes'], (t, k) => (t[k] = ['unreadable_rows'])), ['labeling', 'transport_outage'], (t, k) => (t[k] = 2))
+    expect(projectionSchema.safeParse(silent).success).toBe(false)
+    const noted = withAt(withAt(valid(), ['coverage_notes'], (t, k) => (t[k] = ['unreadable_rows', 'transport_outage'])), ['labeling', 'transport_outage'], (t, k) => (t[k] = 2))
+    expect(projectionSchema.safeParse(noted).success).toBe(true)
+  })
+
+  test('the outage count and note come through from the report, and its count shows in the table', () => {
+    const projection = projectCounts(
+      sampleReport({ outcome: 'inconclusive', notes: ['labeling_incomplete', 'transport_outage'], unreadableRows: 0, coverage: { chunks: 30, labeled: 26, failed: 1, notAttempted: 3, spendCapReached: false, transportOutage: 3 } }),
+    )
+    expect(projection.labeling).toEqual({ chunks: 30, failed: 1, not_attempted: 3, transport_outage: 3 })
+    expect(projection.coverage_notes).toEqual(['labeling_incomplete', 'transport_outage'])
+    expect(renderCountsTable(projection)).toContain('| 30 | 1 | 3 | 3 | 5 | 2 | 1 | 3 |')
+  })
+
   test('projectCounts refuses a report that carries text where a code belongs', () => {
     const junk = sampleReport({ deviations: ['a masking fix for session ses_123' as never] })
     expect(() => projectCounts(junk)).toThrow()
@@ -340,7 +356,8 @@ describe('the counts table', () => {
     expect(table).toContain('| 30 | 12 | 4 | 0 | 33 | 2 |')
     expect(table).toContain('Unfinished')
     expect(table).toContain('Unreadable rows')
-    expect(table).toContain('| 30 | 1 | 0 | 5 | 2 | 1 | 3 |')
+    expect(table).toContain('| 30 | 1 | 0 | 0 | 5 | 2 | 1 | 3 |')
+    expect(table).toContain('Stopped by outage')
     expect(table).toContain('Deviations: masking_fix, session_cap_raise')
     expect(table).toContain(`Declaration hash: ${HASH}`)
     expect(table.endsWith('\n')).toBe(true)
@@ -527,7 +544,7 @@ describe('end to end: freeze, view, label, judge, lock, count, project, purge', 
         google: { counterfactual: zero(), synthesis: zero() },
         other: { counterfactual: zero(), synthesis: zero() },
       },
-      labeling: { chunks: 2, failed: 0, not_attempted: 0 },
+      labeling: { chunks: 2, failed: 0, not_attempted: 0, transport_outage: 0 },
       scrubbed: { outputs: 0, inputs: 0, stimuli: 0, redacted_emails: 0 },
       omissions: { sample_size: 1, found: 1 },
       deviations: [],

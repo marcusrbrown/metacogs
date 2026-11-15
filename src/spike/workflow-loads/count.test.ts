@@ -363,7 +363,7 @@ function countsWith(options: { accepted?: Partial<Record<Method, Partial<Record<
   return { stimuli: 0, methods, families }
 }
 
-const COMPLETE: LabelingCoverage = { chunks: 4, labeled: 4, failed: 0, notAttempted: 0, spendCapReached: false }
+const COMPLETE: LabelingCoverage = { chunks: 4, labeled: 4, failed: 0, notAttempted: 0, spendCapReached: false, transportOutage: 0 }
 const decide = (parts: { counts?: LoadCounts; coverage?: Partial<LabelingCoverage>; omissionsFound?: number; unreadableRows?: number; declaration?: Parameters<typeof sampleDeclaration>[0] } = {}) => {
   const declaration = sampleDeclaration(parts.declaration)
   return decideOutcome({ declaration, counts: parts.counts ?? countsWith(), coverage: { ...COMPLETE, ...parts.coverage }, omissionsFound: parts.omissionsFound ?? 0, unreadableRows: parts.unreadableRows ?? 0 })
@@ -413,14 +413,19 @@ describe('decideOutcome: errors-first', () => {
     expect(decide({ coverage: { labeled: 3, notAttempted: 1, spendCapReached: true } })).toEqual({ outcome: 'inconclusive', notes: ['labeling_incomplete', 'spend_cap_reached'] })
   })
 
+  test('chunks stopped by a proxy outage keep the outcome from being clean, and carry their own note', () => {
+    expect(decide({ coverage: { labeled: 3, notAttempted: 1, transportOutage: 1 } })).toEqual({ outcome: 'inconclusive', notes: ['labeling_incomplete', 'transport_outage'] })
+    expect(decide({ coverage: { transportOutage: 0 } })).toEqual({ outcome: 'clean', notes: [] })
+  })
+
   test('one miss with minimums unmet and the spend cap reached is errors observed, with every coverage note', () => {
     const result = decide({
       counts: countsWith({ accepted: { counterfactual: { expected_fire: 1 } }, buckets: { counterfactual: { miss: 1 } } }),
-      coverage: { labeled: 2, notAttempted: 2, spendCapReached: true },
+      coverage: { labeled: 2, notAttempted: 2, spendCapReached: true, transportOutage: 1 },
       omissionsFound: 5,
       unreadableRows: 1,
     })
-    expect(result).toEqual({ outcome: 'errors_observed', notes: ['minimum_unmet', 'labeling_incomplete', 'spend_cap_reached', 'omission_limit_exceeded', 'unreadable_rows'] })
+    expect(result).toEqual({ outcome: 'errors_observed', notes: ['minimum_unmet', 'labeling_incomplete', 'spend_cap_reached', 'omission_limit_exceeded', 'unreadable_rows', 'transport_outage'] })
   })
 
   test('a miss alone is errors observed with no notes when coverage and minimums are fine', () => {
@@ -452,7 +457,7 @@ describe('decideOutcome: errors-first', () => {
   })
 
   test('notes come in the fixed order, each once', () => {
-    expect(COVERAGE_NOTES).toEqual(['minimum_unmet', 'labeling_incomplete', 'spend_cap_reached', 'omission_limit_exceeded', 'unreadable_rows'])
+    expect(COVERAGE_NOTES).toEqual(['minimum_unmet', 'labeling_incomplete', 'spend_cap_reached', 'omission_limit_exceeded', 'unreadable_rows', 'transport_outage'])
   })
 })
 
@@ -490,7 +495,7 @@ function fixture(overrides: Parameters<typeof gatedRepo>[0] = {}) {
     for (const ref of pendingOmissions(openMarking(marking))) answerOmission(marking, ref, { counterfactual: 'neither', synthesis: 'neither' })
     return lockMarks(marking)
   }
-  const labeling = (slot: 'initial' | 'added'): Partial<Record<'initial' | 'added', SlotLabeling>> => ({ [slot]: { coverage: COMPLETE, counters: { scrubbedOutputs: 1, scrubbedInputs: 2, scrubbedStimuli: 3, redactedEmails: 4 } } })
+  const labeling = (slot: 'initial' | 'added', coverage: LabelingCoverage = COMPLETE): Partial<Record<'initial' | 'added', SlotLabeling>> => ({ [slot]: { coverage, counters: { scrubbedOutputs: 1, scrubbedInputs: 2, scrubbedStimuli: 3, redactedEmails: 4 } } })
   return { repo, store, privateRoot, input, seed, build, lock, labeling }
 }
 
@@ -556,8 +561,23 @@ describe('runCount', () => {
     expect(report.sample.eligible).toBe(a.eligible)
     expect(report.sample.exclusions).toEqual(a.exclusions)
     expect(report.coverage.chunks).toBe(2 * COMPLETE.chunks)
+    expect(report.coverage.transportOutage).toBe(0)
     expect(report.scrubbed.scrubbedOutputs).toBe(2)
     expect(report.deviations).toEqual(['session_cap_raise'])
+  })
+
+  test('chunks stopped by an outage are summed over the slots and named in the notes', () => {
+    const f = fixture({ session_cap: 2 })
+    for (const id of ['s1', 's2', 's3', 's4']) f.seed(id, true)
+    const initial = f.build('initial')
+    f.lock(initial, 'initial', [])
+    recordDeviation({ git: f.repo.git, entry: { code: 'session_cap_raise', reason: 'too few marks', session_cap: 4 } })
+    f.lock(f.build('added'), 'added', [])
+    const stopped = { ...COMPLETE, labeled: 2, notAttempted: 2, transportOutage: 2 }
+    const report = runCount({ ...f.input, skillBodies: BODIES, labeling: { ...f.labeling('initial', stopped), ...f.labeling('added', stopped) } })
+    expect(report.coverage).toMatchObject({ chunks: 8, labeled: 4, notAttempted: 4, transportOutage: 4 })
+    expect(report.notes).toContain('transport_outage')
+    expect(report.outcome).not.toBe('clean')
   })
 
   test('the omission counts are the sums over the locks', () => {

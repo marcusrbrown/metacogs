@@ -9,10 +9,14 @@
  *   proxy key is missing, with no other endpoint to fall back on;
  * - the reply is parsed against a strict schema, a proposal for a stimulus outside the chunk is dropped, and every failure ends as a
  *   code with no session text or reply text in it;
- * - spend is tracked against the declared cap, and every chunk ends as labeled, failed or not attempted.
+ * - spend is tracked against the declared cap, and a call is refused when its own estimate would pass it; every chunk ends as
+ *   labeled, failed or not attempted;
+ * - a request that answers with a redirect is a transport failure: the redirect is never followed and its body never read, and a
+ *   run stops calling after a few consecutive transport failures.
  *
  * Proposals and per-chunk outcomes are written under the private root, append-only, so an interrupted run resumes without calling
- * a labeled chunk again. Raw replies live in their own directory so a later step can delete them. The proposal `reason` came from a
+ * a labeled chunk again. Spend is kept apart, as one record before each request and one after its answer, so a run that dies
+ * between them still counts the request. Raw replies live in their own directory so a later step can delete them. The proposal `reason` came from a
  * model that read session text, so it is a private artifact too.
  */
 import { randomBytes } from 'node:crypto'
@@ -60,6 +64,23 @@ export interface LabelerTransport {
 
 const normalizeEndpoint = (endpoint: string): string => endpoint.trim().replace(/\/+$/, '')
 
+const REDIRECT_REFUSED = 'redirect refused'
+
+/**
+ * `fetch` with redirects off. A 3xx answer throws a fixed message before any of its body is read, so the proxy key, which rides in
+ * the request headers, is never sent on to a `Location` target and nothing the target says reaches an error.
+ */
+function refusingRedirects(inner: typeof fetch): typeof fetch {
+  return (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const response = await inner(input, { ...init, redirect: 'manual' })
+    if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
+      void response.body?.cancel().catch(() => undefined)
+      throw new Error(REDIRECT_REFUSED)
+    }
+    return response
+  }) as unknown as typeof fetch
+}
+
 export interface LabelerTransportOptions {
   declaration: Declaration
   /** Secret. Never logged or returned in an error. */
@@ -79,7 +100,7 @@ export function createLabelerTransport(options: LabelerTransportOptions): Labele
   const baseUrl = normalizeEndpoint(options.baseUrl ?? CLIPROXY_UPSTREAM)
   if (baseUrl !== declared) throw new LabelerRefusal('endpoint_mismatch')
   if (options.key.trim() === '') throw new LabelerRefusal('proxy_key_missing')
-  const inner = cliproxyTransport({ key: options.key, baseUrl, ...(options.fetch ? { fetch: options.fetch } : {}), ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}) })
+  const inner = cliproxyTransport({ key: options.key, baseUrl, fetch: refusingRedirects(options.fetch ?? fetch), ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}) })
   return { endpoint: baseUrl, complete: (request) => inner.complete(request) }
 }
 
@@ -232,23 +253,24 @@ export function parseReply(text: string, chunk: Chunk): ParsedReply {
 export const LABELER_DIR = 'labeler'
 const OUTCOMES_DIR = 'outcomes'
 const REPLIES_DIR = 'replies'
+const ATTEMPTS_DIR = 'attempts'
 
-export const FAILURE_REASONS = ['invalid_json', 'invalid_schema', 'transport', 'spend_cap', 'unscrubbed_input'] as const
+export const FAILURE_REASONS = ['invalid_json', 'invalid_schema', 'transport', 'transport_outage', 'spend_cap', 'unscrubbed_input'] as const
 export type FailureReason = (typeof FAILURE_REASONS)[number]
 
 /**
  * How one chunk ended. `failed` carries a code and the number of calls made, never session or reply text. `not_attempted` means the
- * spend cap was reached before the chunk's first call.
+ * run stopped before the chunk's first call: the spend cap would have been passed, or the proxy was down (`transport_outage`).
  */
 export type ChunkOutcome =
   | { status: 'labeled'; proposals: Proposal[]; discarded: number; attempts: number }
   | { status: 'failed'; attempts: number; reason: FailureReason }
-  | { status: 'not_attempted'; reason: 'spend_cap' }
+  | { status: 'not_attempted'; reason: 'spend_cap' | 'transport_outage' }
 
 const outcomeSchema = z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('labeled'), proposals: z.array(proposalSchema), discarded: z.number().int().nonnegative(), attempts: z.number().int().positive() }),
   z.strictObject({ status: z.literal('failed'), attempts: z.number().int().nonnegative(), reason: z.enum(FAILURE_REASONS) }),
-  z.strictObject({ status: z.literal('not_attempted'), reason: z.literal('spend_cap') }),
+  z.strictObject({ status: z.literal('not_attempted'), reason: z.enum(['spend_cap', 'transport_outage']) }),
 ])
 
 const recordSchema = z.strictObject({
@@ -276,6 +298,7 @@ const dirsOf = (privateRoot: PrivateRoot) => ({
   base: join(privateRoot.root, LABELER_DIR),
   outcomes: join(privateRoot.root, LABELER_DIR, OUTCOMES_DIR),
   replies: join(privateRoot.root, LABELER_DIR, REPLIES_DIR),
+  attempts: join(privateRoot.root, LABELER_DIR, ATTEMPTS_DIR),
 })
 
 const pad = (n: number): string => String(n).padStart(3, '0')
@@ -310,6 +333,41 @@ const latestByKey = (records: readonly { record: OutcomeRecord; seq: number }[])
   return new Map([...latest].map(([key, entry]) => [key, entry.record]))
 }
 
+/**
+ * One line of the spend ledger. `attempt` is written before a request goes out, at the estimated charge; `completion` follows the
+ * answer, at the actual cost. A request with no completion, as after a crash or a transport error, stays at its estimate.
+ */
+const spendRecordSchema = z.discriminatedUnion('kind', [
+  z.strictObject({ schemaVersion: z.literal(1), kind: z.literal('attempt'), attemptId: z.string().regex(/^[0-9a-f]{16}$/), key: z.string().regex(/^[0-9a-f]{32}$/), at: z.string(), estimateUsd: z.number().nonnegative() }),
+  z.strictObject({ schemaVersion: z.literal(1), kind: z.literal('completion'), attemptId: z.string().regex(/^[0-9a-f]{16}$/), key: z.string().regex(/^[0-9a-f]{32}$/), at: z.string(), costUsd: z.number().nonnegative() }),
+])
+type SpendRecord = z.infer<typeof spendRecordSchema>
+const SPEND_FILE = /^([0-9a-f]{32})\.(\d{3,})\.json$/
+
+/** Everything spent so far: per attempt, its completion's cost when there is one and its estimate otherwise. An unreadable record is a refusal. */
+function readSpendUsd(privateRoot: PrivateRoot): number {
+  const dir = dirsOf(privateRoot).attempts
+  if (!existsSync(dir)) return 0
+  const charged = new Map<string, number>()
+  const completed = new Set<string>()
+  for (const name of readdirSync(dir).sort()) {
+    const match = SPEND_FILE.exec(name)
+    if (!match) continue
+    let parsed: ReturnType<typeof spendRecordSchema.safeParse>
+    try {
+      parsed = spendRecordSchema.safeParse(JSON.parse(readFileSync(join(dir, name), 'utf8')))
+    } catch {
+      throw new LabelerRefusal('outcomes_invalid')
+    }
+    if (!parsed.success || parsed.data.key !== match[1]) throw new LabelerRefusal('outcomes_invalid')
+    if (parsed.data.kind === 'completion') {
+      charged.set(parsed.data.attemptId, parsed.data.costUsd)
+      completed.add(parsed.data.attemptId)
+    } else if (!completed.has(parsed.data.attemptId)) charged.set(parsed.data.attemptId, parsed.data.estimateUsd)
+  }
+  return round6([...charged.values()].reduce((sum, usd) => sum + usd, 0))
+}
+
 /** Files already stored for a key, so the next one takes the next number. */
 const nextSeq = (dir: string, key: string): number => (existsSync(dir) ? readdirSync(dir).filter((name) => name.startsWith(`${key}.`)).length : 0) + 1
 
@@ -325,7 +383,8 @@ export function loadLabelerProposals(privateRoot: PrivateRoot, chunks: readonly 
 
 /**
  * How the current chunks ended. Every chunk is labeled, failed or not attempted; one with no stored outcome yet counts as not
- * attempted. `spendCapReached` is true when a chunk's newest outcome was cut short by the spend cap.
+ * attempted. `spendCapReached` is true when a chunk's newest outcome was cut short by the spend cap. `transportOutage` counts the
+ * chunks whose newest outcome was cut short by a proxy outage, failed or not attempted.
  */
 export interface LabelingCoverage {
   chunks: number
@@ -333,6 +392,7 @@ export interface LabelingCoverage {
   failed: number
   notAttempted: number
   spendCapReached: boolean
+  transportOutage: number
 }
 
 /**
@@ -341,13 +401,16 @@ export interface LabelingCoverage {
  */
 export function labelingCoverage(privateRoot: PrivateRoot, chunks: readonly Chunk[], declarationHash: string): LabelingCoverage {
   const latest = latestByKey(readRecords(privateRoot))
-  const coverage: LabelingCoverage = { chunks: chunks.length, labeled: 0, failed: 0, notAttempted: 0, spendCapReached: false }
+  const coverage: LabelingCoverage = { chunks: chunks.length, labeled: 0, failed: 0, notAttempted: 0, spendCapReached: false, transportOutage: 0 }
   for (const chunk of chunks) {
     const outcome = latest.get(chunkKey(declarationHash, chunk))?.outcome
     if (outcome?.status === 'labeled') coverage.labeled += 1
     else if (outcome?.status === 'failed') coverage.failed += 1
     else coverage.notAttempted += 1
-    if ((outcome?.status === 'failed' && outcome.reason === 'spend_cap') || outcome?.status === 'not_attempted') coverage.spendCapReached = true
+    if (outcome?.status === 'failed' || outcome?.status === 'not_attempted') {
+      if (outcome.reason === 'spend_cap') coverage.spendCapReached = true
+      if (outcome.reason === 'transport_outage') coverage.transportOutage += 1
+    }
   }
   return coverage
 }
@@ -389,6 +452,10 @@ export interface LabelInput extends GateInput {
   sessionId?: () => string
   /** The repository the private root must lie outside of. Default: this repository. */
   repoRoot?: string
+  /** The pause before a retry that follows a transport failure, in milliseconds. Default: `TRANSPORT_RETRY_DELAY_MS`. Zero in tests. */
+  retryDelayMs?: number
+  /** Test seam for the pause. Default: a timer. */
+  sleep?: (ms: number) => Promise<void>
 }
 
 export interface ChunkResult {
@@ -429,14 +496,27 @@ const holdsSecret = (text: string): boolean => scrubFindings(text).size > 0
 
 const MAX_NONCE_DRAWS = 8
 
+/** Consecutive transport failures, across chunks, after which the run stops calling. */
+export const TRANSPORT_OUTAGE_THRESHOLD = 3
+
+/** The pause before a retry that follows a transport failure, in milliseconds. */
+export const TRANSPORT_RETRY_DELAY_MS = 2000
+
 /**
  * Labels each chunk in order. Checks the declaration gate first, then that `ruleText` is the declared rule, that the transport is
  * bound to the declared endpoint, and that the private root lies outside the repository; any failure throws before a call or a write.
  *
  * Per chunk: a labeled outcome from an earlier run is kept without a call. Otherwise the chunk gets one call plus up to
- * `retry_count` more when the reply cannot be parsed or the transport fails, then ends `failed`. Before every call, if the spend so
- * far (earlier runs included) has reached the declared cap, no call is made: a chunk with no call yet is `not_attempted`, and a chunk
- * part-way through its retries is `failed` with reason `spend_cap`. A failed chunk never stops the others.
+ * `retry_count` more when the reply cannot be parsed or the transport fails, then ends `failed`. A retry after a transport failure
+ * waits `retryDelayMs` first.
+ *
+ * Before every call, if the spend so far (earlier runs included, from the spend ledger) plus that call's estimate would pass the
+ * declared cap, no call is made: a chunk with no call yet is `not_attempted`, and a chunk part-way through its retries is `failed`
+ * with reason `spend_cap`. The attempt is recorded before the request goes out and its cost after the answer.
+ *
+ * After `TRANSPORT_OUTAGE_THRESHOLD` consecutive transport failures, with any answer resetting the count, the run stops calling:
+ * the chunk in hand ends `failed` with reason `transport_outage` (or `not_attempted` if it had no call yet) and so does every
+ * chunk after it. A failed chunk otherwise never stops the others.
  */
 export async function labelChunks(input: LabelInput): Promise<LabelerRun> {
   const pass = assertGate(input)
@@ -448,13 +528,17 @@ export async function labelChunks(input: LabelInput): Promise<LabelerRun> {
 
   const stored = readRecords(input.privateRoot)
   const latest = latestByKey(stored)
-  const priorSpendUsd = round6(stored.reduce((sum, { record }) => sum + record.spendUsd, 0))
+  const priorSpendUsd = readSpendUsd(input.privateRoot)
   const estimateUsd = input.estimateUsd ?? defaultEstimateUsd
   const nonceOf = input.nonce ?? (() => randomBytes(16).toString('hex'))
   const system = buildLabelerSystemPrompt(input.ruleText)
+  const retryDelayMs = input.retryDelayMs ?? TRANSPORT_RETRY_DELAY_MS
+  const sleep = input.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
 
   let spent = priorSpendUsd
   let calls = 0
+  let consecutiveTransportFailures = 0
+  let outage = false
   const results: ChunkResult[] = []
 
   const write = (chunk: Chunk, key: string, outcome: ChunkOutcome, paid: { calls: number; spendUsd: number }): void => {
@@ -475,6 +559,13 @@ export async function labelChunks(input: LabelInput): Promise<LabelerRun> {
     privateDir(dirs.base)
     privateDir(dirs.outcomes)
     writePrivate(join(dirs.outcomes, `${key}.${pad(nextSeq(dirs.outcomes, key))}.json`), `${JSON.stringify(record, null, 2)}\n`, true)
+  }
+
+  const appendSpend = (record: SpendRecord): void => {
+    privateDir(input.privateRoot.root)
+    privateDir(dirs.base)
+    privateDir(dirs.attempts)
+    writePrivate(join(dirs.attempts, `${record.key}.${pad(nextSeq(dirs.attempts, record.key))}.json`), `${JSON.stringify(record, null, 2)}\n`, true)
   }
 
   const keepReply = (key: string, text: string): void => {
@@ -515,8 +606,8 @@ export async function labelChunks(input: LabelInput): Promise<LabelerRun> {
         outcome = { status: 'failed', attempts, reason: failure }
         break
       }
-      if (spent >= declaration.spend_cap_usd) {
-        outcome = attempts === 0 ? { status: 'not_attempted', reason: 'spend_cap' } : { status: 'failed', attempts, reason: 'spend_cap' }
+      if (outage) {
+        outcome = attempts === 0 ? { status: 'not_attempted', reason: 'transport_outage' } : { status: 'failed', attempts, reason: 'transport_outage' }
         break
       }
       let nonce = nonceOf()
@@ -526,21 +617,32 @@ export async function labelChunks(input: LabelInput): Promise<LabelerRun> {
       }
       const user = buildLabelerUserMessage({ nonce, chunk })
       const estimate = estimateUsd(system.length + user.length)
+      if (round6(spent + estimate) > declaration.spend_cap_usd) {
+        outcome = attempts === 0 ? { status: 'not_attempted', reason: 'spend_cap' } : { status: 'failed', attempts, reason: 'spend_cap' }
+        break
+      }
       attempts += 1
       calls += 1
+      const attemptId = randomBytes(8).toString('hex')
+      appendSpend({ schemaVersion: 1, kind: 'attempt', attemptId, key, at: input.privateRoot.now().toISOString(), estimateUsd: round6(estimate) })
       let response: CompleteResponse
       try {
         response = await input.transport.complete({ model: declaration.labeler.model_id, system, user, sessionId })
       } catch {
-        // A failed call may still have been billed, so the estimate counts.
+        // A failed call may still have been billed, so the estimate counts: the attempt record stands with no completion.
         spent += estimate
         chunkSpend += estimate
         failure = 'transport'
+        consecutiveTransportFailures += 1
+        if (consecutiveTransportFailures >= TRANSPORT_OUTAGE_THRESHOLD) outage = true
+        else if (attempts < maxAttempts && retryDelayMs > 0) await sleep(retryDelayMs)
         continue
       }
+      consecutiveTransportFailures = 0
       const cost = usageUsd(response) ?? estimate
       spent += cost
       chunkSpend += cost
+      appendSpend({ schemaVersion: 1, kind: 'completion', attemptId, key, at: input.privateRoot.now().toISOString(), costUsd: round6(cost) })
       keepReply(key, response.text)
       const parsed = parseReply(response.text, chunk)
       if (!parsed.ok) {

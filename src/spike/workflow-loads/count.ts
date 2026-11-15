@@ -193,9 +193,10 @@ export type Outcome = (typeof OUTCOMES)[number]
  * - `labeling_incomplete`: a chunk failed or was not attempted, or there were no chunks;
  * - `spend_cap_reached`: the spend cap cut a chunk short;
  * - `omission_limit_exceeded`: the omission check found more than the declared limit;
- * - `unreadable_rows`: a stored message or part row could not be read as JSON, so the walk took it for no load and no stimulus.
+ * - `unreadable_rows`: a stored message or part row could not be read as JSON, so the walk took it for no load and no stimulus;
+ * - `transport_outage`: the labeler stopped calling after consecutive transport failures, so chunks were left unlabeled.
  */
-export const COVERAGE_NOTES = ['minimum_unmet', 'labeling_incomplete', 'spend_cap_reached', 'omission_limit_exceeded', 'unreadable_rows'] as const
+export const COVERAGE_NOTES = ['minimum_unmet', 'labeling_incomplete', 'spend_cap_reached', 'omission_limit_exceeded', 'unreadable_rows', 'transport_outage'] as const
 export type CoverageNote = (typeof COVERAGE_NOTES)[number]
 
 export interface OutcomeResult {
@@ -228,6 +229,7 @@ export function decideOutcome(input: OutcomeInput): OutcomeResult {
     spend_cap_reached: coverage.spendCapReached,
     omission_limit_exceeded: input.omissionsFound > declaration.omission.limit,
     unreadable_rows: input.unreadableRows > 0,
+    transport_outage: coverage.transportOutage > 0,
   }
   const notes = COVERAGE_NOTES.filter((note) => thin[note])
   return { outcome: errors > 0 ? 'errors_observed' : notes.length === 0 ? 'clean' : 'inconclusive', notes }
@@ -290,7 +292,7 @@ export function runCount(input: RunCountInput): CountReport {
     }
   }
   const sample: CountReport['sample'] = { considered: 0, eligible: 0, sampled: 0, exclusions: Object.fromEntries(EXCLUSION_REASONS.map((reason) => [reason, 0])) as Record<ExclusionReason, number> }
-  const coverage: LabelingCoverage = { chunks: 0, labeled: 0, failed: 0, notAttempted: 0, spendCapReached: false }
+  const coverage: LabelingCoverage = { chunks: 0, labeled: 0, failed: 0, notAttempted: 0, spendCapReached: false, transportOutage: 0 }
   const scrubbed: ViewCounters = { scrubbedOutputs: 0, scrubbedInputs: 0, scrubbedStimuli: 0, redactedEmails: 0 }
   const omissions = { sampleSize: 0, found: 0 }
 
@@ -313,6 +315,7 @@ export function runCount(input: RunCountInput): CountReport {
     coverage.failed += labeling.coverage.failed
     coverage.notAttempted += labeling.coverage.notAttempted
     coverage.spendCapReached ||= labeling.coverage.spendCapReached
+    coverage.transportOutage += labeling.coverage.transportOutage
     for (const key of Object.keys(scrubbed) as (keyof ViewCounters)[]) scrubbed[key] += labeling.counters[key]
     omissions.sampleSize += lock.omissionSampleSize
     omissions.found += lock.omissionsFound

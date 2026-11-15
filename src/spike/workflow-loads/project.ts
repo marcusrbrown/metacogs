@@ -49,7 +49,7 @@ export const projectionSchema = z
     unreadable_rows: count,
     methods: perMethod(methodSchema),
     model_families: z.strictObject({ anthropic: perMethod(buckets), openai: perMethod(buckets), google: perMethod(buckets), other: perMethod(buckets) }),
-    labeling: z.strictObject({ chunks: count, failed: count, not_attempted: count }),
+    labeling: z.strictObject({ chunks: count, failed: count, not_attempted: count, transport_outage: count }),
     scrubbed: z.strictObject({ outputs: count, inputs: count, stimuli: count, redacted_emails: count }),
     omissions: z.strictObject({ sample_size: count, found: count }),
     deviations: z.array(z.enum(DEVIATION_CODES)),
@@ -57,6 +57,7 @@ export const projectionSchema = z
   .refine((p) => p.outcome !== 'clean' || p.coverage_notes.length === 0, { message: 'a clean outcome carries no coverage note', path: ['coverage_notes'] })
   .refine((p) => p.outcome !== 'inconclusive' || p.coverage_notes.length > 0, { message: 'an inconclusive outcome names what was thin', path: ['coverage_notes'] })
   .refine((p) => p.unreadable_rows === 0 || p.coverage_notes.includes('unreadable_rows'), { message: 'unreadable rows are named among the coverage notes', path: ['coverage_notes'] })
+  .refine((p) => p.labeling.transport_outage === 0 || p.coverage_notes.includes('transport_outage'), { message: 'chunks stopped by a transport outage are named among the coverage notes', path: ['coverage_notes'] })
 
 export type Projection = z.infer<typeof projectionSchema>
 
@@ -96,7 +97,7 @@ export function projectCounts(report: CountReport): Projection {
     unreadable_rows: report.unreadableRows,
     methods,
     model_families: families,
-    labeling: { chunks: report.coverage.chunks, failed: report.coverage.failed, not_attempted: report.coverage.notAttempted },
+    labeling: { chunks: report.coverage.chunks, failed: report.coverage.failed, not_attempted: report.coverage.notAttempted, transport_outage: report.coverage.transportOutage },
     scrubbed: { outputs: report.scrubbed.scrubbedOutputs, inputs: report.scrubbed.scrubbedInputs, stimuli: report.scrubbed.scrubbedStimuli, redacted_emails: report.scrubbed.redactedEmails },
     omissions: { sample_size: report.omissions.sampleSize, found: report.omissions.found },
     deviations: report.deviations,
@@ -170,9 +171,9 @@ export function renderCountsTable(projection: Projection): string {
   const e = projection.sessions.exclusions
   lines.push(row([e.child_session, e.outside_window, e.excluded_project_root, e.already_sampled, e.no_workflow_load, e.unfinished]))
   lines.push('')
-  lines.push(row(['Labeling chunks', 'Failed', 'Not attempted', 'Scrubbed outputs', 'Scrubbed inputs', 'Scrubbed stimuli', 'Redacted emails']))
-  lines.push(row(['---:', '---:', '---:', '---:', '---:', '---:', '---:']))
-  lines.push(row([projection.labeling.chunks, projection.labeling.failed, projection.labeling.not_attempted, projection.scrubbed.outputs, projection.scrubbed.inputs, projection.scrubbed.stimuli, projection.scrubbed.redacted_emails]))
+  lines.push(row(['Labeling chunks', 'Failed', 'Not attempted', 'Stopped by outage', 'Scrubbed outputs', 'Scrubbed inputs', 'Scrubbed stimuli', 'Redacted emails']))
+  lines.push(row(['---:', '---:', '---:', '---:', '---:', '---:', '---:', '---:']))
+  lines.push(row([projection.labeling.chunks, projection.labeling.failed, projection.labeling.not_attempted, projection.labeling.transport_outage, projection.scrubbed.outputs, projection.scrubbed.inputs, projection.scrubbed.stimuli, projection.scrubbed.redacted_emails]))
   lines.push('')
   lines.push(`Deviations: ${projection.deviations.length > 0 ? projection.deviations.join(', ') : 'none'}`)
   lines.push(`Declaration hash: ${projection.declaration_hash}`)
