@@ -26,7 +26,14 @@ export const SYNTHETIC_SPEC: FixtureSpec = {
   ],
 }
 
+/** A workflow fixture: a fire fixture for `counterfactual`, with the same seed turns as the synthetic spec. */
+export const WORKFLOW_SPEC: FixtureSpec = { ...SYNTHETIC_SPEC, id: 'plan-claim', kind: 'workflow', somewhere: '', expected: 'fire', methods: ['counterfactual'] }
+/** A silence control, same seed. */
+export const SILENCE_SPEC: FixtureSpec = { id: 'plan-scoping', kind: 'workflow', provenance: SYNTHETIC_SPEC.provenance, expected_outcome_ref: 'synthetic', somewhere: '', expected: 'silence', turns: SYNTHETIC_SPEC.turns }
+
 export const TOOL_NAMES = ['read', 'task', 'feel', 'drugs', 'skill']
+/** What the trimmed stack offers a main request: no `task`, no `question`. */
+export const WORKFLOW_TOOL_NAMES = ['read', 'skill', 'systematic_skill', 'feel', 'drugs']
 
 /** The text OpenCode builds for a typed command: the skill, the base-directory note, then the arguments. */
 export function skillText(name: string, args: string, dir = `${SKILLS_DIR}/${name}`): string {
@@ -133,6 +140,34 @@ export function healthyResult(job: AttemptJob, o: FakeHostOptions = {}): HostRes
     leakDirs: [],
     cleanup: () => {},
   }
+}
+
+/** A tool-use event for a skill call that completed and returned the skill content. */
+export const skillLoadEvent = (name: string, tool: 'skill' | 'systematic_skill' = 'skill'): string => toolEvent(tool, { name }, 'completed', `<skill_content name="${name}">\n# ${name}\n</skill_content>`)
+
+/** The result of a healthy workflow attempt: the trimmed stack's tools, the host's own agent, the extra events the model made. */
+export function workflowResult(job: AttemptJob, o: { events?: string; cost?: number; over?: Partial<HostResult> } = {}): HostResult {
+  const healthy = healthyResult(job, { cost: o.cost ?? 0 })
+  const [provider, model] = job.model.split('/') as [string, string]
+  return {
+    ...healthy,
+    requests: [titleRequest(), chatRequest({ model: job.model, tools: WORKFLOW_TOOL_NAMES, last: [`§3§ ${job.message.kind === 'text' ? job.message.text : ''}`, '<system-reminder>r</system-reminder>'] })],
+    stdout: stdoutOf(textEvent('scripted reply'), o.events ?? '', stepFinish(o.cost ?? 0)),
+    assistants: [{ agent: 'build', providerID: provider, modelID: model }],
+    systematic: { spec: '@fro.bot/systematic@3.33.2', configSha256: 'cfg-hash' },
+    ...o.over,
+  }
+}
+
+/** A fake host for workflow fixtures: `events(job, n)` is what the model did on its n-th attempt. */
+export function fakeWorkflowExecutor(o: { events?: (job: AttemptJob, n: number) => string; cost?: number; over?: (job: AttemptJob, n: number) => Partial<HostResult> } = {}): { executor: Executor; jobs: AttemptJob[] } {
+  const jobs: AttemptJob[] = []
+  const executor: Executor = async (job) => {
+    jobs.push(job)
+    const n = jobs.length
+    return workflowResult(job, { ...(o.events ? { events: o.events(job, n) } : {}), ...(o.cost !== undefined ? { cost: o.cost } : {}), ...(o.over ? { over: o.over(job, n) } : {}) })
+  }
+  return { executor, jobs }
 }
 
 export function fakeExecutor(o: FakeHostOptions = {}): { executor: Executor; jobs: AttemptJob[] } {

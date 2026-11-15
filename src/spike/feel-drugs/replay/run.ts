@@ -9,8 +9,9 @@ import { CredentialLeakError, type Needle } from '../../../runner/manifest'
 import { sha256 } from '../../../runner/workspace'
 import { writeEvidence } from '../artifacts'
 import { BACKOFF_MS, RUN_TIMEOUT_MS } from '../driver'
-import { ARM_NAMES, type ArmMessage, type ArmName, armMessage, type ExclusionReason, evaluateGates, type GateCheck, mainRequests, WORLD_ARM_NAMES } from './gates'
+import { ARM_NAMES, type ArmMessage, type ArmName, armMessage, type ExclusionReason, evaluateGates, type GateCheck, type GateSet, mainRequests, WORLD_ARM_NAMES } from './gates'
 import type { Executor, HostResult } from './host'
+import { type CallObservation, type Method, normalizeToolUse, observeCalls, scoreWorkflow, type WorkflowOutcome } from './loads'
 import type { ReplayFixture } from './scenario'
 import { HOST_VERSION, ID_PATTERN, loadFrozen, type Store } from './store'
 import { HINDSIGHT_NOTE, type WorldRecord } from './world'
@@ -29,14 +30,25 @@ export const isTerminal = (status: AttemptStatus): boolean => TERMINAL.includes(
 /** What the host-reported cost is multiplied by for the cap: earlier spike runs reported about $3.87 against an estimate near $6.2, and $1.25 against $2.15. */
 export const UNDERCOUNT_FACTOR = 1.75
 
-export type OutcomeLabel = 'no_tool' | 'metacogs_tool' | 'skill_only'
+export type OutcomeLabel = 'no_tool' | 'metacogs_tool' | 'skill_only' | WorkflowOutcome
 
 export interface ObservedCalls {
   tool_calls: { tool: string; status: string | undefined }[]
   /** `feel` and `drugs` calls, by tool name. */
   metacogs_calls: string[]
-  /** Names of skills whose content a `skill` call loaded. */
+  /** Names of skills whose content a `skill` call loaded. For a workflow fixture, `systematic_skill` calls count and the `systematic:` prefix is dropped. */
   skill_loads: string[]
+  /** Workflow fixtures only: what the calls did with the workflow and method skills, for every attempt that reached the host. */
+  workflow?: CallObservation
+}
+
+/** A scored workflow attempt: what the fixture expected, and whether the method fired. Only a `completed` attempt carries one. */
+export interface WorkflowResult {
+  expected: 'fire' | 'silence'
+  methods: Method[]
+  hit: boolean
+  false_fire: boolean
+  wrong_method: Method[]
 }
 
 export interface AttemptRecord {
@@ -66,6 +78,10 @@ export interface AttemptRecord {
   cost: { reported_usd: number; charged_usd: number; basis: 'scripted' | 'no_request' | 'reported_x_factor' | 'estimate' }
   timing: { started_at: string; ended_at: string; wall_ms: number }
   artifacts: Record<string, string>
+  /** Workflow fixtures: the Systematic release the stack ran and the hash of the Systematic config the fixture held, so every arm provably saw the same config. */
+  systematic?: { spec: string | null; config_sha256: string | null }
+  /** Workflow fixtures: the score of a `completed` attempt. */
+  workflow?: WorkflowResult
   /** Real-world mode: the repo, commit and rule the clone landed on, and the history window the model was given. */
   world?: WorldRecord
   hindsight_note?: string
@@ -178,6 +194,50 @@ export function campaignCells(store: Store, campaign: string): CellRow[] {
     }
   }
   return rows
+}
+
+// ── scored cells ───────────────────────────────────────────────────────────
+
+/** What a workflow cell's attempts add up to. `counted` is the scored (completed) attempts; the others are shares of it, except `excluded`. */
+export interface CellTally {
+  counted: number
+  hits: number
+  misses: number
+  silent: number
+  false_fires: number
+  /** Counted attempts that loaded a method the fixture does not list. */
+  wrong_method: number
+  /** Terminal attempts that were not scored: gate exclusions and timeouts. */
+  excluded: number
+}
+
+const readRecord = (file: string): AttemptRecord | undefined => {
+  try {
+    return JSON.parse(readFileSync(file, 'utf8')) as AttemptRecord
+  } catch {
+    return undefined
+  }
+}
+
+/** The tally of every workflow cell of a campaign, in cell order. A cell of another kind is left out. */
+export function campaignTallies(store: Store, campaign: string): { fixture: string; model: string; arm: string; tally: CellTally }[] {
+  const out: { fixture: string; model: string; arm: string; tally: CellTally }[] = []
+  for (const row of campaignCells(store, campaign)) {
+    const dir = cellDir(store, { campaign, fixture: row.fixture, model: row.model, arm: row.arm as ArmName })
+    const records = row.attempts.flatMap((a) => readRecord(join(dir, a.id, 'attempt.json')) ?? [])
+    if (!records.some((r) => r.observed?.workflow !== undefined)) continue
+    const tally: CellTally = { counted: 0, hits: 0, misses: 0, silent: 0, false_fires: 0, wrong_method: 0, excluded: 0 }
+    for (const r of records) {
+      if (r.status === 'completed' && r.workflow) {
+        tally.counted += 1
+        if (r.workflow.expected === 'fire') r.workflow.hit ? (tally.hits += 1) : (tally.misses += 1)
+        else r.workflow.false_fire ? (tally.false_fires += 1) : (tally.silent += 1)
+        if (r.workflow.wrong_method.length > 0) tally.wrong_method += 1
+      } else if (r.terminal) tally.excluded += 1
+    }
+    out.push({ fixture: row.fixture, model: row.model, arm: row.arm, tally })
+  }
+  return out
 }
 
 // ── the pending marker ─────────────────────────────────────────────────────
@@ -384,15 +444,27 @@ export interface AttemptContext {
   host?: string
 }
 
-function observe(events: ReturnType<typeof analyzeEvents>): ObservedCalls {
-  return {
+function observe(events: ReturnType<typeof analyzeEvents>, gateSet: GateSet): ObservedCalls {
+  const base = {
     tool_calls: events.toolUses.map((t) => ({ tool: t.tool, status: t.status })),
     metacogs_calls: events.toolUses.map((t) => t.tool).filter((t) => t === 'feel' || t === 'drugs'),
-    skill_loads: events.skillCalls.filter((s) => isSkillContentLoad(s)).map((s) => skillCallName(s) ?? 'unknown'),
   }
+  if (gateSet === 'feel-drugs') return { ...base, skill_loads: events.skillCalls.filter((s) => isSkillContentLoad(s)).map((s) => skillCallName(s) ?? 'unknown') }
+  const calls = events.toolUses.map(normalizeToolUse)
+  return { ...base, skill_loads: calls.filter((s) => s.tool === 'skill' && isSkillContentLoad(s)).map((s) => skillCallName(s) ?? 'unknown'), workflow: observeCalls(events.toolUses) }
 }
 
 const outcomeOf = (o: ObservedCalls): OutcomeLabel => (o.metacogs_calls.length > 0 ? 'metacogs_tool' : o.skill_loads.length > 0 ? 'skill_only' : 'no_tool')
+
+/** A workflow fixture runs on the trimmed stack's gates; every other kind on the daily stack's. */
+const gateSetOf = (fixture: ReplayFixture): GateSet => (fixture.spec.kind === 'workflow' ? 'workflow' : 'feel-drugs')
+
+function scoreOf(fixture: ReplayFixture, observed: ObservedCalls): { outcome: WorkflowOutcome; result: WorkflowResult } | undefined {
+  const { expected, methods } = fixture.spec
+  if (!observed.workflow || expected === undefined) return undefined
+  const score = scoreWorkflow(expected === 'fire' ? { expected, methods: methods ?? [] } : { expected }, observed.workflow)
+  return { outcome: score.outcome, result: { expected, methods: [...(methods ?? [])], hit: score.hit, false_fire: score.falseFire, wrong_method: score.wrongMethod } }
+}
 
 function chargeFor(provider: 'scripted' | 'cliproxy', reported: number, requests: number, estimate: number): AttemptRecord['cost'] {
   if (provider === 'scripted') return { reported_usd: reported, charged_usd: 0, basis: 'scripted' }
@@ -479,7 +551,8 @@ export async function runAttempt(ctx: AttemptContext): Promise<AttemptRecord> {
   try {
     result = await ctx.executor({ fixtureId: key.fixture, seed: fixture.export, model: key.model, arm: key.arm, message, timeoutMs: ctx.timeoutMs ?? RUN_TIMEOUT_MS, ...(fixture.world ? { world: fixture.world } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) })
     const events = analyzeEvents(result.stdout)
-    const observed = observe(events)
+    const gateSet = gateSetOf(fixture)
+    const observed = observe(events, gateSet)
     const cost = chargeFor(ctx.provider, events.usage.cost, result.requests.length, ctx.attemptEstimateUsd ?? 0)
     incurred = cost
     const parsed = parseEvents(result.stdout).events
@@ -510,6 +583,7 @@ export async function runAttempt(ctx: AttemptContext): Promise<AttemptRecord> {
       reasons = events.hostErrors.length > 0 ? events.hostErrors.map((e) => `host_error:${e.name ?? 'unknown'}`) : result.exitCode !== 0 ? [`host_exit_${result.exitCode}`] : [parsed.length === 0 ? 'no_events' : 'no_completion']
     } else {
       const g = evaluateGates({
+        gateSet,
         arm: key.arm,
         message,
         model: key.model,
@@ -528,6 +602,7 @@ export async function runAttempt(ctx: AttemptContext): Promise<AttemptRecord> {
       reasons = g.reasons
     }
 
+    const scored = status === 'completed' && gateSet === 'workflow' ? scoreOf(fixture, observed) : undefined
     const artifacts = {
       'requests.json': JSON.stringify(result.requests.map((r) => ({ returned_model: r.returnedModel ?? null, body: r.body }))),
       'stdout.jsonl': result.stdout,
@@ -542,14 +617,16 @@ export async function runAttempt(ctx: AttemptContext): Promise<AttemptRecord> {
       terminal: isTerminal(status),
       reasons,
       observed,
-      outcome: status === 'completed' ? outcomeOf(observed) : null,
-      requests: { total: result.requests.length, main: mainRequests(result.requests).length },
+      outcome: status === 'completed' ? (scored ? scored.outcome : outcomeOf(observed)) : null,
+      requests: { total: result.requests.length, main: mainRequests(result.requests, gateSet).length },
       stack: result.stackSummary,
       unrecognized_events: events.unrecognized.length,
       usage: events.usage,
       cost,
       timing: { started_at: result.startedAt, ended_at: result.endedAt, wall_ms: result.wallMs },
       artifacts: Object.fromEntries(Object.entries(artifacts).map(([file, text]) => [file, sha256(text)])),
+      ...(result.systematic ? { systematic: { spec: result.systematic.spec, config_sha256: result.systematic.configSha256 } } : {}),
+      ...(scored ? { workflow: scored.result } : {}),
       ...(result.world ? { world: result.world, hindsight_note: HINDSIGHT_NOTE } : {}),
       ...(fixture.history ? { history: fixture.history } : {}),
     }
@@ -590,6 +667,13 @@ export interface CampaignOptions {
   again?: boolean
   /** Tries per cell in one invocation when attempts keep failing for infrastructure reasons. Default 3. */
   maxAttempts?: number
+  /**
+   * Scored attempts a cell needs, each independent. Only a `completed` attempt scores. Without it a cell ends at its first
+   * terminal attempt, whatever that was.
+   */
+  attemptsPerCell?: number
+  /** With `attemptsPerCell`: terminal attempts that did not score (gate exclusions, timeouts) a cell may have and still be replaced. Default 1. */
+  replacements?: number
   expectedHostVersion?: string
   /** Real-world mode: the fixtures are built scenarios, run on the six real-world arms. */
   world?: boolean
@@ -641,7 +725,16 @@ export interface CampaignSummary {
 
 const stamp = (d: Date): string => d.toISOString().replace(/[-:.]/g, '').slice(0, 18)
 
-/** Runs every fixture, model and arm cell that has no counted attempt, stopping before a provider attempt that could pass the cap. */
+/** Attempts of a cell that scored: they completed. */
+const scoredIn = (cell: string): number => readAttempts(cell).filter((a) => a.status === 'completed').length
+/** Terminal attempts of a cell that did not score: gate exclusions and timeouts. */
+const unscoredIn = (cell: string): number => readAttempts(cell).filter((a) => a.terminal && a.status !== 'completed').length
+
+/**
+ * Runs every fixture, model and arm cell that has no counted attempt, stopping before a provider attempt that could pass the cap.
+ * With `attemptsPerCell`, a cell instead runs until it holds that many scored attempts, replacing any that were excluded.
+ * Every stage that shares a campaign name shares one ledger.
+ */
 export async function runCampaign(options: CampaignOptions, deps: CampaignDeps): Promise<CampaignSummary> {
   const { store } = deps
   const now = deps.now ?? (() => new Date())
@@ -654,6 +747,9 @@ export async function runCampaign(options: CampaignOptions, deps: CampaignDeps):
   const live = options.provider === 'cliproxy'
   if (live && !(options.attemptEstimateUsd && options.attemptEstimateUsd > 0)) throw new Error('a cliproxy campaign needs an attempt estimate in USD, so the cap holds before the first call')
   if (live && !deps.cliproxy) throw new Error('a cliproxy campaign needs a resolved CLIProxyAPI key')
+  if (options.attemptsPerCell !== undefined && !(Number.isInteger(options.attemptsPerCell) && options.attemptsPerCell >= 1)) throw new Error('attempts per cell takes a positive whole number')
+  if (options.replacements !== undefined && !(Number.isInteger(options.replacements) && options.replacements >= 0)) throw new Error('replacements takes a non-negative whole number')
+  if (options.attemptsPerCell !== undefined && options.again) throw new Error('--again does not combine with attempts per cell: a cell is complete once it holds its count')
 
   // Fixtures come only through loadFrozen: frozen, scanned clean as of now, unedited and approved. All load before any run.
   const load = deps.loadFixture ?? ((id: string) => loadFrozen(store, id))
@@ -661,6 +757,8 @@ export async function runCampaign(options: CampaignOptions, deps: CampaignDeps):
   const self: RunnerIdentity = { pid: deps.pid ?? process.pid, host: deps.host ?? hostname(), alive: deps.alive ?? pidAlive }
   const maxAttempts = options.maxAttempts ?? 3
   const estimate = options.attemptEstimateUsd ?? 0
+  const target = options.attemptsPerCell
+  const replacements = options.replacements ?? 1
   assertAccountingReconciled(store, options.name, now(), estimate, self)
   const before = spentUsd(store, options.name)
   let spent = before
@@ -678,72 +776,96 @@ export async function runCampaign(options: CampaignOptions, deps: CampaignDeps):
       unrun.push({ fixture: key.fixture, model: key.model, arm: key.arm, reason: 'no_somewhere' })
       continue
     }
-    if (!options.again && countedAttempt(readAttempts(cellDir(store, key)))) continue
+    const cell = cellDir(store, key)
+    if (target === undefined ? !options.again && countedAttempt(readAttempts(cell)) : scoredIn(cell) >= target) continue
     if (stoppedBy) {
       unrun.push({ fixture: key.fixture, model: key.model, arm: key.arm, reason: stoppedBy })
       continue
     }
 
-    let settled = false
-    for (let tryNo = 1; tryNo <= maxAttempts && !settled; tryNo++) {
-      if (deps.signal?.aborted) {
-        stoppedBy = 'aborted'
-        break
-      }
-      if (live && spent + Math.max(estimate, largest) > options.capUsd) {
-        stoppedBy = 'budget'
-        break
-      }
-      let record: AttemptRecord
-      try {
-        record = await runAttempt({
-          store,
-          key,
-          fixture: loaded,
-          executor: deps.executor,
-          provider: options.provider,
-          ...(deps.cliproxy || deps.needles ? { needles: [...realWorldNeedles(deps.cliproxy?.needles ?? [], options.world === true), ...(deps.needles ?? [])] } : {}),
-          ...(options.expectedHostVersion ? { expectedHostVersion: options.expectedHostVersion } : {}),
-          ...(deps.skillsDir ? { skillsDir: deps.skillsDir } : {}),
-          ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
-          attemptEstimateUsd: estimate,
-          ...(deps.signal ? { signal: deps.signal } : {}),
-          now,
-          pid: self.pid,
-          host: self.host,
-        })
-      } catch (e) {
-        if (!(e instanceof AccountingPersistError)) throw e
-        // The charge is real but its record is gone: count it here and schedule nothing more.
-        attempts += 1
-        spent += e.record.cost.charged_usd
-        largest = Math.max(largest, e.record.cost.charged_usd)
-        orphan = { schema_version: 1, at: now().toISOString(), fixture: key.fixture, model: key.model, arm: key.arm, attempt: e.record.attempt, charged_usd: e.record.cost.charged_usd }
-        try {
-          appendOrphanCharge(store, options.name, orphan)
-        } catch {
-          log(`${ORPHAN_FILE} could not be written either; the run note carries the charge and the next run will ask for it`)
+    /** One slot: tries until an attempt is terminal. `undefined`: the campaign must stop, or the tries ran out. */
+    const runSlot = async (): Promise<AttemptRecord | undefined> => {
+      let settled: AttemptRecord | undefined
+      for (let tryNo = 1; tryNo <= maxAttempts && !settled; tryNo++) {
+        if (deps.signal?.aborted) {
+          stoppedBy = 'aborted'
+          break
         }
-        log(`${key.fixture} ${key.model} ${key.arm} ${e.record.attempt}: ${e.message}`)
-        stoppedBy = 'accounting'
+        if (live && spent + Math.max(estimate, largest) > options.capUsd) {
+          stoppedBy = 'budget'
+          break
+        }
+        let record: AttemptRecord
+        try {
+          record = await runAttempt({
+            store,
+            key,
+            fixture: loaded,
+            executor: deps.executor,
+            provider: options.provider,
+            ...(deps.cliproxy || deps.needles ? { needles: [...realWorldNeedles(deps.cliproxy?.needles ?? [], options.world === true), ...(deps.needles ?? [])] } : {}),
+            ...(options.expectedHostVersion ? { expectedHostVersion: options.expectedHostVersion } : {}),
+            ...(deps.skillsDir ? { skillsDir: deps.skillsDir } : {}),
+            ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
+            attemptEstimateUsd: estimate,
+            ...(deps.signal ? { signal: deps.signal } : {}),
+            now,
+            pid: self.pid,
+            host: self.host,
+          })
+        } catch (e) {
+          if (!(e instanceof AccountingPersistError)) throw e
+          // The charge is real but its record is gone: count it here and schedule nothing more.
+          attempts += 1
+          spent += e.record.cost.charged_usd
+          largest = Math.max(largest, e.record.cost.charged_usd)
+          orphan = { schema_version: 1, at: now().toISOString(), fixture: key.fixture, model: key.model, arm: key.arm, attempt: e.record.attempt, charged_usd: e.record.cost.charged_usd }
+          try {
+            appendOrphanCharge(store, options.name, orphan)
+          } catch {
+            log(`${ORPHAN_FILE} could not be written either; the run note carries the charge and the next run will ask for it`)
+          }
+          log(`${key.fixture} ${key.model} ${key.arm} ${e.record.attempt}: ${e.message}`)
+          stoppedBy = 'accounting'
+          break
+        }
+        attempts += 1
+        spent += record.cost.charged_usd
+        largest = Math.max(largest, record.cost.charged_usd)
+        log(`${key.fixture} ${key.model} ${key.arm} ${record.attempt}: ${record.status}${record.reasons.length ? ` (${record.reasons.join(', ')})` : ''}`)
+        if (record.terminal) settled = record
+        if (!settled && record.status === 'rate_limited' && tryNo < maxAttempts) await sleep(BACKOFF_MS[Math.min(tryNo - 1, BACKOFF_MS.length - 1)]!)
+        if (!settled && (record.reasons.includes('aborted') || record.reasons.includes('preflight_aborted'))) {
+          stoppedBy = 'aborted'
+          break
+        }
+      }
+      return settled
+    }
+
+    if (target === undefined) {
+      if (!(await runSlot())) unrun.push({ fixture: key.fixture, model: key.model, arm: key.arm, reason: stoppedBy ?? 'attempts_exhausted' })
+      continue
+    }
+    // Scored cell: slots run until `target` attempts completed. A terminal attempt that did not complete is replaced, up to `replacements`.
+    while (scoredIn(cell) < target) {
+      if (unscoredIn(cell) > replacements) {
+        unrun.push({ fixture: key.fixture, model: key.model, arm: key.arm, reason: 'attempts_exhausted' })
         break
       }
-      attempts += 1
-      spent += record.cost.charged_usd
-      largest = Math.max(largest, record.cost.charged_usd)
-      log(`${key.fixture} ${key.model} ${key.arm} ${record.attempt}: ${record.status}${record.reasons.length ? ` (${record.reasons.join(', ')})` : ''}`)
-      settled = record.terminal
-      if (!settled && record.status === 'rate_limited' && tryNo < maxAttempts) await sleep(BACKOFF_MS[Math.min(tryNo - 1, BACKOFF_MS.length - 1)]!)
-      if (!settled && (record.reasons.includes('aborted') || record.reasons.includes('preflight_aborted'))) {
-        stoppedBy = 'aborted'
+      if (!(await runSlot())) {
+        unrun.push({ fixture: key.fixture, model: key.model, arm: key.arm, reason: stoppedBy ?? 'attempts_exhausted' })
         break
       }
     }
-    if (!settled) unrun.push({ fixture: key.fixture, model: key.model, arm: key.arm, reason: stoppedBy ?? 'attempts_exhausted' })
   }
 
   const counted: CampaignSummary['counted'] = {}
-  for (const row of campaignCells(store, options.name)) if (row.counted?.status) counted[row.counted.status] = (counted[row.counted.status] ?? 0) + 1
+  for (const row of campaignCells(store, options.name)) {
+    if (target === undefined) {
+      if (row.counted?.status) counted[row.counted.status] = (counted[row.counted.status] ?? 0) + 1
+    } else if (scoredIn(cellDir(store, { campaign: options.name, fixture: row.fixture, model: row.model, arm: row.arm as ArmName })) >= target) counted.completed = (counted.completed ?? 0) + 1
+  }
   const summary: CampaignSummary = { cells: cells.length, attempts, counted, unrun, spentUsd: spent, capUsd: options.capUsd, stoppedBy }
   const dir = campaignDir(store, options.name)
   mkdirSync(dir, { recursive: true, mode: 0o700 })

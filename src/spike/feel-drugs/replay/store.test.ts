@@ -98,6 +98,82 @@ describe('parseSpec', () => {
   })
 })
 
+describe('workflow fixtures', () => {
+  const workflow = (over: Record<string, unknown> = {}): Record<string, unknown> => ({ ...spec({ id: 'plan-claim', kind: 'workflow', somewhere: '' }), expected: 'fire', methods: ['counterfactual'], ...over })
+
+  test('a fire fixture parses with its methods and round-trips unchanged', () => {
+    const parsed = parseSpec(JSON.parse(JSON.stringify(workflow())))
+    expect(parsed).toMatchObject({ kind: 'workflow', expected: 'fire', methods: ['counterfactual'] })
+    expect(parseSpec(JSON.parse(JSON.stringify(parsed)))).toEqual(parsed)
+  })
+
+  test('a silence fixture carries no methods: an empty list or none parses the same', () => {
+    const none = parseSpec(workflow({ expected: 'silence', methods: undefined }))
+    const empty = parseSpec(workflow({ expected: 'silence', methods: [] }))
+    expect(none).toEqual(empty)
+    expect('methods' in none).toBe(false)
+    expect(none.expected).toBe('silence')
+  })
+
+  test.each([
+    ['no expected value', { expected: undefined }],
+    ['an unknown expected value', { expected: 'maybe' }],
+    ['a fire fixture with no methods', { methods: undefined }],
+    ['a fire fixture with an empty methods list', { methods: [] }],
+    ['an unknown method', { methods: ['feel'] }],
+    ['a repeated method', { methods: ['synthesis', 'synthesis'] }],
+    ['methods that are not a list', { methods: 'synthesis' }],
+    ['a silence fixture that names a method', { expected: 'silence', methods: ['synthesis'] }],
+  ])('rejects %s', (_label, over) => {
+    expect(() => parseSpec(workflow(over))).toThrow(SpecError)
+  })
+
+  test('expected and methods belong to the workflow kind alone', () => {
+    for (const kind of ['feel', 'drugs', 'ordinary']) expect(() => parseSpec({ ...workflow(), kind })).toThrow(SpecError)
+    expect(() => parseSpec({ ...spec(), methods: ['synthesis'] })).toThrow(SpecError)
+  })
+
+  test('an error names the field and never echoes the value', () => {
+    const sentinel = 'PRIVATE-VALUE-123'
+    for (const over of [{ expected: sentinel }, { methods: [sentinel] }]) {
+      try {
+        parseSpec(workflow(over))
+        throw new Error('should have thrown')
+      } catch (e) {
+        expect(e).toBeInstanceOf(SpecError)
+        expect((e as Error).message).toMatch(/spec\.(expected|methods)/)
+        expect((e as Error).message).not.toContain(sentinel)
+      }
+    }
+  })
+
+  test('building a fixture hashes the spec stably, and the expectation and methods are part of the hash', () => {
+    const store = newStore()
+    const hash = (over: Record<string, unknown> = {}): string => (buildFixture(store, workflow({ id: 'h', ...over })) as { spec_sha256: string }).spec_sha256
+    const base = hash()
+    expect(hash()).toBe(base)
+    expect(hash({ expected: 'silence', methods: undefined })).not.toBe(base)
+    expect(hash({ methods: ['synthesis'] })).not.toBe(base)
+    expect(hash({ methods: ['synthesis', 'counterfactual'] })).not.toBe(hash({ methods: ['counterfactual', 'synthesis'] }))
+    expect(hash()).toBe(base)
+  })
+
+  test('a workflow fixture freezes, is approved, loads, and lists with its kind', () => {
+    const store = newStore()
+    buildFixture(store, workflow())
+    freezeFixture(store, 'plan-claim')
+    approveFixture(store, 'plan-claim')
+    expect(loadFrozen(store, 'plan-claim').spec).toMatchObject({ kind: 'workflow', expected: 'fire', methods: ['counterfactual'] })
+    expect(listFixtures(store)).toEqual([{ id: 'plan-claim', kind: 'workflow', status: 'frozen', approved: true }])
+  })
+
+  test('the export of a seeded session keeps a systematic_skill tool call and its skill content', () => {
+    const seeded = parseSpec(workflow({ turns: [{ role: 'user', text: 'Plan it.' }, { role: 'assistant', text: 'Loading.', tools: [{ callID: 'call_p', tool: 'systematic_skill', input: { name: 'ce:plan' }, output: '<skill_content name="systematic:ce:plan">x</skill_content>' }] }] }))
+    const tool = buildExport(seeded).messages[1]!.parts.find((p) => p.type === 'tool')
+    expect(tool).toMatchObject({ tool: 'systematic_skill', state: { input: { name: 'ce:plan' }, output: '<skill_content name="systematic:ce:plan">x</skill_content>' } })
+  })
+})
+
 describe('buildExport', () => {
   const exported = buildExport(spec())
 

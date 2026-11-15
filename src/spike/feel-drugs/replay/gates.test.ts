@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { ARM_NAMES, type ArmName, armMessage, evaluateGates, type GateInput, mainRequests, NUDGE_ONLY, parseSkillDelivery, runArgs, WHICHEVER } from './gates'
+import { ARM_NAMES, type ArmName, armMessage, type AssistantInfo, evaluateGates, type GateInput, type GateResult, mainRequests, NUDGE_ONLY, parseSkillDelivery, runArgs, WHICHEVER } from './gates'
 import { chatRequest, gateInput, MODEL, OK_ASSISTANT, SEED_USER, skillText, SKILLS_DIR, titleRequest } from './test-support'
 import { requestedModel, toolNamesAnyWire, userMessageParts, userTextsAnyWire } from './wire'
 
@@ -78,6 +78,62 @@ describe('the skill text', () => {
   test('text that is not the skill reads as null', () => {
     expect(parseSkillDelivery('Continue.')).toBeNull()
     expect(parseSkillDelivery('# feel\n\nno base directory line')).toBeNull()
+  })
+})
+
+describe('the workflow gate set', () => {
+  const BUILD: AssistantInfo = { agent: 'build', providerID: 'anthropic', modelID: 'claude-opus-5-5' }
+  const WORKFLOW_TOOLS = ['read', 'bash', 'skill', 'systematic_skill', 'systematic_search', 'feel', 'drugs']
+  const request = (tools = WORKFLOW_TOOLS, last = ['§3§ Continue.', '<system-reminder>r</system-reminder>']) => chatRequest({ last, tools })
+  const run = (over: Partial<GateInput> = {}): GateResult => evaluateGates(gateInput({ arm: 'continue-a', message: armMessage('continue-a', { somewhere: '' })!, gateSet: 'workflow', assistants: [BUILD], requests: [titleRequest(), request()], ...over }))
+
+  test('a healthy attempt passes: no feel or drugs needed, no skill delivery, the build agent', () => {
+    const r = run({ requests: [titleRequest(), request(['read', 'skill', 'systematic_skill'])] })
+    expect(r.reasons).toEqual([])
+    expect(r.passed).toBe(true)
+    expect(r.mainRequests).toBe(1)
+    expect(r.checks.map((c) => c.name)).toEqual(['host_version', 'main_request', 'tools_offered', 'tool_policy', 'agent', 'compaction', 'model', 'seed_history', 'stack_injection'])
+  })
+
+  test('a main request that does not list systematic_skill is excluded as tool_missing, and the check names the tool', () => {
+    const r = run({ requests: [request(['read', 'skill', 'feel', 'drugs'])] })
+    expect(r.reasons).toEqual(['tool_missing'])
+    expect(r.checks.find((c) => c.name === 'tools_offered')?.detail).toContain('systematic_skill')
+  })
+
+  test('systematic_skill must be listed on every main request, not just one', () => {
+    expect(run({ requests: [request(), request(['read'])] }).reasons).toEqual(['tool_missing'])
+  })
+
+  test('a main request that lists question or task is excluded as tool_policy, with the tool named', () => {
+    for (const tool of ['question', 'task']) {
+      const r = run({ requests: [request([...WORKFLOW_TOOLS, tool])] })
+      expect(r.reasons).toEqual(['tool_policy'])
+      expect(r.checks.find((c) => c.name === 'tool_policy')?.detail).toContain(tool)
+    }
+    expect(run({ requests: [request([...WORKFLOW_TOOLS, 'question', 'task'])] }).checks.find((c) => c.name === 'tool_policy')?.detail).toBe('offered on a main request: question, task')
+  })
+
+  test('a request with no tool at all is no main request', () => {
+    expect(run({ requests: [titleRequest()] }).reasons).toEqual(['no_main_request'])
+  })
+
+  test('the shared gates still hold: host version, agent, model, seed history and compaction', () => {
+    expect(run({ hostVersion: '1.19.4' }).reasons).toEqual(['host_version'])
+    expect(run({ assistants: [{ ...BUILD, agent: 'orchestrator' }] }).reasons).toEqual(['agent_mismatch'])
+    expect(run({ assistants: [{ ...BUILD, modelID: 'gpt-6-luna' }] }).reasons).toEqual(['model_mismatch'])
+    expect(run({ seedUserTurns: [...SEED_USER].reverse() }).reasons).toEqual(['seed_history_missing'])
+    expect(run({ partTypes: ['text', 'compaction'] }).reasons).toEqual(['compaction'])
+  })
+
+  test('the expected agent can be named', () => {
+    expect(run({ expectedAgent: 'plan', assistants: [{ ...BUILD, agent: 'plan' }] }).reasons).toEqual([])
+  })
+
+  test('the main request is any request that offers a tool', () => {
+    const reqs = [titleRequest(), chatRequest({ last: ['x'], tools: ['read'] }), chatRequest({ last: ['y'], tools: [] })]
+    expect(mainRequests(reqs, 'workflow')).toEqual([reqs[1]!])
+    expect(mainRequests(reqs)).toEqual([])
   })
 })
 
@@ -162,6 +218,12 @@ describe('the gate matrix', () => {
   test('the main request is the one offering both task and feel', () => {
     const reqs = [titleRequest(), chatRequest({ last: ['x'], tools: ['read'] }), chatRequest({ last: ['y'] })]
     expect(mainRequests(reqs)).toEqual([reqs[2]!])
+  })
+
+  test('the feel and drugs gate set is the default and does not accept a trimmed workflow request', () => {
+    const request = chatRequest({ last: ['Continue.'], tools: ['read', 'systematic_skill'] })
+    expect(run('continue-a', { requests: [request] }).reasons).toEqual(['tool_missing'])
+    expect(run('continue-a', { requests: [request], gateSet: 'feel-drugs' }).reasons).toEqual(['tool_missing'])
   })
 
   test('the Responses and Anthropic wires pass the same gates', () => {

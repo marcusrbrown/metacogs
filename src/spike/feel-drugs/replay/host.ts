@@ -1,6 +1,6 @@
 /** The host side of an attempt: the daily harness, a cloned base fixture, import, run, export. Real processes, throwaway fixtures. */
 import { spawnSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -13,7 +13,7 @@ import { spawnCapture } from '../../../runner/opencode'
 import { type RecordedRequest, type ScriptedStep, type ScriptRequest, startRecordingProxy, startScriptedProvider } from '../../../runner/scripted-provider'
 import { gitInit, sha256 } from '../../../runner/workspace'
 import { type ArmMessage, type ArmName, type AssistantInfo, runArgs } from './gates'
-import { defaultOwnerConfig, type OwnerConfig, REPLAY_AGENT, STACK_NPM_PLUGINS, stackHostConfig, stubProviders, writeStackConfigs } from './stack'
+import { dailyStack, defaultOwnerConfig, type OwnerConfig, STACK_NPM_PLUGINS, type StackProfile, stackHostConfig, stubProviders, writeStackConfigs } from './stack'
 import type { ReplaySeed } from './history'
 import { defaultUnreadable, sandboxAvailable, sandboxPrefix } from './sandbox'
 import { cloneWorld, ghEnv, type GhAuth, removeGhConfig, type WorldJob, type WorldRecord, worldPermission, writeGhConfig } from './world'
@@ -46,9 +46,9 @@ export function hostVersion(harness: string): string {
 
 // ── the base fixture ───────────────────────────────────────────────────────
 
-/** Where the installed plugin cache lives: keyed by the host version and the registry plugins, so a change starts a new base. */
-export function defaultBaseDir(storeRoot: string, harness: string): string {
-  return join(storeRoot, 'base', sha256(JSON.stringify({ version: hostVersion(harness), plugins: STACK_NPM_PLUGINS })).slice(0, 12))
+/** Where the installed plugin cache lives: keyed by the host version and the registry plugins, so a change starts a new base. The daily stack's key is unchanged. */
+export function defaultBaseDir(storeRoot: string, harness: string, plugins: readonly string[] = STACK_NPM_PLUGINS): string {
+  return join(storeRoot, 'base', sha256(JSON.stringify({ version: hostVersion(harness), plugins })).slice(0, 12))
 }
 
 const clone = (from: string, to: string): void => {
@@ -58,15 +58,16 @@ const clone = (from: string, to: string): void => {
 }
 
 /** Installs the registry plugins once (online) and keeps the cache and config dir as the base every attempt clones. */
-export async function prepareBase(input: { harness: string; baseDir: string; owner?: OwnerConfig; log?: (line: string) => void }): Promise<string> {
+export async function prepareBase(input: { harness: string; baseDir: string; owner?: OwnerConfig; stack?: StackProfile; log?: (line: string) => void }): Promise<string> {
+  const stack = input.stack ?? dailyStack()
   const { baseDir } = input
   if (existsSync(join(baseDir, 'READY'))) return baseDir
   input.log?.(`preparing the base fixture at ${baseDir} (installs the registry plugins; needs the network once)`)
   const fx = createFixture('metacogs-replay-base-')
   try {
     gitInit(fx.workspace)
-    writeStackConfigs(fx, input.owner ?? defaultOwnerConfig())
-    const config = stackHostConfig({ provider: stubProviders('http://127.0.0.1:9/v1'), pluginSpecs: STACK_NPM_PLUGINS })
+    writeStackConfigs(fx, input.owner ?? defaultOwnerConfig(), stack)
+    const config = stackHostConfig({ provider: stubProviders('http://127.0.0.1:9/v1'), pluginSpecs: stack.npmPlugins, permission: stack.permission, agent: stack.agent })
     const env = buildChildEnv({ fixture: fx, config })
     mkdirSync(join(fx.root, 'logs'), { recursive: true })
     const r = await spawnCapture([input.harness, 'debug', 'config'], { cwd: fx.workspace, env, timeoutMs: 900_000, stdoutPath: join(fx.root, 'logs', 'base.out'), stderrPath: join(fx.root, 'logs', 'base.err') })
@@ -110,6 +111,8 @@ export interface HostResult {
   endedAt: string
   wallMs: number
   stack: DailyStackVerdict | null
+  /** The Systematic release in the stack's plugin list and the hash of the Systematic config written into the fixture, so every arm provably saw the same config. */
+  systematic?: { spec: string | null; configSha256: string | null }
   /** Plugin specs, default agent and mcp count as the host reported them. */
   stackSummary: { plugins: string[]; default_agent: string | null; mcp_entries: number } | null
   assistants: AssistantInfo[] | null
@@ -130,6 +133,8 @@ export interface HostExecutorOptions {
   /** Required for `cliproxy`: the key goes only into the attempt fixture's throwaway auth file. */
   cliproxy?: ResolvedCliproxy
   owner?: OwnerConfig
+  /** The stack the attempt runs. Default: the daily stack. The base fixture must have been prepared for the same stack. */
+  stack?: StackProfile
   /** Scripted provider only: the model's reply to a request. `undefined` answers with plain text. */
   script?: (arm: ArmName, request: ScriptRequest) => ScriptedStep | undefined
   /** Scripted provider only: the model id each request reports back. Default: the one it asked for. */
@@ -184,6 +189,8 @@ export function createHostExecutor(options: HostExecutorOptions): Executor {
   const { harness } = options
   const version = hostVersion(harness)
   const owner = options.owner ?? defaultOwnerConfig()
+  const profile = options.stack ?? dailyStack()
+  const systematicSpec = profile.npmPlugins.find((p) => p.startsWith('@fro.bot/systematic@')) ?? null
 
   return async (job) => {
     const startedAt = new Date()
@@ -213,11 +220,13 @@ export function createHostExecutor(options: HostExecutorOptions): Executor {
       } else gitInit(fx.workspace)
       // the agent's shell is allowed in the clone and permissions do not confine it, so every real-world host process runs write-confined to the fixture
       const sandbox = job.world && options.world?.sandbox !== 'off' ? sandboxPrefix({ writable: [fx.root, bunInstallCacheDir(), ...(options.world?.writable ?? [])], unreadable: defaultUnreadable() }) : []
-      writeStackConfigs(fx, owner)
+      writeStackConfigs(fx, owner, profile)
+      const systematicConfig = join(fx.xdgConfigHome, 'opencode', 'systematic.jsonc')
+      const systematic = { spec: systematicSpec, configSha256: existsSync(systematicConfig) ? sha256(readFileSync(systematicConfig, 'utf8')) : null }
       clone(join(options.baseDir, 'cache'), fx.xdgCacheHome)
       clone(join(options.baseDir, 'opencode-config-dir'), fx.opencodeConfigDir)
       const provider = options.provider === 'scripted' ? stubProviders(server.url) : cliproxyProviderConfig(server.url)
-      const config = stackHostConfig({ provider, pluginSpecs: [...STACK_NPM_PLUGINS, options.packed.spec], ...(job.world ? { permission: worldPermission() } : {}) })
+      const config = stackHostConfig({ provider, pluginSpecs: [...profile.npmPlugins, options.packed.spec], permission: job.world ? worldPermission() : profile.permission, agent: profile.agent })
       const env = buildChildEnv({ fixture: fx, config, extra: { ...OFFLINE_NPM, ...(ghDir ? ghEnv(ghDir) : {}), ...(job.world ? options.world?.env : {}) } })
       if (options.provider === 'cliproxy') {
         if (!options.cliproxy) throw new Error('the cliproxy provider needs a resolved key')
@@ -232,9 +241,10 @@ export function createHostExecutor(options: HostExecutorOptions): Executor {
       const stack = checkDailyStack({
         effective,
         generated: config,
-        plugins: [...STACK_NPM_PLUGINS, options.packed.spec],
+        plugins: [...profile.npmPlugins, options.packed.spec],
         configPath: fx.configPath,
-        defaultAgent: REPLAY_AGENT,
+        defaultAgent: profile.reportedDefaultAgent,
+        mcpMayBeAbsent: profile.mcpMayBeAbsent,
         skillsPaths: [options.packed.pluginSkillsDir],
         keepKeys: ['permission', 'share', 'compaction'],
         // a real repo may declare its own plugin (Systematic loads ./src/index.ts); the daily setup runs it too
@@ -244,7 +254,7 @@ export function createHostExecutor(options: HostExecutorOptions): Executor {
       const stackSummary = eff
         ? { plugins: Array.isArray(eff.plugin_origins) ? eff.plugin_origins.filter(isRecord).map((o) => String(o.spec)) : [], default_agent: typeof eff.default_agent === 'string' ? eff.default_agent : null, mcp_entries: isRecord(eff.mcp) ? Object.keys(eff.mcp).length : -1 }
         : null
-      const base = { hostVersion: version, leakDirs: job.world ? worldLeakDirs(fx) : [fx.workspace], ...(worldRecord ? { world: worldRecord } : {}), cleanup, stack, stackSummary }
+      const base = { hostVersion: version, systematic, leakDirs: job.world ? worldLeakDirs(fx) : [fx.workspace], ...(worldRecord ? { world: worldRecord } : {}), cleanup, stack, stackSummary }
       const finish = (extra: Partial<HostResult>): HostResult => {
         const ended = new Date()
         return { ...base, requests: server.requests, stdout: '', stderr: '', exitCode: -1, timedOut: false, aborted: false, ran: false, startedAt: startedAt.toISOString(), endedAt: ended.toISOString(), wallMs: ended.getTime() - startedAt.getTime(), assistants: null, partTypes: null, ...extra }

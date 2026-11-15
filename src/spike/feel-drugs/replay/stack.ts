@@ -9,8 +9,12 @@ import { buildConfig } from '../../../runner/workspace'
 
 /** Registry plugins of the stack. The packed local metacogs plugin is added after these. */
 export const STACK_NPM_PLUGINS = ['oh-my-opencode-slim@3.0.7', '@cortexkit/opencode-magic-context@0.49.40', '@cortexkit/aft-opencode@0.63.5', '@fro.bot/systematic@3.31.5'] as const
+/** The Systematic release the baseline arm runs: the shipped package from the registry, one exact version. */
+export const SYSTEMATIC_PIN = '@fro.bot/systematic@3.33.2'
 /** Slim's default agent, the one that sees all four metacogs skills. */
 export const REPLAY_AGENT = 'orchestrator'
+/** The host's own default agent, which the trimmed stack runs under because it has no slim. */
+export const WORKFLOW_AGENT = 'build'
 /** Slim hooks switched off: `council-inject` adds a Council Mode block to the first `/drugs` text; the other checks for updates. */
 export const DISABLED_HOOKS = ['council-inject', 'auto-update-checker'] as const
 
@@ -49,22 +53,64 @@ export const magicContextConfig = (owner: Json): Json => ({
   dreamer: { ...section(owner, 'dreamer'), disable: true },
 })
 
-/** Writes the four plugin configs into the fixture's XDG config home, and copies slim's prompt appendices. */
-export function writeStackConfigs(fx: Pick<Fixture, 'xdgConfigHome'>, owner: OwnerConfig): void {
+// ── stack profiles ─────────────────────────────────────────────────────────
+
+export type StackConfigName = 'slim' | 'systematic' | 'aft' | 'magic-context'
+
+/** What differs between the daily stack and the trimmed workflow stack; everything else in a replay is shared. */
+export interface StackProfile {
+  name: 'daily' | 'workflow'
+  /** Registry plugins, in load order. The packed local metacogs plugin is added after these. */
+  npmPlugins: readonly string[]
+  /** The agent the replayed assistant messages must run. */
+  defaultAgent: string
+  /** The default agent `debug config` reports; `null` when nothing in the stack names one. */
+  reportedDefaultAgent: string | null
+  /** The stack has no plugin that adds an `mcp` block, so `debug config` may report none. */
+  mcpMayBeAbsent: boolean
+  /** The `permission` block of the generated host config. */
+  permission: Json
+  /** The `agent` block of the generated host config. */
+  agent: Json
+  /** The plugin configs written into the fixture. */
+  configs: readonly StackConfigName[]
+}
+
+const ALL_CONFIGS: readonly StackConfigName[] = ['slim', 'systematic', 'aft', 'magic-context']
+const DAILY_AGENT_SWITCHES: Json = { general: { disable: true }, explore: { disable: true } }
+
+/** The owner's daily stack: slim, magic-context, aft and Systematic, then metacogs. */
+export const dailyStack = (): StackProfile => ({ name: 'daily', npmPlugins: STACK_NPM_PLUGINS, defaultAgent: REPLAY_AGENT, reportedDefaultAgent: REPLAY_AGENT, mcpMayBeAbsent: false, permission: replayPermission(), agent: DAILY_AGENT_SWITCHES, configs: ALL_CONFIGS })
+
+/**
+ * The trimmed stack for workflow fixtures: one registry release of Systematic, then metacogs. `question` and `task` are denied, so
+ * the host removes both tools from every request and the model works inline.
+ */
+export function workflowStack(systematic: string = SYSTEMATIC_PIN): StackProfile {
+  if (!/^@fro\.bot\/systematic@\d+\.\d+\.\d+$/.test(systematic)) throw new Error(`the workflow stack takes a registry release of @fro.bot/systematic, as @fro.bot/systematic@<version>; got ${JSON.stringify(systematic)}`)
+  return { name: 'workflow', npmPlugins: [systematic], defaultAgent: WORKFLOW_AGENT, reportedDefaultAgent: null, mcpMayBeAbsent: true, permission: workflowPermission(), agent: DAILY_AGENT_SWITCHES, configs: ['systematic'] }
+}
+
+/** Writes the profile's plugin configs into the fixture's XDG config home, and copies slim's prompt appendices when slim is in it. */
+export function writeStackConfigs(fx: Pick<Fixture, 'xdgConfigHome'>, owner: OwnerConfig, profile: Pick<StackProfile, 'configs'> = { configs: ALL_CONFIGS }): void {
+  const has = (name: StackConfigName): boolean => profile.configs.includes(name)
   const oc = join(fx.xdgConfigHome, 'opencode')
-  mkdirSync(join(oc, 'oh-my-opencode-slim'), { recursive: true })
-  writeFileSync(join(oc, 'oh-my-opencode-slim.jsonc'), JSON.stringify(slimConfig(readJsonc(owner.opencodeDir, 'oh-my-opencode-slim.jsonc'))))
-  writeFileSync(join(oc, 'systematic.jsonc'), JSON.stringify(systematicConfig(readJsonc(owner.opencodeDir, 'systematic.jsonc'))))
-  if (owner.opencodeDir !== null) {
-    for (const f of ['orchestrator_append.md', 'designer_append.md']) {
-      const source = join(owner.opencodeDir, 'oh-my-opencode-slim', f)
-      if (existsSync(source)) copyFileSync(source, join(oc, 'oh-my-opencode-slim', f))
+  mkdirSync(oc, { recursive: true })
+  if (has('slim')) {
+    mkdirSync(join(oc, 'oh-my-opencode-slim'), { recursive: true })
+    writeFileSync(join(oc, 'oh-my-opencode-slim.jsonc'), JSON.stringify(slimConfig(readJsonc(owner.opencodeDir, 'oh-my-opencode-slim.jsonc'))))
+    if (owner.opencodeDir !== null) {
+      for (const f of ['orchestrator_append.md', 'designer_append.md']) {
+        const source = join(owner.opencodeDir, 'oh-my-opencode-slim', f)
+        if (existsSync(source)) copyFileSync(source, join(oc, 'oh-my-opencode-slim', f))
+      }
     }
   }
+  if (has('systematic')) writeFileSync(join(oc, 'systematic.jsonc'), JSON.stringify(systematicConfig(readJsonc(owner.opencodeDir, 'systematic.jsonc'))))
   const ck = join(fx.xdgConfigHome, 'cortexkit')
-  mkdirSync(ck, { recursive: true })
-  writeFileSync(join(ck, 'aft.jsonc'), JSON.stringify(aftConfig(readJsonc(owner.cortexkitDir, 'aft.jsonc'))))
-  writeFileSync(join(ck, 'magic-context.jsonc'), JSON.stringify(magicContextConfig(readJsonc(owner.cortexkitDir, 'magic-context.jsonc'))))
+  if (has('aft') || has('magic-context')) mkdirSync(ck, { recursive: true })
+  if (has('aft')) writeFileSync(join(ck, 'aft.jsonc'), JSON.stringify(aftConfig(readJsonc(owner.cortexkitDir, 'aft.jsonc'))))
+  if (has('magic-context')) writeFileSync(join(ck, 'magic-context.jsonc'), JSON.stringify(magicContextConfig(readJsonc(owner.cortexkitDir, 'magic-context.jsonc'))))
 }
 
 // ── host config ────────────────────────────────────────────────────────────
@@ -84,6 +130,9 @@ export function replayPermission(): Json {
   }
 }
 
+/** The replay denials plus `question` and `task`: neither tool is offered, so the model cannot ask or delegate. */
+export const workflowPermission = (): Json => ({ ...replayPermission(), question: 'deny', task: 'deny' })
+
 const stubModel = (id: string) => ({ id, name: id, attachment: false, reasoning: false, temperature: false, tool_call: true, release_date: '2026-10-22', limit: { context: 200_000, output: 10_000 }, cost: { input: 0, output: 0 }, options: {} })
 const STUB_MODELS = { anthropic: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'], openai: ['gpt-6-luna', 'gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-astra'] } as const
 
@@ -93,13 +142,13 @@ export function stubProviders(baseURL: string): Json {
 }
 
 /** The generated `OPENCODE_CONFIG` of one attempt. */
-export function stackHostConfig(input: { provider: Json; pluginSpecs: readonly string[]; permission?: Json }): Json {
+export function stackHostConfig(input: { provider: Json; pluginSpecs: readonly string[]; permission?: Json; agent?: Json }): Json {
   return buildConfig({
     permission: input.permission ?? replayPermission(),
     provider: input.provider,
     extra: {
       plugin: [...input.pluginSpecs],
-      agent: { general: { disable: true }, explore: { disable: true } },
+      agent: input.agent ?? DAILY_AGENT_SWITCHES,
       compaction: { auto: false, prune: false },
       experimental: { openTelemetry: false },
       lsp: true,

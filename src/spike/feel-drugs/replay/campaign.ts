@@ -4,8 +4,9 @@ import { type ResolvedCliproxy, resolveCliproxy as defaultResolveCliproxy } from
 import { CredentialLeakError } from '../../../runner/manifest'
 import { ARM_NAMES, type ArmName, REPLAY_MODELS, WORLD_ARM_NAMES } from './gates'
 import { createHostExecutor, defaultBaseDir, type Executor, prepareBase, resolveHarness } from './host'
-import { campaignCells, campaignDir, runCampaign, spentUsd } from './run'
+import { campaignCells, campaignDir, campaignTallies, runCampaign, spentUsd } from './run'
 import { listWorldScenarios, loadWorldFixture, type ReplayFixture } from './scenario'
+import { dailyStack, type StackProfile, workflowStack } from './stack'
 import { listFixtures, loadFrozen, type Store } from './store'
 import { type GhAuth, resolveGhAuth as defaultResolveGhAuth } from './world'
 
@@ -23,6 +24,10 @@ export interface CampaignValues {
   'timeout-ms'?: string | undefined
   'expect-host-version'?: string | undefined
   again?: boolean | undefined
+  /** Scored attempts per cell (workflow fixtures). */
+  'attempts-per-cell'?: string | undefined
+  /** Terminal attempts per cell that may be replaced (with `--attempts-per-cell`). */
+  replacements?: string | undefined
   /** `real`: replay the real history in a clone of the real repo. */
   world?: string | undefined
 }
@@ -58,6 +63,22 @@ function positive(text: string | undefined, flag: string): number {
   return text !== undefined && Number.isFinite(n) && n > 0 ? n : usage(`${flag} takes a positive number`)
 }
 
+function whole(text: string | undefined, flag: string, min: number): number {
+  const n = Number(text)
+  return text !== undefined && text.trim() !== '' && Number.isInteger(n) && n >= min ? n : usage(`${flag} takes a whole number, ${min} or more`)
+}
+
+/** A workflow fixture runs on the trimmed Systematic stack, any other kind on the daily stack; one campaign cannot use both. */
+export function stackForKinds(kinds: readonly string[]): StackProfile {
+  const workflow = kinds.filter((k) => k === 'workflow').length
+  if (workflow > 0 && workflow < kinds.length) usage('workflow fixtures run on the trimmed Systematic stack and the others on the daily stack; run them as separate campaigns')
+  return workflow > 0 ? workflowStack() : dailyStack()
+}
+
+/** One line per workflow cell: its scored attempts and what they added up to. */
+const tallyLines = (store: Store, campaign: string): string[] =>
+  campaignTallies(store, campaign).map((r) => `tally\t${r.fixture}\t${r.model}\t${r.arm}\tcounted=${r.tally.counted}\thits=${r.tally.hits}\tmisses=${r.tally.misses}\tsilent=${r.tally.silent}\tfalse_fires=${r.tally.false_fires}\twrong_method=${r.tally.wrong_method}\texcluded=${r.tally.excluded}`)
+
 /** Fixture ids to run: the named ones, or every frozen and approved one. An edited fixture is refused either way. */
 function fixtureIds(store: Store, spec: string): string[] {
   if (spec !== 'all') return list(spec)
@@ -89,13 +110,19 @@ export async function campaignCommand(values: CampaignValues, ctx: CampaignCliCo
   const live = provider === 'cliproxy'
   const attemptEstimateUsd = values['attempt-estimate'] === undefined ? undefined : positive(values['attempt-estimate'], '--attempt-estimate')
   if (live && attemptEstimateUsd === undefined) usage('--provider cliproxy needs --attempt-estimate <usd>, so the cap holds before the first call')
+  const attemptsPerCell = values['attempts-per-cell'] === undefined ? undefined : whole(values['attempts-per-cell'], '--attempts-per-cell', 1)
+  const replacements = values.replacements === undefined ? undefined : whole(values.replacements, '--replacements', 0)
+  if (replacements !== undefined && attemptsPerCell === undefined) usage('--replacements needs --attempts-per-cell')
+  if (attemptsPerCell !== undefined && values.again) usage('--again does not combine with --attempts-per-cell: a cell is complete once it holds its count')
   const timeoutMs = values['timeout-ms'] === undefined ? (world ? WORLD_TIMEOUT_MS : undefined) : positive(values['timeout-ms'], '--timeout-ms')
 
   // Fixtures first, then the credential: no key is fetched for a fixture that would be refused.
   const loadWorld = (id: string): ReplayFixture => loadWorldFixture(ctx.store, id, { ...(ctx.deps?.home ? { home: ctx.deps.home } : {}), repoRoot: ctx.store.repoRoot })
   const ids = world ? worldFixtureIds(ctx.store, values.fixtures ?? usage('campaign needs --fixtures')) : fixtureIds(ctx.store, values.fixtures ?? usage('campaign needs --fixtures'))
   if (ids.length === 0) usage(world ? 'no built real-world scenarios to run; run `replay world build`' : 'no frozen, approved fixtures to run')
-  for (const id of ids) world ? loadWorld(id) : loadFrozen(ctx.store, id)
+  const kinds: string[] = []
+  for (const id of ids) kinds.push(world ? loadWorld(id).spec.kind : loadFrozen(ctx.store, id).spec.kind)
+  const stack = world ? dailyStack() : stackForKinds(kinds)
   let gh: GhAuth | undefined
   if (world) {
     try {
@@ -120,19 +147,20 @@ export async function campaignCommand(values: CampaignValues, ctx: CampaignCliCo
     let skillsDir = ctx.deps?.skillsDir
     if (!executor) {
       const harness = resolveHarness(ctx.env)
-      const baseDir = await prepareBase({ harness, baseDir: defaultBaseDir(ctx.store.root, harness), log: ctx.out })
+      const baseDir = await prepareBase({ harness, baseDir: defaultBaseDir(ctx.store.root, harness, stack.npmPlugins), stack, log: ctx.out })
       const packed = await packedPlugin()
       owned = true
-      executor = createHostExecutor({ harness, baseDir, packed, provider, ...(cliproxy ? { cliproxy } : {}), ...(world ? { world: { ...(gh ? { gh } : {}) } } : {}) })
+      executor = createHostExecutor({ harness, baseDir, packed, provider, stack, ...(cliproxy ? { cliproxy } : {}), ...(world ? { world: { ...(gh ? { gh } : {}) } } : {}) })
       skillsDir = packed.pluginSkillsDir
     }
     const summary = await runCampaign(
-      { name, models, arms: arms as ArmName[], fixtures: ids, capUsd, provider, ...(attemptEstimateUsd ? { attemptEstimateUsd } : {}), ...(timeoutMs ? { timeoutMs } : {}), ...(values.again ? { again: true } : {}), ...(values['expect-host-version'] ? { expectedHostVersion: values['expect-host-version'] } : {}), ...(world ? { world: true } : {}) },
+      { name, models, arms: arms as ArmName[], fixtures: ids, capUsd, provider, ...(attemptEstimateUsd ? { attemptEstimateUsd } : {}), ...(timeoutMs ? { timeoutMs } : {}), ...(values.again ? { again: true } : {}), ...(attemptsPerCell !== undefined ? { attemptsPerCell } : {}), ...(replacements !== undefined ? { replacements } : {}), ...(values['expect-host-version'] ? { expectedHostVersion: values['expect-host-version'] } : {}), ...(world ? { world: true } : {}) },
       { store: ctx.store, executor, ...(cliproxy ? { cliproxy } : {}), ...(world ? { loadFixture: loadWorld, ...(gh ? { needles: gh.needles } : {}) } : {}), ...(skillsDir ? { skillsDir } : {}), ...(ctx.deps?.sleep ? { sleep: ctx.deps.sleep } : {}), log: ctx.out, signal: abort.signal },
     )
     const counted = Object.entries(summary.counted).map(([status, n]) => `${status}=${n}`).join(' ') || 'none'
     ctx.out(`campaign ${name}${world ? ' (real world)' : ''} cells=${summary.cells} attempts=${summary.attempts} spent=$${summary.spentUsd.toFixed(4)} cap=$${summary.capUsd.toFixed(4)}`)
     ctx.out(`counted: ${counted}`)
+    for (const line of tallyLines(ctx.store, name)) ctx.out(line)
     for (const u of summary.unrun) ctx.out(`not run\t${u.fixture}\t${u.model}\t${u.arm}\t${u.reason}`)
     if (summary.stoppedBy === 'budget') ctx.out('stopped before the next provider attempt: it could pass the cap')
     if (summary.stoppedBy === 'accounting') ctx.out('stopped: an attempt record could not be written, so its spend is only in the run note')
@@ -163,6 +191,7 @@ export function statusCommand(name: string | undefined, ctx: Pick<CampaignCliCon
   }
   ctx.out(`campaign ${name} cells=${rows.length} attempts=${rows.reduce((n, r) => n + r.attempts.length, 0)} spent=$${spentUsd(ctx.store, name!).toFixed(4)}`)
   ctx.out(`counted: ${[...totals].map(([status, n]) => `${status}=${n}`).join(' ')}`)
+  for (const line of tallyLines(ctx.store, name!)) ctx.out(line)
   return 0
 }
 

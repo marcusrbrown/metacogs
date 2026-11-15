@@ -351,13 +351,18 @@ export interface DailyStackInput {
   plugins: readonly string[]
   /** The generated config file every origin must come from. */
   configPath?: string
-  defaultAgent: string
+  /** The default agent `debug config` must report. `null`: the config must report none (a stack with no agent plugin leaves the host's own default unnamed). */
+  defaultAgent: string | null
+  /** A stack with no plugin that adds an `mcp` block reports none. Default: the block must be present and empty. */
+  mcpMayBeAbsent?: boolean
   /** Skill directories that must appear among `skills.paths`. */
   skillsPaths?: readonly string[]
   /** Generated keys the effective config must keep exactly (the stack adds agents, commands and more around them). A plugin may add `deny` rules to `permission` and nothing else to these. */
   keepKeys?: readonly string[]
-  /** A main request: when given, the tools and skills it offers must include `feel` and `drugs`. */
+  /** A main request: when given, the tools and skills it offers must include `required` (default `feel` and `drugs`). */
   offered?: RecordedRequest
+  /** The tools and skills `offered` must carry. Default: `feel` and `drugs` for both. */
+  required?: { tools: readonly string[]; skills: readonly string[] }
   /** Plugin origins beyond `plugins` that are fine, such as a repo's own plugin its project config declares. They are not counted or ordered. */
   allowOrigin?: (origin: Record<string, unknown>) => boolean
 }
@@ -397,8 +402,9 @@ export function checkDailyStack(input: DailyStackInput): DailyStackVerdict {
   const stray = input.configPath === undefined ? 0 : origins.filter((o) => o.source !== input.configPath).length
   add('plugins_loaded', sameOrder && stray === 0, sameOrder ? (stray ? `${stray} plugin origins come from outside the generated config` : `${specs.length} plugins from the generated config${allowed.length ? ` and ${allowed.length} the project declares` : ''}`) : `plugin_origins lists ${specs.length} plugins, expected ${input.plugins.length}, or in another order`)
   add('no_auth_plugins', !/(anthropic|openai|opencode)-auth/.test(JSON.stringify(eff.plugin ?? [])), 'no auth plugin in the effective plugin list')
-  add('default_agent', eff.default_agent === input.defaultAgent, `default agent is ${String(eff.default_agent)}, expected ${input.defaultAgent}`)
-  add('mcp_empty', isRecord(eff.mcp) && Object.keys(eff.mcp).length === 0, `mcp has ${isRecord(eff.mcp) ? Object.keys(eff.mcp).length : 'no'} entries`)
+  add('default_agent', (eff.default_agent ?? null) === input.defaultAgent, `default agent is ${String(eff.default_agent)}, expected ${String(input.defaultAgent)}`)
+  const mcpEmpty = isRecord(eff.mcp) ? Object.keys(eff.mcp).length === 0 : input.mcpMayBeAbsent === true && eff.mcp === undefined
+  add('mcp_empty', mcpEmpty, `mcp has ${isRecord(eff.mcp) ? Object.keys(eff.mcp).length : 'no'} entries`)
   const drift = (input.keepKeys ?? []).filter((k) => !keptKey(eff[k], input.generated[k], k === 'permission'))
   add('generated_kept', drift.length === 0, drift.length ? `changed from the generated config: ${drift.join(', ')}` : 'generated keys kept')
   if (input.skillsPaths) {
@@ -408,11 +414,12 @@ export function checkDailyStack(input: DailyStackInput): DailyStackVerdict {
   }
   if (input.offered) {
     const tools = offeredTools([input.offered])
-    const missingTools = ['feel', 'drugs'].filter((t) => !tools.includes(t))
-    add('tools_offered', missingTools.length === 0, missingTools.length ? `not offered: ${missingTools.join(', ')}` : 'feel and drugs offered')
+    const required = input.required ?? { tools: ['feel', 'drugs'], skills: ['feel', 'drugs'] }
+    const missingTools = required.tools.filter((t) => !tools.includes(t))
+    add('tools_offered', missingTools.length === 0, missingTools.length ? `not offered: ${missingTools.join(', ')}` : `${required.tools.join(' and ')} offered`)
     const skills = availableSkillsIn(input.offered) ?? []
-    const missingSkills = ['feel', 'drugs'].filter((s) => !skills.includes(s))
-    add('skills_listed', missingSkills.length === 0, missingSkills.length ? `not listed: ${missingSkills.join(', ')}` : 'feel and drugs listed')
+    const missingSkills = required.skills.filter((s) => !skills.includes(s))
+    add('skills_listed', missingSkills.length === 0, missingSkills.length ? `not listed: ${missingSkills.join(', ')}` : `${required.skills.join(' and ')} listed`)
   }
   return { passed: checks.every((c) => c.passed), checks }
 }

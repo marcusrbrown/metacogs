@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { sha256 } from '../../../runner/workspace'
 import { extractSession, nextHumanTurn } from './extract'
 import { assertEndsAtCutoff, buildRealExport, type DroppedParts, type HistoryWindow, type ReplaySeed } from './history'
+import type { Method } from './loads'
 import { type FixtureKind, type FixtureSpec, ID_PATTERN, KINDS, parseSpec, privateDir, SpecError, type Store, type Turn, writePrivate } from './store'
 import { branchHints, type CheckoutContext, checkoutOf, type WorldJob } from './world'
 
@@ -197,7 +198,7 @@ export function buildWorldScenario(store: Store, id: string, options: BuildOptio
 
 /** What an attempt runs from: a frozen paraphrased fixture satisfies it, and so does a built real-world scenario. */
 export interface ReplayFixture {
-  spec: { kind: FixtureKind; somewhere: string; turns: readonly Turn[]; substance?: string }
+  spec: { kind: FixtureKind; somewhere: string; turns: readonly Turn[]; substance?: string; expected?: 'fire' | 'silence'; methods?: readonly Method[] }
   export: ReplaySeed
   entry: { spec_sha256: string; export_sha256: string }
   /** Texts the first request must hold; default: the spec's user turns. */

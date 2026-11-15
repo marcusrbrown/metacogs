@@ -1,6 +1,7 @@
 /** Arms and the per-attempt gate matrix. A failed gate excludes the attempt; it is never an outcome. */
 import { systemTexts } from '../../../runner/isolation'
 import type { RecordedRequest } from '../../../runner/scripted-provider'
+import { WORKFLOW_AGENT } from './stack'
 import type { FixtureSpec } from './store'
 import { requestedModel, toolNamesAnyWire, userMessageParts, userTextsAnyWire } from './wire'
 
@@ -55,7 +56,7 @@ export function runArgs(model: string, sessionId: string, message: ArmMessage): 
 
 // ── gates ──────────────────────────────────────────────────────────────────
 
-export const EXCLUSION_REASONS = ['host_version', 'no_main_request', 'tool_missing', 'model_mismatch', 'agent_mismatch', 'compaction', 'skill_not_delivered', 'args_mismatch', 'seed_history_missing', 'stack_injection', 'isolation_failed'] as const
+export const EXCLUSION_REASONS = ['host_version', 'no_main_request', 'tool_missing', 'tool_policy', 'model_mismatch', 'agent_mismatch', 'compaction', 'skill_not_delivered', 'args_mismatch', 'seed_history_missing', 'stack_injection', 'isolation_failed'] as const
 export type ExclusionReason = (typeof EXCLUSION_REASONS)[number]
 
 export interface GateCheck {
@@ -73,7 +74,15 @@ export interface AssistantInfo {
   modelID?: string
 }
 
+/** `feel-drugs`: the daily stack, where the main request offers `task`, `feel` and `drugs`. `workflow`: the trimmed Systematic stack, where it offers `systematic_skill` and neither `question` nor `task`. */
+export type GateSet = 'feel-drugs' | 'workflow'
+
+/** Tools the workflow stack denies; a main request that offers one is excluded. */
+export const WORKFLOW_DENIED_TOOLS = ['question', 'task'] as const
+
 export interface GateInput {
+  /** Default `feel-drugs`. */
+  gateSet?: GateSet
   arm: ArmName
   message: ArmMessage
   /** `provider/model`. */
@@ -109,11 +118,14 @@ const bodyOf = (r: RecordedRequest): Record<string, unknown> => (isRecord(r.body
 const stripTag = (s: string): string => s.replace(/^§\d+§ (?:<!--[^\n]*?-->\n)?/, '')
 const SUMMARIZER = /you are a context summarization agent|summarize what was done in this conversation/i
 
-/** The main request is the one that offers both `task` and `feel`; title and subagent requests are not gated on the model. */
-export function mainRequests(requests: readonly RecordedRequest[]): RecordedRequest[] {
+/**
+ * The main request is the one that offers both `task` and `feel`; title and subagent requests are not gated on the model. In the
+ * workflow set, which has no `feel` or `task`, it is any request that offers a tool: the title request offers none.
+ */
+export function mainRequests(requests: readonly RecordedRequest[], gateSet: GateSet = 'feel-drugs'): RecordedRequest[] {
   return requests.filter((r) => {
     const names = toolNamesAnyWire(bodyOf(r))
-    return names.includes('task') && names.includes('feel')
+    return gateSet === 'workflow' ? names.length > 0 : names.includes('task') && names.includes('feel')
   })
 }
 
@@ -156,17 +168,26 @@ export function evaluateGates(input: GateInput): GateResult {
 
   checks.push(check('host_version', input.hostVersion === input.expectedHostVersion, `reported ${input.hostVersion}, expected ${input.expectedHostVersion}`, 'host_version'))
 
-  const mains = mainRequests(requests)
+  const gateSet = input.gateSet ?? 'feel-drugs'
+  const mains = mainRequests(requests, gateSet)
   const withTools = requests.filter((r) => toolNamesAnyWire(bodyOf(r)).length > 0)
   if (mains.length === 0) {
     checks.push(withTools.length === 0 ? check('main_request', false, 'no request offered any tool', 'no_main_request') : check('tools_offered', false, 'no request offered both task and feel', 'tool_missing'))
   } else {
     checks.push({ name: 'main_request', passed: true, detail: `${mains.length} of ${requests.length} requests` })
-    const missing = ['feel', 'drugs'].filter((tool) => mains.some((r) => !toolNamesAnyWire(bodyOf(r)).includes(tool)))
-    checks.push(check('tools_offered', missing.length === 0, missing.length ? `not offered on every main request: ${missing.join(', ')}` : 'task, feel and drugs offered', 'tool_missing'))
+    if (gateSet === 'workflow') {
+      const offered = (r: RecordedRequest): string[] => toolNamesAnyWire(bodyOf(r))
+      const missing = ['systematic_skill'].filter((tool) => mains.some((r) => !offered(r).includes(tool)))
+      checks.push(check('tools_offered', missing.length === 0, missing.length ? `not offered on every main request: ${missing.join(', ')}` : 'systematic_skill offered', 'tool_missing'))
+      const denied = WORKFLOW_DENIED_TOOLS.filter((tool) => mains.some((r) => offered(r).includes(tool)))
+      checks.push(check('tool_policy', denied.length === 0, denied.length ? `offered on a main request: ${denied.join(', ')}` : 'question and task not offered', 'tool_policy'))
+    } else {
+      const missing = ['feel', 'drugs'].filter((tool) => mains.some((r) => !toolNamesAnyWire(bodyOf(r)).includes(tool)))
+      checks.push(check('tools_offered', missing.length === 0, missing.length ? `not offered on every main request: ${missing.join(', ')}` : 'task, feel and drugs offered', 'tool_missing'))
+    }
   }
 
-  const expectedAgent = input.expectedAgent ?? 'orchestrator'
+  const expectedAgent = input.expectedAgent ?? (gateSet === 'workflow' ? WORKFLOW_AGENT : 'orchestrator')
   if (input.assistants === null || input.assistants.length === 0) {
     checks.push(check('agent', false, 'the session export has no assistant message after the seed', 'agent_mismatch'))
   } else {

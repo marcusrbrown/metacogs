@@ -396,6 +396,29 @@ describe('checkDailyStack', () => {
     expect(failedNames(base({ offered: mainRequest(['task', 'feel', 'drugs'], ['feel']) }))).toEqual(['skills_listed'])
   })
 
+  test('the tools and skills the offered request must carry follow the caller, and name what is missing', () => {
+    const required = { tools: ['systematic_skill'], skills: ['counterfactual', 'synthesis'] }
+    const stack = mainRequest(['read', 'systematic_skill'], ['counterfactual', 'synthesis', 'ce:plan'])
+    expect(checkDailyStack(base({ offered: stack, required })).passed).toBe(true)
+    // feel and drugs are not demanded once the caller names its own list
+    expect(checkDailyStack(base({ offered: stack, required })).checks.map((c) => c.detail).join(' ')).not.toContain('feel')
+    const noTool = checkDailyStack(base({ offered: mainRequest(['read'], ['counterfactual', 'synthesis']), required }))
+    expect(noTool.checks.find((c) => c.name === 'tools_offered')).toMatchObject({ passed: false, detail: 'not offered: systematic_skill' })
+    const noSkill = checkDailyStack(base({ offered: mainRequest(['systematic_skill'], ['counterfactual']), required }))
+    expect(noSkill.checks.find((c) => c.name === 'skills_listed')).toMatchObject({ passed: false, detail: 'not listed: synthesis' })
+    // the default is still feel and drugs
+    expect(failedNames(base({ offered: mainRequest(['systematic_skill'], ['counterfactual', 'synthesis']) }))).toEqual(['tools_offered', 'skills_listed'])
+  })
+
+  test('a stack with no agent plugin reports no default agent and may report no mcp block; neither is accepted by default', () => {
+    const { default_agent: _agent, mcp: _mcp, ...bare } = EFF
+    expect(failedNames(base({ effective: bare }))).toEqual(['default_agent', 'mcp_empty'])
+    expect(checkDailyStack(base({ effective: bare, defaultAgent: null, mcpMayBeAbsent: true })).passed).toBe(true)
+    // a reported agent still fails when none is expected, and a non-empty mcp block still fails when absence is allowed
+    expect(failedNames(base({ defaultAgent: null, mcpMayBeAbsent: true }))).toEqual(['default_agent'])
+    expect(failedNames(base({ effective: { ...bare, mcp: { context7: {} } }, defaultAgent: null, mcpMayBeAbsent: true }))).toEqual(['mcp_empty'])
+  })
+
   test('fails when a plugin did not load, loaded from elsewhere, or an auth plugin is present', () => {
     expect(failedNames(base({ effective: { ...EFF, plugin_origins: EFF.plugin_origins.slice(0, 2) } }))).toEqual(['plugins_loaded'])
     expect(failedNames(base({ effective: { ...EFF, plugin_origins: EFF.plugin_origins.map((o) => ({ ...o, source: '/home/x/opencode.json' })) } }))).toEqual(['plugins_loaded'])

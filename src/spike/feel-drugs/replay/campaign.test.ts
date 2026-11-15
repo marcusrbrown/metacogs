@@ -4,8 +4,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { ResolvedCliproxy } from '../../../runner/cliproxy'
+import { CampaignUsageError, stackForKinds } from './campaign'
 import { mainAsync } from './cli'
-import { approvedFixture, fakeExecutor, MODEL, SYNTHETIC_SPEC } from './test-support'
+import { approvedFixture, fakeExecutor, fakeWorkflowExecutor, MODEL, SILENCE_SPEC, skillLoadEvent, SYNTHETIC_SPEC, WORKFLOW_SPEC } from './test-support'
 import { buildFixture, freezeFixture, openStore } from './store'
 
 const dirs: string[] = []
@@ -32,6 +33,19 @@ function harness(deps: Parameters<typeof mainAsync>[1] extends infer T ? (T exte
 }
 
 const base = ['campaign', '--name', 'camp', '--models', MODEL, '--arms', 'all', '--fixtures', 'moment-a', '--cap', '10']
+
+describe('the stack a campaign runs on', () => {
+  test('workflow fixtures run on the trimmed Systematic stack, the other kinds on the daily stack', () => {
+    expect(stackForKinds(['workflow', 'workflow']).name).toBe('workflow')
+    expect(stackForKinds(['feel', 'drugs', 'ordinary']).name).toBe('daily')
+    expect(stackForKinds([]).name).toBe('daily')
+  })
+
+  test('a mix is refused', () => {
+    expect(() => stackForKinds(['workflow', 'feel'])).toThrow(CampaignUsageError)
+    expect(() => stackForKinds(['ordinary', 'workflow'])).toThrow('separate campaigns')
+  })
+})
 
 describe('bun run replay campaign', () => {
   test('runs a scripted campaign, prints counts and ids only, then status lists every cell', async () => {
@@ -106,6 +120,74 @@ describe('bun run replay campaign', () => {
     const h = harness({ executor: fakeExecutor().executor })
     expect(await h.run(...argv)).toBe(2)
     expect(h.err.join('\n')).toContain(needle)
+  })
+
+  test('--attempts-per-cell runs three scored attempts per cell and prints each workflow cell tally, in the run and in status', async () => {
+    const { executor, jobs } = fakeWorkflowExecutor({ events: (_job, n) => (n === 2 ? '' : skillLoadEvent('counterfactual')) })
+    const h = harness({ executor })
+    approvedFixture(h.store, WORKFLOW_SPEC)
+    const argv = ['campaign', '--name', 'camp', '--models', MODEL, '--arms', 'continue-a', '--fixtures', WORKFLOW_SPEC.id, '--cap', '10', '--attempts-per-cell', '3']
+    expect(await h.run(...argv)).toBe(0)
+    expect(jobs).toHaveLength(3)
+    expect(h.out).toContain('campaign camp cells=1 attempts=3 spent=$0.0000 cap=$10.0000')
+    expect(h.out).toContain('counted: completed=1')
+    const tally = `tally\t${WORKFLOW_SPEC.id}\t${MODEL}\tcontinue-a\tcounted=3\thits=2\tmisses=1\tsilent=0\tfalse_fires=0\twrong_method=0\texcluded=0`
+    expect(h.out).toContain(tally)
+
+    h.out.length = 0
+    expect(await h.run('status', 'camp')).toBe(0)
+    expect(h.out).toContain(tally)
+    expect(h.out[0]).toBe(`${WORKFLOW_SPEC.id}\t${MODEL}\tcontinue-a\tattempts=3\tcounted=a001:completed\tall=a001:completed,a002:completed,a003:completed`)
+
+    h.out.length = 0
+    expect(await h.run(...argv)).toBe(0)
+    expect(jobs).toHaveLength(3)
+    expect(h.out).toContain('campaign camp cells=1 attempts=0 spent=$0.0000 cap=$10.0000')
+  })
+
+  test('--replacements bounds the replacements of excluded attempts, and a cell it cannot fill exits 3', async () => {
+    const { executor, jobs } = fakeWorkflowExecutor({ over: () => ({ partTypes: ['compaction'] }) })
+    const h = harness({ executor })
+    approvedFixture(h.store, SILENCE_SPEC)
+    const argv = ['campaign', '--name', 'camp', '--models', MODEL, '--arms', 'continue-a', '--fixtures', SILENCE_SPEC.id, '--cap', '10', '--attempts-per-cell', '2']
+    expect(await h.run(...argv, '--replacements', '0')).toBe(3)
+    expect(jobs).toHaveLength(1)
+    expect(h.out.join('\n')).toContain(`not run\t${SILENCE_SPEC.id}\t${MODEL}\tcontinue-a\tattempts_exhausted`)
+    expect(h.out).toContain(`tally\t${SILENCE_SPEC.id}\t${MODEL}\tcontinue-a\tcounted=0\thits=0\tmisses=0\tsilent=0\tfalse_fires=0\twrong_method=0\texcluded=1`)
+  })
+
+  test.each([
+    [['--attempts-per-cell', '0'], '--attempts-per-cell takes'],
+    [['--attempts-per-cell', '1.5'], '--attempts-per-cell takes'],
+    [['--attempts-per-cell', 'many'], '--attempts-per-cell takes'],
+    [['--attempts-per-cell', '3', '--replacements=-1'], '--replacements takes'],
+    [['--attempts-per-cell', '3', '--replacements', '0.5'], '--replacements takes'],
+    [['--replacements', '1'], '--replacements needs --attempts-per-cell'],
+    [['--attempts-per-cell', '3', '--again'], '--again'],
+  ])('usage error (exit 2): %j', async (extra, needle) => {
+    const h = harness({ executor: fakeWorkflowExecutor().executor })
+    approvedFixture(h.store, WORKFLOW_SPEC)
+    expect(await h.run('campaign', '--name', 'camp', '--models', MODEL, '--arms', 'continue-a', '--fixtures', WORKFLOW_SPEC.id, '--cap', '1', ...extra)).toBe(2)
+    expect(h.err.join('\n')).toContain(needle)
+  })
+
+  test('a campaign that mixes workflow fixtures with daily-stack fixtures is a usage error: they run on different stacks', async () => {
+    const { executor, jobs } = fakeWorkflowExecutor()
+    const h = harness({ executor })
+    approvedFixture(h.store, WORKFLOW_SPEC)
+    approvedFixture(h.store)
+    expect(await h.run('campaign', '--name', 'camp', '--models', MODEL, '--arms', 'continue-a', '--fixtures', `${WORKFLOW_SPEC.id},moment-a`, '--cap', '1')).toBe(2)
+    expect(h.err.join('\n')).toContain('workflow')
+    expect(jobs).toHaveLength(0)
+  })
+
+  test('a campaign without the new flags is unchanged: one attempt per cell, no tally line', async () => {
+    const { executor, jobs } = fakeExecutor()
+    const h = harness({ executor })
+    approvedFixture(h.store)
+    expect(await h.run('campaign', '--name', 'camp', '--models', MODEL, '--arms', 'continue-a', '--fixtures', 'moment-a', '--cap', '1')).toBe(0)
+    expect(jobs).toHaveLength(1)
+    expect(h.out.some((l) => l.startsWith('tally\t'))).toBe(false)
   })
 
   test('a cliproxy campaign without a key name is a usage error', async () => {

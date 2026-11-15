@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 import { type Finding, type FixtureStamp, scanRepo, stampFixture, verifyStamp } from '../../../scan/secrets'
 import { CustodyError, isInside, sha256, stateRoot } from '../../../runner/workspace'
+import { METHODS, type Method } from './loads'
 
 const REPO_ROOT = fileURLToPath(new URL('../../../..', import.meta.url)).replace(/\/$/, '')
 
@@ -57,7 +58,7 @@ export function openStore(options: StoreOptions = {}): Store {
 
 // ── the fixture spec ───────────────────────────────────────────────────────
 
-export const KINDS = ['feel', 'drugs', 'ordinary'] as const
+export const KINDS = ['feel', 'drugs', 'ordinary', 'workflow'] as const
 export type FixtureKind = (typeof KINDS)[number]
 
 export interface ToolCall {
@@ -80,6 +81,10 @@ export interface FixtureSpec {
   turns: Turn[]
   /** The `/feel` argument for this moment. */
   somewhere: string
+  /** `workflow` fixtures only: whether a method should load at the point the history stops. */
+  expected?: 'fire' | 'silence'
+  /** `workflow` fixtures with `expected: fire` only: the methods, any one of which counts as a hit. */
+  methods?: Method[]
 }
 
 export class SpecError extends Error {
@@ -131,10 +136,11 @@ function parseTurn(v: unknown, path: string, index: number): Turn {
 
 /** Parse, don't validate: a bad spec never becomes a `FixtureSpec`. Messages name fields, never values. */
 export function parseSpec(input: unknown): FixtureSpec {
-  const o = object(input, 'spec', ['id', 'kind', 'provenance', 'excluded', 'expected_outcome_ref', 'turns', 'somewhere'])
+  const o = object(input, 'spec', ['id', 'kind', 'provenance', 'excluded', 'expected_outcome_ref', 'turns', 'somewhere', 'expected', 'methods'])
   const id = str(o.id, 'spec.id')
   if (!ID_PATTERN.test(id)) fail('spec.id', 'lowercase letters, digits and hyphens, up to 64 characters')
   if (!KINDS.includes(o.kind as FixtureKind)) fail('spec.kind', KINDS.join(' | '))
+  const workflow = parseWorkflow(o)
   const p = object(o.provenance, 'spec.provenance', ['project', 'source_session', 'cutoff_message', 'date'])
   const date = str(p.date, 'spec.provenance.date')
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date))) fail('spec.provenance.date', 'a YYYY-MM-DD date')
@@ -153,7 +159,28 @@ export function parseSpec(input: unknown): FixtureSpec {
     expected_outcome_ref: str(o.expected_outcome_ref, 'spec.expected_outcome_ref'),
     turns,
     somewhere: str(o.somewhere, 'spec.somewhere', false),
+    ...workflow,
   }
+}
+
+/** `expected` and `methods` for a workflow fixture; neither may appear on any other kind. A silence fixture holds no methods, listed or empty. */
+function parseWorkflow(o: Record<string, unknown>): Pick<FixtureSpec, 'expected' | 'methods'> {
+  if (o.kind !== 'workflow') {
+    if (o.expected !== undefined) fail('spec.expected', 'absent (only a workflow fixture has one)')
+    if (o.methods !== undefined) fail('spec.methods', 'absent (only a workflow fixture has any)')
+    return {}
+  }
+  if (o.expected !== 'fire' && o.expected !== 'silence') fail('spec.expected', 'fire | silence')
+  if (o.methods !== undefined && !Array.isArray(o.methods)) fail('spec.methods', 'an array')
+  const listed = (o.methods ?? []) as unknown[]
+  const methods = listed.map((m, n) => ((METHODS as readonly unknown[]).includes(m) ? (m as Method) : fail(`spec.methods[${n}]`, METHODS.join(' | '))))
+  if (new Set(methods).size !== methods.length) fail('spec.methods', 'no repeated method')
+  if (o.expected === 'silence') {
+    if (methods.length > 0) fail('spec.methods', 'none on a silence fixture')
+    return { expected: 'silence' }
+  }
+  if (methods.length === 0) fail('spec.methods', 'at least one method on a fire fixture')
+  return { expected: 'fire', methods }
 }
 
 // ── the export builder ─────────────────────────────────────────────────────

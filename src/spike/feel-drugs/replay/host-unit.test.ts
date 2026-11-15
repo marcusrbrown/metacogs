@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { buildExport } from './store'
-import { type AttemptJob, createHostExecutor, hostVersion, resolveHarness, shiftTimes } from './host'
+import { type AttemptJob, createHostExecutor, defaultBaseDir, hostVersion, resolveHarness, shiftTimes } from './host'
+import { dailyStack, workflowStack } from './stack'
 import { parseSkillDelivery } from './gates'
 import { armMessage } from './gates'
 import { MODEL, SYNTHETIC_SPEC } from './test-support'
@@ -65,6 +66,30 @@ describe('the harness binary', () => {
     expect(hostVersion(bin)).toBe('9.9.9+test')
     writeFileSync(bin, '#!/bin/sh\necho "changed"\n')
     expect(hostVersion(bin)).toBe('9.9.9+test')
+  })
+})
+
+describe('the base fixture cache key', () => {
+  const fakeHarness = (): string => {
+    const bin = join(tmp(), 'opencode')
+    writeFileSync(bin, '#!/bin/sh\necho "9.9.9+fake"\n')
+    chmodSync(bin, 0o755)
+    return bin
+  }
+
+  test('the daily key is the one it always was, so existing bases are still found', () => {
+    const bin = fakeHarness()
+    expect(defaultBaseDir('/store', bin)).toBe('/store/base/df2e5569c204')
+    expect(defaultBaseDir('/store', bin, dailyStack().npmPlugins)).toBe('/store/base/df2e5569c204')
+  })
+
+  test('the trimmed stack and each Systematic release start their own base', () => {
+    const bin = fakeHarness()
+    const daily = defaultBaseDir('/store', bin)
+    const trimmed = defaultBaseDir('/store', bin, workflowStack().npmPlugins)
+    const other = defaultBaseDir('/store', bin, workflowStack('@fro.bot/systematic@9.9.9').npmPlugins)
+    expect(new Set([daily, trimmed, other]).size).toBe(3)
+    expect(defaultBaseDir('/store', bin, workflowStack().npmPlugins)).toBe(trimmed)
   })
 })
 

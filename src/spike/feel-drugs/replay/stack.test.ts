@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { aftConfig, magicContextConfig, replayPermission, slimConfig, stackHostConfig, STACK_NPM_PLUGINS, stubProviders, systematicConfig, writeStackConfigs } from './stack'
+import { aftConfig, dailyStack, magicContextConfig, replayPermission, slimConfig, stackHostConfig, STACK_NPM_PLUGINS, stubProviders, SYSTEMATIC_PIN, systematicConfig, workflowPermission, workflowStack, writeStackConfigs } from './stack'
 
 /** The parts of the generated host config these tests read. */
 type GeneratedConfig = { plugin: unknown[]; share: string; compaction: { auto: boolean; prune: boolean }; provider: Record<string, unknown> }
@@ -62,6 +62,64 @@ describe('writeStackConfigs', () => {
     const bare = { xdgConfigHome: tmp() }
     writeStackConfigs(bare, { opencodeDir: null, cortexkitDir: null })
     expect(JSON.parse(readFileSync(join(bare.xdgConfigHome, 'opencode', 'systematic.jsonc'), 'utf8'))).toEqual({ search: { allow_project_sources: [] } })
+  })
+})
+
+describe('the workflow stack', () => {
+  test('the pinned Systematic is the only registry plugin: slim, magic-context and aft are left out', () => {
+    const stack = workflowStack()
+    expect(stack.npmPlugins).toEqual([SYSTEMATIC_PIN])
+    expect(SYSTEMATIC_PIN).toMatch(/^@fro\.bot\/systematic@\d+\.\d+\.\d+$/)
+    const joined = JSON.stringify(stack.npmPlugins)
+    for (const left of ['oh-my-opencode-slim', 'magic-context', 'aft']) expect(joined).not.toContain(left)
+    // no agent plugin: the host's own default runs, and `debug config` names none and may carry no mcp block
+    expect(stack).toMatchObject({ defaultAgent: 'build', reportedDefaultAgent: null, mcpMayBeAbsent: true })
+    expect(workflowStack('@fro.bot/systematic@9.9.9').npmPlugins).toEqual(['@fro.bot/systematic@9.9.9'])
+  })
+
+  test('only a registry release of Systematic is accepted: a local build and another plugin are refused', () => {
+    expect(() => workflowStack('file:///tmp/build/dist/index.js')).toThrow('registry release')
+    expect(() => workflowStack('oh-my-opencode-slim@3.0.7')).toThrow('registry release')
+    expect(() => workflowStack('@fro.bot/systematic')).toThrow('registry release')
+  })
+
+  test('question and task are denied on top of the replay denials, which are kept', () => {
+    const p = workflowPermission() as { bash: Record<string, string> } & Record<string, unknown>
+    expect(p.question).toBe('deny')
+    expect(p.task).toBe('deny')
+    expect(p.external_directory).toBe('deny')
+    expect(p.bash['git push*']).toBe('deny')
+    expect(workflowStack().permission).toEqual(workflowPermission())
+  })
+
+  test('only the Systematic config is written, from the owner file with the safety switches', () => {
+    const owner = tmp()
+    mkdirSync(join(owner, 'oc'))
+    writeFileSync(join(owner, 'oc', 'systematic.jsonc'), '{ "y": 2 }')
+    const fx = { xdgConfigHome: tmp() }
+    writeStackConfigs(fx, { opencodeDir: join(owner, 'oc'), cortexkitDir: null }, workflowStack())
+    expect(JSON.parse(readFileSync(join(fx.xdgConfigHome, 'opencode', 'systematic.jsonc'), 'utf8'))).toEqual({ y: 2, search: { allow_project_sources: [] } })
+    for (const absent of [['opencode', 'oh-my-opencode-slim.jsonc'], ['cortexkit', 'aft.jsonc'], ['cortexkit', 'magic-context.jsonc']]) expect(existsSync(join(fx.xdgConfigHome, ...absent!))).toBe(false)
+  })
+
+  test('the daily stack is the existing one: five plugins in the order they were, the orchestrator, the existing permission', () => {
+    const daily = dailyStack()
+    expect(daily.npmPlugins).toEqual(STACK_NPM_PLUGINS)
+    expect(daily).toMatchObject({ defaultAgent: 'orchestrator', reportedDefaultAgent: 'orchestrator', mcpMayBeAbsent: false })
+    expect(daily.permission).toEqual(replayPermission())
+    expect(daily.agent).toEqual({ general: { disable: true }, explore: { disable: true } })
+    const fx = { xdgConfigHome: tmp() }
+    writeStackConfigs(fx, { opencodeDir: null, cortexkitDir: null }, daily)
+    for (const present of [['opencode', 'oh-my-opencode-slim.jsonc'], ['opencode', 'systematic.jsonc'], ['cortexkit', 'aft.jsonc'], ['cortexkit', 'magic-context.jsonc']]) expect(existsSync(join(fx.xdgConfigHome, ...present!))).toBe(true)
+  })
+
+  test('the generated config carries the profile: its plugins, its permission and no mcp block', () => {
+    const stack = workflowStack()
+    const c = stackHostConfig({ provider: stubProviders('http://127.0.0.1:1/v1'), pluginSpecs: [...stack.npmPlugins, 'file:///pkg/dist/index.js'], permission: stack.permission, agent: stack.agent }) as GeneratedConfig & { permission: Record<string, unknown> }
+    expect(c.plugin).toEqual([SYSTEMATIC_PIN, 'file:///pkg/dist/index.js'])
+    expect(c.permission.question).toBe('deny')
+    expect(c.permission.task).toBe('deny')
+    expect('mcp' in c).toBe(false)
   })
 })
 
