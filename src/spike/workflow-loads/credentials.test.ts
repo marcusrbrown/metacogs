@@ -25,6 +25,12 @@ const HARBOR = ['harbor', 'Moon42'].join('')
 const ACTUAL = ['actual', 'pass42'].join('')
 const PASSWORD = ['pass', 'word'].join('')
 const TOKEN = ['to', 'ken'].join('')
+// The key `password` with its first letter written as a JSON unicode escape: a backslash in the text, not a `p`.
+const ESCAPED_KEY = `\\u0070${['ass', 'word'].join('')}`
+/** Valid JSON whose first `body` is overwritten by the second: parsing it keeps only `null`. */
+const DUPLICATE = `{"body":{"${ESCAPED_KEY}":"${HARBOR}"},"body":null}`
+const FENCED = `Here is the config the service reads:\n\n\`\`\`json\n{\n  "db": {\n    "${ESCAPED_KEY}": "${HARBOR}"\n  }\n}\n\`\`\`\n\nLet me know if it looks right.`
+const PLANTED_KEY = ['sk', 'ant', 'abcdefghijklmnopqrstuvwx'].join('-')
 
 /** A secret that must never survive: the case's input, as a structured tool input or as text, and the value inside it. */
 interface Case {
@@ -60,6 +66,12 @@ const CASES: Case[] = [
   { name: 'an assignment inside JSON text inside a string', secret: ACTUAL, input: { payload: JSON.stringify({ body: `${PASSWORD}\t=\t${ACTUAL}` }) } },
   { name: 'a nested password that contains escaped quotes', secret: ACTUAL, input: { content: JSON.stringify({ a: { [PASSWORD]: `${ACTUAL}"x"` } }) } },
   { name: 'an environment variable reference after a token', secret: 'GH_TOKEN', text: `${TOKEN}: \${GH_TOKEN}` },
+  { name: 'a duplicate property that hides an escaped credential key', secret: HARBOR, text: DUPLICATE },
+  { name: 'a duplicate property inside a JSON string', secret: HARBOR, input: { content: JSON.stringify({ body: DUPLICATE }) } },
+  { name: 'a duplicate property after a tool label', secret: HARBOR, text: `[tool] write ${DUPLICATE}` },
+  { name: 'a multiline JSON object with an escaped key in a fence after prose', secret: HARBOR, text: FENCED },
+  { name: 'a labeled array with an escaped key', secret: HARBOR, text: `[tool] read [{"${ESCAPED_KEY}":"${HARBOR}"}]` },
+  { name: 'a known-format secret written with escaped hyphens', secret: PLANTED_KEY, text: `key: ${PLANTED_KEY.replaceAll('-', '\\u002d')}` },
   { name: 'a placeholder value with its key', secret: '<redacted>', input: { env: { [PASSWORD]: '<redacted>' } } },
 ]
 
@@ -179,4 +191,57 @@ describe('a limit hit is withheld and never sent', () => {
       expect(run.results[0]?.outcome).toEqual({ status: 'failed', attempts: 0, reason: 'unscrubbed_input' })
     })
   }
+})
+
+describe('an email written with an escape', () => {
+  const ENCODED = '{"to":"someone\\u0040corp-mail.com"}'
+  const LITERAL = `{"to":"${['someone', 'corp-mail.com'].join('@')}"}`
+
+  test('the view withholds the whole text, since the address cannot be removed in place', () => {
+    const { rendered } = viewOf({ output: ENCODED })
+    const shown = JSON.stringify(rendered.scopes)
+    expect(shown).toContain(SCRUB_PLACEHOLDER)
+    expect(shown).not.toContain('corp-mail')
+    expect(rendered.counters).toMatchObject({ scrubbedOutputs: 1, redactedEmails: 0 })
+  })
+
+  test('a literal address keeps today\'s in-place redaction: the text stays, the address goes', () => {
+    const { rendered } = viewOf({ output: LITERAL })
+    const shown = JSON.stringify(rendered.scopes)
+    expect(shown).toContain('[email]')
+    expect(shown).not.toContain('corp-mail')
+    expect(rendered.counters).toMatchObject({ scrubbedOutputs: 0, redactedEmails: 1 })
+  })
+
+  test('the pre-send guard refuses a chunk that still holds it, and a chunk built from the view is sent', async () => {
+    const f = fixture()
+    const refused = await sendChunk(f, [chunkWith(`[tool] bash {"command":"cat f"}\n[output] ${ENCODED}`)])
+    expect(refused.transport.requests).toHaveLength(0)
+    expect(refused.run.results[0]?.outcome).toEqual({ status: 'failed', attempts: 0, reason: 'unscrubbed_input' })
+
+    const { f: g, rendered } = viewOf({ output: ENCODED })
+    const scope = rendered.scopes[0]
+    if (!scope) throw new Error('no scope')
+    const sent = await sendChunk(g, chunkScope(scope, { budget: 100_000 }))
+    expect(sent.transport.requests.length).toBeGreaterThan(0)
+    expect(sent.run.coverageComplete).toBe(true)
+    expect(sent.transport.requests.map((r) => r.user).join('\n')).not.toContain('corp-mail')
+  })
+})
+
+describe('an escape that names nothing secret is kept', () => {
+  const TEXT = 'the caf\\u00e9 menu, a path with a slash\\/ and a byte \\x41, and a tab\\there'
+
+  test('the view keeps it as written', () => {
+    const { rendered } = viewOf({ output: TEXT })
+    expect(JSON.stringify(rendered.scopes)).toContain('caf')
+    expect(JSON.stringify(rendered.scopes)).not.toContain(SCRUB_PLACEHOLDER)
+    expect(rendered.counters).toEqual({ scrubbedOutputs: 0, scrubbedInputs: 0, scrubbedStimuli: 0, redactedEmails: 0 })
+  })
+
+  test('the pre-send guard lets it through', async () => {
+    const f = fixture()
+    const { transport } = await sendChunk(f, [chunkWith(TEXT)])
+    expect(transport.requests).toHaveLength(1)
+  })
 })

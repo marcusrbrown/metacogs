@@ -20,7 +20,7 @@ import { redactPaths } from '../feel-drugs/sheet'
 import { assertOutsideRepo, privateDir, writePrivate } from '../feel-drugs/replay/store'
 import { assertGate, type GateInput, METHODS } from './declaration'
 import { type MethodCall, methodCallOf, nameRegex, type StoredToolUse, toolUseOfPart, type WorkflowSkill, wholeWordRegex } from './loads'
-import { EMAIL_PLACEHOLDER, inputHoldsSecret, redactAbsolutePaths, SCRUB_PLACEHOLDER, scrubFindings } from './scrub'
+import { EMAIL_ADDRESS, EMAIL_PLACEHOLDER, inputHoldsSecret, redactAbsolutePaths, SCRUB_PLACEHOLDER, scrubFindings } from './scrub'
 import type { ManifestSlot, PrivateRoot, StimulusKind, WalkedEntry, WalkedSession } from './store'
 
 // ── rules ──────────────────────────────────────────────────────────────────
@@ -99,8 +99,6 @@ interface Renderer {
   counters: ViewCounters
 }
 
-/** The scanner's address shape. The scanner reports lines, not positions, so addresses are replaced with this pattern. */
-const EMAIL_ADDRESS = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g
 
 /** The current home first, then any other absolute path. */
 const redact = (text: string): string => redactAbsolutePaths(redactPaths(text, { workspaces: [], homes: [] }))

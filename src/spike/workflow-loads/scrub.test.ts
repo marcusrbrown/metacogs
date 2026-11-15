@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { inputHoldsSecret, MAX_SEPARATORS, PATH_PLACEHOLDER, redactAbsolutePaths, SCRUB_LIMITS, SCRUB_LIMIT_RULE, type ScrubLimits, scrubFindings } from './scrub'
+import { EMAIL_ENCODED_RULE, inputHoldsSecret, MAX_SEPARATORS, PATH_PLACEHOLDER, redactAbsolutePaths, SCRUB_LIMITS, SCRUB_LIMIT_RULE, type ScrubLimits, scrubFindings, unescapeText } from './scrub'
 
 // Assembled at runtime so this file holds no credential-shaped literal.
 const VALUE = ['v4lue', 'Of', 'Some', 'Length'].join('')
@@ -172,6 +172,89 @@ describe('scrubFindings: the key next to an assignment', () => {
     expect(scrubFindings(ok).size).toBe(0)
     expect(SCRUB_LIMITS).toEqual({ decodeDepth: 8, containerDepth: 64, nodes: 25_000, chars: 2_000_000 })
     expect(scrubFindings('x'.repeat(SCRUB_LIMITS.chars + 1)).has(SCRUB_LIMIT_RULE)).toBe(true)
+  })
+})
+
+describe('scrubFindings: text written with escapes', () => {
+  // Assembled at runtime so this file holds no credential-shaped literal.
+  const V = ['harbor', 'Moon42'].join('')
+  const hit = (text: string): boolean => scrubFindings(text).has('credential-field')
+  const encode = (text: string): string => text.replace(/\\/g, '\\u005c')
+
+  test('unescapeText names the character of \\uXXXX (any number of backslashes, any case, a surrogate pair), \\xXX and \\/', () => {
+    expect(unescapeText('\\u0070 \\\\u0070 \\\\\\\\\\u0070 \\u004F \\u004f')).toBe('p p p O O')
+    expect(unescapeText('\\ud83d\\ude00 and \\uD83D\\uDE00')).toBe('\u{1f600} and \u{1f600}')
+    expect(unescapeText('\\x41\\x4a \\x4')).toBe('AJ \\x4')
+    expect(unescapeText('a\\/b \\\\/c')).toBe('a/b /c')
+    expect(unescapeText('no escapes \\n \\t \\u12 \\xZ here')).toBe('no escapes \\n \\t \\u12 \\xZ here')
+    expect(unescapeText('')).toBe('')
+  })
+
+  test('a credential key written with an escape is found, in the forms JSON parsing cannot reach', () => {
+    for (const text of [`\\u0070assword=${V}`, `pass\\x77ord: ${V}`, `{"body":{"\\u0070assword":"${V}"},"body":null}`, `prose\\n\`\`\`json\\n{\\n "\\u0070assword": "${V}"\\n}\\n\`\`\``, `[tool] read [{"\\\\u0070assword":"${V}"}]`, `to\\u006ben=${V}`]) {
+      expect([text, hit(text)]).toEqual([text, true])
+    }
+  })
+
+  test('unescaping repeats until nothing changes: an escape of the backslash of another escape', () => {
+    const once = '\\u0070assword=x'
+    expect(hit(encode(once))).toBe(true)
+    expect(hit(encode(encode(once)))).toBe(true)
+    expect(hit(encode(encode(encode(encode(once)))))).toBe(true)
+  })
+
+  test('the passes are limited: a text that still changes after the last pass is a finding of its own', () => {
+    const small: ScrubLimits = { decodeDepth: 3, containerDepth: 5, nodes: 20, chars: 500 }
+    let text = '\\u0070lain'
+    // `\u0070lain` is one pass, and each encoding adds one
+    for (let i = 0; i < 2; i++) text = encode(text)
+    expect(scrubFindings(text, small).has(SCRUB_LIMIT_RULE)).toBe(false)
+    expect(scrubFindings(encode(text), small).has(SCRUB_LIMIT_RULE)).toBe(true)
+  })
+
+  test('the unescaped forms count toward the size limit, though the text itself is under it', () => {
+    const limits: ScrubLimits = { decodeDepth: 8, containerDepth: 5, nodes: 100, chars: 150 }
+    let text = `\\u0070${'a'.repeat(40)}`
+    for (let i = 0; i < 3; i++) text = encode(text)
+    expect(text.length).toBeLessThanOrEqual(limits.chars)
+    expect(scrubFindings(text, limits).has(SCRUB_LIMIT_RULE)).toBe(true)
+    expect(scrubFindings(text, { ...limits, chars: 2000 }).has(SCRUB_LIMIT_RULE)).toBe(false)
+  })
+
+  test('a known-format secret written with escapes is found', () => {
+    const key = ['sk', 'ant', 'abcdefghijklmnopqrstuvwx'].join('-')
+    expect(scrubFindings(key).size).toBeGreaterThan(0)
+    expect(scrubFindings(key.replaceAll('-', '\\u002d')).size).toBeGreaterThan(0)
+  })
+
+  test('an address written with an escape is its own finding, and one that is also written out is the ordinary email finding', () => {
+    const literal = ['someone', 'corp-mail.com'].join('@')
+    expect([...scrubFindings('{"to":"someone\\u0040corp-mail.com"}')].sort()).toEqual([EMAIL_ENCODED_RULE])
+    expect([...scrubFindings(`{"to":"${literal}"}`)]).toEqual(['email'])
+    // the same address written both ways is still just the one the text holds
+    expect([...scrubFindings(`${literal} and someone\\u0040corp-mail.com`)]).toEqual(['email'])
+    // another address, only in escaped form, is not covered by the literal one
+    expect([...scrubFindings(`${literal} and other\\u0040corp-mail.com`)].sort()).toEqual(['email', EMAIL_ENCODED_RULE].sort())
+    // an address inside decoded JSON that is also in the text is the literal one
+    expect([...scrubFindings(JSON.stringify({ to: literal }))]).toEqual(['email'])
+  })
+
+  test('ordinary escapes name nothing: no finding', () => {
+    for (const text of ['caf\\u00e9 and na\\u00efve', 'a\\/b\\/c', '\\x41\\x42', 'a\\tb\\nc']) expect([text, scrubFindings(text).size]).toEqual([text, 0])
+  })
+
+  test('long runs of backslashes stay linear', () => {
+    const started = performance.now()
+    expect(scrubFindings('\\'.repeat(200_000) + 'u0070').size).toBe(0)
+    expect(scrubFindings('\\u00'.repeat(30_000)).size).toBe(0)
+    expect(performance.now() - started).toBeLessThan(2000)
+  })
+})
+
+describe('inputHoldsSecret: escaped text', () => {
+  test('an email written with an escape is not a secret here, as a literal one is not: the serialized input decides', () => {
+    expect(inputHoldsSecret({ to: 'someone\\u0040corp-mail.com' })).toBe(false)
+    expect(inputHoldsSecret({ k: '\\u0070assword=x' })).toBe(true)
   })
 })
 
