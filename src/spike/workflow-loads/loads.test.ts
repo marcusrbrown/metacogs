@@ -52,6 +52,8 @@ describe('methodCallOf', () => {
   test('a call that loads or records a method is classified from its input alone, whatever its status or output', () => {
     expect(kindOf(skillCall('counterfactual'))).toBe('skill_call')
     expect(kindOf(skillCall('systematic:synthesis', 'systematic_skill', 'error', 'boom'))).toBe('skill_call')
+    expect(kindOf(skillCall('systematic:counterfactual', 'systematic_skill'))).toBe('skill_call')
+    expect(kindOf(skillCall('systematic:systematic:synthesis', 'systematic_skill'))).toBe('skill_call')
     expect(kindOf(skillCall('Counterfactual', 'skill', 'running', ''))).toBe('skill_call')
     expect(kindOf(read('/pkg/skills/synthesis/SKILL.md', 'partial'))).toBe('file_read')
     expect(kindOf(toolPart('bash', { command: 'cat skills/counterfactual/SKILL.md' }, 'x'))).toBe('file_read')
@@ -103,6 +105,25 @@ describe('loadEvents', () => {
     }
     const s = skillCall('synthesis')
     expect(loadEvents(s, bodies)).toEqual([{ method: 'synthesis', basis: 'skill_call', partId: s.id }])
+  })
+
+  test('the plugin prefix is part of the name the host accepts: a prefixed method name is the same load, by either tool', () => {
+    for (const method of ['counterfactual', 'synthesis'] as const) {
+      for (const tool of ['skill', 'systematic_skill']) {
+        const p = skillCall(`systematic:${method}`, tool)
+        expect([method, tool, loadEvents(p, bodies)]).toEqual([method, tool, [{ method, basis: 'skill_call', partId: p.id }]])
+      }
+    }
+  })
+
+  test('a prefixed call that errored, or that returned no skill content, is no load, and a prefix on another skill is no method load', () => {
+    expect(loadEvents(skillCall('systematic:synthesis', 'systematic_skill', 'error'), bodies)).toEqual([])
+    expect(loadEvents(skillCall('systematic:synthesis', 'systematic_skill', 'completed', 'Skill not found'), bodies)).toEqual([])
+    expect(loadEvents(skillCall('systematic:ce:plan', 'systematic_skill'), bodies)).toEqual([])
+    expect(loadEvents(skillCall('systematic:feel', 'systematic_skill'), bodies)).toEqual([])
+    // only the one prefix the plugin adds; a name that merely contains the method is not that method's load
+    expect(loadEvents(skillCall('systematic:systematic:synthesis', 'systematic_skill'), bodies)).toEqual([])
+    expect(loadEvents(skillCall('mysystematic:synthesis', 'systematic_skill'), bodies)).toEqual([])
   })
 
   test('a skill call that errored, or whose output is not skill content, is no load', () => {

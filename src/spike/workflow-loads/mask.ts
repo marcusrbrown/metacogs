@@ -20,7 +20,7 @@ import { redactPaths } from '../feel-drugs/sheet'
 import { assertOutsideRepo, privateDir, writePrivate } from '../feel-drugs/replay/store'
 import { assertGate, type GateInput, METHODS } from './declaration'
 import { type MethodCall, methodCallOf, nameRegex, type StoredToolUse, toolUseOfPart, type WorkflowSkill, wholeWordRegex } from './loads'
-import { redactAbsolutePaths, scrubFindings } from './scrub'
+import { EMAIL_PLACEHOLDER, inputHoldsSecret, redactAbsolutePaths, SCRUB_PLACEHOLDER, scrubFindings } from './scrub'
 import type { ManifestSlot, PrivateRoot, StimulusKind, WalkedEntry, WalkedSession } from './store'
 
 // ── rules ──────────────────────────────────────────────────────────────────
@@ -36,10 +36,7 @@ export interface MaskOptions {
 
 /** The one neutral token that stands for a method name or the record helper's path. */
 export const METHOD_TOKEN = '<method>'
-/** What a text with a secret finding becomes. */
-export const SCRUB_PLACEHOLDER = '[withheld: secret pattern found]'
-/** What each email address becomes when an address is the text's only finding. */
-export const EMAIL_PLACEHOLDER = '[email]'
+export { EMAIL_PLACEHOLDER, SCRUB_PLACEHOLDER }
 const TRUNCATION_MARKER = '[… truncated]'
 
 /** The same bounds for every part, whatever tool it came from. Lengths are in characters; `traffic` counts shown tool calls per interval. */
@@ -124,8 +121,7 @@ function finish(text: string, counter: Counter, limit: number, renderer: Rendere
   const rules = scrubFindings(text)
   // any finding but an address withholds the whole text; an address alone only loses the address
   if ([...rules].some((rule) => rule !== 'email')) {
-    renderer.counters[counter] += 1
-    return SCRUB_PLACEHOLDER
+    return withhold(counter, renderer)
   }
   let body = text
   if (rules.has('email')) {
@@ -133,6 +129,11 @@ function finish(text: string, counter: Counter, limit: number, renderer: Rendere
     body = text.replace(EMAIL_ADDRESS, EMAIL_PLACEHOLDER)
   }
   return truncate(redact(tokenize(body, renderer)), limit)
+}
+
+function withhold(counter: Counter, renderer: Renderer): string {
+  renderer.counters[counter] += 1
+  return SCRUB_PLACEHOLDER
 }
 
 const stringifyInput = (input: unknown): string => {
@@ -157,7 +158,8 @@ function renderTool(use: StoredToolUse, renderer: Renderer): string | null {
   const rule = droppedBy(use)
   if (rule !== null && !renderer.off.has(rule)) return null
   const status = use.status !== undefined && use.status !== 'completed' ? ` (${use.status})` : ''
-  const input = finish(stringifyInput(use.input), 'scrubbedInputs', RENDER_LIMITS.input, renderer)
+  // the structured input is checked before it is serialized: serializing escapes the quotes of JSON text held in a string
+  const input = inputHoldsSecret(use.input) ? withhold('scrubbedInputs', renderer) : finish(stringifyInput(use.input), 'scrubbedInputs', RENDER_LIMITS.input, renderer)
   const head = `[tool] ${tokenize(use.storedTool, renderer)}${status}${input === '' ? '' : ` ${input}`}`
   const [label, body] = use.output !== undefined && use.output !== '' ? (['output', use.output] as const) : use.error !== undefined && use.error !== '' ? (['error', use.error] as const) : ([null, ''] as const)
   return label === null ? head : `${head}\n[${label}] ${finish(body, 'scrubbedOutputs', RENDER_LIMITS.output, renderer)}`

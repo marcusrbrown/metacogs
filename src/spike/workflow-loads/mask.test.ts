@@ -986,6 +986,64 @@ describe('the scrub: credential fields', () => {
   })
 })
 
+describe('the scrub: JSON text inside a tool input', () => {
+  const VALUE = ['hunter', 'two', 'pass', 'phrase', '99'].join('')
+  const REAL_DOLLAR = ['$', 'uperSecret42'].join('')
+
+  const withInput = (input: Record<string, unknown>, tool = 'write') => {
+    const f = fixture()
+    scoped(f.store, 'ses_a', [{ user: 'go', turn: (a) => f.store.addTool(a, { tool, input, output: 'ok' }) }])
+    return renderSessions([sessionOf(walk(f), 'ses_a')])
+  }
+
+  test('a file written with a JSON password is withheld as an input, counted, and its value never reaches the view', () => {
+    const rendered = withInput({ filePath: 'config.json', content: JSON.stringify({ db: { password: VALUE } }) })
+    const [line] = rendered.scopes[0]?.stimuli[0]?.traffic ?? []
+    expect(line).toContain(SCRUB_PLACEHOLDER)
+    expect(rendered.counters).toMatchObject({ scrubbedInputs: 1, scrubbedOutputs: 0 })
+    expect(JSON.stringify(rendered)).not.toContain(VALUE)
+  })
+
+  test('the same text deeper in the input, in an array of edits and as a string inside a string, is found', () => {
+    const inner = JSON.stringify({ token: VALUE })
+    for (const input of [{ edits: [{ filePath: 'a', newString: inner }] }, { payload: JSON.stringify({ body: inner }) }, { a: { b: { c: [inner] } } }]) {
+      const rendered = withInput(input)
+      expect([JSON.stringify(input), rendered.counters.scrubbedInputs]).toEqual([JSON.stringify(input), 1])
+      expect(JSON.stringify(rendered)).not.toContain(VALUE)
+    }
+  })
+
+  test('a field the serialization would hide is found in the string as written: tabs around the separator are escaped to `\\t` once serialized', () => {
+    const rendered = withInput({ filePath: 'x.env', content: `password\t=\t${VALUE}` })
+    expect(rendered.counters.scrubbedInputs).toBe(1)
+    expect(JSON.stringify(rendered)).not.toContain(VALUE)
+  })
+
+  test('a field whose key is a credential name is found by its key, whatever the value looks like', () => {
+    for (const input of [{ headers: { Authorization: `Bearer ${VALUE}` } }, { env: { DB_PASSWORD: REAL_DOLLAR } }, { password: 12345678 }]) {
+      const rendered = withInput(input, 'webfetch')
+      expect([JSON.stringify(input), rendered.counters.scrubbedInputs]).toEqual([JSON.stringify(input), 1])
+      expect(JSON.stringify(rendered)).not.toMatch(/uperSecret42|hunter|12345678/)
+    }
+  })
+
+  test('a placeholder value, a field with no value and ordinary JSON text are not withheld', () => {
+    const rendered = withInput({ filePath: 'config.json', content: JSON.stringify({ db: { password: '${DB_PASSWORD}', name: 'app', max_tokens: 4096 } }), env: { TOKEN: '', password: '<redacted>' } })
+    expect(rendered.counters.scrubbedInputs).toBe(0)
+    expect(rendered.scopes[0]?.stimuli[0]?.traffic[0]).toContain('config.json')
+  })
+
+  test('a quoted password that starts with $, <, [ or { is withheld in a user message and in a tool input', () => {
+    for (const value of [REAL_DOLLAR, ['<', 'uperSecret42'].join(''), ['[', 'uperSecret42]'].join(''), ['{', 'uperSecret42}'].join('')]) {
+      const f = fixture()
+      scoped(f.store, 'ses_a', [{ user: `set password="${value}" now`, turn: (a) => f.store.addTool(a, { tool: 'bash', input: { command: `export PASSWORD='${value}'` }, output: 'ok' }) }])
+      const rendered = renderSessions([sessionOf(walk(f), 'ses_a')])
+      expect([value, rendered.counters.scrubbedStimuli, rendered.counters.scrubbedInputs]).toEqual([value, 1, 1])
+      expect(JSON.stringify(rendered)).not.toContain('uperSecret42')
+    }
+  })
+})
+
 describe('the scrub: absolute paths', () => {
   const text = (id: string): string => {
     const f = fixture()

@@ -432,8 +432,11 @@ const ASSUMED_OUTPUT_TOKENS = 1500
 /** Default per-call estimate in USD from the characters sent, at `ASSUMED_PRICE_PER_MTOK`. Used when the proxy returns no usage, and for a call that errored. */
 export const defaultEstimateUsd = (inputChars: number): number => ((inputChars / 3) * ASSUMED_PRICE_PER_MTOK.input + ASSUMED_OUTPUT_TOKENS * ASSUMED_PRICE_PER_MTOK.output) / 1e6
 
+const isTokenCount = (n: number | undefined): n is number => n !== undefined && Number.isFinite(n) && n >= 0
+
+/** The cost the returned usage prices at, or `undefined` when a count is missing, negative, not a number or infinite: the estimate stands then. */
 const usageUsd = (response: CompleteResponse): number | undefined =>
-  response.inputTokens === undefined || response.outputTokens === undefined ? undefined : (response.inputTokens * ASSUMED_PRICE_PER_MTOK.input + response.outputTokens * ASSUMED_PRICE_PER_MTOK.output) / 1e6
+  isTokenCount(response.inputTokens) && isTokenCount(response.outputTokens) ? (response.inputTokens * ASSUMED_PRICE_PER_MTOK.input + response.outputTokens * ASSUMED_PRICE_PER_MTOK.output) / 1e6 : undefined
 
 const round6 = (n: number): number => Number(n.toFixed(6))
 

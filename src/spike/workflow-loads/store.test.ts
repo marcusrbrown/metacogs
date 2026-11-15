@@ -778,6 +778,44 @@ describe('walkManifest: stimuli, scopes and intervals', () => {
     expect(new Set(scope.stimuli.flatMap((s) => [s.entry.message.id, ...s.after.map((e) => e.message.id)])).size).toBe(3)
   })
 
+  test('a message with no parts still counts toward the scope message cap', () => {
+    const f = fixture({ scope_message_cap: 3 })
+    const users: string[] = []
+    scene(f, 'ses_a', () => {
+      for (const text of ['u0', 'u1', 'u2']) {
+        const u = f.store.addMessage('ses_a', 'user')
+        f.store.addText(u, text)
+        users.push(u)
+        // a partless assistant message between the first two user messages: the turn was cut off before it wrote anything
+        if (text === 'u0') f.store.addMessage('ses_a', 'assistant')
+      }
+    })
+    const [session] = freezeAndWalk(f)
+    const scope = session!.scopes[0]!
+    // messages counted from the first stimulus: u0, the partless one, u1
+    expect(scope.ended).toBe('message_cap')
+    expect(scope.stimuli.map((s) => s.id)).toEqual([users[0]!, users[1]!])
+  })
+
+  test('a message with no parts keeps its place in the interval and is the first assistant message when it comes first', () => {
+    const f = fixture()
+    f.store.addSession({ id: 'ses_a', created: '2026-01-15' })
+    f.store.addText(f.store.addMessage('ses_a', 'user'), 'start')
+    const partless = f.store.addMessage('ses_a', 'assistant', { providerID: 'anthropic', modelID: 'claude-x' })
+    f.store.addSkillCall(f.store.addMessage('ses_a', 'assistant', { providerID: 'openai', modelID: 'gpt-x' }), 'ce:plan')
+    const u = f.store.addMessage('ses_a', 'user')
+    f.store.addText(u, 'in scope')
+    const later = f.store.addMessage('ses_a', 'assistant', { providerID: 'google', modelID: 'gemini-x' })
+    f.store.addText(f.store.addMessage('ses_a', 'assistant', { providerID: 'openai', modelID: 'gpt-x' }), 'answer')
+    const [session] = freezeAndWalk(f)
+    expect(session!.firstAssistant?.id).toBe(partless)
+    const [stimulus] = session!.scopes[0]!.stimuli
+    expect(stimulus!.after.map((e) => [e.message.id === later ? 'later' : 'other', e.role, e.parts.length])).toEqual([
+      ['later', 'assistant', 0],
+      ['other', 'assistant', 1],
+    ])
+  })
+
   test('a load by direct read of a skill file, and by the plugin tool, are reported with their basis', () => {
     const f = fixture({ decision_bearing_tools: ['task'] })
     scene(f, 'ses_a', ({ assistant }) => {
@@ -795,6 +833,27 @@ describe('walkManifest: stimuli, scopes and intervals', () => {
     expect(s2!.loads.counterfactual).toMatchObject({ loaded: true, basis: 'skill_call' })
     expect(s2!.loads.synthesis).toMatchObject({ loaded: false, loadedEarlier: true })
     expect(s3!.loads.counterfactual).toMatchObject({ loaded: false, loadedEarlier: true })
+  })
+
+  test('a method loaded by its prefixed name is counted in its interval, and as loaded earlier after it', () => {
+    const f = fixture({ decision_bearing_tools: ['task'] })
+    scene(f, 'ses_a', ({ assistant }) => {
+      f.store.addTool(assistant, { tool: 'task', output: 'r1' })
+      f.store.addSkillCall(assistant, 'systematic:counterfactual', { tool: 'systematic_skill' })
+      f.store.addTool(assistant, { tool: 'task', output: 'r2' })
+      f.store.addSkillCall(assistant, 'systematic:synthesis', { tool: 'skill' })
+      f.store.addTool(assistant, { tool: 'task', output: 'r3' })
+    })
+    const [session] = freezeAndWalk(f)
+    const [s1, s2, s3] = session!.scopes[0]!.stimuli
+    expect(s1!.loads.counterfactual).toMatchObject({ loaded: true, basis: 'skill_call', loadedEarlier: false })
+    expect(s1!.loads.synthesis.loaded).toBe(false)
+    expect(s2!.loads.counterfactual).toMatchObject({ loaded: false, loadedEarlier: true })
+    expect(s2!.loads.synthesis).toMatchObject({ loaded: true, basis: 'skill_call', loadedEarlier: false })
+    expect(s3!.loads.counterfactual.loadedEarlier).toBe(true)
+    expect(s3!.loads.synthesis).toMatchObject({ loaded: false, loadedEarlier: true })
+    // the prefixed call is no stimulus even when its tool were declared decision-bearing: it stays in the interval it fell in
+    expect(s1!.after.flatMap((e) => e.parts.map((p) => JSON.parse(p.data).tool))).toEqual(['systematic_skill'])
   })
 
   test('a method loaded before the workflow scope began counts as loaded earlier', () => {

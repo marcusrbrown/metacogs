@@ -993,3 +993,115 @@ describe('judge exit codes', () => {
     expect(fields(lineOf(late, 'judge'))).toMatchObject({ ready_to_lock: 'no' })
   })
 })
+
+describe('label resumes with the parameters it was run with', () => {
+  const chunkingFile = (f: Fixture): string => join(f.privateRoot, 'marks', 'initial', 'chunking.json')
+  const labeledTwice = async (f: Fixture) => {
+    await run(f, ['freeze'])
+    await run(f, ['view'])
+    const first = responder()
+    const firstRun = await run(f, ['label', '--budget', '300', '--context', '1'], { label: { transport: first } })
+    expect(firstRun.code).toBe(0)
+    return { first, chunks: fields(lineOf(firstRun, 'label')).chunks }
+  }
+
+  test('without --budget and --context a rerun uses the stored values: the same chunks, resumed, and nothing is sent again', async () => {
+    const f = fixture()
+    const { first, chunks } = await labeledTwice(f)
+    expect(first.requests).toBeGreaterThan(0)
+    const stored = readFileSync(chunkingFile(f), 'utf8')
+    const again = responder()
+    const rerun = await run(f, ['label'], { label: { transport: again } })
+    expect(rerun.code).toBe(0)
+    expect(fields(lineOf(rerun, 'label'))).toMatchObject({ chunks, calls: '0', coverage: 'complete' })
+    expect(again.requests).toBe(0)
+    expect(readFileSync(chunkingFile(f), 'utf8')).toBe(stored)
+  })
+
+  test('one option given and the other left out: the left-out one is the stored value', async () => {
+    const f = fixture()
+    const { chunks } = await labeledTwice(f)
+    const again = responder()
+    const rerun = await run(f, ['label', '--budget', '300'], { label: { transport: again } })
+    expect(fields(lineOf(rerun, 'label'))).toMatchObject({ chunks, calls: '0' })
+    expect(again.requests).toBe(0)
+    const other = await run(f, ['label', '--context', '1'], { label: { transport: again } })
+    expect(fields(lineOf(other, 'label'))).toMatchObject({ chunks, calls: '0' })
+  })
+
+  test('a value that differs from the stored one is refused while labeler outcomes exist, with nothing sent and the stored values kept', async () => {
+    const f = fixture()
+    await labeledTwice(f)
+    const stored = readFileSync(chunkingFile(f), 'utf8')
+    for (const flags of [['--budget', '400'], ['--context', '2'], ['--budget', '400', '--context', '1']]) {
+      const transport = responder()
+      const refused = await run(f, ['label', ...flags], { label: { transport } })
+      expect([flags.join(' '), refused.code]).toEqual([flags.join(' '), 1])
+      expect(refused.err.join('\n')).toContain('chunking_changed')
+      expect(transport.requests).toBe(0)
+    }
+    expect(readFileSync(chunkingFile(f), 'utf8')).toBe(stored)
+  })
+
+  test('with no stored parameters, or no outcomes, the options are free', async () => {
+    const f = fixture()
+    await run(f, ['freeze'])
+    await run(f, ['view'])
+    expect((await run(f, ['label', '--budget', '300', '--context', '1'], { label: { transport: responder() } })).code).toBe(0)
+    rmSync(join(f.privateRoot, 'labeler'), { recursive: true, force: true })
+    const free = await run(f, ['label', '--budget', '500', '--context', '2'], { label: { transport: responder() } })
+    expect(free.code).toBe(0)
+    expect(JSON.parse(readFileSync(chunkingFile(f), 'utf8'))).toMatchObject({ budget: 500, contextK: 2 })
+  })
+})
+
+describe('status reports the labeling coverage', () => {
+  const coverageOf = async (f: Fixture) => fields(lineOf(await run(f, ['status']), 'status'))
+
+  test('pending before labeling, then complete with the counts', async () => {
+    const f = fixture()
+    await run(f, ['freeze'])
+    await run(f, ['view'])
+    expect(await coverageOf(f)).toMatchObject({ labeling: 'pending', chunks: '0', labeled: '0', failed: '0', not_attempted: '0', spend_cap: 'no', transport_outage: '0' })
+    await run(f, ['label'], { label: { transport: responder() } })
+    expect(await coverageOf(f)).toMatchObject({ labeling: 'complete', chunks: '2', labeled: '2', failed: '0', not_attempted: '0', spend_cap: 'no', transport_outage: '0' })
+  })
+
+  test('chunks that failed are counted, and the labeling is incomplete', async () => {
+    const f = fixture()
+    await run(f, ['freeze'])
+    await run(f, ['view'])
+    const garbage: LabelerTransport = { endpoint: ENDPOINT, complete: async () => ({ text: 'not json' }) }
+    expect((await run(f, ['label'], { label: { transport: garbage } })).code).toBe(3)
+    expect(await coverageOf(f)).toMatchObject({ labeling: 'incomplete', chunks: '2', labeled: '0', failed: '2', not_attempted: '0', spend_cap: 'no' })
+  })
+
+  test('a run stopped by the spend cap says so', async () => {
+    const f = fixture({ spend_cap_usd: 0.000001 })
+    await run(f, ['freeze'])
+    await run(f, ['view'])
+    expect((await run(f, ['label'], { label: { transport: responder() } })).code).toBe(3)
+    expect(await coverageOf(f)).toMatchObject({ labeling: 'incomplete', labeled: '0', not_attempted: '2', spend_cap: 'yes', transport_outage: '0' })
+  })
+
+  test('a run stopped by a proxy outage says so, with the chunks it left', async () => {
+    const f = fixture({ retry_count: 0 })
+    await run(f, ['freeze'])
+    await run(f, ['view'])
+    const down: LabelerTransport = {
+      endpoint: ENDPOINT,
+      async complete() {
+        throw new Error('proxy down')
+      },
+    }
+    expect((await run(f, ['label', '--budget', '1', '--context', '0'], { label: { transport: down } })).code).toBe(3)
+    const status = await coverageOf(f)
+    expect(status).toMatchObject({ labeling: 'incomplete', chunks: '6', labeled: '0', failed: '3', not_attempted: '3', spend_cap: 'no', transport_outage: '3' })
+  })
+
+  test('no labeling field says done', async () => {
+    const f = fixture()
+    await prepare(f)
+    expect((await run(f, ['status'])).out.join('\n')).not.toContain('labeling=done')
+  })
+})

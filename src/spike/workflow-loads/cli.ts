@@ -5,7 +5,7 @@
  *
  * The usage text (`--help`) is the reference for every command, option, default and exit code, and ends with the known limits.
  */
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
@@ -17,7 +17,7 @@ import { defaultDb } from '../feel-drugs/replay/world-cli'
 import { assertOutsideRepo, privateDir, writePrivate } from '../feel-drugs/replay/store'
 import { type CountReport, runCount, type SlotLabeling } from './count'
 import { assertGate, type GateInput, type GatePass, MARKING_RULE_PATH, METHODS, type Method } from './declaration'
-import { createLabelerTransport, deleteLabelerReplies, labelChunks, labelingCoverage, type LabelerTransport, loadLabelerProposals, type Proposal, type ResolveKeyOptions, resolveLabelerKey } from './labeler'
+import { createLabelerTransport, deleteLabelerReplies, LABELER_DIR, labelChunks, labelingCoverage, type LabelerTransport, loadLabelerProposals, type Proposal, type ResolveKeyOptions, resolveLabelerKey } from './labeler'
 import { collectSkillBodies } from './loads'
 import { assertJudgingNotStarted, lockMarks, MarksRefusal, openJudging, openMarking, type OmissionAnswer, pendingOmissions, pendingProposals, type ProposalChoice, readLocks, requireLocks, type StimulusRef } from './marks'
 import { auditRendered, buildHiddenView, type Chunk, chunkScope, DEFAULT_CONTEXT, deleteHiddenViews, type HiddenView, type LeakKind, renderForChunk, renderWithContext, viewPath, writeHiddenView } from './mask'
@@ -65,7 +65,7 @@ const USAGE = [
   '  judge    judge each proposal, then the omission sample, at the prompt (a quit saves; a rerun resumes); needs a terminal on both',
   '           standard input and standard output',
   '  lock     lock the slot once every item is judged and answered',
-  '  status   counts only',
+  '  status   counts only, including the labeling coverage: chunks labeled, failed and not attempted, and whether the spend cap or a proxy outage stopped a run',
   '  count    count loads against the locked marks of every slot and print the outcome (needs every frozen slot locked and its stored view',
   '           unchanged since it was judged)',
   '  project  write evals/spikes/workflow-loads/counts.json and print the counts table (counts only; needs the views, as count does)',
@@ -77,8 +77,9 @@ const USAGE = [
   '  --private-root <dir>     where the manifests, views, labeler records, judgments and locks are kept (default:',
   '                           $XDG_STATE_HOME/metacogs/workflow-loads, or ~/.local/state/metacogs/workflow-loads); refused inside the repository',
   '  --repo-root <dir>        the repository holding the committed declaration, marking rule and deviations (default: this repository)',
-  `  --budget <chars>         label: characters per labeler chunk (default: ${DEFAULT_BUDGET})`,
-  `  --context <n>            label: stimuli of context before a chunk's first stimulus (default: ${DEFAULT_CONTEXT})`,
+  `  --budget <chars>         label: characters per labeler chunk (default: ${DEFAULT_BUDGET}, or the value the slot was labeled with)`,
+  `  --context <n>            label: stimuli of context before a chunk's first stimulus (default: ${DEFAULT_CONTEXT}, or the value the slot was labeled with)`,
+  '                           a value that differs from the one the slot was labeled with is refused once labeler outcomes exist',
   '  --auth-cliproxy <name>   label: the CLIProxy key name (default: the METACOGS_AUTH_CLIPROXY environment variable)',
   '  --help, -h               print this text and exit 0, before anything is opened',
   '',
@@ -102,7 +103,7 @@ class UsageError extends Error {}
 /** A step that needs an earlier one. The message is fixed text. */
 class StepRefusal extends Error {
   constructor(
-    readonly reason: 'view_missing' | 'labeling_not_run' | 'judge_needs_terminal',
+    readonly reason: 'view_missing' | 'labeling_not_run' | 'judge_needs_terminal' | 'chunking_changed',
     message: string,
   ) {
     super(`${reason}: ${message}`)
@@ -272,6 +273,12 @@ function writeChunking(ctx: Ctx, chunking: Chunking): void {
   writePrivate(chunkingPath(ctx), `${JSON.stringify(chunking, null, 2)}\n`)
 }
 
+/** Any labeler outcome is stored under the private root. */
+function holdsLabelerOutcomes(ctx: Ctx): boolean {
+  const dir = join(ctx.privateRoot.root, LABELER_DIR, 'outcomes')
+  return existsSync(dir) && readdirSync(dir).length > 0
+}
+
 const chunksOf = (view: HiddenView, chunking: Chunking): Chunk[] => view.scopes.flatMap((scope) => chunkScope(scope, { budget: chunking.budget, contextK: chunking.contextK }))
 
 /**
@@ -374,13 +381,19 @@ function viewCommand(ctx: Ctx): number {
 }
 
 async function labelCommand(ctx: Ctx): Promise<number> {
-  const budget = integerOption(ctx.values.budget, 'budget', 1, DEFAULT_BUDGET)
-  const contextK = integerOption(ctx.values.context, 'context', 0, DEFAULT_CONTEXT)
+  // an option left out keeps the value the slot was labeled with: the stored outcomes are found by chunk, and a different cut finds none
+  const stored = readChunking(ctx)
+  const budget = integerOption(ctx.values.budget, 'budget', 1, stored?.budget ?? DEFAULT_BUDGET)
+  const contextK = integerOption(ctx.values.context, 'context', 0, stored?.contextK ?? DEFAULT_CONTEXT)
   const pass = assertGate(gateInput(ctx))
   // labeling again would change the proposals, and with them the omission sample, after judging began
   assertJudgingNotStarted(ctx.privateRoot, ctx.slot)
   const view = readView(ctx)
   if (!view) throw new StepRefusal('view_missing', 'build the view first')
+  if (stored && (stored.budget !== budget || stored.contextK !== contextK) && holdsLabelerOutcomes(ctx)) {
+    // a new cut would start every chunk over and send the whole view again
+    throw new StepRefusal('chunking_changed', `this slot was labeled with --budget ${stored.budget} --context ${stored.contextK}; leave the options out or give those values`)
+  }
   const chunking: Chunking = { schemaVersion: 1, budget, contextK }
   const transport =
     ctx.io.label?.transport ??
@@ -574,7 +587,10 @@ function statusCommand(ctx: Ctx): number {
   const { view, chunking, proposals } = readLabeling(ctx, pass.declarationHash)
   const locks = readLocks(ctx.privateRoot, pass.declarationHash)
   const counts = { proposals: 0, items: 0, judged: 0, omission_sample: 0, omission_answered: 0 }
+  const coverage = { chunks: 0, labeled: 0, failed: 0, not_attempted: 0, spend_cap: 'no', transport_outage: 0 }
   if (view && chunking) {
+    const found = labelingCoverage(ctx.privateRoot, chunksOf(view, chunking), pass.declarationHash)
+    Object.assign(coverage, { chunks: found.chunks, labeled: found.labeled, failed: found.failed, not_attempted: found.notAttempted, spend_cap: found.spendCapReached ? 'yes' : 'no', transport_outage: found.transportOutage })
     const marking = openMarking({ ...markingInput(ctx, { pass, declarationHash: pass.declarationHash, view, chunking, proposals }) })
     counts.items = marking.items.length
     counts.proposals = marking.items.reduce((sum, item) => sum + item.proposed.length, 0)
@@ -589,7 +605,9 @@ function statusCommand(ctx: Ctx): number {
       sessions: manifest?.sessions.length ?? 0,
       view: view ? 'present' : 'absent',
       stimuli: view?.scopes.reduce((sum, scope) => sum + scope.stimuli.length, 0) ?? 0,
-      labeling: chunking ? 'done' : 'pending',
+      // the real coverage, not whether a run happened: a run that stopped early leaves chunks unlabeled
+      labeling: !chunking ? 'pending' : coverage.chunks > 0 && coverage.labeled === coverage.chunks ? 'complete' : 'incomplete',
+      ...coverage,
       ...counts,
       locked: locks.some((lock) => lock.slot === ctx.slot) ? 'yes' : 'no',
       locks: locks.length,

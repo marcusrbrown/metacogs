@@ -385,6 +385,32 @@ describe('spend', () => {
     expect(run.results[1]?.outcome.status).toBe('not_attempted')
   })
 
+  test('usage that is negative, not a number or infinite is taken for no usage: the estimate stands and the ledger stays valid', async () => {
+    const bad: [string, number, number][] = [
+      ['negative input', -1_000_000, 0],
+      ['negative output', 0, -5],
+      ['NaN', Number.NaN, 10],
+      ['infinite', Number.POSITIVE_INFINITY, 0],
+      ['negative infinity', 0, Number.NEGATIVE_INFINITY],
+    ]
+    for (const [name, inputTokens, outputTokens] of bad) {
+      const f = fixture({ spend_cap_usd: 100 })
+      const transport = scripted([{ text: reply(), inputTokens, outputTokens }])
+      const run = await labelChunks(base(f, transport, [chunkOf(['a1'])], { estimateUsd: () => 0.25 }))
+      expect([name, run.totals.spendUsd]).toEqual([name, 0.25])
+      // the stored ledger is readable by a later run, which counts the same spend
+      const again = await labelChunks(base(f, scripted([]), [chunkOf(['a1'])]))
+      expect([name, again.priorSpendUsd]).toEqual([name, 0.25])
+    }
+  })
+
+  test('valid usage, zero included, is still priced from the tokens', async () => {
+    const f = fixture({ spend_cap_usd: 100 })
+    const transport = scripted([{ text: reply(), inputTokens: 0, outputTokens: 0 }])
+    const run = await labelChunks(base(f, transport, [chunkOf(['a1'])], { estimateUsd: () => 0.25 }))
+    expect(run.totals.spendUsd).toBe(0)
+  })
+
   test('without usage the per-call estimate stands, and a call that errored still costs its estimate', async () => {
     const f = fixture({ spend_cap_usd: 100, retry_count: 1 })
     const transport = scripted([new TransportError('down'), reply()])
@@ -830,6 +856,50 @@ describe('what reaches the model: credential fields', () => {
       expect(run.results[0]?.outcome).toEqual({ status: 'failed', attempts: 0, reason: 'unscrubbed_input' })
       expect(JSON.stringify(run)).not.toContain(VALUE)
     }
+  })
+
+  test('a rendered tool input that holds JSON text with a credential field, escaped by serialization, is never sent', async () => {
+    const escaped = `[tool] write ${JSON.stringify({ filePath: 'c.json', content: JSON.stringify({ password: VALUE }) })}`
+    expect(escaped).toContain(`\\"password\\"`)
+    const f = fixture()
+    const transport = scripted([])
+    const run = await labelChunks(base(f, transport, [chunkOf(['a1'], { text: escaped })]))
+    expect(transport.requests).toHaveLength(0)
+    expect(run.results[0]?.outcome).toEqual({ status: 'failed', attempts: 0, reason: 'unscrubbed_input' })
+    expect(JSON.stringify(run)).not.toContain(VALUE)
+  })
+
+  test('a quoted value that starts with $, <, [ or { is never sent, and a whole placeholder value is', async () => {
+    for (const value of [['$', 'uperSecret42'].join(''), ['<', 'uperSecret42'].join(''), ['[', 'uperSecret42]'].join(''), ['{', 'uperSecret42}'].join('')]) {
+      const f = fixture()
+      const transport = scripted([])
+      const run = await labelChunks(base(f, transport, [chunkOf(['a1'], { text: `set password="${value}"` })]))
+      expect([value, transport.requests.length, run.results[0]?.outcome]).toEqual([value, 0, { status: 'failed', attempts: 0, reason: 'unscrubbed_input' }])
+    }
+    const f = fixture()
+    const transport = scripted([reply({ stimulus_id: 'a1' })])
+    await labelChunks(base(f, transport, [chunkOf(['a1'], { text: 'set password="${DB_PASSWORD}" and token=<redacted> and secret: [REDACTED] and auth=***' })]))
+    expect(transport.requests).toHaveLength(1)
+  })
+
+  test('a tool input with JSON text in a string reaches the transport as the placeholder, not as its escaped text', async () => {
+    const f = fixture()
+    const store = syntheticStore()
+    cleanup.push(() => store.destroy())
+    seedWorkflowSession(store, { id: 'ses_a', created: '2026-01-15' })
+    store.addText(store.addMessage('ses_a', 'user'), 'write the config')
+    store.addTool(store.addMessage('ses_a', 'assistant'), { tool: 'write', input: { filePath: 'c.json', content: JSON.stringify({ password: VALUE }) }, output: 'ok' })
+    const input = { git: f.repo.git, db: store.path, privateRoot: f.privateRoot }
+    freezeManifest(input)
+    const scope = renderSessions(walkManifest({ ...input, skillBodies: { counterfactual: ['body of counterfactual'], synthesis: ['body of synthesis'] } })).scopes[0]
+    if (!scope) throw new Error('no scope')
+    const chunks = chunkScope(scope, { budget: 100_000 })
+    const transport = scripted(chunks.map(() => reply()))
+    const run = await labelChunks(base(f, transport, chunks))
+    expect(run.coverageComplete).toBe(true)
+    const sent = transport.requests.map((r) => `${r.system}\n${r.user}`).join('\n')
+    expect(sent).toContain(SCRUB_PLACEHOLDER)
+    expect(sent).not.toContain(VALUE)
   })
 
   test('a view built from a session that held such a field reaches the transport without its value', async () => {

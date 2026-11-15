@@ -367,7 +367,7 @@ export type MessageRole = 'user' | 'assistant' | 'other'
 
 /**
  * One position in a session's stored order. A user message is one entry holding all its parts. An assistant message is one entry
- * per part, so the boundary between two stimuli can fall inside one assistant turn.
+ * per part, so the boundary between two stimuli can fall inside one assistant turn; one with no parts is a single entry with none.
  */
 export interface WalkedEntry {
   message: RawMessage
@@ -435,7 +435,8 @@ function entriesOf(messages: readonly RawMessage[], parts: readonly RawPart[]): 
   for (const message of messages) {
     const role = parseRole(message.data)
     const own = byMessage.get(message.id) ?? []
-    if (role === 'user') entries.push({ message, role, parts: own })
+    // a message with no parts keeps its place: it counts toward the scope cap and may be the session's first assistant message
+    if (role === 'user' || own.length === 0) entries.push({ message, role, parts: own })
     else for (const part of own) entries.push({ message, role, parts: [part] })
   }
   return entries

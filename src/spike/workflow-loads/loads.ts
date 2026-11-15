@@ -104,10 +104,22 @@ export interface LoadEvent {
   partId: string
 }
 
+/**
+ * The use as the runner's detectors take it: a skill call that names the skill with the plugin's one `systematic:` prefix names it
+ * bare, because the detector compares the name with the method exactly. Any other name is left as it is. The runner's code is not
+ * changed. (`methodCallOf` is wider on purpose: it matches a method name anywhere in a skill name, so the view drops every call
+ * that could be a load, while a load is counted only for the names the plugin accepts.)
+ */
+function withBareSkillName(use: StoredToolUse): StoredToolUse {
+  if (use.tool !== 'skill' || !isRecord(use.input) || typeof use.input.name !== 'string' || !use.input.name.startsWith(PLUGIN_PREFIX)) return use
+  return { ...use, input: { ...use.input, name: use.input.name.slice(PLUGIN_PREFIX.length) } }
+}
+
 /** The method loads one stored part carries: none, or one per method it loaded. A skill call takes precedence over a read as the basis. */
 export function loadEvents(part: RawPart, bodies: SkillBodies): LoadEvent[] {
-  const use = toolUseOfPart(part)
-  if (!use) return []
+  const stored = toolUseOfPart(part)
+  if (!stored) return []
+  const use = withBareSkillName(stored)
   const events: LoadEvent[] = []
   for (const method of METHODS) {
     if (isSkillContentLoad(use, method)) events.push({ method, basis: 'skill_call', partId: part.id })

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
+import { EMAIL_PLACEHOLDER, SCRUB_PLACEHOLDER } from './mask'
 import { PATH_PLACEHOLDER, redactAbsolutePaths, scrubFindings } from './scrub'
 
 // Assembled at runtime so this file holds no credential-shaped literal.
@@ -73,6 +74,63 @@ describe('scrubFindings: credential fields', () => {
 
   test('a home path is never a finding on its own, as before', () => {
     expect(scrubFindings('/Users/someone/work').has('home-path')).toBe(false)
+  })
+})
+
+describe('scrubFindings: a real value is not taken for a placeholder', () => {
+  // Assembled at runtime so this file holds no credential-shaped literal.
+  const REAL = [
+    ['$', 'uperSecret42'].join(''),
+    ['${', 'uperSecret42}'].join(''),
+    ['<', 'uperSecret42'].join(''),
+    ['<', 'uper Secret 42>'].join(''),
+    ['[', 'uperSecret42]'].join(''),
+    ['{', 'uperSecret42}'].join(''),
+  ]
+  const forms: [string, (value: string) => string][] = [
+    ['double-quoted', (v) => `password="${v}"`],
+    ['single-quoted', (v) => `password='${v}'`],
+    ['unquoted', (v) => `password=${v}`],
+    ['with a colon', (v) => `password: ${v}`],
+    ['quoted JSON', (v) => `{"password": "${v}"}`],
+  ]
+  for (const [formName, form] of forms) {
+    test(`a value that starts with $, <, [ or { is a finding when ${formName}`, () => {
+      for (const value of REAL) expect([value, scrubFindings(form(value)).has('credential-field')]).toEqual([value, true])
+    })
+  }
+
+  const PLACEHOLDERS = ['${TOKEN}', '$TOKEN', '$DB_PASSWORD', '<placeholder>', '<redacted>', '<abs-path>', '<method>', '[REDACTED]', '[MASKED_VALUE]', '[WITHHELD SECRET]', '***', SCRUB_PLACEHOLDER, EMAIL_PLACEHOLDER]
+  for (const [formName, form] of forms) {
+    test(`a whole placeholder value is no finding when ${formName}`, () => {
+      for (const value of PLACEHOLDERS) expect([value, [...scrubFindings(form(value))].filter((rule) => rule !== 'home-path')]).toEqual([value, []])
+    })
+  }
+
+  test('a placeholder is exempt only as the whole value: a longer value that starts like one is a finding', () => {
+    for (const value of ['$TOKEN_and_more_text', '<redacted> plus a real one', '[REDACTED]x', '***abc', '${TOKEN}tail', '<a b>']) {
+      expect([value, scrubFindings(`password="${value}"`).has('credential-field')]).toEqual([value, true])
+    }
+  })
+
+  test('lowercase names after $ are a finding: a variable reference is upper case, a password is not', () => {
+    expect(scrubFindings(`password="${['$', 'uperSecret42'].join('')}"`).has('credential-field')).toBe(true)
+    expect(scrubFindings('password="$TOKEN"').has('credential-field')).toBe(false)
+  })
+})
+
+describe('scrubFindings: JSON text that was escaped by a second JSON layer', () => {
+  const VALUE = ['v4lue', 'Of', 'Some', 'Length'].join('')
+
+  test('an escaped quoted field is found, at any depth of escaping', () => {
+    expect(scrubFindings(`{"content":"{\\"password\\":\\"${VALUE}\\"}"}`).has('credential-field')).toBe(true)
+    expect(scrubFindings(`{"a":"{\\"b\\":\\"{\\\\\\"token\\\\\\":\\\\\\"${VALUE}\\\\\\"}\\"}"}`).has('credential-field')).toBe(true)
+    expect(scrubFindings(`[tool] write {"content":"{\\"Authorization\\": \\"Bearer ${VALUE}\\"}"}`).has('credential-field')).toBe(true)
+  })
+
+  test('an escaped placeholder, and escaped text with no credential field, are no finding', () => {
+    expect(scrubFindings('{"content":"{\\"password\\":\\"${TOKEN}\\"}"}').size).toBe(0)
+    expect(scrubFindings('{"content":"{\\"name\\":\\"value\\"}"}').size).toBe(0)
   })
 })
 
