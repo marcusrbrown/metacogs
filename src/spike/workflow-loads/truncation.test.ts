@@ -6,9 +6,9 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 
 import { chunkScope, RENDER_LIMITS, SCRUB_PLACEHOLDER } from './mask'
-import { holdsSecret, SCAN_WINDOW, scrubFindings, SCRUB_LIMIT_RULE } from './scrub'
+import { holdsSecret, scrubFindings, SCRUB_LIMIT_RULE } from './scrub'
 import { CREDENTIAL_TEXT_CASES, EMAIL_TEXT_CASES } from './scrub-cases'
-import { assertViewAccepted, cleanup, sendChunk, viewOf } from './view-support'
+import { assertNoFragments, assertViewAccepted, assertWithheld, cleanup, sendChunk, viewOf } from './view-support'
 
 afterEach(() => {
   for (const fn of cleanup.splice(0).reverse()) fn()
@@ -86,6 +86,35 @@ describe('no fragment of an address survives the cut', () => {
   })
 })
 
+describe('a cut can make a fragment the guard refuses: the text is then withheld', () => {
+  // An address on a reserved domain is not an email finding, but the front of it, cut inside the domain, is: `…@docs.exam` reads as an
+  // address on an ordinary one. The view must not keep such a fragment, and the withholding is the render of the text, not a later pass.
+  const RESERVED = ['writer', 'docs.example.com'].join('@')
+
+  test('the guard accepts what the view keeps wherever the cut falls in the address, and the text is withheld by its own render', () => {
+    const cut = LIMIT.output - MARKER_LENGTH
+    let withheld = 0
+    let kept = 0
+    for (let start = cut - RESERVED.length - 2; start <= cut + 2; start++) {
+      const { rendered } = viewOfKind('output', placed('output', RESERVED, start))
+      const [line] = rendered.scopes[0]?.stimuli[0]?.traffic ?? []
+      expect([start, holdsSecret(line ?? '')]).toEqual([start, false])
+      expect([start, rendered.counters.scrubbedStimuli]).toEqual([start, 0])
+      if (rendered.counters.scrubbedOutputs === 1) withheld += 1
+      else kept += 1
+    }
+    // a cut inside the domain is withheld; one before the address or after it keeps the text
+    expect(withheld).toBeGreaterThan(0)
+    expect(kept).toBeGreaterThan(0)
+  })
+
+  test('an address on a reserved domain that the cut does not touch is kept whole', () => {
+    const { rendered } = viewOfKind('output', `see ${RESERVED} for details`)
+    expect(allText(rendered)).toContain(RESERVED)
+    expect(rendered.counters.scrubbedOutputs).toBe(0)
+  })
+})
+
 describe('a text is withheld rather than cut inside an escape', () => {
   const ESCAPE = '\\u00e9'
 
@@ -116,32 +145,35 @@ describe('a text is withheld rather than cut inside an escape', () => {
   })
 })
 
-describe('the scan covers the kept text and a margin past it', () => {
-  test('a secret past the kept text but inside the scanned margin withholds the text, in every kind', () => {
+describe('the scan covers the whole text, kept or not', () => {
+  /** Paragraphs of one short line each, so no line is near the line bound. */
+  const paragraphs = (word: string, count: number): string => Array.from({ length: count }, () => `${word} and some words to keep the line going`).join('\n')
+
+  test('a secret past the kept text withholds the text, wherever it lies, in every kind', () => {
     for (const kind of ['stimulus', 'input', 'output'] as const) {
-      const { rendered } = viewOfKind(kind, placed(kind, KEY, LIMIT[kind] + 100))
-      expect([kind, allText(rendered).includes(KEY), allText(rendered).includes(SCRUB_PLACEHOLDER)]).toEqual([kind, false, true])
+      for (const start of [LIMIT[kind] + 100, 9000, 15_000]) {
+        const { rendered } = viewOfKind(kind, placed(kind, KEY, start))
+        expect([kind, start, allText(rendered).includes(KEY), allText(rendered).includes(SCRUB_PLACEHOLDER)]).toEqual([kind, start, false, true])
+      }
     }
   })
 
-  test('a secret far past the scanned window is not in the view: the text is kept, cut before it', () => {
-    for (const kind of ['stimulus', 'input', 'output'] as const) {
-      const { rendered } = viewOfKind(kind, placed(kind, KEY, SCAN_WINDOW + 500))
-      expect([kind, allText(rendered).includes(KEY)]).toEqual([kind, false])
-      expect([kind, allText(rendered).includes(SCRUB_PLACEHOLDER)]).toEqual([kind, false])
-      expect(allText(rendered)).toContain('[… truncated]')
-    }
+  test('a secret on a line far into a long multi-line text withholds it', () => {
+    const text = `${paragraphs('first', 1500)}\n${KEY}\n${paragraphs('last', 100)}`
+    expect(text.length).toBeGreaterThan(50_000)
+    const { rendered } = viewOfKind('output', text)
+    expect([allText(rendered).includes(KEY), allText(rendered).includes(SCRUB_PLACEHOLDER)]).toEqual([false, true])
   })
 
-  test('a long text that shrinks past the cut when paths are replaced is withheld: its tail was not scanned far enough', () => {
-    const paths = '/usr/local/lib/node_modules/some-package/dist/index.js '.repeat(Math.ceil((SCAN_WINDOW * 3) / 55))
-    const { rendered } = viewOfKind('output', paths)
-    expect(rendered.counters.scrubbedOutputs).toBe(1)
+  test('a long text that shrinks a lot when paths are replaced is scanned whole, then kept and cut', () => {
+    const text = Array.from({ length: 800 }, () => '/usr/local/lib/node_modules/some-package/dist/index.js').join('\n')
+    const { rendered } = viewOfKind('output', text)
+    expect(rendered.counters.scrubbedOutputs).toBe(0)
+    expect(allText(rendered)).toContain('[… truncated]')
   })
 
-  test('a long text that stays long after its paths are replaced is kept and cut', () => {
-    const paths = '/usr/lib/a.js and some words to keep the text long '.repeat(Math.ceil((SCAN_WINDOW * 3) / 50))
-    const { rendered } = viewOfKind('output', paths)
+  test('a long text of ordinary lines is kept and cut', () => {
+    const { rendered } = viewOfKind('output', paragraphs('plain', 1500))
     expect(rendered.counters.scrubbedOutputs).toBe(0)
     expect(allText(rendered)).toContain('[… truncated]')
   })
@@ -164,11 +196,11 @@ describe('a very long line is withheld without being scanned', () => {
     }
   }, 30_000)
 
-  test('100,000 characters in one line are cut after a scan of the window only, in under two seconds', async () => {
+  test('a line over the line bound is withheld at once, whole, whatever it holds: no part of it is kept', async () => {
     for (const kind of ['stimulus', 'output'] as const) {
       const { rendered, elapsed } = await quickly(kind, 100_000)
       expect([kind, elapsed < 2000]).toEqual([kind, true])
-      expect(allText(rendered)).toContain('[… truncated]')
+      expect([kind, allText(rendered).includes(SCRUB_PLACEHOLDER), allText(rendered).includes('[… truncated]')]).toEqual([kind, true, false])
     }
   }, 30_000)
 
@@ -185,13 +217,26 @@ describe('a very long line is withheld without being scanned', () => {
   }, 30_000)
 })
 
-describe('whatever crosses the cut, the guard accepts the view', () => {
+describe('whatever crosses the cut, the view withholds it or holds none of it, and no request does', () => {
   const cut = LIMIT.output - MARKER_LENGTH
+  const placedAtCut = (text: string): string => `${filler(cut - Math.min(text.length - 1, 12))}${text} ${filler(3000)}`
 
-  test('every credential and address text of the shared tables, placed so the cut falls inside it', async () => {
-    for (const text of [...CREDENTIAL_TEXT_CASES, ...EMAIL_TEXT_CASES]) {
-      const head = Math.min(text.length - 1, 12)
-      await assertViewAccepted({ output: `${filler(cut - head)}${text} ${filler(3000)}` }, text.slice(0, 40))
+  test('every credential text of the shared table, placed so the cut falls inside it, is withheld and no 16-character run of it is anywhere', async () => {
+    for (const text of CREDENTIAL_TEXT_CASES) await assertWithheld({ output: placedAtCut(text) }, [text], text.slice(0, 40))
+  }, 300_000)
+
+  test('every address text of the shared table, placed so the cut falls inside it, leaves no fragment of the address in the view or a request', async () => {
+    const forms = [LITERAL, ENCODED]
+    for (const text of EMAIL_TEXT_CASES) {
+      await assertNoFragments({ output: placedAtCut(text) }, forms, text.slice(0, 40))
+      await assertViewAccepted({ output: placedAtCut(text) }, text.slice(0, 40))
+    }
+  }, 300_000)
+
+  test('the same, as a stimulus and as a tool input', async () => {
+    for (const text of [...CREDENTIAL_TEXT_CASES.slice(0, 12), ...EMAIL_TEXT_CASES.slice(2, 5)]) {
+      await assertNoFragments({ user: placedAtCut(text) }, [text, LITERAL, ENCODED], text.slice(0, 40))
+      await assertNoFragments({ input: { content: placedAtCut(text) } }, [text, LITERAL, ENCODED], text.slice(0, 40))
     }
   }, 300_000)
 })

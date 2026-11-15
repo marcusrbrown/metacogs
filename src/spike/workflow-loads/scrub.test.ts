@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { inputHoldsSecret, MAX_SEPARATORS, PATH_PLACEHOLDER, redactAbsolutePaths, SCAN_WINDOW, SCRUB_LIMITS, SCRUB_LIMIT_RULE, type ScrubLimits, scrubFindings, unescapeText } from './scrub'
+import { inputHoldsSecret, MAX_SEPARATORS, PATH_PLACEHOLDER, redactAbsolutePaths, SCRUB_LIMITS, SCRUB_LIMIT_RULE, type ScrubLimits, scrubFindings, unescapeText } from './scrub'
 import { CREDENTIAL_TEXT_CASES, EMAIL_TEXT_CASES } from './scrub-cases'
 
 // Assembled at runtime so this file holds no credential-shaped literal.
@@ -174,7 +174,7 @@ describe('scrubFindings: the key next to an assignment', () => {
     let ok = 'leaf'
     for (let i = 0; i < 4; i++) ok = JSON.stringify({ body: ok })
     expect(scrubFindings(ok).size).toBe(0)
-    expect(SCRUB_LIMITS).toEqual({ decodeDepth: 8, containerDepth: 64, nodes: 25_000, chars: 1_000_000, line: 20_000 })
+    expect(SCRUB_LIMITS).toEqual({ decodeDepth: 8, containerDepth: 64, nodes: 25_000, chars: 100_000, line: 20_000 })
     expect(scrubFindings('x'.repeat(SCRUB_LIMITS.chars + 1)).has(SCRUB_LIMIT_RULE)).toBe(true)
   })
 })
@@ -292,8 +292,9 @@ describe('scrubFindings: the cost of a long line', () => {
   })
 
   test('the bound is per line: many short lines of any total length up to the hard bound are scanned', () => {
-    const lines = Array.from({ length: 20_000 }, (_, i) => `line number ${i}`).join('\n')
+    const lines = Array.from({ length: 5000 }, (_, i) => `line number ${i}`).join('\n')
     expect(lines.length).toBeGreaterThan(SCRUB_LIMITS.line)
+    expect(lines.length).toBeLessThan(SCRUB_LIMITS.chars)
     expect(scrubFindings(lines).size).toBe(0)
     expect(scrubFindings(`${lines}\n${'x'.repeat(SCRUB_LIMITS.line + 1)}`).has(SCRUB_LIMIT_RULE)).toBe(true)
     expect(scrubFindings('x'.repeat(SCRUB_LIMITS.line)).has(SCRUB_LIMIT_RULE)).toBe(false)
@@ -306,15 +307,18 @@ describe('scrubFindings: the cost of a long line', () => {
   })
 
   test('a string in a structured input longer than the hard bound is a limit finding, not a prefix scan', () => {
-    expect(inputHoldsSecret({ content: 'x'.repeat(SCRUB_LIMITS.chars + 1) })).toBe(true)
-    expect(inputHoldsSecret({ content: 'x'.repeat(SCRUB_LIMITS.chars) })).toBe(false)
+    const text = 'ab cd\n'.repeat(Math.ceil(SCRUB_LIMITS.chars / 6) + 1)
+    expect(inputHoldsSecret({ content: text.slice(0, SCRUB_LIMITS.chars + 1) })).toBe(true)
+    expect(inputHoldsSecret({ content: text.slice(0, SCRUB_LIMITS.chars) })).toBe(false)
   })
 
-  test('a string in a structured input is inspected only as far as the window: a secret beyond it is not what the view keeps', () => {
+  test('a string in a structured input is inspected in full: a secret anywhere in it is found, and a longer line than the line bound is a limit finding', () => {
     const key = ['sk', 'ant', 'abcdefghijklmnopqrstuvwx'].join('-')
-    const filler = 'ab cd '.repeat(Math.ceil((SCAN_WINDOW + 100) / 6))
-    expect(inputHoldsSecret({ content: `${filler}${key}` })).toBe(false)
-    expect(inputHoldsSecret({ content: `${filler.slice(0, SCAN_WINDOW - 100)}${key}` })).toBe(true)
+    const filler = 'ab cd '.repeat(3000)
+    expect(inputHoldsSecret({ content: `${filler}${key}` })).toBe(true)
+    expect(inputHoldsSecret({ content: `${filler.slice(0, 5000)}${key}${filler.slice(0, 1000)}` })).toBe(true)
+    expect(inputHoldsSecret({ content: filler })).toBe(false)
+    expect(inputHoldsSecret({ content: 'ab cd '.repeat(Math.ceil(SCRUB_LIMITS.line / 6) + 1) })).toBe(true)
   })
 })
 
@@ -422,7 +426,7 @@ describe('the scrub rules on long text', () => {
     expect(redactAbsolutePaths('/'.repeat(100_000))).toBe('/'.repeat(100_000))
     expect(redactAbsolutePaths('/a'.repeat(50_000))).toBe(PATH_PLACEHOLDER)
     expect(scrubFindings(`${'token '.repeat(50_000)}`, UNBOUNDED).size).toBe(0)
-    expect(scrubFindings(`${'password:\n'.repeat(20_000)}`).has('credential-field')).toBe(true)
+    expect(scrubFindings(`${'password:\n'.repeat(20_000)}`, UNBOUNDED).has('credential-field')).toBe(true)
     expect(scrubFindings(`${'password '.repeat(50_000)}`, UNBOUNDED).size).toBe(0)
     expect(scrubFindings(`${'\\'.repeat(200_000)}`, UNBOUNDED).size).toBe(0)
     expect(performance.now() - started).toBeLessThan(2000)

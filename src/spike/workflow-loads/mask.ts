@@ -20,7 +20,7 @@ import { redactPaths } from '../feel-drugs/sheet'
 import { assertOutsideRepo, privateDir, writePrivate } from '../feel-drugs/replay/store'
 import { assertGate, type GateInput, METHODS } from './declaration'
 import { type MethodCall, methodCallOf, nameRegex, type StoredToolUse, toolUseOfPart, type WorkflowSkill, wholeWordRegex } from './loads'
-import { EMAIL_ADDRESS, EMAIL_PLACEHOLDER, holdsSecret, inputHoldsSecret, redactAbsolutePaths, SCAN_TAIL, SCAN_WINDOW, SCRUB_LIMITS, SCRUB_PLACEHOLDER, scrubFindings } from './scrub'
+import { EMAIL_ADDRESS, EMAIL_PLACEHOLDER, holdsSecret, inputHoldsSecret, redactAbsolutePaths, SCRUB_PLACEHOLDER, scrubFindings } from './scrub'
 import type { ManifestSlot, PrivateRoot, StimulusKind, WalkedEntry, WalkedSession } from './store'
 
 // ── rules ──────────────────────────────────────────────────────────────────
@@ -129,39 +129,38 @@ function cutsEscape(text: string, cut: number): boolean {
 /**
  * A text of the view, rendered: scanned, transformed, cut, and checked as the labeler's guard checks what it is sent.
  *
- * - A text over the hard bound is withheld without being scanned. A longer text than the window is scanned and transformed as
- *   far as the window only, since only its start is kept; the cut then needs a tail past it in the scanned part, or the text is
- *   withheld (it shrank too far in the transforms for the scan to have reached past what is kept).
+ * - The whole text is scanned and transformed before anything is cut, however little of it is kept: a pattern that needs its closing
+ *   context (a quoted value, a token's last segment) is only recognised in full, and no window or tail is a bound for that. What
+ *   keeps the cost small is the two bounds that need no window: a text over the hard bound is withheld without being scanned, and
+ *   so is one with a line over the line bound (see `SCRUB_LIMITS`).
  * - Scan, then replace addresses, tokenize and redact paths, each followed by the guard: whatever the guard would refuse (an
  *   address that was only written with an escape and so was not replaced, say) withholds the whole text, before it is cut. A cut
- *   never falls inside an escape sequence: the text is withheld instead.
+ *   never falls inside an escape sequence: the text is withheld instead. The guard is run again after a step unless the text had
+ *   no finding and the step left it as it was: the same text gives the same answer.
  * - A kept text ends as the guard accepted it: the guard runs once more on the cut text.
  */
 function finish(text: string, counter: Counter, limit: number, renderer: Renderer): string {
-  if (text.length > SCRUB_LIMITS.chars) return withhold(counter, renderer)
-  const windowed = text.length > SCAN_WINDOW
-  const scanned = windowed ? text.slice(0, SCAN_WINDOW) : text
-  const rules = scrubFindings(scanned)
-  // any finding but an address withholds the whole text; an address alone only loses the address
+  const rules = scrubFindings(text)
+  // any finding but an address withholds the whole text, a limit finding included; an address alone only loses the address
   if ([...rules].some((rule) => rule !== 'email')) return withhold(counter, renderer)
-  const body = rules.has('email') ? scanned.replace(EMAIL_ADDRESS, EMAIL_PLACEHOLDER) : scanned
-  if (holdsSecret(body)) return withhold(counter, renderer)
+  // a text with no finding that a step left as it was needs no second look; one that had a finding (an address) always gets it
+  const clean = rules.size === 0
+  const refused = (before: string, after: string): boolean => !(clean && after === before) && holdsSecret(after)
+  const body = rules.has('email') ? text.replace(EMAIL_ADDRESS, EMAIL_PLACEHOLDER) : text
+  if (refused(text, body)) return withhold(counter, renderer)
   const transformed = redact(tokenize(body, renderer))
-  if (holdsSecret(transformed)) return withhold(counter, renderer)
+  if (refused(body, transformed)) return withhold(counter, renderer)
   let out = transformed
   if (transformed.length > limit) {
-    if (windowed && transformed.length < limit + SCAN_TAIL) return withhold(counter, renderer)
     let cut = Math.max(0, limit - TRUNCATION_MARKER.length)
     // not between the two halves of a surrogate pair
     const before = transformed.charCodeAt(cut - 1)
     if (before >= 0xd800 && before <= 0xdbff) cut -= 1
     if (cutsEscape(transformed, cut)) return withhold(counter, renderer)
     out = `${transformed.slice(0, cut)}${TRUNCATION_MARKER}`
-  } else if (windowed) {
-    return withhold(counter, renderer)
   }
-  if (holdsSecret(out)) return withhold(counter, renderer)
-  if (body !== scanned) renderer.counters.redactedEmails += 1
+  if (refused(transformed, out)) return withhold(counter, renderer)
+  if (body !== text) renderer.counters.redactedEmails += 1
   return out
 }
 

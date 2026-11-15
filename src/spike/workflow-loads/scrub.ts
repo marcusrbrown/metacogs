@@ -57,18 +57,8 @@ const CREDENTIAL_KEY_NAME = new RegExp(`${CREDENTIAL_KEY}[\\s"']*$`, 'i')
  * 100 ms at 20,000 characters, 1.7 s at 80,000), so a longer line is a finding of its own, not a scan. The limits are a parameter so
  * a test can use small ones.
  */
-export const SCRUB_LIMITS = { decodeDepth: 8, containerDepth: 64, nodes: 25_000, chars: 1_000_000, line: 20_000 }
+export const SCRUB_LIMITS = { decodeDepth: 8, containerDepth: 64, nodes: 25_000, chars: 100_000, line: 20_000 }
 export type ScrubLimits = typeof SCRUB_LIMITS
-
-/**
- * How much of a long text is scanned when only its start is kept: the view scans this many characters, which is the longest kept
- * text (4,000) with a tail of at least `SCAN_TAIL` past it even after the transforms have shortened the text. A secret that starts in
- * the kept text and runs on past the cut is a match within the tail: the longest thing a rule needs to see is a minimum-length key
- * (about 40 characters), a header value (20) or an address with every character written as a six-character escape (about 1,500).
- */
-export const SCAN_WINDOW = 8192
-/** The least text that must follow the cut, after the transforms, in the part that was scanned. */
-export const SCAN_TAIL = 2048
 
 interface Walk {
   limits: ScrubLimits
@@ -177,11 +167,8 @@ function decodeInto(value: unknown, layer: number, walk: Walk): void {
 function inspectValue(value: unknown, layer: number, container: number, walk: Walk): void {
   if (walk.limit) return
   if (typeof value === 'string') {
-    // a string of the input itself is inspected as far as the view could keep it; one longer than the hard bound is not inspected
-    if (layer === 0 && value.length > walk.limits.chars) walk.limit = true
-    else if (layer === 0 && value.length > SCAN_WINDOW) inspectText(value.slice(0, SCAN_WINDOW), layer, walk)
-    else inspectText(value, layer, walk)
-    return
+    // every string is inspected in full: `inspectText` withholds one over the hard bound or with a line over the line bound
+    return inspectText(value, layer, walk)
   }
   walk.nodes += 1
   if (walk.nodes > walk.limits.nodes) {
