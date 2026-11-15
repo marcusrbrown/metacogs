@@ -52,10 +52,12 @@ const CREDENTIAL_KEY_NAME = new RegExp(`${CREDENTIAL_KEY}[\\s"']*$`, 'i')
 /**
  * What the inspection of one text, or one structured input, may spend. `decodeDepth`: JSON layers decoded one inside another.
  * `containerDepth`: arrays and objects inside one another. `nodes`: values visited. `chars`: the total length of decoded text
- * (the first text is not counted), and also the longest text that is inspected at all. The limits are a parameter so a test can use
- * small ones.
+ * (the first text is not counted), and also the hard bound: the longest text that is inspected at all, which is withheld outright
+ * beyond it. `line`: the longest line the scanner is run on. The scanner's time grows with the square of a line's length (about
+ * 100 ms at 20,000 characters, 1.7 s at 80,000), so a longer line is a finding of its own, not a scan. The limits are a parameter so
+ * a test can use small ones.
  */
-export const SCRUB_LIMITS = { decodeDepth: 8, containerDepth: 64, nodes: 25_000, chars: 2_000_000 }
+export const SCRUB_LIMITS = { decodeDepth: 8, containerDepth: 64, nodes: 25_000, chars: 100_000, line: 20_000 }
 export type ScrubLimits = typeof SCRUB_LIMITS
 
 interface Walk {
@@ -80,6 +82,11 @@ function decodeJson(text: string): { value: unknown } | undefined {
   } catch {
     return undefined
   }
+}
+
+/** Whether any line is longer than `max`, with the line breaks the scanner splits on. A text no longer than `max` has none. */
+function hasLongLine(text: string, max: number): boolean {
+  return text.length > max && text.split(/\r\n|\r|\n/).some((line) => line.length > max)
 }
 
 // ── escapes ────────────────────────────────────────────────────────────────
@@ -115,7 +122,7 @@ function inspectText(text: string, layer: number, walk: Walk): void {
   walk.nodes += 1
   if (layer > 0) walk.chars += text.length
   // checked before anything is run on the text: the scanner's time grows with the square of a line's length
-  if (walk.nodes > walk.limits.nodes || walk.chars > walk.limits.chars || text.length > walk.limits.chars) {
+  if (walk.nodes > walk.limits.nodes || walk.chars > walk.limits.chars || text.length > walk.limits.chars || hasLongLine(text, walk.limits.line)) {
     walk.limit = true
     return
   }
@@ -159,7 +166,10 @@ function decodeInto(value: unknown, layer: number, walk: Walk): void {
 /** Walks a value: every string through `inspectText`, every object key that names a credential as a finding. */
 function inspectValue(value: unknown, layer: number, container: number, walk: Walk): void {
   if (walk.limit) return
-  if (typeof value === 'string') return inspectText(value, layer, walk)
+  if (typeof value === 'string') {
+    // every string is inspected in full: `inspectText` withholds one over the hard bound or with a line over the line bound
+    return inspectText(value, layer, walk)
+  }
   walk.nodes += 1
   if (walk.nodes > walk.limits.nodes) {
     walk.limit = true

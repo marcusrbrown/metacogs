@@ -6,7 +6,18 @@ const VALUE = ['harbor', 'Moon42'].join('')
 const KEY = ['pass', 'word'].join('')
 const TOKEN = ['to', 'ken'].join('')
 const ESCAPED_KEY = `\\u0070${['ass', 'word'].join('')}`
-const ADDRESS = ['someone', 'corp-mail.com'].join('@')
+/** The address the email cases are built on, as parts, and written out and with each escape. Every case below is built from these, so what a test checks for cannot drift from what the cases hold. */
+export const EMAIL_LOCAL = 'someone'
+export const EMAIL_DOMAIN = ['corp', 'mail.com'].join('-')
+const ADDRESS = `${EMAIL_LOCAL}@${EMAIL_DOMAIN}`
+const ADDRESS_U = `${EMAIL_LOCAL}\\u0040${EMAIL_DOMAIN}`
+const ADDRESS_X = `${EMAIL_LOCAL}\\x40${EMAIL_DOMAIN}`
+/**
+ * The forms of the address the cases hold: 21, 26 and 24 characters, so each has distinguishing runs of 16. The local part (7) and
+ * the domain (13) are shorter than a run, so a test checks them whole, as `EMAIL_PARTS`.
+ */
+export const EMAIL_ADDRESS_FORMS: readonly string[] = [ADDRESS, ADDRESS_U, ADDRESS_X]
+export const EMAIL_PARTS: readonly string[] = [EMAIL_LOCAL, EMAIL_DOMAIN]
 
 /** Each of these holds a credential key next to an assignment, or a known-format secret, in some form. */
 export const CREDENTIAL_TEXT_CASES: readonly string[] = [
@@ -50,10 +61,10 @@ export const CREDENTIAL_TEXT_CASES: readonly string[] = [
 export const EMAIL_TEXT_CASES: readonly string[] = [
   ADDRESS,
   `{"to":"${ADDRESS}"}`,
-  '{"to":"someone\\u0040corp-mail.com"}',
-  `${ADDRESS} and someone\\u0040corp-mail.com`,
-  `someone\\u0040corp-mail.com and ${ADDRESS}`,
-  `{"to":"${ADDRESS}","cc":"someone\\u0040corp-mail.com"}`,
-  `[tool] send {"to":"someone\\u0040corp-mail.com"}`,
-  `${ADDRESS}\nsomeone\\x40corp-mail.com`,
+  `{"to":"${ADDRESS_U}"}`,
+  `${ADDRESS} and ${ADDRESS_U}`,
+  `${ADDRESS_U} and ${ADDRESS}`,
+  `{"to":"${ADDRESS}","cc":"${ADDRESS_U}"}`,
+  `[tool] send {"to":"${ADDRESS_U}"}`,
+  `${ADDRESS}\n${ADDRESS_X}`,
 ]
