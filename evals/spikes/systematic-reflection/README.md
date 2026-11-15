@@ -6,7 +6,7 @@ Does the `counterfactual` or `synthesis` method load at chosen `ce:plan` and `ce
 
 Status: baseline protocol frozen, no paid run yet.
 
-- Pre-registration commit: recorded here when it is committed.
+- Pre-registration commit: `d0d35fd`.
 - Deviations log: none.
 
 ## Baseline arm
