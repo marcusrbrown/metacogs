@@ -6,6 +6,7 @@ import { join } from 'node:path'
 
 import { main, mainAsync } from './cli'
 import type { FixtureSpec } from './store'
+import { SYNTHETIC_REPO } from './test-support'
 
 const cleanup: (() => void)[] = []
 afterEach(() => {
@@ -94,6 +95,24 @@ describe('replay cli', () => {
     expect(h.run('list')).toBe(0)
     expect(h.out.at(-1)).toBe('moment-a\tdrugs\tfrozen\tapproved')
     expect([...h.out, ...h.err].join('\n')).not.toContain(PRIVATE)
+  })
+
+  test('build --repo stores the seeded repository, prints its hash, and refuses a repo file inside the repo or one that does not parse', () => {
+    const h = harness()
+    const repoFile = join(tmp('replay-repo-file-'), 'repo.json')
+    writeFileSync(repoFile, JSON.stringify(SYNTHETIC_REPO))
+    expect(h.run('build', writeSpec(spec({ kind: 'workflow', expected: 'silence', somewhere: '' })), '--repo', repoFile)).toBe(0)
+    expect(h.out.at(-1)).toMatch(/^built moment-a status=draft export_sha256=[0-9a-f]{12} repo_sha256=[0-9a-f]{12}$/)
+    expect(existsSync(join(h.store, 'fixtures', 'moment-a', 'repo.json'))).toBe(true)
+
+    const inside = join(h.repoRoot, 'repo.json')
+    writeFileSync(inside, JSON.stringify(SYNTHETIC_REPO))
+    expect(h.run('build', writeSpec(spec({ kind: 'workflow', expected: 'silence', somewhere: '' })), '--repo', inside)).toBe(1)
+    expect(h.err.join('\n')).toContain('CustodyError')
+    h.err.length = 0
+    writeFileSync(repoFile, JSON.stringify({ ...SYNTHETIC_REPO, commits: [] }))
+    expect(h.run('build', writeSpec(spec({ kind: 'workflow', expected: 'silence', somewhere: '' })), '--repo', repoFile)).toBe(1)
+    expect(h.err.join('\n')).toContain('repo.commits')
   })
 
   test('freeze reports the rule for a dirty fixture, exits 1, and leaves it draft', () => {

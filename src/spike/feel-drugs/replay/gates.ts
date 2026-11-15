@@ -1,6 +1,7 @@
 /** Arms and the per-attempt gate matrix. A failed gate excludes the attempt; it is never an outcome. */
 import { systemTexts } from '../../../runner/isolation'
 import type { RecordedRequest } from '../../../runner/scripted-provider'
+import type { RepoExpectation, RepoReport } from './repo'
 import { WORKFLOW_AGENT } from './stack'
 import type { FixtureSpec } from './store'
 import { requestedModel, toolNamesAnyWire, userMessageParts, userTextsAnyWire } from './wire'
@@ -56,7 +57,7 @@ export function runArgs(model: string, sessionId: string, message: ArmMessage): 
 
 // ── gates ──────────────────────────────────────────────────────────────────
 
-export const EXCLUSION_REASONS = ['host_version', 'no_main_request', 'tool_missing', 'tool_policy', 'model_mismatch', 'agent_mismatch', 'compaction', 'skill_not_delivered', 'args_mismatch', 'seed_history_missing', 'stack_injection', 'isolation_failed'] as const
+export const EXCLUSION_REASONS = ['host_version', 'no_main_request', 'tool_missing', 'tool_policy', 'model_mismatch', 'agent_mismatch', 'compaction', 'skill_not_delivered', 'args_mismatch', 'seed_history_missing', 'stack_injection', 'isolation_failed', 'seeded_repo_missing'] as const
 export type ExclusionReason = (typeof EXCLUSION_REASONS)[number]
 
 export interface GateCheck {
@@ -101,6 +102,8 @@ export interface GateInput {
   partTypes: readonly string[] | null
   /** `type` of every event on stdout. */
   eventTypes: readonly string[]
+  /** Workflow fixtures: the verdict of `seededRepoCheck`, recorded with the other checks. */
+  seededRepo?: GateCheck
 }
 
 export interface GateResult {
@@ -151,6 +154,29 @@ export function parseSkillDelivery(firstPart: string): SkillDelivery | null {
 }
 
 const check = (name: string, passed: boolean, detail: string, reason: ExclusionReason): GateCheck => (passed ? { name, passed, detail } : { name, passed, reason, detail })
+
+const short = (hash: string): string => hash.slice(0, 12)
+
+/**
+ * A workflow fixture's seed reads a repository, so the attempt's workspace must hold it: the files and history the fixture declares,
+ * written before the model ran. The check fails when the fixture declares none, when the host reported none, and when what it found
+ * differs from what the fixture declares. Ids, counts and short hashes only.
+ */
+export function seededRepoCheck(expected: RepoExpectation | null, found: RepoReport | null | undefined): GateCheck {
+  const name = 'seeded_repo'
+  if (expected === null) return check(name, false, 'the fixture carries no repository payload, so the seed\'s reads have nothing to read', 'seeded_repo_missing')
+  const want = `${expected.files} files, ${expected.commits} commits, tree ${short(expected.tree_sha256)}`
+  if (!found) return check(name, false, `the workspace was not reported; expected ${want}`, 'seeded_repo_missing')
+  const differs: string[] = []
+  if (found.payload_sha256 !== expected.payload_sha256) differs.push('payload')
+  if (found.tree_sha256 !== expected.tree_sha256) differs.push('files')
+  if (found.files !== expected.files) differs.push('file count')
+  if (found.commits !== expected.commits) differs.push('commit count')
+  if (!found.clean) differs.push('working tree not clean')
+  if (found.skill_dirs.join(',') !== expected.skill_dirs.join(',')) differs.push('skill directories')
+  if (differs.length > 0) return check(name, false, `the workspace differs from the fixture (${differs.join(', ')}); expected ${want}, found ${found.files} files, ${found.commits} commits, tree ${short(found.tree_sha256)}`, 'seeded_repo_missing')
+  return check(name, true, `${found.files} files, ${found.commits} commits, head ${short(found.head)}, ${found.skill_files} skill files`, 'seeded_repo_missing')
+}
 
 /** Fixture user turns each appear, in order, inside the replayed user messages (plugins add tags and reminders around them). */
 function seedPresent(body: Record<string, unknown>, turns: readonly string[]): boolean {
@@ -212,6 +238,8 @@ export function evaluateGates(input: GateInput): GateResult {
     const council = lastParts.some((p) => p.includes('## Council Mode'))
     checks.push(check('stack_injection', !council, `council block ${council ? 'present' : 'absent'}`, 'stack_injection'))
   }
+
+  if (input.seededRepo) checks.push(input.seededRepo)
 
   let receivedArgs: string | null = null
   if (input.message.kind === 'command' && mains.length > 0) {

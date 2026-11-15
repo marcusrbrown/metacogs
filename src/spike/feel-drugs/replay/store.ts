@@ -1,12 +1,13 @@
 /** Private replay store: raw extracts, authored fixture specs, built session exports, and the freeze manifest. */
 import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { join, posix, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { type Finding, type FixtureStamp, scanRepo, stampFixture, verifyStamp } from '../../../scan/secrets'
 import { CustodyError, isInside, sha256, stateRoot } from '../../../runner/workspace'
 import { METHODS, type Method } from './loads'
+import { canonicalRepo } from './repo'
 
 const REPO_ROOT = fileURLToPath(new URL('../../../..', import.meta.url)).replace(/\/$/, '')
 
@@ -183,6 +184,71 @@ function parseWorkflow(o: Record<string, unknown>): Pick<FixtureSpec, 'expected'
   return { expected: 'fire', methods }
 }
 
+// ── the seeded repository ──────────────────────────────────────────────────
+
+/** One commit of a seeded repository. `files` are written and committed; a later commit overwrites an earlier file. */
+export interface RepoCommit {
+  message: string
+  /** UTC, `YYYY-MM-DDTHH:MM:SSZ`: author and committer date, so the same payload gives the same history. */
+  date: string
+  /** The branch this commit lands on. Default: the previous commit's branch, and `main` for the first. A new name branches from the previous commit. */
+  branch?: string
+  files: Record<string, string>
+}
+
+/**
+ * The repository a workflow fixture's seed was read from: the files and git history its tool calls show, at the paths they show,
+ * written into every attempt's workspace. Kept beside the spec as `repo.json`, in canonical form so its hash is stable.
+ */
+export interface RepoPayload {
+  schema_version: 1
+  /** Systematic skill directories (under `skills/`) the seed's paths point into, copied to `.systematic/skills/<name>` from the installed package. */
+  systematic_skills: string[]
+  commits: RepoCommit[]
+  /** The commit (an index into `commits`) that `origin/main` points at. Absent: no `origin/main`. */
+  origin_main_after?: number
+}
+
+const BRANCH_NAME = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/
+
+/** A path inside the workspace, in normal form, outside `.git` and `.systematic`, which the host owns. */
+function repoPath(v: unknown, path: string): string {
+  const p = str(v, path)
+  if (p.includes('\0') || posix.isAbsolute(p) || posix.normalize(p) !== p || p.split('/').includes('..') || p.endsWith('/')) fail(path, 'a relative path in normal form with no ".." segment')
+  const top = p.split('/')[0]
+  if (top === '.git' || top === '.systematic') fail(path, 'a path outside .git and .systematic')
+  return p
+}
+
+/** Parse, don't validate: a bad payload never becomes a `RepoPayload`. Messages name fields, never values. */
+export function parseRepo(input: unknown): RepoPayload {
+  const o = object(input, 'repo', ['schema_version', 'systematic_skills', 'commits', 'origin_main_after'])
+  if (o.schema_version !== 1) fail('repo.schema_version', '1')
+  if (!Array.isArray(o.systematic_skills)) fail('repo.systematic_skills', 'an array')
+  const skills = (o.systematic_skills as unknown[]).map((s, n) => {
+    const name = str(s, `repo.systematic_skills[${n}]`)
+    return /^[a-z0-9][a-z0-9-]*$/.test(name) ? name : fail(`repo.systematic_skills[${n}]`, 'a skill directory name')
+  })
+  if (new Set(skills).size !== skills.length) fail('repo.systematic_skills', 'no repeated name')
+  if (!Array.isArray(o.commits) || o.commits.length === 0) fail('repo.commits', 'a non-empty array')
+  const commits = (o.commits as unknown[]).map((c, n): RepoCommit => {
+    const at = `repo.commits[${n}]`
+    const cm = object(c, at, ['message', 'date', 'branch', 'files'])
+    const date = str(cm.date, `${at}.date`)
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(date) || Number.isNaN(Date.parse(date))) fail(`${at}.date`, 'a UTC time as YYYY-MM-DDTHH:MM:SSZ')
+    if (cm.branch !== undefined && (typeof cm.branch !== 'string' || !BRANCH_NAME.test(cm.branch) || cm.branch.includes('..') || cm.branch.endsWith('/') || cm.branch.endsWith('.lock'))) fail(`${at}.branch`, 'a branch name')
+    const filesIn = object(cm.files, `${at}.files`, Object.keys(isObject(cm.files) ? cm.files : {}))
+    const names = Object.keys(filesIn)
+    if (names.length === 0) fail(`${at}.files`, 'at least one file')
+    const files: Record<string, string> = {}
+    for (const name of names) files[repoPath(name, `${at}.files.<path>`)] = str(filesIn[name], `${at}.files.<path>`, false)
+    return { message: str(cm.message, `${at}.message`), date, ...(cm.branch !== undefined ? { branch: cm.branch as string } : {}), files }
+  })
+  const after = o.origin_main_after
+  if (after !== undefined && !(Number.isInteger(after) && (after as number) >= 0 && (after as number) < commits.length)) fail('repo.origin_main_after', 'the index of a commit')
+  return { schema_version: 1, systematic_skills: skills, commits, ...(after !== undefined ? { origin_main_after: after as number } : {}) }
+}
+
 // ── skill-text placeholders ────────────────────────────────────────────────
 
 /** Where a rendered skill says it lives. A seeded session names no real machine path. */
@@ -253,7 +319,7 @@ function skillToolOutput(tree: string, dirName: string, args: string | undefined
 }
 
 /** The text the read tool returns for a file: its path, numbered lines and a line count. */
-function readToolOutput(path: string, text: string): string {
+export function readToolOutput(path: string, text: string): string {
   const lines = text.split('\n')
   if (lines.at(-1) === '') lines.pop()
   return `<path>${path}</path>\n<type>file</type>\n<content>\n${lines.map((l, i) => `${i + 1}: ${l}`).join('\n')}\n\n(End of file - total ${lines.length} lines)\n</content>`
@@ -508,8 +574,8 @@ export interface ScanReport {
   findings: Finding[]
 }
 export type ManifestEntry =
-  | { status: 'draft'; spec_sha256: string; export_sha256: string; last_scan: ScanReport | null; render?: RenderRecord; review: Review; updated_at: string }
-  | { status: 'frozen'; spec_sha256: string; export_sha256: string; stamp: FixtureStamp; render?: RenderRecord; review: Review; updated_at: string }
+  | { status: 'draft'; spec_sha256: string; export_sha256: string; last_scan: ScanReport | null; render?: RenderRecord; repo_sha256?: string; review: Review; updated_at: string }
+  | { status: 'frozen'; spec_sha256: string; export_sha256: string; stamp: FixtureStamp; render?: RenderRecord; repo_sha256?: string; review: Review; updated_at: string }
   | { status: 'excluded'; spec_sha256: string; reason: string; review: Review; updated_at: string }
 type Frozen = Extract<ManifestEntry, { status: 'frozen' }>
 
@@ -580,6 +646,8 @@ function intact(store: Store, id: string, entry: Frozen): boolean {
 export interface BuildFixtureOptions {
   /** A Systematic package tree (the directory that holds `skills/`). Needed when the spec holds skill-text placeholders. */
   systematicTree?: string
+  /** The seeded repository, as parsed JSON: written beside the spec as `repo.json`. Absent: the fixture carries none, and a workflow attempt on it is excluded. */
+  repo?: unknown
 }
 
 /**
@@ -598,6 +666,9 @@ export function buildFixture(store: Store, input: unknown, options: BuildFixture
     spec = filled.spec
     render = { template_sha256: sha256(canonical(template)), systematic_version: systematicVersion(options.systematicTree), skill_text: filled.skillText, home_path_rewrites: filled.homePathRewrites }
   }
+  const repo = options.repo === undefined ? undefined : parseRepo(options.repo)
+  const repoText = repo ? canonicalRepo(repo) : undefined
+  const repoHash = repoText === undefined ? undefined : sha256(repoText)
   const dir = fixtureDir(store, spec.id)
   privateDir(dir)
   const specText = canonical(spec)
@@ -606,6 +677,8 @@ export function buildFixture(store: Store, input: unknown, options: BuildFixture
   const now = store.now().toISOString()
   const prior = readManifest(store).fixtures[spec.id]
   writePrivate(join(dir, 'spec.json'), specText)
+  if (repoText !== undefined && !spec.excluded) writePrivate(join(dir, 'repo.json'), repoText)
+  else rmSync(join(dir, 'repo.json'), { force: true })
 
   if (spec.excluded) {
     rmSync(exportPath, { force: true })
@@ -614,8 +687,8 @@ export function buildFixture(store: Store, input: unknown, options: BuildFixture
   const exportText = canonical(buildExport(spec))
   const exportHash = sha256(exportText)
   writePrivate(exportPath, exportText)
-  if (prior?.status === 'frozen' && prior.spec_sha256 === specHash && prior.export_sha256 === exportHash) return prior
-  return putEntry(store, spec.id, { status: 'draft', spec_sha256: specHash, export_sha256: exportHash, last_scan: null, ...(render ? { render } : {}), review: UNREVIEWED, updated_at: now })
+  if (prior?.status === 'frozen' && prior.spec_sha256 === specHash && prior.export_sha256 === exportHash && prior.repo_sha256 === repoHash) return prior
+  return putEntry(store, spec.id, { status: 'draft', spec_sha256: specHash, export_sha256: exportHash, last_scan: null, ...(render ? { render } : {}), ...(repoHash ? { repo_sha256: repoHash } : {}), review: UNREVIEWED, updated_at: now })
 }
 
 /** Scans the fixture directory in fixture mode and, only if it is clean, stamps it. Any finding leaves the fixture draft. */
@@ -633,10 +706,10 @@ export function freezeFixture(store: Store, id: string): Frozen {
   const now = store.now().toISOString()
   const findings = scanRepo({ root: dir, mode: 'fixture' })
   if (findings.length > 0) {
-    putEntry(store, id, { status: 'draft', spec_sha256: sha256(specText), export_sha256: sha256(exportText), last_scan: { clean: false, findings }, ...(entry.status === 'draft' && entry.render ? { render: entry.render } : {}), review: UNREVIEWED, updated_at: now })
+    putEntry(store, id, { status: 'draft', spec_sha256: sha256(specText), export_sha256: sha256(exportText), last_scan: { clean: false, findings }, ...(entry.status === 'draft' && entry.render ? { render: entry.render } : {}), ...(entry.repo_sha256 ? { repo_sha256: entry.repo_sha256 } : {}), review: UNREVIEWED, updated_at: now })
     throw new FreezeError(id, findings)
   }
-  const frozen: Frozen = { status: 'frozen', spec_sha256: sha256(specText), export_sha256: sha256(exportText), stamp: stampFixture(dir), ...(entry.render ? { render: entry.render } : {}), review: UNREVIEWED, updated_at: now }
+  const frozen: Frozen = { status: 'frozen', spec_sha256: sha256(specText), export_sha256: sha256(exportText), stamp: stampFixture(dir), ...(entry.render ? { render: entry.render } : {}), ...(entry.repo_sha256 ? { repo_sha256: entry.repo_sha256 } : {}), review: UNREVIEWED, updated_at: now }
   putEntry(store, id, frozen)
   return frozen
 }
@@ -656,6 +729,8 @@ export interface LoadedFixture {
   spec: FixtureSpec
   export: SessionExport
   entry: Frozen
+  /** The seeded repository, when the fixture carries one. */
+  repo?: RepoPayload
 }
 
 /** The only way a fixture reaches a run: frozen, scanned clean as of now, unedited, and approved. */
@@ -666,10 +741,12 @@ export function loadFrozen(store: Store, id: string): LoadedFixture {
   if (!intact(store, id, entry)) throw new FixtureRefusal('edited', id, 'was edited after it was frozen or no longer scans clean; it needs a new scan and review')
   if (!entry.review.approved_by_author) throw new FixtureRefusal('not_approved', id, 'has not been approved by the author')
   const dir = fixtureDir(store, id)
+  const repoText = readText(join(dir, 'repo.json'))
   return {
     spec: parseSpec(JSON.parse(readFileSync(join(dir, 'spec.json'), 'utf8'))),
     export: JSON.parse(readFileSync(join(dir, 'export.json'), 'utf8')) as SessionExport,
     entry,
+    ...(repoText !== null ? { repo: parseRepo(JSON.parse(repoText)) } : {}),
   }
 }
 

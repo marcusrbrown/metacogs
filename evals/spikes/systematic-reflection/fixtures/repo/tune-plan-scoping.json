@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "systematic_skills": [
+    "ce-plan"
+  ],
+  "commits": [
+    {
+      "message": "snapshot of the repository the session read",
+      "date": "2026-11-09T09:00:00Z",
+      "files": {
+        "docs/brainstorms/2026-09-22-tenant-audit-log-requirements.md": "# 2026-09-22-tenant-audit-log-requirements\n",
+        "docs/brainstorms/2026-10-14-statement-export-requirements.md": "# 2026-10-14-statement-export-requirements\n",
+        "src/cli/index.ts": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\ncase 'export': return runExport(ledger, parseExportArgs(rest))\n",
+        "scripts/nightly-export.sh": "\n\n\n\n\n\n\nledger export --stdout --since \"$SINCE\" | gzip > \"$OUT_DIR/ledger-$DATE.csv.gz\"\n",
+        "src/cli/export.ts": "import { writeFile } from 'node:fs/promises'\n\nimport type { Ledger } from '../ledger/types.js'\nimport { toCsv } from './csv.js'\n\nexport type ExportFormat = 'csv'\n\nexport interface ExportOptions {\n  format: ExportFormat\n  out?: string\n  stdout: boolean\n  since?: string\n}\n\n/** Writes ledger entries to a file or stdout and returns the number of rows written. */\nexport async function runExport(ledger: Ledger, options: ExportOptions): Promise<number> {\n  const rows = await ledger.entries({ since: options.since })\n  const text = toCsv(rows)\n  if (options.stdout) {\n    process.stdout.write(text)\n    return rows.length\n  }\n  await writeFile(options.out ?? 'ledger-export.csv', text)\n  return rows.length\n}\n",
+        "src/cli/args.ts": "import type { ExportFormat, ExportOptions } from './export.js'\n\nconst FORMATS: readonly ExportFormat[] = ['csv']\n\nexport function parseExportArgs(argv: string[]): ExportOptions {\n  const options: ExportOptions = { format: 'csv', stdout: false }\n  for (let i = 0; i < argv.length; i += 1) {\n    const arg = argv[i]!\n    if (arg === '--stdout') options.stdout = true\n    else if (arg === '--out') options.out = argv[++i]\n    else if (arg === '--since') options.since = argv[++i]\n    else if (arg === '--format') {\n      const value = argv[++i] as ExportFormat\n      if (!FORMATS.includes(value)) throw new Error(`unknown format: ${value}`)\n      options.format = value\n    } else throw new Error(`unknown argument: ${arg}`)\n  }\n  return options\n}\n",
+        "test/cli/export.test.ts": "import { describe, expect, test } from 'bun:test'\n\nimport { runExport } from '../../src/cli/export.js'\n\ndescribe('runExport', () => {\n  test('writes one csv row per entry and returns the count', async () => {\n    const chunks: string[] = []\n    const original = process.stdout.write.bind(process.stdout)\n    process.stdout.write = ((chunk: string) => (chunks.push(chunk), true)) as typeof process.stdout.write\n    try {\n      const ledger = { entries: async () => [{ id: 'e1', amountMinor: 1200, currency: 'EUR', postedAt: '2026-11-01' }] }\n      expect(await runExport(ledger, { format: 'csv', stdout: true })).toBe(1)\n    } finally {\n      process.stdout.write = original\n    }\n    expect(chunks.join('')).toContain('e1,1200,EUR,2026-11-01')\n  })\n})\n"
+      }
+    }
+  ]
+}

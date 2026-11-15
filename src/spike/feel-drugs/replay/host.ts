@@ -12,9 +12,11 @@ import { checkDailyStack, type DailyStackVerdict } from '../../../runner/isolati
 import { spawnCapture } from '../../../runner/opencode'
 import { type RecordedRequest, type ScriptedStep, type ScriptRequest, startRecordingProxy, startScriptedProvider } from '../../../runner/scripted-provider'
 import { gitInit, sha256 } from '../../../runner/workspace'
-import { type ArmMessage, type ArmName, type AssistantInfo, runArgs } from './gates'
+import { type ArmMessage, type ArmName, type AssistantInfo, runArgs, seededRepoCheck } from './gates'
 import { dailyStack, defaultOwnerConfig, type OwnerConfig, STACK_NPM_PLUGINS, type StackProfile, stackHostConfig, stubProviders, writeStackConfigs } from './stack'
 import type { ReplaySeed } from './history'
+import { expectedRepo, inspectRepo, materializeRepo, provideSkills, type RepoReport, repoPermission, rewriteSeedPaths } from './repo'
+import type { RepoPayload } from './store'
 import { defaultUnreadable, sandboxAvailable, sandboxPrefix } from './sandbox'
 import { cloneWorld, ghEnv, type GhAuth, removeGhConfig, type WorldJob, type WorldRecord, worldPermission, writeGhConfig } from './world'
 
@@ -89,6 +91,8 @@ export interface AttemptJob {
   seed: ReplaySeed
   /** Real-world mode: clone this repo into the workspace instead of an empty git init. */
   world?: WorldJob
+  /** Workflow fixtures: the repository the seed's tool calls read. It is written into the workspace and the seed's `/workspace` paths point at it. */
+  repo?: RepoPayload
   model: string
   arm: ArmName
   message: ArmMessage
@@ -120,6 +124,8 @@ export interface HostResult {
   leakDirs: string[]
   /** Real-world mode: the commit and rule the clone landed on. */
   world?: WorldRecord
+  /** Seeded-repository attempts: what the workspace held before the model ran. */
+  repo?: RepoReport
   cleanup(): void
 }
 
@@ -191,6 +197,8 @@ export function createHostExecutor(options: HostExecutorOptions): Executor {
   const owner = options.owner ?? defaultOwnerConfig()
   const profile = options.stack ?? dailyStack()
   const systematicSpec = profile.npmPlugins.find((p) => p.startsWith('@fro.bot/systematic@')) ?? null
+  /** The installed package's skills, as the attempt's cache clone holds them. */
+  const installedSkills = (cache: string): string | null => (systematicSpec ? join(cache, 'opencode', 'packages', systematicSpec, 'node_modules', '@fro.bot', 'systematic', 'skills') : null)
 
   return async (job) => {
     const startedAt = new Date()
@@ -210,23 +218,37 @@ export function createHostExecutor(options: HostExecutorOptions): Executor {
       destroyFixture(fx)
     }
     try {
-      if (job.world && options.world?.sandbox !== 'off' && !sandboxAvailable()) throw new Error('real-world attempts need /usr/bin/sandbox-exec (macOS) to confine the agent shell to its clone')
+      // a real-world or seeded-repository attempt gets a shell, which permissions alone do not confine
+      const shell = Boolean(job.world || job.repo)
+      if (shell && options.world?.sandbox !== 'off' && !sandboxAvailable()) throw new Error('attempts with a shell (real-world, seeded repository) need /usr/bin/sandbox-exec (macOS) to confine it to the fixture')
       let worldRecord: WorldRecord | undefined
       let ghDir: string | undefined
       if (job.world) {
         worldRecord = cloneWorld({ ...job.world, dest: fx.workspace })
         if (options.world?.gh) ghDir = writeGhConfig(fx.root, options.world.gh)
         else worldRecord = { ...worldRecord, gh: 'none' }
-      } else gitInit(fx.workspace)
-      // the agent's shell is allowed in the clone and permissions do not confine it, so every real-world host process runs write-confined to the fixture
-      const sandbox = job.world && options.world?.sandbox !== 'off' ? sandboxPrefix({ writable: [fx.root, bunInstallCacheDir(), ...(options.world?.writable ?? [])], unreadable: defaultUnreadable() }) : []
+      } else if (job.repo) materializeRepo(fx.workspace, job.repo)
+      else gitInit(fx.workspace)
+      // the agent's shell is allowed in the workspace and permissions do not confine it, so every such host process runs write-confined to the fixture
+      const sandbox = shell && options.world?.sandbox !== 'off' ? sandboxPrefix({ writable: [fx.root, bunInstallCacheDir(), ...(options.world?.writable ?? [])], unreadable: defaultUnreadable() }) : []
       writeStackConfigs(fx, owner, profile)
       const systematicConfig = join(fx.xdgConfigHome, 'opencode', 'systematic.jsonc')
       const systematic = { spec: systematicSpec, configSha256: existsSync(systematicConfig) ? sha256(readFileSync(systematicConfig, 'utf8')) : null }
       clone(join(options.baseDir, 'cache'), fx.xdgCacheHome)
       clone(join(options.baseDir, 'opencode-config-dir'), fx.opencodeConfigDir)
+      // the repository is read back before anything runs, so the attempt records what the workspace held and not what was meant to be there
+      let repoReport: RepoReport | undefined
+      if (job.repo) {
+        const skills = installedSkills(fx.xdgCacheHome)
+        try {
+          if (skills) provideSkills(fx.workspace, skills, job.repo.systematic_skills)
+        } catch {
+          // a skill directory that did not arrive shows in the report, and the gate excludes the attempt
+        }
+        repoReport = inspectRepo(fx.workspace, job.repo)
+      }
       const provider = options.provider === 'scripted' ? stubProviders(server.url) : cliproxyProviderConfig(server.url)
-      const config = stackHostConfig({ provider, pluginSpecs: [...profile.npmPlugins, options.packed.spec], permission: job.world ? worldPermission() : profile.permission, agent: profile.agent })
+      const config = stackHostConfig({ provider, pluginSpecs: [...profile.npmPlugins, options.packed.spec], permission: job.world ? worldPermission() : job.repo ? repoPermission() : profile.permission, agent: profile.agent })
       const env = buildChildEnv({ fixture: fx, config, extra: { ...OFFLINE_NPM, ...(ghDir ? ghEnv(ghDir) : {}), ...(job.world ? options.world?.env : {}) } })
       if (options.provider === 'cliproxy') {
         if (!options.cliproxy) throw new Error('the cliproxy provider needs a resolved key')
@@ -254,7 +276,7 @@ export function createHostExecutor(options: HostExecutorOptions): Executor {
       const stackSummary = eff
         ? { plugins: Array.isArray(eff.plugin_origins) ? eff.plugin_origins.filter(isRecord).map((o) => String(o.spec)) : [], default_agent: typeof eff.default_agent === 'string' ? eff.default_agent : null, mcp_entries: isRecord(eff.mcp) ? Object.keys(eff.mcp).length : -1 }
         : null
-      const base = { hostVersion: version, systematic, leakDirs: job.world ? worldLeakDirs(fx) : [fx.workspace], ...(worldRecord ? { world: worldRecord } : {}), cleanup, stack, stackSummary }
+      const base = { hostVersion: version, systematic, leakDirs: shell ? worldLeakDirs(fx) : [fx.workspace], ...(worldRecord ? { world: worldRecord } : {}), ...(repoReport ? { repo: repoReport } : {}), cleanup, stack, stackSummary }
       const finish = (extra: Partial<HostResult>): HostResult => {
         const ended = new Date()
         return { ...base, requests: server.requests, stdout: '', stderr: '', exitCode: -1, timedOut: false, aborted: false, ran: false, startedAt: startedAt.toISOString(), endedAt: ended.toISOString(), wallMs: ended.getTime() - startedAt.getTime(), assistants: null, partTypes: null, ...extra }
@@ -270,8 +292,15 @@ export function createHostExecutor(options: HostExecutorOptions): Executor {
         return finish({ stderr: dbg.stderr })
       }
 
+      // never send the model to a workspace that lacks the repository the seed read: the attempt is not run, and the gate names why
+      if (job.repo && !seededRepoCheck(expectedRepo(job.repo), repoReport).passed) {
+        if (ghDir) removeGhConfig(ghDir)
+        return finish({})
+      }
+
       const seed = structuredClone(job.seed)
       seed.info.directory = realpathSync(fx.workspace)
+      if (job.repo && repoReport) repoReport.seed_path_rewrites = rewriteSeedPaths(seed, realpathSync(fx.workspace))
       shiftTimes(seed, Date.now())
       const seedFile = join(fx.root, 'seed-export.json')
       writeFileSync(seedFile, JSON.stringify(seed))
@@ -303,8 +332,8 @@ export function createHostExecutor(options: HostExecutorOptions): Executor {
   }
 }
 
-/** Where a credential could land in a real-world attempt: the clone's own directories (not `.git` or dependencies), the temp dir and the host logs. */
+/** Where a credential could land in an attempt with a shell: the workspace's own directories (not `.git`, dependencies or the provided skills), the temp dir and the host logs. */
 function worldLeakDirs(fx: { workspace: string; tmp: string; root: string }): string[] {
-  const top = readdirSync(fx.workspace, { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== '.git' && e.name !== 'node_modules').map((e) => join(fx.workspace, e.name))
+  const top = readdirSync(fx.workspace, { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== '.git' && e.name !== 'node_modules' && e.name !== '.systematic').map((e) => join(fx.workspace, e.name))
   return [...top, fx.tmp, join(fx.root, 'logs')]
 }

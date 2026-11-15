@@ -7,7 +7,7 @@ import { sha256 } from '../../../runner/workspace'
 import { extractSession, nextHumanTurn } from './extract'
 import { assertEndsAtCutoff, buildRealExport, type DroppedParts, type HistoryWindow, type ReplaySeed } from './history'
 import type { Method } from './loads'
-import { type FixtureKind, type FixtureSpec, ID_PATTERN, KINDS, parseSpec, privateDir, SpecError, type Store, type Turn, writePrivate } from './store'
+import { type FixtureKind, type FixtureSpec, ID_PATTERN, KINDS, parseSpec, privateDir, type RepoPayload, SpecError, type Store, type Turn, writePrivate } from './store'
 import { branchHints, type CheckoutContext, checkoutOf, type WorldJob } from './world'
 
 /** The 11 approved moments: the 8 feel and drugs fixtures plus three ordinary ones. */
@@ -203,6 +203,8 @@ export interface ReplayFixture {
   entry: { spec_sha256: string; export_sha256: string }
   /** Texts the first request must hold; default: the spec's user turns. */
   seedUserTurns?: readonly string[]
+  /** The repository the seed's tool calls read. Workflow fixtures carry one; an attempt without it is excluded. */
+  repo?: RepoPayload
   world?: WorldJob
   history?: { window: HistoryWindow; dropped: DroppedParts; part_types: Record<string, number> }
 }

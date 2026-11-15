@@ -7,7 +7,7 @@ import type { ResolvedCliproxy } from '../../../runner/cliproxy'
 import type { AttemptJob, HostResult } from './host'
 import { type AttemptRecord, campaignCells, campaignTallies, type CampaignOptions, cellDir, readAttempts, runAttempt, runCampaign, spentUsd } from './run'
 import { loadFrozen } from './store'
-import { approvedFixture, fakeExecutor, fakeWorkflowExecutor, type Lab, MODEL, newLab, SILENCE_SPEC, skillLoadEvent, stdoutOf, toolEvent, WORKFLOW_SPEC, WORKFLOW_TOOL_NAMES, chatRequest, titleRequest } from './test-support'
+import { approvedFixture, faithfulReport, fakeExecutor, fakeWorkflowExecutor, type Lab, MODEL, newLab, SILENCE_SPEC, skillLoadEvent, stdoutOf, SYNTHETIC_REPO, toolEvent, WORKFLOW_SPEC, WORKFLOW_TOOL_NAMES, chatRequest, titleRequest } from './test-support'
 
 const labs: Lab[] = []
 afterEach(() => {
@@ -287,5 +287,75 @@ describe('one ledger across stages', () => {
     expect(jobs).toHaveLength(2)
     expect(summary.stoppedBy).toBe('budget')
     expect(readAttempts(cell(l)).map((a) => a.status)).toEqual(['excluded', 'completed'])
+  })
+})
+
+describe('the seeded repository', () => {
+  const hit = skillLoadEvent('counterfactual')
+  const runOne = (l: Lab, over: Partial<HostResult> = {}) => attempt(l, WORKFLOW_SPEC, hit, over)
+
+  test('an attempt whose workspace lacks the repository is excluded as seeded_repo_missing, and a method load in it is not scored', async () => {
+    const l = lab()
+    approvedFixture(l.store, WORKFLOW_SPEC)
+    const r = await runOne(l, { repo: undefined })
+    expect(r).toMatchObject({ status: 'excluded', terminal: true, reasons: ['seeded_repo_missing'], outcome: null })
+    expect(r.workflow).toBeUndefined()
+    expect(r.gates).toMatchObject({ passed: false, checks: [{ name: 'seeded_repo', passed: false, reason: 'seeded_repo_missing' }] })
+    expect(r.gates!.checks[0]!.detail).toContain('not reported')
+  })
+
+  test('a workspace that holds other files than the fixture declares is excluded the same way', async () => {
+    const l = lab()
+    approvedFixture(l.store, WORKFLOW_SPEC)
+    const r = await attempt(l, WORKFLOW_SPEC, hit, { repo: { ...faithfulReport(SYNTHETIC_REPO), files: 0, tree_sha256: 'e'.repeat(64) } })
+    expect(r).toMatchObject({ status: 'excluded', reasons: ['seeded_repo_missing'] })
+    expect(r.gates!.checks[0]!.detail).toContain('files')
+  })
+
+  test('a host that did not run the model at all because the repository was wrong is excluded and costs nothing', async () => {
+    const l = lab()
+    approvedFixture(l.store, WORKFLOW_SPEC)
+    const r = await runOne(l, { ran: false, stdout: '', exitCode: -1, requests: [], assistants: null, partTypes: null, repo: { ...faithfulReport(SYNTHETIC_REPO), clean: false } })
+    expect(r).toMatchObject({ status: 'excluded', reasons: ['seeded_repo_missing'], cost: { charged_usd: 0 } })
+  })
+
+  test('a workflow fixture that carries no repository payload is excluded, and the reason says why', async () => {
+    const l = lab()
+    approvedFixture(l.store, WORKFLOW_SPEC, null)
+    const r = await runOne(l)
+    expect(r).toMatchObject({ status: 'excluded', reasons: ['seeded_repo_missing'] })
+    expect(r.gates!.checks[0]!.detail).toContain('no repository payload')
+  })
+
+  test('the executor is handed the fixture repository, and the record keeps what the host found', async () => {
+    const l = lab()
+    approvedFixture(l.store, WORKFLOW_SPEC)
+    const { executor, jobs } = fakeWorkflowExecutor({ events: () => hit })
+    const r = await runAttempt({ store: l.store, key: { campaign: 'camp', fixture: WORKFLOW_SPEC.id, model: MODEL, arm: 'continue-a' }, fixture: loadFrozen(l.store, WORKFLOW_SPEC.id), executor, provider: 'scripted' })
+    expect(jobs[0]!.repo).toEqual(SYNTHETIC_REPO)
+    expect(r.status).toBe('completed')
+    expect(r.repo).toEqual(faithfulReport(SYNTHETIC_REPO))
+    expect(r.gates!.checks.map((c) => c.name)).toContain('seeded_repo')
+  })
+
+  test('an excluded attempt is replaced like any other: three counted and one excluded report three', async () => {
+    const l = lab()
+    approvedFixture(l.store, WORKFLOW_SPEC)
+    const { executor, jobs } = fakeWorkflowExecutor({ events: () => hit, over: (_job, n) => (n === 2 ? { repo: undefined } : {}) })
+    const summary = await runCampaign(options({ attemptsPerCell: 3 }), { store: l.store, executor })
+    expect(jobs).toHaveLength(4)
+    expect(summary.unrun).toEqual([])
+    expect(readAttempts(cell(l)).map((a) => a.status)).toEqual(['completed', 'excluded', 'completed', 'completed'])
+    const [row] = campaignTallies(l.store, 'camp')
+    expect(row!.tally).toMatchObject({ counted: 3, hits: 3, excluded: 1 })
+  })
+
+  test('a daily-stack fixture needs no repository', async () => {
+    const l = lab()
+    approvedFixture(l.store)
+    const { executor } = fakeExecutor()
+    const r = await runAttempt({ store: l.store, key: { campaign: 'camp', fixture: 'moment-a', model: MODEL, arm: 'continue-a' }, fixture: loadFrozen(l.store, 'moment-a'), executor, provider: 'scripted' })
+    expect(r.status).toBe('completed')
+    expect(r.repo).toBeUndefined()
   })
 })

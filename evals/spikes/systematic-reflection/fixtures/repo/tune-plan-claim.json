@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "systematic_skills": [
+    "ce-plan"
+  ],
+  "commits": [
+    {
+      "message": "snapshot of the repository the session read",
+      "date": "2026-11-09T09:00:00Z",
+      "files": {
+        "docs/brainstorms/2026-09-22-tenant-audit-log-requirements.md": "# 2026-09-22-tenant-audit-log-requirements\n",
+        "docs/brainstorms/2026-10-14-statement-export-requirements.md": "# 2026-10-14-statement-export-requirements\n",
+        "docs/brainstorms/2026-11-02-invoice-render-service-requirements.md": "---\ndate: 2026-11-02\ntopic: invoice-render-service\n---\n\n# Move invoice PDF rendering to the docrender service\n\n## Problem Frame\n\nInvoice PDFs are rendered in-process with a vendored fork of pdfkit (`third_party/pdfkit-fork`). The fork trails upstream by 14 months, blocks the Node 22 upgrade, and has an open font-embedding bug for ligatures. The platform team runs `docrender`, an internal HTML-to-PDF service that statements and receipts already use.\n\n## Requirements\n\n- R1. Invoice PDFs are produced by calling docrender instead of the in-process renderer.\n- R2. Output keeps the current page layout for all 11 invoice templates, within a visual-diff tolerance of 0.5%.\n- R3. Rendering failures surface as the existing `INVOICE_RENDER_FAILED` error with the request id attached.\n- R4. The p95 render time for a single-page invoice stays under 1.5 seconds.\n- R5. The Node 22 upgrade is unblocked.\n- R6. `third_party/pdfkit-fork` and its tests are deleted in the same release as the cutover. No flag-gated fallback ships.\n\n## Key Decisions\n\n- Use docrender rather than upgrading to upstream pdfkit. Upstream pdfkit still lacks bidirectional text shaping, which our `ar` and `he` invoices need.\n- docrender handles right-to-left layout and Arabic shaping natively, so none of the RTL drawing code in the fork is carried over (docrender team, platform sync on Oct 28).\n- No fallback renderer (R6). Keeping two renderers doubles the regression surface for a release that is meant to retire the fork.\n\n## Scope Boundaries\n\n- Receipts and statements are untouched.\n- No change to the invoice data model or the `/invoices/:id/pdf` route contract.\n\n## Outstanding Questions\n\n### Resolve Before Planning\n\n(none)\n\n### Deferred to Planning\n\n- Which of the 11 templates need markup changes to render as HTML?\n- Roll out per tenant, or flip globally?\n- Where does the visual regression check run in CI?\n",
+        "docs/plans/2026-09-30-001-feat-tenant-audit-log-plan.md": "# 2026-09-30-001-feat-tenant-audit-log-plan\n",
+        "docs/plans/2026-10-20-001-feat-statement-export-plan.md": "# 2026-10-20-001-feat-statement-export-plan\n",
+        "src/invoices/layouts/standard.ts": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nconst direction = locale === 'ar' || locale === 'he' ? 'rtl' : 'ltr'\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\ndoc.text(shapeBidi(invoice.customer.name), { align: direction === 'rtl' ? 'right' : 'left' })\n",
+        "src/invoices/layouts/compact.ts": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nconst direction = locale === 'ar' || locale === 'he' ? 'rtl' : 'ltr'\n",
+        "src/invoices/layouts/credit-note.ts": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nconst direction = locale === 'ar' || locale === 'he' ? 'rtl' : 'ltr'\n",
+        "src/invoices/render/bidi.ts": "\n\n\n\n\n\n\n\n\n\n\nexport function shapeBidi(text: string): string {\n",
+        "src/statements/docrender-client.ts": "import type { Logger } from '../log.js'\n\n/** Locales the statements flow sends to docrender. Statements are issued in these four. */\nexport const SUPPORTED_LOCALES = ['en', 'de', 'fr', 'es'] as const\nexport type StatementLocale = (typeof SUPPORTED_LOCALES)[number]\n\nexport interface RenderRequest {\n  html: string\n  locale: StatementLocale\n  requestId: string\n}\n\nexport interface DocrenderClient {\n  render(request: RenderRequest): Promise<Uint8Array>\n}\n\nexport function createDocrenderClient(baseUrl: string, log: Logger): DocrenderClient {\n  return {\n    async render({ html, locale, requestId }) {\n      const response = await fetch(`${baseUrl}/v2/render`, {\n        method: 'POST',\n        headers: { 'content-type': 'application/json', 'x-request-id': requestId },\n        body: JSON.stringify({ html, locale, format: 'pdf' }),\n      })\n      if (!response.ok) {\n        log.warn({ requestId, status: response.status }, 'docrender request failed')\n        throw new Error(`docrender responded ${response.status}`)\n      }\n      return new Uint8Array(await response.arrayBuffer())\n    },\n  }\n}\n",
+        "docs/ops/invoice-volume-2026q3.md": "# Invoice volume, Q3 2026\n\nSource: billing warehouse export, 2026-10-05.\n\n| Locale | Invoices issued | Share |\n|--------|-----------------|-------|\n| en | 41,902 | 52% |\n| de | 9,114 | 11% |\n| fr | 5,308 | 7% |\n| es | 3,577 | 4% |\n| ar | 12,260 | 15% |\n| he | 8,509 | 11% |\n\nTotal: 80,670. Right-to-left locales (ar, he) are 26% of issued invoices.\n",
+        "third_party/pdfkit-fork/LICENSE": "\n",
+        "third_party/pdfkit-fork/README.md": "# README\n",
+        "third_party/pdfkit-fork/package.json": "{}\n",
+        "third_party/pdfkit-fork/lib/.gitkeep": "",
+        "third_party/pdfkit-fork/patches/.gitkeep": "",
+        "src/invoices/layouts/layout-04.ts": "export {}\n",
+        "src/invoices/layouts/layout-05.ts": "export {}\n",
+        "src/invoices/layouts/layout-06.ts": "export {}\n",
+        "src/invoices/layouts/layout-07.ts": "export {}\n",
+        "src/invoices/layouts/layout-08.ts": "export {}\n",
+        "src/invoices/layouts/layout-09.ts": "export {}\n",
+        "src/invoices/layouts/layout-10.ts": "export {}\n",
+        "src/invoices/layouts/layout-11.ts": "export {}\n"
+      }
+    }
+  ]
+}

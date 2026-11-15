@@ -225,5 +225,54 @@
     "The shipped ce-plan text holds two example paths that the fixture scan refuses as home paths. The example keeps its shape with the name in angle brackets. The count per fixture is recorded as home_path_rewrites. Every arm gets the same rewrite.",
     "Reviewer and validator returns, and the screen, prepare, merge and finalize outputs in the review fixtures, come from running the pinned validator on the authored returns. One disposition reason in tune-review-verdict was reworded from \"passed synthesis\" to \"passed the merge phase\" so no fixture carries a method name."
   ],
-  "limits": "OpenCode only, one model, 3 attempts per cell, synthetic seeds, a trimmed stack without slim, magic-context and aft, ce:plan interactive and ce:review autofix modes only. Counts and denominators are reported. No rates or intervals are claimed."
+  "limits": "OpenCode only, one model, 3 attempts per cell, synthetic seeds, a trimmed stack without slim, magic-context and aft, ce:plan interactive and ce:review autofix modes only. Counts and denominators are reported. No rates or intervals are claimed.",
+  "amendments": [
+    {
+      "id": 1,
+      "marker": "AMENDMENT 1: harness workspace. Added after the first baseline screen (metacogs 3dd0670) ran in workspaces that lacked the seeded repository. Every field above this key is unchanged.",
+      "date": "2026-11-15",
+      "reason": "The first screen ran each attempt in an empty git workspace. The seeds read /workspace/... paths and ran git and helper scripts, none of which existed, and the shell was denied by the replay permission. The first screen is void as evidence for wiring decisions and is kept for the record (results/baseline.json).",
+      "changes": {
+        "harness": "A workflow attempt now writes the fixture's seeded repository into its workspace before the model runs, reads it back, and is excluded as seeded_repo_missing when what it finds differs from what the fixture declares. A seeded attempt gets a shell under the write sandbox with the real-world permission set (question and task stay denied; pushes, gh, publishes and login files are refused).",
+        "campaign": "The rerun is a new campaign, systematic-reflection-2, so the first screen's attempts stay untouched. Its cap is the remainder of the one $10 ledger after the first screen's $0.3843, so the two campaigns together never pass $10."
+      },
+      "workspace": {
+        "payload": "One canonical JSON file per fixture under fixtures/repo/<id>.json, kept in the replay store beside the spec as repo.json. It holds the files and git history the seed's tool calls show: a file whose full content the seed shows (a read output or a diff hunk) is written byte for byte; a path the seed only lists (glob, ls, grep) holds only the lines the seed shows, at the line numbers it shows, or a one-line stub; the review fixtures hold a base commit, a feature branch with the diff, and origin/main at the base. Nothing the seed never showed is added, so the claims the fixtures leave unverified stay unverified (the docrender locale support, the Redis restart behaviour, the gateway's handling of a repeated capture).",
+        "repo_payload_sha256": {
+          "tune-plan-claim": "5fc17b142f039ab90bcf3551596fd1cba7b3fd4cc88289b8182a0d466a80b195",
+          "tune-plan-lanes": "bde2ef4d55aa0fb6860991ae2b6296727d8c19e864cefe466ee1d848c7e34772",
+          "tune-plan-scoping": "c6983e328a39d7c79666295f3da4d9b461a8bc15eb7b6c2a1f72a78fe8865787",
+          "tune-review-dedup": "383cf15015eca2c5d1418b88927ea21339889de7735d0b3963012aa6f24093ea",
+          "tune-review-disagree": "139266c9f82d7639c707ffd445948c1f499657b45938af4a15eeb95059afe186",
+          "tune-review-validator": "383cf15015eca2c5d1418b88927ea21339889de7735d0b3963012aa6f24093ea",
+          "tune-review-verdict": "383cf15015eca2c5d1418b88927ea21339889de7735d0b3963012aa6f24093ea"
+        },
+        "repo_payload_hash_rule": "sha256 of the committed file bytes, which are the canonical JSON of the parsed payload.",
+        "skills": "Each payload names the Systematic skill directories the seed's paths point into (ce-plan or ce-review). They are copied from the installed 3.33.2 package, the one the stack loads, to .systematic/skills/<name> in the workspace, so SKILL_DIR paths and skill-relative reads and scripts resolve. .systematic/ is outside git status.",
+        "seed_paths": "The seeds name /workspace, which cannot exist on the host. At import every /workspace in the seed (tool inputs and outputs, skill base directories, cwd) is pointed at the attempt's real workspace path. The model sees ordinary in-project paths. Rendered skill-text hashes and fixture hashes above are of the unpointed text and do not change.",
+        "git_history": "Commit ids differ from the ids printed in the seeds, which cannot be reproduced. Names, branches, file lists, hunks and subjects match. Commits use a fixed identity and date, so the same payload always gives the same ids.",
+        "shell": {
+          "permission": "world permission set: bash allowed, git push, gh writes, publishes, hosts.yml and auth.json refused; external_directory, webfetch and websearch denied; question and task denied",
+          "confinement": "macOS sandbox-exec, writes limited to the attempt fixture and the bun cache; credential directories unreadable",
+          "leak_scan": "the workspace's own directories (not .git, node_modules or .systematic), the temp dir and the host logs"
+        }
+      },
+      "exclusion_rule_addition": {
+        "reason": "seeded_repo_missing",
+        "rule": "An attempt is excluded, never counted, when the workspace read back before the model ran differs from the fixture's payload (payload hash, file tree hash, file count, commit count, a clean tree, the skill directories), when the host reports none, or when the fixture carries none. The host does not run the model in that case. The exclusion draws on the existing replacement budget and the quarter-of-a-stage stop."
+      },
+      "unchanged": [
+        "fixture_hashes and every fixture's decision content",
+        "hit_bar, wrong_method, false_fire, stop_rule, exclusion_rule and attempts_per_cell",
+        "model, host version, Systematic pin, metacogs arm and the Continue. message",
+        "spend.cap_usd 10 as one ledger across both campaigns, and attempt_estimate_usd 0.10"
+      ],
+      "rerun": {
+        "campaign": "systematic-reflection-2",
+        "results": "results/baseline-2.json",
+        "cap_usd": 9.6157,
+        "ledger": "10 - 0.3843 spent by the first screen"
+      }
+    }
+  ]
 }

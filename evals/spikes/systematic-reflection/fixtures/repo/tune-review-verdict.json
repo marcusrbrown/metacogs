@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "systematic_skills": [
+    "ce-review"
+  ],
+  "commits": [
+    {
+      "message": "chore: base before the settlement retry change",
+      "date": "2026-11-09T09:00:00Z",
+      "branch": "main",
+      "files": {
+        "src/settlement/job.ts": "import type { GatewayClient } from '../gateway/client.js'\nimport { logger } from '../log.js'\nimport type { PaymentStore } from '../store/payments.js'\n\nconst LOCK_TTL_MS = 30_000\n\nexport async function settlePending(gateway: GatewayClient, store: PaymentStore): Promise<number> {\n  const lock = await store.acquireLock('settlement', LOCK_TTL_MS)\n  if (!lock) return 0\n  let settled = 0\n  try {\n    const pending = await store.listAuthorized({ limit: 500 })\n    for (const payment of pending) {\n      const result = await gateway.capture({ paymentId: payment.id, amountMinor: payment.amountMinor })\n      if (!result.ok) {\n        logger.warn({ paymentId: payment.id, code: result.error.code }, 'capture failed')\n        continue\n      }\n      await store.markCaptured(payment.id, result.capturedAt)\n      settled += 1\n    }\n  } finally {\n    await lock.release()\n  }\n  return settled\n}\n",
+        "AGENTS.md": "# AGENTS.md\n"
+      }
+    },
+    {
+      "message": "feat: retry transient capture failures in the settlement job",
+      "date": "2026-11-10T09:00:00Z",
+      "branch": "feat/settlement-retry",
+      "files": {
+        "src/settlement/job.ts": "import type { GatewayClient } from '../gateway/client.js'\nimport { logger } from '../log.js'\nimport type { PaymentStore } from '../store/payments.js'\nimport { captureWithRetry } from './retry.js'\n\nconst LOCK_TTL_MS = 30_000\n\nexport async function settlePending(gateway: GatewayClient, store: PaymentStore): Promise<number> {\n  const lock = await store.acquireLock('settlement', LOCK_TTL_MS)\n  if (!lock) return 0\n  let settled = 0\n  try {\n    const pending = await store.listAuthorized({ limit: 500 })\n    for (const payment of pending) {\n      const result = await captureWithRetry(gateway, payment.id, payment.amountMinor)\n      if (!result.ok) {\n        logger.warn({ paymentId: payment.id, code: result.error.code }, 'capture failed')\n        continue\n      }\n      await store.markCaptured(payment.id, result.capturedAt)\n      settled += 1\n    }\n  } finally {\n    await lock.release()\n  }\n  return settled\n}\n",
+        "src/settlement/retry.ts": "import { setTimeout as sleep } from 'node:timers/promises'\n\nimport type { CaptureResult, GatewayClient } from '../gateway/client.js'\nimport { logger } from '../log.js'\n\nexport interface RetryPolicy {\n  maxAttempts: number\n  baseDelayMs: number\n  maxDelayMs: number\n}\n\nexport const DEFAULT_POLICY: RetryPolicy = { maxAttempts: 5, baseDelayMs: 250, maxDelayMs: 8_000 }\n\nconst RETRYABLE = new Set(['gateway_timeout', 'rate_limited'])\n\n/** Captures one authorized payment, retrying transient gateway failures with capped exponential backoff. */\nexport async function captureWithRetry(\n  gateway: GatewayClient,\n  paymentId: string,\n  amountMinor: number,\n  policy: RetryPolicy = DEFAULT_POLICY,\n): Promise<CaptureResult> {\n  let attempt = 0\n  for (;;) {\n    attempt += 1\n    const result = await gateway.capture({ paymentId, amountMinor })\n    if (result.ok) return result\n    if (!RETRYABLE.has(result.error.code) || attempt >= policy.maxAttempts) {\n      logger.warn({ paymentId, attempt, code: result.error.code }, 'capture failed')\n      return result\n    }\n    const delay = Math.min(policy.maxDelayMs, policy.baseDelayMs * 2 ** (attempt - 1))\n    await sleep(delay)\n  }\n}\n",
+        "test/settlement/retry.test.ts": "import { describe, expect, test } from 'bun:test'\n\nimport type { CaptureResult, GatewayClient } from '../../src/gateway/client.js'\nimport { captureWithRetry } from '../../src/settlement/retry.js'\n\nconst FAST = { maxAttempts: 3, baseDelayMs: 1, maxDelayMs: 2 }\nconst timeout: CaptureResult = { ok: false, error: { code: 'gateway_timeout', message: 'upstream timed out' } }\nconst ok: CaptureResult = { ok: true, capturedAt: '2026-11-10T09:00:00.000Z' }\n\nfunction scripted(results: CaptureResult[]): GatewayClient & { calls: number } {\n  const client = {\n    calls: 0,\n    async capture() {\n      return results[Math.min(client.calls++, results.length - 1)]!\n    },\n  }\n  return client\n}\n\ndescribe('captureWithRetry', () => {\n  test('returns the first successful capture', async () => {\n    const gateway = scripted([timeout, ok])\n    expect(await captureWithRetry(gateway, 'pay_1', 1200, FAST)).toEqual(ok)\n    expect(gateway.calls).toBe(2)\n  })\n\n  test('gives up after maxAttempts', async () => {\n    const gateway = scripted([timeout])\n    const result = await captureWithRetry(gateway, 'pay_2', 1200, FAST)\n    expect(result.ok).toBe(false)\n    expect(gateway.calls).toBe(3)\n  })\n})\n"
+      }
+    }
+  ],
+  "origin_main_after": 0
+}

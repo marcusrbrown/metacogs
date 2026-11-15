@@ -9,9 +9,10 @@ import { CredentialLeakError, type Needle } from '../../../runner/manifest'
 import { sha256 } from '../../../runner/workspace'
 import { writeEvidence } from '../artifacts'
 import { BACKOFF_MS, RUN_TIMEOUT_MS } from '../driver'
-import { ARM_NAMES, type ArmMessage, type ArmName, armMessage, type ExclusionReason, evaluateGates, type GateCheck, type GateSet, mainRequests, WORLD_ARM_NAMES } from './gates'
+import { ARM_NAMES, type ArmMessage, type ArmName, armMessage, type ExclusionReason, evaluateGates, type GateCheck, type GateSet, mainRequests, seededRepoCheck, WORLD_ARM_NAMES } from './gates'
 import type { Executor, HostResult } from './host'
 import { type CallObservation, type Method, normalizeToolUse, observeCalls, scoreWorkflow, type WorkflowOutcome } from './loads'
+import { expectedRepo, type RepoReport } from './repo'
 import type { ReplayFixture } from './scenario'
 import { HOST_VERSION, ID_PATTERN, loadFrozen, type Store } from './store'
 import { HINDSIGHT_NOTE, type WorldRecord } from './world'
@@ -80,6 +81,8 @@ export interface AttemptRecord {
   artifacts: Record<string, string>
   /** Workflow fixtures: the Systematic release the stack ran and the hash of the Systematic config the fixture held, so every arm provably saw the same config. */
   systematic?: { spec: string | null; config_sha256: string | null }
+  /** Workflow fixtures: what the workspace held before the model ran (the files, commits and skill directories the seed's reads rely on). */
+  repo?: RepoReport
   /** Workflow fixtures: the score of a `completed` attempt. */
   workflow?: WorkflowResult
   /** Real-world mode: the repo, commit and rule the clone landed on, and the history window the model was given. */
@@ -549,9 +552,11 @@ export async function runAttempt(ctx: AttemptContext): Promise<AttemptRecord> {
   /** Set as soon as the host has run: from then on a failure keeps the charge. */
   let incurred: AttemptRecord['cost'] | undefined
   try {
-    result = await ctx.executor({ fixtureId: key.fixture, seed: fixture.export, model: key.model, arm: key.arm, message, timeoutMs: ctx.timeoutMs ?? RUN_TIMEOUT_MS, ...(fixture.world ? { world: fixture.world } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) })
+    result = await ctx.executor({ fixtureId: key.fixture, seed: fixture.export, model: key.model, arm: key.arm, message, timeoutMs: ctx.timeoutMs ?? RUN_TIMEOUT_MS, ...(fixture.world ? { world: fixture.world } : {}), ...(fixture.repo ? { repo: fixture.repo } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) })
     const events = analyzeEvents(result.stdout)
     const gateSet = gateSetOf(fixture)
+    // A workflow seed reads a repository; if the workspace does not hold it, the attempt says nothing about the model.
+    const seededRepo = gateSet === 'workflow' ? seededRepoCheck(fixture.repo ? expectedRepo(fixture.repo) : null, result.repo) : undefined
     const observed = observe(events, gateSet)
     const cost = chargeFor(ctx.provider, events.usage.cost, result.requests.length, ctx.attemptEstimateUsd ?? 0)
     incurred = cost
@@ -569,6 +574,10 @@ export async function runAttempt(ctx: AttemptContext): Promise<AttemptRecord> {
       status = 'excluded'
       reasons = ['isolation_failed' satisfies ExclusionReason]
       gates = { passed: false, checks: result.stack.checks.filter((c) => !c.passed).map((c) => ({ name: c.name, passed: false, reason: 'isolation_failed', detail: c.detail })) }
+    } else if (seededRepo && !seededRepo.passed) {
+      status = 'excluded'
+      reasons = ['seeded_repo_missing' satisfies ExclusionReason]
+      gates = { passed: false, checks: [seededRepo] }
     } else if (result.aborted) {
       status = 'error'
       reasons = ['aborted']
@@ -595,6 +604,7 @@ export async function runAttempt(ctx: AttemptContext): Promise<AttemptRecord> {
         assistants: result.assistants,
         partTypes: result.partTypes,
         eventTypes: parsed.map((e) => e.type),
+        ...(seededRepo ? { seededRepo } : {}),
       })
       gates = { passed: g.passed, checks: g.checks }
       receivedArgs = g.receivedArgs
@@ -626,6 +636,7 @@ export async function runAttempt(ctx: AttemptContext): Promise<AttemptRecord> {
       timing: { started_at: result.startedAt, ended_at: result.endedAt, wall_ms: result.wallMs },
       artifacts: Object.fromEntries(Object.entries(artifacts).map(([file, text]) => [file, sha256(text)])),
       ...(result.systematic ? { systematic: { spec: result.systematic.spec, config_sha256: result.systematic.configSha256 } } : {}),
+      ...(result.repo ? { repo: result.repo } : {}),
       ...(scored ? { workflow: scored.result } : {}),
       ...(result.world ? { world: result.world, hindsight_note: HINDSIGHT_NOTE } : {}),
       ...(fixture.history ? { history: fixture.history } : {}),

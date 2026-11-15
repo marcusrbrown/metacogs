@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 
-import { ARM_NAMES, type ArmName, armMessage, type AssistantInfo, evaluateGates, type GateInput, type GateResult, mainRequests, NUDGE_ONLY, parseSkillDelivery, runArgs, WHICHEVER } from './gates'
-import { chatRequest, gateInput, MODEL, OK_ASSISTANT, SEED_USER, skillText, SKILLS_DIR, titleRequest } from './test-support'
+import { ARM_NAMES, type ArmName, armMessage, type AssistantInfo, evaluateGates, type GateInput, type GateResult, mainRequests, NUDGE_ONLY, parseSkillDelivery, runArgs, seededRepoCheck, WHICHEVER } from './gates'
+import { expectedRepo, type RepoReport } from './repo'
+import { chatRequest, faithfulReport, gateInput, MODEL, OK_ASSISTANT, SEED_USER, skillText, SKILLS_DIR, SYNTHETIC_REPO, titleRequest } from './test-support'
 import { requestedModel, toolNamesAnyWire, userMessageParts, userTextsAnyWire } from './wire'
 
 const somewhere = { somewhere: 'in the gap between the test and the fix' }
@@ -236,5 +237,48 @@ describe('the gate matrix', () => {
       expect(r.reasons).toEqual([])
       expect(r.receivedArgs).toBe('caffeine')
     }
+  })
+})
+
+describe('the seeded repository gate', () => {
+  const want = expectedRepo(SYNTHETIC_REPO)
+  const found = faithfulReport(SYNTHETIC_REPO)
+
+  test('passes when the host found the files, the commits and the skills the fixture declares', () => {
+    expect(seededRepoCheck(want, found)).toMatchObject({ name: 'seeded_repo', passed: true })
+  })
+
+  test('fails with a named reason when the fixture declares no repository', () => {
+    expect(seededRepoCheck(null, found)).toMatchObject({ passed: false, reason: 'seeded_repo_missing', detail: expect.stringContaining('no repository payload') })
+  })
+
+  test('fails with a named reason when the host reported no workspace at all', () => {
+    for (const none of [undefined, null]) expect(seededRepoCheck(want, none)).toMatchObject({ passed: false, reason: 'seeded_repo_missing', detail: expect.stringContaining('not reported') })
+  })
+
+  test.each([
+    ['another payload', { payload_sha256: 'f'.repeat(64) }, 'payload'],
+    ['other file contents', { tree_sha256: 'e'.repeat(64) }, 'files'],
+    ['fewer files', { files: 0 }, 'file count'],
+    ['a different history length', { commits: 5 }, 'commit count'],
+    ['an uncommitted change', { clean: false }, 'not clean'],
+    ['a skill directory that did not arrive', { skill_dirs: ['ce-plan'] }, 'skill directories'],
+  ] satisfies [string, Partial<RepoReport>, string][])('fails when the workspace holds %s', (_name, over, what) => {
+    const check = seededRepoCheck({ ...want, skill_dirs: [] }, { ...found, skill_dirs: [], ...over })
+    expect(check).toMatchObject({ passed: false, reason: 'seeded_repo_missing' })
+    expect(check.detail).toContain(what)
+  })
+
+  test('the verdict is one more check of the gate set, and a failed one excludes under its own reason', () => {
+    const ok = run('continue-a', { seededRepo: seededRepoCheck(want, found) })
+    expect(ok.passed).toBe(true)
+    expect(ok.checks.map((c) => c.name)).toContain('seeded_repo')
+    const lacking = run('continue-a', { seededRepo: seededRepoCheck(want, null) })
+    expect(lacking).toMatchObject({ passed: false, reasons: ['seeded_repo_missing'] })
+  })
+
+  test('detail carries ids, counts and short hashes only', () => {
+    const check = seededRepoCheck(want, { ...found, tree_sha256: 'e'.repeat(64) })
+    expect(check.detail).not.toMatch(/[0-9a-f]{40}/)
   })
 })

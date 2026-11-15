@@ -6,7 +6,8 @@ import { join } from 'node:path'
 import type { RecordedRequest } from '../../../runner/scripted-provider'
 import type { AssistantInfo, GateInput } from './gates'
 import type { AttemptJob, Executor, HostResult } from './host'
-import { approveFixture, buildFixture, type FixtureSpec, freezeFixture, HOST_VERSION, openStore, type Store } from './store'
+import { expectedRepo, type RepoReport } from './repo'
+import { approveFixture, buildFixture, type FixtureSpec, freezeFixture, HOST_VERSION, openStore, type RepoPayload, type Store } from './store'
 
 export const SKILLS_DIR = '/pkg/plugin/skills'
 export const MODEL = 'anthropic/claude-opus-5-5'
@@ -30,6 +31,19 @@ export const SYNTHETIC_SPEC: FixtureSpec = {
 export const WORKFLOW_SPEC: FixtureSpec = { ...SYNTHETIC_SPEC, id: 'plan-claim', kind: 'workflow', somewhere: '', expected: 'fire', methods: ['counterfactual'] }
 /** A silence control, same seed. */
 export const SILENCE_SPEC: FixtureSpec = { id: 'plan-scoping', kind: 'workflow', provenance: SYNTHETIC_SPEC.provenance, expected_outcome_ref: 'synthetic', somewhere: '', expected: 'silence', turns: SYNTHETIC_SPEC.turns }
+
+/** A small seeded repository for workflow fixtures: one commit on `main`. */
+export const SYNTHETIC_REPO: RepoPayload = {
+  schema_version: 1,
+  systematic_skills: [],
+  commits: [{ message: 'initial snapshot', date: '2026-11-01T09:00:00Z', files: { 'notes.txt': 'synthetic notes line\n', 'src/a.ts': 'export const a = 1\n' } }],
+}
+
+/** What a host reports after writing `repo` faithfully. */
+export function faithfulReport(repo: RepoPayload): RepoReport {
+  const want = expectedRepo(repo)
+  return { ...want, head: 'a'.repeat(40), branch: 'main', clean: true, skill_files: 0, seed_path_rewrites: 0 }
+}
 
 export const TOOL_NAMES = ['read', 'task', 'feel', 'drugs', 'skill']
 /** What the trimmed stack offers a main request: no `task`, no `question`. */
@@ -155,6 +169,7 @@ export function workflowResult(job: AttemptJob, o: { events?: string; cost?: num
     stdout: stdoutOf(textEvent('scripted reply'), o.events ?? '', stepFinish(o.cost ?? 0)),
     assistants: [{ agent: 'build', providerID: provider, modelID: model }],
     systematic: { spec: '@fro.bot/systematic@3.33.2', configSha256: 'cfg-hash' },
+    ...(job.repo ? { repo: faithfulReport(job.repo) } : {}),
     ...o.over,
   }
 }
@@ -198,10 +213,11 @@ export function newLab(): Lab {
   return { store, root, dispose: () => rmSync(root, { recursive: true, force: true }) }
 }
 
-/** Builds, freezes and approves a synthetic fixture. */
-export function approvedFixture(store: Store, over: Partial<FixtureSpec> = {}): string {
+/** Builds, freezes and approves a synthetic fixture. A workflow fixture carries `SYNTHETIC_REPO` unless `repo` says otherwise (`null`: none). */
+export function approvedFixture(store: Store, over: Partial<FixtureSpec> = {}, repo?: RepoPayload | null): string {
   const spec = { ...SYNTHETIC_SPEC, ...over }
-  buildFixture(store, spec)
+  const seeded = repo === undefined ? (spec.kind === 'workflow' ? SYNTHETIC_REPO : undefined) : (repo ?? undefined)
+  buildFixture(store, spec, seeded ? { repo: seeded } : {})
   freezeFixture(store, spec.id)
   approveFixture(store, spec.id)
   return spec.id

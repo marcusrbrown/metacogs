@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { spawnSync } from 'node:child_process'
 import { dirname, join } from 'node:path'
 
 import { CustodyError, sha256 } from '../../../runner/workspace'
+import { canonicalRepo, finalFiles, materializeRepo } from './repo'
+import { SYNTHETIC_REPO } from './test-support'
 import {
   approveFixture,
   buildExport,
@@ -16,7 +19,9 @@ import {
   loadFrozen,
   loadRaw,
   openStore,
+  parseRepo,
   parseSpec,
+  readToolOutput,
   type SessionExport,
   saveRaw,
   skillPlaceholders,
@@ -757,3 +762,159 @@ function refusal(fn: () => unknown): string {
   }
   throw new Error('expected a FixtureRefusal')
 }
+
+describe('a fixture\'s seeded repository', () => {
+  const wf = (over: Partial<FixtureSpec> = {}): FixtureSpec => spec({ id: 'plan-claim', kind: 'workflow', somewhere: '', expected: 'fire', methods: ['counterfactual'], ...over })
+  const repo = (over: Record<string, unknown> = {}): Record<string, unknown> => ({ ...SYNTHETIC_REPO, ...over })
+  const dirOf = (store: Store, id = 'plan-claim'): string => join(store.root, 'fixtures', id)
+
+  test('is written beside the spec in canonical form, hashed in the manifest, and read back by loadFrozen', () => {
+    const store = newStore()
+    const entry = buildFixture(store, wf(), { repo: repo() })
+    const text = readFileSync(join(dirOf(store), 'repo.json'), 'utf8')
+    expect(text).toBe(canonicalRepo(SYNTHETIC_REPO))
+    expect(entry).toMatchObject({ status: 'draft', repo_sha256: sha256(text) })
+    freezeFixture(store, 'plan-claim')
+    approveFixture(store, 'plan-claim')
+    const loaded = loadFrozen(store, 'plan-claim')
+    expect(loaded.repo).toEqual(SYNTHETIC_REPO)
+    expect(loaded.entry.repo_sha256).toBe(sha256(text))
+  })
+
+  test('a fixture built without one has none, and loads without one', () => {
+    const store = newStore()
+    buildFixture(store, wf())
+    expect(existsSync(join(dirOf(store), 'repo.json'))).toBe(false)
+    freezeFixture(store, 'plan-claim')
+    approveFixture(store, 'plan-claim')
+    expect(loadFrozen(store, 'plan-claim').repo).toBeUndefined()
+  })
+
+  test('rebuilding with the same payload keeps the freeze and the approval; another payload, or none, returns it to draft', () => {
+    const store = newStore()
+    buildFixture(store, wf(), { repo: repo() })
+    freezeFixture(store, 'plan-claim')
+    approveFixture(store, 'plan-claim')
+    expect(buildFixture(store, wf(), { repo: repo() }).status).toBe('frozen')
+    const other = repo({ commits: [{ message: 'other', date: '2026-11-01T09:00:00Z', files: { 'x.txt': 'x\n' } }] })
+    expect(buildFixture(store, wf(), { repo: other }).status).toBe('draft')
+    expect(() => loadFrozen(store, 'plan-claim')).toThrow(FixtureRefusal)
+    freezeFixture(store, 'plan-claim')
+    approveFixture(store, 'plan-claim')
+    expect(buildFixture(store, wf()).status).toBe('draft')
+    expect(existsSync(join(dirOf(store), 'repo.json'))).toBe(false)
+  })
+
+  test('a repo.json edited after the freeze, or added to a fixture frozen without one, is refused at load', () => {
+    const store = newStore()
+    buildFixture(store, wf(), { repo: repo() })
+    freezeFixture(store, 'plan-claim')
+    approveFixture(store, 'plan-claim')
+    writeFileSync(join(dirOf(store), 'repo.json'), canonicalRepo({ ...SYNTHETIC_REPO, commits: [{ ...SYNTHETIC_REPO.commits[0]!, files: { 'evil.txt': 'x' } }] }))
+    expect(() => loadFrozen(store, 'plan-claim')).toThrow(FixtureRefusal)
+
+    const bare = newStore()
+    buildFixture(bare, wf())
+    freezeFixture(bare, 'plan-claim')
+    approveFixture(bare, 'plan-claim')
+    writeFileSync(join(dirOf(bare), 'repo.json'), canonicalRepo(SYNTHETIC_REPO))
+    expect(() => loadFrozen(bare, 'plan-claim')).toThrow(FixtureRefusal)
+  })
+
+  test('a payload that does not parse is refused before anything is written, naming the field', () => {
+    const store = newStore()
+    expect(() => buildFixture(store, wf(), { repo: repo({ commits: [] }) })).toThrow('repo.commits')
+    expect(existsSync(join(store.root, 'fixtures', 'plan-claim', 'spec.json'))).toBe(false)
+  })
+})
+
+describe('the committed seeded repositories', () => {
+  const dir = join(import.meta.dir, '../../../../evals/spikes/systematic-reflection')
+  const ids = (): string[] => readdirSync(join(dir, 'fixtures', 'tune')).filter((f) => f.endsWith('.json')).map((f) => f.replace(/\.json$/, '')).sort()
+  const bytes = (id: string): string => readFileSync(join(dir, 'fixtures', 'repo', `${id}.json`), 'utf8')
+  const specOf = (id: string): FixtureSpec => parseSpec(JSON.parse(readFileSync(join(dir, 'fixtures', 'tune', `${id}.json`), 'utf8')))
+  const prereg = (): { amendments: { workspace: { repo_payload_sha256: Record<string, string> } }[] } => JSON.parse(readFileSync(join(dir, 'prereg.json'), 'utf8'))
+  const tools = (id: string) => specOf(id).turns.flatMap((t) => (t.role === 'assistant' ? (t.tools ?? []) : []))
+  const rel = (p: string): string => p.replace(/^\/workspace\//, '')
+
+  test('there is one per tuning fixture, in canonical form, and the prereg amendment records the hash of each', () => {
+    expect(readdirSync(join(dir, 'fixtures', 'repo')).sort()).toEqual(ids().map((id) => `${id}.json`))
+    const hashes = prereg().amendments[0]!.workspace.repo_payload_sha256
+    expect(Object.keys(hashes).sort()).toEqual(ids())
+    for (const id of ids()) {
+      expect(canonicalRepo(parseRepo(JSON.parse(bytes(id))))).toBe(bytes(id))
+      expect(sha256(bytes(id))).toBe(hashes[id]!)
+    }
+  })
+
+  test('none names either method or metacogs, and none holds a home path', () => {
+    for (const id of ids()) {
+      expect(bytes(id)).not.toMatch(/counterfactual|synthes|metacog/i)
+      expect(bytes(id)).not.toMatch(/\/(Users|home)\//)
+    }
+  })
+
+  test('every file a seeded read shows is in the repository byte for byte, and every path a seeded glob, grep or ls lists is there', () => {
+    for (const id of ids()) {
+      const files = finalFiles(parseRepo(JSON.parse(bytes(id))))
+      for (const call of tools(id)) {
+        if (call.tool === 'read' && call.output.startsWith('<path>')) {
+          const path = call.input.filePath as string
+          expect(files.has(rel(path))).toBe(true)
+          expect(readToolOutput(path, files.get(rel(path))!)).toBe(call.output)
+        }
+        if (call.tool === 'glob') {
+          const glob = new Bun.Glob(call.input.pattern as string)
+          const listed = call.output === 'No files found' ? [] : call.output.split('\n')
+          for (const p of listed) expect(files.has(p) && glob.match(p)).toBe(true)
+          expect([...files.keys()].filter((p) => glob.match(p)).sort()).toEqual([...listed].sort())
+        }
+        if (call.tool === 'grep') {
+          let file = ''
+          for (const line of call.output.split('\n')) {
+            const named = /^(\S.*):$/.exec(line)
+            if (named && !line.startsWith('Found')) file = named[1]!
+            const hit = /^ {2}Line (\d+): (.*)$/.exec(line)
+            if (hit) expect(files.get(file)?.split('\n')[Number(hit[1]) - 1]).toBe(hit[2]!)
+          }
+        }
+      }
+    }
+  })
+
+  test('the layout and fork listings in the seeded shell calls match the repository', () => {
+    const files = [...finalFiles(parseRepo(JSON.parse(bytes('tune-plan-claim')))).keys()]
+    const entries = (dirName: string): string[] => [...new Set(files.filter((p) => p.startsWith(`${dirName}/`)).map((p) => p.slice(dirName.length + 1).split('/')[0]!))].sort((a, b) => (a < b ? -1 : 1))
+    const call = tools('tune-plan-claim').find((c) => c.tool === 'bash')!
+    expect(call.input.command).toBe('ls src/invoices/layouts | wc -l && ls third_party/pdfkit-fork | head -5')
+    expect(call.output.split('\n')).toEqual([String(entries('src/invoices/layouts').length), ...entries('third_party/pdfkit-fork').slice(0, 5)])
+  })
+
+  test('every skill directory a seeded path points into is declared, so it is copied into the workspace', () => {
+    for (const id of ids()) {
+      const fromPlaceholders = skillPlaceholders(specOf(id)).map((key) => /^systematic-(?:skill|file):([a-z0-9-]+)/.exec(key)![1]!)
+      const fromPaths = [...JSON.stringify(specOf(id)).matchAll(/\/workspace\/\.systematic\/skills\/([a-z0-9-]+)\//g)].map((m) => m[1]!)
+      const named = new Set([...fromPlaceholders, ...fromPaths])
+      expect([...named].sort()).toEqual([...parseRepo(JSON.parse(bytes(id))).systematic_skills].sort())
+    }
+  })
+
+  test('each review repository is a real branch: origin/main is the base, the diff and file list match the seeded git calls', () => {
+    for (const id of ids().filter((i) => i.startsWith('tune-review-'))) {
+      const dest = tmp('replay-review-repo-')
+      materializeRepo(dest, parseRepo(JSON.parse(bytes(id))))
+      const git = (...args: string[]): string => {
+        const r = spawnSync('git', args, { cwd: dest, encoding: 'utf8' })
+        expect(r.status).toBe(0)
+        return r.stdout
+      }
+      const seededDiff = tools(id).find((c) => c.tool === 'bash' && String(c.input.command).includes('git diff -U10'))!.output
+      const files = /FILES:\n([\s\S]*?)\nDIFF:\n/.exec(seededDiff)![1]!
+      const diff = /DIFF:\n([\s\S]*?)UNTRACKED:/.exec(seededDiff)![1]!
+      expect(git('diff', '--name-only', 'origin/main').trim()).toBe(files)
+      expect(git('diff', '-U10', 'origin/main').split('\n').filter((l) => !l.startsWith('index ')).join('\n')).toBe(diff.split('\n').filter((l) => !l.startsWith('index ')).join('\n'))
+      expect(git('rev-parse', '--abbrev-ref', 'HEAD').trim()).toBe('feat/settlement-retry')
+      expect(git('log', '--format=%s', 'origin/main..HEAD').trim()).toBe('feat: retry transient capture failures in the settlement job')
+    }
+  })
+})
