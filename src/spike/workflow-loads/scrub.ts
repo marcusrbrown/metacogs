@@ -27,11 +27,6 @@ export const EMAIL_PLACEHOLDER = '[email]'
 export const CREDENTIAL_FIELD_RULE = 'credential-field'
 /** The rule name a reached limit reports under. */
 export const SCRUB_LIMIT_RULE = 'scrub-limit'
-/**
- * The rule name for an email address that appears only in an unescaped or decoded form of a text (`someone\u0040host.example`), not
- * written out in it. It cannot be replaced in place, so the whole text is withheld; an address written out is the ordinary `email` finding.
- */
-export const EMAIL_ENCODED_RULE = 'email-encoded'
 /** The scanner's address shape. The scanner reports lines, not positions, so addresses are found with this pattern. */
 export const EMAIL_ADDRESS = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g
 
@@ -40,10 +35,13 @@ export const EMAIL_ADDRESS = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)
 /** Names that mark a field as a credential. As the end of a longer name (`db_password`, `X_AUTH_TOKEN`) they count too. */
 const CREDENTIAL_KEY = '(?:pass(?:word|wd|phrase)|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credentials?|auth(?:orization)?|cookie)'
 
-/** The most separators (quotes, brackets, backslashes, whitespace, or the two-character escapes `\t` `\n` `\r`) allowed between a key and its `:` or `=`. */
+/** The most separators (quotes, brackets, backslashes, whitespace, control characters, or a backslash run and a letter) allowed between a key and its `:` or `=`. */
 export const MAX_SEPARATORS = 16
-/** One separator: a run of backslashes ending in `t`, `n` or `r` is one (an escaped tab, at any depth of escaping), or one quote, bracket, backslash or whitespace character. */
-const SEPARATOR = /(?:\\+[tnr]|[\s"'`\\[\]{}()])/.source
+/**
+ * One separator: a run of backslashes and then an ASCII letter (an escape such as `\t`, `\f`, `\b`, at any depth of escaping), or one
+ * quote, bracket, backslash, whitespace or control character (the unescaped forms hold the characters the escapes name).
+ */
+const SEPARATOR = /(?:\\+[A-Za-z]|[\s"'`\\[\]{}()\x00-\x1f])/.source
 /** A credential key, then a short run of separators, then an assignment. Not global, so `test` keeps no state. */
 const CREDENTIAL_ASSIGNMENT = new RegExp(`${CREDENTIAL_KEY}${SEPARATOR}{0,${MAX_SEPARATORS}}[:=]`, 'i')
 /** An object key that is a credential name, with at most quotes and spaces around it. */
@@ -63,14 +61,12 @@ export type ScrubLimits = typeof SCRUB_LIMITS
 interface Walk {
   limits: ScrubLimits
   rules: Set<string>
-  /** The addresses written out in the text being inspected: an address found only in another form of it is not among them. */
-  written: Set<string>
   nodes: number
   chars: number
   limit: boolean
 }
 
-const newWalk = (limits: ScrubLimits): Walk => ({ limits, rules: new Set(), written: new Set(), nodes: 0, chars: 0, limit: false })
+const newWalk = (limits: ScrubLimits): Walk => ({ limits, rules: new Set(), nodes: 0, chars: 0, limit: false })
 
 /** A text that could be a JSON string, object or array. */
 const looksLikeJson = (text: string): boolean => {
@@ -89,35 +85,28 @@ function decodeJson(text: string): { value: unknown } | undefined {
 // ── escapes ────────────────────────────────────────────────────────────────
 
 /**
- * `\uXXXX`, `\xXX` and `\/` with any number of backslashes before them (an escape inside an escaped string has more). The lookbehind
- * starts a match only at the first backslash of a run, so a long run of backslashes costs one pass over it, not one per position.
- * A surrogate pair is two escapes, and two `fromCharCode` units are the pair.
+ * What an escape names: `\uXXXX`, `\xXX`, `\/`, and the JSON short escapes `\b \f \n \r \t \"`, with any number of backslashes
+ * before it (an escape inside an escaped string has more); then a run of two or more backslashes that names nothing, which is one
+ * backslash. The lookbehind starts a match only at the first backslash of a run, so a long run costs one pass over it, not one per
+ * position. A surrogate pair is two escapes, and two `fromCharCode` units are the pair.
  */
-const ESCAPE = /(?<!\\)\\+(?:u([0-9a-f]{4})|x([0-9a-f]{2})|(\/))/gi
+const ESCAPE = /(?<!\\)(?:\\+(?:u([0-9a-fA-F]{4})|x([0-9a-fA-F]{2})|([/bfnrt"]))|\\{2,})/g
+const SHORT_ESCAPES: Record<string, string> = { '/': '/', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t', '"': '"' }
 
 /** One pass: every such escape replaced by the character it names. A backslash that an escape names stays for the next pass. */
 export function unescapeText(text: string): string {
   if (!text.includes('\\')) return text
-  return text.replace(ESCAPE, (_, unicode: string | undefined, hex: string | undefined, slash: string | undefined) => (slash ? '/' : String.fromCharCode(Number.parseInt(unicode ?? hex ?? '0', 16))))
+  return text.replace(ESCAPE, (_, unicode: string | undefined, hex: string | undefined, short: string | undefined) => {
+    if (short !== undefined) return SHORT_ESCAPES[short] ?? short
+    if (unicode === undefined && hex === undefined) return '\\'
+    return String.fromCharCode(Number.parseInt(unicode ?? hex ?? '0', 16))
+  })
 }
 
-/**
- * Runs every rule on one form of a text. The scanner's email finding stands for a form that is the text as written (`raw`). In any
- * other form (unescaped, or decoded from JSON) each address is looked up among those written out: one that is not there cannot be
- * replaced in the text, so it is its own finding and the whole text is withheld.
- */
-function runRules(text: string, raw: boolean, walk: Walk): void {
-  let email = false
-  for (const finding of scanText('view', text, 'fixture')) {
-    if (finding.rule === 'email') email = true
-    else walk.rules.add(finding.rule)
-  }
+/** Runs every rule on one form of a text: the text as written, an unescaped form of it, or a string decoded from JSON inside it. */
+function runRules(text: string, walk: Walk): void {
+  for (const finding of scanText('view', text, 'fixture')) walk.rules.add(finding.rule)
   if (CREDENTIAL_ASSIGNMENT.test(text)) walk.rules.add(CREDENTIAL_FIELD_RULE)
-  if (!email) return
-  if (raw) {
-    walk.rules.add('email')
-    for (const address of text.match(EMAIL_ADDRESS) ?? []) walk.written.add(address)
-  } else if ((text.match(EMAIL_ADDRESS) ?? []).some((address) => !walk.written.has(address))) walk.rules.add(EMAIL_ENCODED_RULE)
 }
 
 /** Runs the rules on one text, then on its unescaped forms, then on whatever JSON it decodes to. `layer` counts the decodes so far. */
@@ -130,7 +119,7 @@ function inspectText(text: string, layer: number, walk: Walk): void {
     walk.limit = true
     return
   }
-  runRules(text, layer === 0, walk)
+  runRules(text, walk)
   // JSON parsing cannot be relied on to expose an escaped key (a duplicate property overwrites it, a fence or a label hides the
   // object), so the text is also read with every escape replaced, until nothing changes
   let form = text
@@ -143,7 +132,7 @@ function inspectText(text: string, layer: number, walk: Walk): void {
       return
     }
     form = next
-    runRules(form, false, walk)
+    runRules(form, walk)
   }
   const whole = looksLikeJson(text) ? decodeJson(text) : undefined
   if (whole) return decodeInto(whole.value, layer, walk)
@@ -206,7 +195,7 @@ const findingsOf = (walk: Walk): Set<string> => {
 export function inputHoldsSecret(input: unknown, limits: ScrubLimits = SCRUB_LIMITS): boolean {
   const walk = newWalk(limits)
   inspectValue(input, 0, 0, walk)
-  return [...findingsOf(walk)].some((rule) => rule !== 'email' && rule !== EMAIL_ENCODED_RULE)
+  return [...findingsOf(walk)].some((rule) => rule !== 'email')
 }
 
 /**
@@ -237,3 +226,6 @@ const DRIVE_PATH = new RegExp(`(?<![A-Za-z0-9])[A-Za-z]:[\\\\/][^${PATH_END}]+`,
 export function redactAbsolutePaths(text: string): string {
   return text.replace(DRIVE_PATH, PATH_PLACEHOLDER).replace(HOME_PATH, PATH_PLACEHOLDER).replace(POSIX_PATH, PATH_PLACEHOLDER)
 }
+
+/** What the labeler's pre-send guard asks of a text, and what the view asks of what it renders: any finding at all refuses it. */
+export const holdsSecret = (text: string): boolean => scrubFindings(text).size > 0

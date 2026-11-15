@@ -30,7 +30,7 @@ import { ASSUMED_PRICE_PER_MTOK, type CompleteRequest, type CompleteResponse, cl
 import { assertOutsideRepo, privateDir, writePrivate } from '../feel-drugs/replay/store'
 import { assertGate, type Declaration, type GateInput, LABELS, type Label, markingRuleHash, METHODS, type Method } from './declaration'
 import type { Chunk } from './mask'
-import { scrubFindings } from './scrub'
+import { holdsSecret } from './scrub'
 import type { PrivateRoot } from './store'
 
 // ── the refusals ───────────────────────────────────────────────────────────
@@ -495,7 +495,6 @@ export interface LabelerRun {
 }
 
 /** A secret rule fires on the text: the same rules the view's scrub applies, so this check cannot be weaker than the scrub. */
-const holdsSecret = (text: string): boolean => scrubFindings(text).size > 0
 
 const MAX_NONCE_DRAWS = 8
 

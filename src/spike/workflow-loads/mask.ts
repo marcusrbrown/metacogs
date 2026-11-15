@@ -20,7 +20,7 @@ import { redactPaths } from '../feel-drugs/sheet'
 import { assertOutsideRepo, privateDir, writePrivate } from '../feel-drugs/replay/store'
 import { assertGate, type GateInput, METHODS } from './declaration'
 import { type MethodCall, methodCallOf, nameRegex, type StoredToolUse, toolUseOfPart, type WorkflowSkill, wholeWordRegex } from './loads'
-import { EMAIL_ADDRESS, EMAIL_PLACEHOLDER, inputHoldsSecret, redactAbsolutePaths, SCRUB_PLACEHOLDER, scrubFindings } from './scrub'
+import { EMAIL_ADDRESS, EMAIL_PLACEHOLDER, holdsSecret, inputHoldsSecret, redactAbsolutePaths, SCRUB_PLACEHOLDER, scrubFindings } from './scrub'
 import type { ManifestSlot, PrivateRoot, StimulusKind, WalkedEntry, WalkedSession } from './store'
 
 // ── rules ──────────────────────────────────────────────────────────────────
@@ -114,19 +114,20 @@ function tokenize(text: string, renderer: Renderer): string {
 
 type Counter = keyof ViewCounters
 
-/** Scan, tokenize, redact paths, bound: in that order, so a secret is found in the whole text and a cut never half-hides one. */
+/**
+ * Scan, tokenize, redact paths, bound: in that order, so a secret is found in the whole text and a cut never half-hides one. Then
+ * the result is checked as the labeler's guard checks what it is sent: whatever the guard would refuse (an address that was only
+ * written with an escape and so was not replaced, say) is withheld here, so the view never holds text that cannot be sent.
+ */
 function finish(text: string, counter: Counter, limit: number, renderer: Renderer): string {
   const rules = scrubFindings(text)
   // any finding but an address withholds the whole text; an address alone only loses the address
-  if ([...rules].some((rule) => rule !== 'email')) {
-    return withhold(counter, renderer)
-  }
-  let body = text
-  if (rules.has('email')) {
-    renderer.counters.redactedEmails += 1
-    body = text.replace(EMAIL_ADDRESS, EMAIL_PLACEHOLDER)
-  }
-  return truncate(redact(tokenize(body, renderer)), limit)
+  if ([...rules].some((rule) => rule !== 'email')) return withhold(counter, renderer)
+  const body = rules.has('email') ? text.replace(EMAIL_ADDRESS, EMAIL_PLACEHOLDER) : text
+  const out = truncate(redact(tokenize(body, renderer)), limit)
+  if (holdsSecret(out)) return withhold(counter, renderer)
+  if (body !== text) renderer.counters.redactedEmails += 1
+  return out
 }
 
 function withhold(counter: Counter, renderer: Renderer): string {
@@ -199,6 +200,15 @@ function userText(entry: WalkedEntry): string {
   return texts.join('\n\n')
 }
 
+/**
+ * A rendered piece the labeler's guard would refuse (a tool line built from parts that were each fine, say) is withheld whole. The
+ * pieces of a chunk are joined under headings that no key can reach across (`### [...]` follows a blank line, and no separator is
+ * `#`), so a chunk of pieces that pass is a chunk that passes.
+ */
+function sendable(text: string, renderer: Renderer): string {
+  return holdsSecret(text) ? withhold('scrubbedStimuli', renderer) : text
+}
+
 function renderScope(session: WalkedSession, scopeIndex: number, renderer: Renderer): HiddenScope | null {
   const scope = session.scopes[scopeIndex]
   if (!scope) return null
@@ -210,7 +220,7 @@ function renderScope(session: WalkedSession, scopeIndex: number, renderer: Rende
     workflow: scope.workflow,
     stimuli: scope.stimuli.map((stimulus) => {
       const text = stimulus.kind === 'user_message' ? finish(userText(stimulus.entry), 'scrubbedStimuli', RENDER_LIMITS.stimulus, renderer) : renderEntry(stimulus.entry, renderer).join('\n')
-      return { id: stimulus.id, kind: stimulus.kind, text, traffic: capped(stimulus.after.flatMap((entry) => renderEntry(entry, renderer))) }
+      return { id: stimulus.id, kind: stimulus.kind, text: sendable(text, renderer), traffic: capped(stimulus.after.flatMap((entry) => renderEntry(entry, renderer))).map((line) => sendable(line, renderer)) }
     }),
   }
 }

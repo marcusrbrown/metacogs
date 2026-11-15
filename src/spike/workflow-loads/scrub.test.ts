@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
-import { EMAIL_ENCODED_RULE, inputHoldsSecret, MAX_SEPARATORS, PATH_PLACEHOLDER, redactAbsolutePaths, SCRUB_LIMITS, SCRUB_LIMIT_RULE, type ScrubLimits, scrubFindings, unescapeText } from './scrub'
+import { inputHoldsSecret, MAX_SEPARATORS, PATH_PLACEHOLDER, redactAbsolutePaths, SCRUB_LIMITS, SCRUB_LIMIT_RULE, type ScrubLimits, scrubFindings, unescapeText } from './scrub'
+import { CREDENTIAL_TEXT_CASES, EMAIL_TEXT_CASES } from './scrub-cases'
 
 // Assembled at runtime so this file holds no credential-shaped literal.
 const VALUE = ['v4lue', 'Of', 'Some', 'Length'].join('')
@@ -186,7 +187,7 @@ describe('scrubFindings: text written with escapes', () => {
     expect(unescapeText('\\ud83d\\ude00 and \\uD83D\\uDE00')).toBe('\u{1f600} and \u{1f600}')
     expect(unescapeText('\\x41\\x4a \\x4')).toBe('AJ \\x4')
     expect(unescapeText('a\\/b \\\\/c')).toBe('a/b /c')
-    expect(unescapeText('no escapes \\n \\t \\u12 \\xZ here')).toBe('no escapes \\n \\t \\u12 \\xZ here')
+    expect(unescapeText('no escapes \\d \\w \\u12 \\xZ here')).toBe('no escapes \\d \\w \\u12 \\xZ here')
     expect(unescapeText('')).toBe('')
   })
 
@@ -194,6 +195,30 @@ describe('scrubFindings: text written with escapes', () => {
     for (const text of [`\\u0070assword=${V}`, `pass\\x77ord: ${V}`, `{"body":{"\\u0070assword":"${V}"},"body":null}`, `prose\\n\`\`\`json\\n{\\n "\\u0070assword": "${V}"\\n}\\n\`\`\``, `[tool] read [{"\\\\u0070assword":"${V}"}]`, `to\\u006ben=${V}`]) {
       expect([text, hit(text)]).toEqual([text, true])
     }
+  })
+
+  test('every text of the shared table is a finding', () => {
+    for (const text of CREDENTIAL_TEXT_CASES) expect([text, scrubFindings(text).size > 0]).toEqual([text, true])
+  })
+
+  test('every short JSON escape is replaced, with any number of backslashes before it', () => {
+    expect(unescapeText('a\\nb \\\\nc \\\\\\\\td')).toBe('a\nb \nc \td')
+    expect(unescapeText('\\b\\f\\r')).toBe('\b\f\r')
+    expect(unescapeText('say \\"hi\\" and \\\\"hi\\\\"')).toBe('say "hi" and "hi"')
+    // a run of two or more backslashes with no escape after it is one backslash; a single one stays
+    expect(unescapeText('C:\\\\Users \\\\\\\\ and \\d')).toBe('C:\\Users \\ and \\d')
+  })
+
+  test('a run of backslashes and then any ASCII letter separates a key from its assignment', () => {
+    for (const letter of ['b', 'f', 'v', 'a', 'q', 'T', 'Z']) {
+      for (const run of ['\\', '\\\\', '\\\\\\']) {
+        const text = `password${run}${letter}=${V}`
+        expect([text, hit(text)]).toEqual([text, true])
+      }
+    }
+    // control characters, as the unescaped forms hold them, separate too
+    expect(hit(`password\f=${V}`)).toBe(true)
+    expect(hit(`password\b:${V}`)).toBe(true)
   })
 
   test('unescaping repeats until nothing changes: an escape of the backslash of another escape', () => {
@@ -227,16 +252,8 @@ describe('scrubFindings: text written with escapes', () => {
     expect(scrubFindings(key.replaceAll('-', '\\u002d')).size).toBeGreaterThan(0)
   })
 
-  test('an address written with an escape is its own finding, and one that is also written out is the ordinary email finding', () => {
-    const literal = ['someone', 'corp-mail.com'].join('@')
-    expect([...scrubFindings('{"to":"someone\\u0040corp-mail.com"}')].sort()).toEqual([EMAIL_ENCODED_RULE])
-    expect([...scrubFindings(`{"to":"${literal}"}`)]).toEqual(['email'])
-    // the same address written both ways is still just the one the text holds
-    expect([...scrubFindings(`${literal} and someone\\u0040corp-mail.com`)]).toEqual(['email'])
-    // another address, only in escaped form, is not covered by the literal one
-    expect([...scrubFindings(`${literal} and other\\u0040corp-mail.com`)].sort()).toEqual(['email', EMAIL_ENCODED_RULE].sort())
-    // an address inside decoded JSON that is also in the text is the literal one
-    expect([...scrubFindings(JSON.stringify({ to: literal }))]).toEqual(['email'])
+  test('an address is the email finding whether it is written out, written with an escape, or both', () => {
+    for (const text of EMAIL_TEXT_CASES) expect([text, [...scrubFindings(text)]]).toEqual([text, ['email']])
   })
 
   test('ordinary escapes name nothing: no finding', () => {

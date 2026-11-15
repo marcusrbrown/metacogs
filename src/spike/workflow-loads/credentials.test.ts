@@ -11,7 +11,8 @@ import { gatedRepo, seedWorkflowSession, syntheticStore } from './test-support'
 import { type CompleteRequest } from '../feel-drugs/replay/judge'
 import { type LabelerTransport, labelChunks } from './labeler'
 import { type Chunk, chunkScope, renderSessions, renderStimulusBlock, SCRUB_PLACEHOLDER } from './mask'
-import { SCRUB_LIMITS } from './scrub'
+import { holdsSecret, SCRUB_LIMITS } from './scrub'
+import { CREDENTIAL_TEXT_CASES, EMAIL_TEXT_CASES } from './scrub-cases'
 import { freezeManifest, openPrivateRoot, walkManifest } from './store'
 import { SAMPLE_RULE_TEXT } from './test-support'
 
@@ -72,6 +73,11 @@ const CASES: Case[] = [
   { name: 'a multiline JSON object with an escaped key in a fence after prose', secret: HARBOR, text: FENCED },
   { name: 'a labeled array with an escaped key', secret: HARBOR, text: `[tool] read [{"${ESCAPED_KEY}":"${HARBOR}"}]` },
   { name: 'a known-format secret written with escaped hyphens', secret: PLANTED_KEY, text: `key: ${PLANTED_KEY.replaceAll('-', '\\u002d')}` },
+  { name: 'an escaped form feed after a key, in a duplicate property', secret: HARBOR, text: `{"body":{"${PASSWORD}\\f":"${HARBOR}"},"body":null}` },
+  { name: 'an escaped form feed after a key, in a labeled array', secret: HARBOR, text: `[tool] read [{"${PASSWORD}\\f":"${HARBOR}"}]` },
+  { name: 'an escaped form feed after a key, in a fence', secret: HARBOR, text: `Here is the config:\n\n\`\`\`json\n{\n  "db": {\n    "${PASSWORD}\\f": "${HARBOR}"\n  }\n}\n\`\`\`\n` },
+  { name: 'an escaped backspace after a key', secret: HARBOR, text: `{"body":{"${PASSWORD}\\b":"${HARBOR}"},"body":null}` },
+  { name: 'an escaped form feed after a key with a doubled backslash', secret: HARBOR, text: `{"body":{"${PASSWORD}\\\\f":"${HARBOR}"},"body":null}` },
   { name: 'a placeholder value with its key', secret: '<redacted>', input: { env: { [PASSWORD]: '<redacted>' } } },
 ]
 
@@ -89,11 +95,11 @@ function fixture() {
 }
 
 /** The view of a one-stimulus workflow session whose assistant turn made one tool call. */
-function viewOf(call: { input?: Record<string, unknown>; output?: string }) {
+function viewOf(call: { input?: Record<string, unknown>; output?: string; tool?: string }) {
   const f = fixture()
   seedWorkflowSession(f.store, { id: 'ses_a', created: '2026-01-15' })
   f.store.addText(f.store.addMessage('ses_a', 'user'), 'go on')
-  f.store.addTool(f.store.addMessage('ses_a', 'assistant'), { tool: call.input ? 'write' : 'bash', input: call.input ?? { command: 'cat f' }, output: call.output ?? 'ok' })
+  f.store.addTool(f.store.addMessage('ses_a', 'assistant'), { tool: call.tool ?? (call.input ? 'write' : 'bash'), input: call.input ?? { command: 'cat f' }, output: call.output ?? 'ok' })
   const input = { git: f.repo.git, db: f.store.path, privateRoot: f.privateRoot }
   freezeManifest(input)
   return { f, rendered: renderSessions(walkManifest({ ...input, skillBodies: { counterfactual: ['body of counterfactual'], synthesis: ['body of synthesis'] } })) }
@@ -241,6 +247,97 @@ describe('an escape that names nothing secret is kept', () => {
 
   test('the pre-send guard lets it through', async () => {
     const f = fixture()
+    const { transport } = await sendChunk(f, [chunkWith(TEXT)])
+    expect(transport.requests).toHaveLength(1)
+  })
+})
+
+describe('an address written out and the same one written with an escape', () => {
+  const MIXED = `${['someone', 'corp-mail.com'].join('@')} and someone\\u0040corp-mail.com`
+
+  test('the view output passes the guard, so the chunk is sent with neither address in the request', async () => {
+    const { f, rendered } = viewOf({ output: MIXED })
+    const shown = JSON.stringify(rendered.scopes)
+    expect(shown).not.toContain('corp-mail')
+    expect(shown).toContain(SCRUB_PLACEHOLDER)
+    const scope = rendered.scopes[0]
+    if (!scope) throw new Error('no scope')
+    const chunks = chunkScope(scope, { budget: 100_000 })
+    for (const chunk of chunks) expect(holdsSecret(chunk.text)).toBe(false)
+    const { transport, run } = await sendChunk(f, chunks)
+    expect(transport.requests.length).toBeGreaterThan(0)
+    expect(run.coverageComplete).toBe(true)
+    expect(transport.requests.map((r) => `${r.system}\n${r.user}`).join('\n')).not.toContain('corp-mail')
+  })
+
+  test('a literal address alone is still redacted in place, and counted', () => {
+    const { rendered } = viewOf({ output: `write to ${['someone', 'corp-mail.com'].join('@')} soon` })
+    expect(JSON.stringify(rendered.scopes)).toContain('write to [email] soon')
+    expect(rendered.counters).toMatchObject({ scrubbedOutputs: 0, redactedEmails: 1 })
+  })
+})
+
+describe('whatever the view renders, the guard accepts', () => {
+  /** Every string the view holds for the scope, and every chunk text the labeler would be sent, for a range of budgets and contexts. */
+  async function assertAccepted(call: { input?: Record<string, unknown>; output?: string }, label: string) {
+    const { f, rendered } = viewOf(call)
+    for (const scope of rendered.scopes) {
+      for (const stimulus of scope.stimuli) {
+        for (const text of [stimulus.text, ...stimulus.traffic]) expect([label, text, holdsSecret(text)]).toEqual([label, text, false])
+      }
+      for (const budget of [150, 600, 100_000]) {
+        for (const contextK of [0, 1, 3]) {
+          for (const chunk of chunkScope(scope, { budget, contextK })) expect([label, holdsSecret(chunk.text)]).toEqual([label, false])
+        }
+      }
+    }
+    const scope = rendered.scopes[0]
+    if (!scope) throw new Error('no scope')
+    const { transport, run } = await sendChunk(f, chunkScope(scope, { budget: 100_000 }))
+    expect([label, run.results.map((r) => r.outcome.status)]).toEqual([label, run.results.map(() => 'labeled')])
+    expect(transport.requests.length).toBeGreaterThan(0)
+  }
+
+  test('every credential text of the shared table, as a tool output', async () => {
+    for (const text of CREDENTIAL_TEXT_CASES) await assertAccepted({ output: text }, text.slice(0, 40))
+  }, 60_000)
+
+  test('every address text of the shared table, as a tool output', async () => {
+    for (const text of EMAIL_TEXT_CASES) await assertAccepted({ output: text }, text.slice(0, 40))
+  }, 60_000)
+
+  test('every case of this file, as a tool input or an output', async () => {
+    for (const c of CASES) await assertAccepted(c.input ? { input: c.input } : { output: c.text ?? '' }, c.name)
+  }, 60_000)
+})
+
+describe('a line whose parts are each fine but whose whole is not', () => {
+  // a tool named like a credential key, called with an input whose first key is empty: `token {"":1}` reads as `token` then `:`
+  const NAME = ['to', 'ken'].join('')
+
+  test('the guard refuses the composed line, so the view withholds it', async () => {
+    const line = `[tool] ${NAME} {"":1}`
+    expect(holdsSecret(line)).toBe(true)
+    expect(holdsSecret('{"":1}')).toBe(false)
+    const { f, rendered } = viewOf({ tool: NAME, input: { '': 1 } })
+    const [stimulus] = rendered.scopes[0]?.stimuli ?? []
+    for (const text of [stimulus?.text ?? '', ...(stimulus?.traffic ?? [])]) expect(holdsSecret(text)).toBe(false)
+    expect(JSON.stringify(rendered.scopes)).toContain(SCRUB_PLACEHOLDER)
+    const scope = rendered.scopes[0]
+    if (!scope) throw new Error('no scope')
+    const { run } = await sendChunk(f, chunkScope(scope, { budget: 100_000 }))
+    expect(run.coverageComplete).toBe(true)
+  })
+})
+
+describe('ordinary newline and tab escapes are kept', () => {
+  const TEXT = 'first line\\nsecond line\\tindented, and a quote \\" and a backslash \\\\ and a bell \\b'
+
+  test('the view keeps the text as written, and the guard lets it through', async () => {
+    const { f, rendered } = viewOf({ output: TEXT })
+    expect(JSON.stringify(rendered.scopes)).toContain('second line')
+    expect(JSON.stringify(rendered.scopes)).not.toContain(SCRUB_PLACEHOLDER)
+    expect(rendered.counters).toEqual({ scrubbedOutputs: 0, scrubbedInputs: 0, scrubbedStimuli: 0, redactedEmails: 0 })
     const { transport } = await sendChunk(f, [chunkWith(TEXT)])
     expect(transport.requests).toHaveLength(1)
   })
