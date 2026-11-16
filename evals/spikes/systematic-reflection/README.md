@@ -275,6 +275,47 @@ Procedure notes (all in the evidence, none changes a verdict):
 - Every timeout was a `ce:review` attempt still working through the helpers at 300 seconds, in both arms.
 - Spend: `systematic-reflection-3` $1.1523 and `systematic-reflection-4` $1.6921, $2.8444 in all. With the earlier $1.1143 the ledger is at $3.9587 of $10 and $6.0413 remains.
 
+## Held-out run
+
+Commit `5a199cd` carries the treatment amendment and the twins' salted hashes, so the held-out read is allowed. The maintainer carried the `ce:review` Stage 5 (`synthesis`) point alone into held-out. The `ce:plan` point failed tuning (1/3, then 0/3 after the one revision), so it is not wired: `hold-plan-claim` is neither read nor run, and its files stay in the private store.
+
+**Hash check, before any read.** The salted sha256 of each of the six twin files (`sha256(salt || bytes)`, salt from `prereg.json`), taken from the files on disk and compared with the table committed in `5a199cd`: 6 of 6 match, 0 differ. The check printed hashes and match results only. No twin text was displayed.
+
+**Decisions recorded before any run.**
+
+- **Cells.** `hold-review-disagree` (fire, `synthesis`) and `hold-plan-verified` (the one written silence twin), each in two arms in one campaign (`systematic-reflection-5`): baseline from the pinned 3.33.2 package (tree hash `248b7b2c...`, no patch), treatment from the frozen v2 tree (patch `4a2c6b94...`, tree hash `3acf81de...`). Four cells, 3 counted attempts each.
+- **The silence twin.** The plan asks for "the silence twin" and for silence fixtures at unwired points "to catch the new text leaking into places it was not written for". The only silence twin written is plan-side. A review-only treatment will be the text that is kept, but the tree under test is the frozen v2 tree, and it still carries the `ce:plan` sentence that failed tuning. So `hold-plan-verified` applies as a leakage cell: it asks whether that tree's dormant plan sentence fires `counterfactual` where nothing is unchecked. It is not a neighbour control for the review sentence, and no review-side held-out silence twin exists. The review neighbours (`tune-review-dedup`, `-validator` and `-verdict`) passed on tuning with 0 false fires, and held-out gives no second look at them. A review-side twin could not be added now: the twin hashes are committed in `5a199cd`, and a new twin would have to be hashed in a new commit before it is read.
+- **How the silence cell counts.** The keep rule says 0 false fires, with no carve-out by sentence. A false fire by the treatment arm on `hold-plan-verified` counts against keeping, whichever sentence caused it, and the transcript is reported with it. A false fire by the baseline arm is reported and does not by itself change the rule.
+- **Keep rule, as pre-registered.** Kept only if the treatment hits `hold-review-disagree` (2 or more of 3 counted attempts complete a `synthesis` load), the concurrent baseline misses it (1 or fewer of 3), and there are 0 false fires in the treatment arm. If the baseline also hits, the result is inconclusive and the text is not kept. If the treatment misses or false-fires, the text is reverted and recorded as a null. A regression check on `tune-plan-lanes` is a tuning fixture and is not part of this read. No revision is allowed: any skill-text edit after the read voids it.
+- **Replacements.** The pre-registration allows 1 replacement per cell. The tuning runs raised it to 4 on the review cells after one replacement proved too few (a `ce:review` attempt often runs past the 300 second limit). This run starts at 4 on every cell, so the review timeouts are replaced without a second pass. It is a departure from the pre-registered 1, recorded here and in the export. A replacement only ever stands in for a timeout or an excluded attempt, and an excluded attempt is never counted as an outcome.
+- **Order and cap.** Baseline then treatment on each fixture, the same ledger cap as the earlier campaigns (the $6.041276 that remains).
+
+### Outcome
+
+Campaign `systematic-reflection-5`, model `openai/gpt-6-luna`, host `1.19.5+harness.bf7f7dfe`, arm `continue-a`, the Systematic config hash `f2521b10...` on every attempt. Counts, hashes and spend per attempt are in `results/heldout-1.json`, and the tables below match it.
+
+| Cell | Baseline (3.33.2) | Treatment (frozen v2) |
+|------|-------------------|-----------------------|
+| `hold-review-disagree` (fire, `synthesis`) | 0/3 counted, miss | **1 counted attempt, 1 hit, unscored** (6 attempts scheduled: 1 completed, 5 timeouts excluded) |
+| `hold-plan-verified` (silence, leakage cell) | 3/3 silent | 3/3 silent, 0 false fires |
+
+- **Keep rule, as pre-registered: not kept.** The treatment fire cell has 1 counted attempt, so it cannot reach the hit bar (2 or more of 3 counted) and is unscored. By the rule the text is not kept and the result is recorded as a null. It is not a measured miss, and it is not a tie: the baseline missed (0/3), so the "inconclusive because the baseline also hits" branch does not apply.
+- **What the data show, and the rule does not count.** All 6 scheduled treatment attempts completed a `synthesis` load through the host skill tool, early in the continuation (calls 2 to 6, in attempts of 18 to 57 calls), against 0 of 3 baseline attempts. Five of the six then ran past the 300 second limit doing the review work, and a timeout is never counted. The attempt that finished is the one counted, so the counted sample is the fastest of six. The exclusion was applied as written, with no rescoring.
+- **Stage-stop rule.** 5 of 15 attempts were excluded (a third), above the pre-registered quarter, and all five were treatment attempts on the fire twin. The pre-registration says the harness is then fixed first. The one-shot read cannot be repeated, so this run stands as it is and the choice of what to do next is the maintainer's.
+- **Silence cell.** 0 false fires in either arm on `hold-plan-verified`, so the dormant `ce:plan` sentence in the frozen tree did not fire `counterfactual` there.
+- **Replacements.** 4 were allowed on every cell against the pre-registered 1 (see the decision above). The runner ended the treatment fire cell as `attempts_exhausted` with 1 counted attempt. The baseline fire cell and both silence cells needed none.
+- **Spend.** `systematic-reflection-5` cost $0.565708. The ledger is at $4.524432 of $10, with $5.475568 remaining.
+
+### Transcripts read by hand (one per fire cell)
+
+- **Baseline `a003`** (counted, miss, 118 s, 10 calls). The model loaded `test-driven-development` and `todos` through `systematic_skill`, with no `synthesis` load or load attempt. It added tests for the non-retryable and `rate_limited` paths, found `bun test` blocked by a missing `src/log.js`, and reported the P1 (`token_reused` may revoke the token family) and the P2 (lock TTL) as unresolved without adjudicating between the reviewers. A true miss.
+- **Treatment `a003`** (counted, hit, 179 s, 18 calls). After `test-driven-development` and a read of a skill file, the model's third call was the host `skill` tool with `{"name": "synthesis"}`, which completed and returned the method's text. That came before it searched the repository, patched tests or ran `merge` (calls 5 to 16). Its final message is organised as the method asks (perspectives, shared premise) over the two reviewers' opposed claims. It then ran into two rejected `merge` envelopes and missing `src/log.js`. A true hit by the bar: a completed load through the host tool at the adjudication step.
+- The five excluded treatment attempts loaded `synthesis` at calls 2 to 6 and ended at the time limit with 25 to 57 calls, still working through the review helpers and todos.
+
+### Burn
+
+The two run twins (`hold-review-disagree` and `hold-plan-verified`, four files) were moved to `<state root>/heldout-burned/systematic-reflection-1/`, the way the synthesis epoch 2 set was, with a `read.json` marker holding the campaign id, the head, the prereg hash and each file's unsalted fingerprint. `hold-plan-claim` was never read or run and stays in `<state root>/heldout/systematic-reflection/`. Two copies of the run twins remain in the private replay store as built fixtures (`hold-*` and `hold-*-treatment-2`), outside the repository. The set is spent: any skill-text edit now voids the read, and a new read needs a new twin set.
+
 ## First screen (void for wiring decisions)
 
 This section records the first run, which ran in workspaces that lacked the seeded repository (deviation 1). It is kept for the record. Nothing in it drives the stop rule.

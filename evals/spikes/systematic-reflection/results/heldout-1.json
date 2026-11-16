@@ -1,0 +1,737 @@
+{
+  "schema_version": 1,
+  "spike": "systematic-reflection",
+  "stage": "heldout-1",
+  "arm": "baseline+treatment",
+  "replay_arm": "continue-a",
+  "campaign": "systematic-reflection-5",
+  "refs": {
+    "metacogs_head": "5a199cd42a6dc1eab3abfcd0f5281680f628be0d",
+    "metacogs_tree": "the head above (the treatment amendment and the plumbing are committed in it); no uncommitted harness change",
+    "prereg_commit": "d0d35fd",
+    "treatment_amendment_commit": "5a199cd",
+    "harness_commit": "a29c406d20b5833e1953f5de3c063b6d91972e79",
+    "systematic": "@fro.bot/systematic@3.33.2",
+    "systematic_tarball_sha256": "5da735ed727b9f303d5fb54d56faa37c2be536880d1cc0433ef1788742bfd31b",
+    "metacogs_packed_tarball_sha256": "d05a037dbe407b70cea5a50eb1facc5915f106d006499844a91cade6185c9b4d",
+    "metacogs_version": "0.4.1",
+    "treatment_text": "v2 (frozen, no revision)",
+    "treatment_patch_sha256": "4a2c6b9439ccd37f609a2e1126556ccc26d246e065323fcd3cf18d6285fc941b",
+    "treatment_tree_sha256": "3acf81de879d5f76804fd71d7b1b072f64d6fce4b4046d642eec8d6527267cb9",
+    "wired_point": "ce:review Stage 5 step 3 (synthesis); the ce:plan sentence is in the tree under test but its point failed tuning and is not wired"
+  },
+  "prereg_sha256": "1283325ce0ee73fdd14023db957d48d17f4f4c46d83320d0ed2275318fb0b380",
+  "prereg_amendment": 2,
+  "model": "openai/gpt-6-luna",
+  "host_version": "1.19.5+harness.bf7f7dfe",
+  "systematic_config_sha256": "f2521b1e0fb88becbcb8f4223f733ecc6d293ede9b44f03519ea4726cf21cf2c",
+  "attempts_per_cell": 3,
+  "replacements_allowed": 4,
+  "preregistered_replacements": 1,
+  "workspace": {
+    "seeded_repository": true,
+    "shell": "confined (write sandbox, no pushes or gh writes), question and task denied; heredoc temp files and the installed skills directory allowed (deviation 2)",
+    "seed_paths_pointed_at_workspace": true
+  },
+  "held_out": {
+    "twins_hash_checked_before_read": "sha256(salt || bytes) of the six twin files equals the table committed in 5a199cd (6 of 6)",
+    "run_twins": [
+      "hold-review-disagree",
+      "hold-plan-verified"
+    ],
+    "not_read_not_run": [
+      "hold-plan-claim"
+    ],
+    "burn": "run twin files moved to heldout-burned/systematic-reflection-1/ with a read.json marker; hold-plan-claim stays in heldout/systematic-reflection/ unread"
+  },
+  "totals": {
+    "cells": 4,
+    "scheduled_attempts": 15,
+    "counted_attempts": 10,
+    "excluded_attempts": 5,
+    "excluded_fraction": 0.3333
+  },
+  "spend": {
+    "campaign": "systematic-reflection-5",
+    "ledger_cap_usd": 10,
+    "ledger_spent_before_usd": 3.958724,
+    "cap_usd": 6.0412,
+    "spent_usd": 0.565708,
+    "attempt_sum_charged_usd": 0.565708,
+    "attempt_sum_reported_usd": 0.323262,
+    "ledger_spent_usd": 4.524432,
+    "ledger_remaining_usd": 5.475568,
+    "stopped_by": null
+  },
+  "keep_rule": {
+    "as_preregistered": "Kept only if the treatment hits hold-review-disagree (2 or more of 3 counted attempts complete a synthesis load), the concurrent baseline misses it (1 or fewer of 3), and the treatment arm has 0 false fires. A baseline hit is inconclusive. A treatment miss or false fire reverts the text and records a null. No revision.",
+    "baseline_fire_cell": {
+      "counted": 3,
+      "hits": 0,
+      "verdict": "miss"
+    },
+    "treatment_fire_cell": {
+      "counted": 1,
+      "hits": 1,
+      "verdict": "unscored",
+      "attempts_scheduled": 6,
+      "excluded_as_timeout": 5,
+      "attempts_with_a_completed_synthesis_load": 6
+    },
+    "treatment_false_fires_on_silence_twin": 0,
+    "outcome": "not_kept",
+    "reason": "The treatment cell has 1 counted attempt, so it cannot reach the pre-registered hit bar (2 of 3 counted) and is unscored. By the rule the text is not kept and the result is a null. It is not a measured miss: all 6 scheduled treatment attempts completed a synthesis load through the host skill tool, early (calls 2 to 6), against 0 of 3 for the baseline, but 5 of the 6 ran past the 300 second limit afterwards and a timeout is never counted.",
+    "caveats": [
+      "Excluded attempts were 5 of 15 (a third), above the pre-registered quarter that stops a stage until the harness is fixed. All 5 were treatment attempts on the fire twin.",
+      "Exclusion is not neutral here: the attempts that loaded synthesis went on to do longer review work and were the ones cut off, so the counted treatment attempt is the fastest of six. The rule was applied as written and not rescored.",
+      "No revision and no further attempts: the held-out read is one-shot, and any skill-text edit after it voids it."
+    ]
+  },
+  "fixtures": {
+    "hold-review-disagree": {
+      "arm": "baseline",
+      "template": "hold-review-disagree",
+      "expected": "fire",
+      "methods": [
+        "synthesis"
+      ],
+      "skill": "ce:review",
+      "mode": "autofix",
+      "twin_salted_sha256": {
+        "spec_salted_sha256": "eb67ac52da3d406b723b78c4c7599cd42ac4f74aebeea50992b621bc08dc3e93",
+        "repo_salted_sha256": "7b36c98faf1cff8b8f6e42a1df18b075761c76b79d278a8eb575d52aeb93dd09"
+      },
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-review": "a1e4d4df57bca15a44c2e363516454d5251dc80444f5dea9cb22d955098af330"
+      },
+      "render_tree_sha256": "248b7b2cb52db08013a0a4bb857a7443d48e33caca7973a57cad2ab20657987b",
+      "counted_attempts": 3,
+      "excluded_attempts": 0,
+      "hits": 0,
+      "false_fires": 0,
+      "wrong_method_loads": 0,
+      "silent": null,
+      "verdict": "miss",
+      "scheduled_attempts_with_a_completed_method_load": 0,
+      "attempts": [
+        {
+          "attempt": "a001",
+          "status": "completed",
+          "counted": true,
+          "outcome": "miss",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "todos",
+            "test-driven-development"
+          ],
+          "tool_calls": 30,
+          "failed_tool_calls": 1,
+          "wall_s": 264,
+          "charged_usd": 0.042704,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ad95e0e45e6",
+            "branch": "feat/session-refresh-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 21
+          },
+          "spec_sha256": "5846b064c5ef3a4ea14f3ba231e9ef7709f768a271c954bde3eb28f466c1e1d0",
+          "export_sha256": "5c65aaeba9f40d4dea4634e30a8b1da1c9fc297ea6030fa10eb6df12f135f434"
+        },
+        {
+          "attempt": "a002",
+          "status": "completed",
+          "counted": true,
+          "outcome": "miss",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "test-driven-development",
+            "todos"
+          ],
+          "tool_calls": 16,
+          "failed_tool_calls": 1,
+          "wall_s": 137,
+          "charged_usd": 0.032422,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ad95e0e45e6",
+            "branch": "feat/session-refresh-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 21
+          },
+          "spec_sha256": "5846b064c5ef3a4ea14f3ba231e9ef7709f768a271c954bde3eb28f466c1e1d0",
+          "export_sha256": "5c65aaeba9f40d4dea4634e30a8b1da1c9fc297ea6030fa10eb6df12f135f434"
+        },
+        {
+          "attempt": "a003",
+          "status": "completed",
+          "counted": true,
+          "outcome": "miss",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "test-driven-development",
+            "todos"
+          ],
+          "tool_calls": 10,
+          "failed_tool_calls": 0,
+          "wall_s": 118,
+          "charged_usd": 0.020212,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ad95e0e45e6",
+            "branch": "feat/session-refresh-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 21
+          },
+          "spec_sha256": "5846b064c5ef3a4ea14f3ba231e9ef7709f768a271c954bde3eb28f466c1e1d0",
+          "export_sha256": "5c65aaeba9f40d4dea4634e30a8b1da1c9fc297ea6030fa10eb6df12f135f434"
+        }
+      ]
+    },
+    "hold-review-disagree-treatment-2": {
+      "arm": "treatment",
+      "template": "hold-review-disagree",
+      "expected": "fire",
+      "methods": [
+        "synthesis"
+      ],
+      "skill": "ce:review",
+      "mode": "autofix",
+      "twin_salted_sha256": {
+        "spec_salted_sha256": "eb67ac52da3d406b723b78c4c7599cd42ac4f74aebeea50992b621bc08dc3e93",
+        "repo_salted_sha256": "7b36c98faf1cff8b8f6e42a1df18b075761c76b79d278a8eb575d52aeb93dd09"
+      },
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-review": "0cc9da47d7f7b7dc38343e4624e5589bf1a52efdd668f9876fa65bf6ea0b2b56"
+      },
+      "render_tree_sha256": "3acf81de879d5f76804fd71d7b1b072f64d6fce4b4046d642eec8d6527267cb9",
+      "counted_attempts": 1,
+      "excluded_attempts": 5,
+      "hits": 1,
+      "false_fires": 0,
+      "wrong_method_loads": 0,
+      "silent": null,
+      "verdict": "unscored",
+      "scheduled_attempts_with_a_completed_method_load": 6,
+      "attempts": [
+        {
+          "attempt": "a001",
+          "status": "timeout",
+          "counted": false,
+          "outcome": null,
+          "gates_passed": null,
+          "exclusion_reasons": [
+            "timeout"
+          ],
+          "hit": null,
+          "false_fire": null,
+          "wrong_method": [],
+          "method_loads": [
+            "synthesis"
+          ],
+          "method_attempts": [
+            "synthesis"
+          ],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "test-driven-development",
+            "todos"
+          ],
+          "tool_calls": 51,
+          "failed_tool_calls": 3,
+          "wall_s": 302,
+          "charged_usd": 0.064112,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ad95e0e45e6",
+            "branch": "feat/session-refresh-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 21
+          },
+          "spec_sha256": "8d84ec4740f4e0672fada4bd23fcd09d936c511f474b92355db76ebfed93589a",
+          "export_sha256": "a92f4153f5f07399e481f512076bb50c62f7d03459ff027aa8a467c41f44e3c6"
+        },
+        {
+          "attempt": "a002",
+          "status": "timeout",
+          "counted": false,
+          "outcome": null,
+          "gates_passed": null,
+          "exclusion_reasons": [
+            "timeout"
+          ],
+          "hit": null,
+          "false_fire": null,
+          "wrong_method": [],
+          "method_loads": [
+            "synthesis"
+          ],
+          "method_attempts": [
+            "synthesis"
+          ],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "test-driven-development",
+            "todos"
+          ],
+          "tool_calls": 25,
+          "failed_tool_calls": 3,
+          "wall_s": 302,
+          "charged_usd": 0.03918,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ad95e0e45e6",
+            "branch": "feat/session-refresh-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 21
+          },
+          "spec_sha256": "8d84ec4740f4e0672fada4bd23fcd09d936c511f474b92355db76ebfed93589a",
+          "export_sha256": "a92f4153f5f07399e481f512076bb50c62f7d03459ff027aa8a467c41f44e3c6"
+        },
+        {
+          "attempt": "a003",
+          "status": "completed",
+          "counted": true,
+          "outcome": "hit",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": true,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [
+            "synthesis"
+          ],
+          "method_attempts": [
+            "synthesis"
+          ],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "test-driven-development",
+            "todos"
+          ],
+          "tool_calls": 18,
+          "failed_tool_calls": 1,
+          "wall_s": 179,
+          "charged_usd": 0.026772,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ad95e0e45e6",
+            "branch": "feat/session-refresh-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 21
+          },
+          "spec_sha256": "8d84ec4740f4e0672fada4bd23fcd09d936c511f474b92355db76ebfed93589a",
+          "export_sha256": "a92f4153f5f07399e481f512076bb50c62f7d03459ff027aa8a467c41f44e3c6"
+        },
+        {
+          "attempt": "a004",
+          "status": "timeout",
+          "counted": false,
+          "outcome": null,
+          "gates_passed": null,
+          "exclusion_reasons": [
+            "timeout"
+          ],
+          "hit": null,
+          "false_fire": null,
+          "wrong_method": [],
+          "method_loads": [
+            "synthesis"
+          ],
+          "method_attempts": [
+            "synthesis"
+          ],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "test-driven-development",
+            "ce:work",
+            "todos"
+          ],
+          "tool_calls": 52,
+          "failed_tool_calls": 4,
+          "wall_s": 302,
+          "charged_usd": 0.063271,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ad95e0e45e6",
+            "branch": "feat/session-refresh-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 21
+          },
+          "spec_sha256": "8d84ec4740f4e0672fada4bd23fcd09d936c511f474b92355db76ebfed93589a",
+          "export_sha256": "a92f4153f5f07399e481f512076bb50c62f7d03459ff027aa8a467c41f44e3c6"
+        },
+        {
+          "attempt": "a005",
+          "status": "timeout",
+          "counted": false,
+          "outcome": null,
+          "gates_passed": null,
+          "exclusion_reasons": [
+            "timeout"
+          ],
+          "hit": null,
+          "false_fire": null,
+          "wrong_method": [],
+          "method_loads": [
+            "synthesis"
+          ],
+          "method_attempts": [
+            "synthesis"
+          ],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "test-driven-development",
+            "todos"
+          ],
+          "tool_calls": 30,
+          "failed_tool_calls": 3,
+          "wall_s": 302,
+          "charged_usd": 0.054936,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ad95e0e45e6",
+            "branch": "feat/session-refresh-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 21
+          },
+          "spec_sha256": "8d84ec4740f4e0672fada4bd23fcd09d936c511f474b92355db76ebfed93589a",
+          "export_sha256": "a92f4153f5f07399e481f512076bb50c62f7d03459ff027aa8a467c41f44e3c6"
+        },
+        {
+          "attempt": "a006",
+          "status": "timeout",
+          "counted": false,
+          "outcome": null,
+          "gates_passed": null,
+          "exclusion_reasons": [
+            "timeout"
+          ],
+          "hit": null,
+          "false_fire": null,
+          "wrong_method": [],
+          "method_loads": [
+            "synthesis"
+          ],
+          "method_attempts": [
+            "synthesis"
+          ],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "todos",
+            "test-driven-development"
+          ],
+          "tool_calls": 57,
+          "failed_tool_calls": 3,
+          "wall_s": 302,
+          "charged_usd": 0.070294,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ad95e0e45e6",
+            "branch": "feat/session-refresh-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 21
+          },
+          "spec_sha256": "8d84ec4740f4e0672fada4bd23fcd09d936c511f474b92355db76ebfed93589a",
+          "export_sha256": "a92f4153f5f07399e481f512076bb50c62f7d03459ff027aa8a467c41f44e3c6"
+        }
+      ]
+    },
+    "hold-plan-verified": {
+      "arm": "baseline",
+      "template": "hold-plan-verified",
+      "expected": "silence",
+      "methods": [],
+      "skill": "ce:plan",
+      "mode": "interactive",
+      "twin_salted_sha256": {
+        "spec_salted_sha256": "e3b696ee6f4b9eee0eed8f645bbf85787d89d91ff8575c0ad4079b41ed4cd574",
+        "repo_salted_sha256": "dad5b9a849000fe9c5d9edc38e7b290fca0789dbb93074d7aa5333accd7f2fbb"
+      },
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-plan": "794bf94459f9865606cb61306eb170cee41897c1fbfe95e3cf3e29186fdaf2ca"
+      },
+      "render_tree_sha256": "248b7b2cb52db08013a0a4bb857a7443d48e33caca7973a57cad2ab20657987b",
+      "counted_attempts": 3,
+      "excluded_attempts": 0,
+      "hits": 0,
+      "false_fires": 0,
+      "wrong_method_loads": 0,
+      "silent": 3,
+      "verdict": "silent",
+      "scheduled_attempts_with_a_completed_method_load": 0,
+      "attempts": [
+        {
+          "attempt": "a001",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [],
+          "tool_calls": 17,
+          "failed_tool_calls": 4,
+          "wall_s": 67,
+          "charged_usd": 0.014882,
+          "repo": {
+            "files": 12,
+            "commits": 1,
+            "head": "f683b189f903",
+            "branch": "main",
+            "clean": true,
+            "skill_files": 9,
+            "seed_path_rewrites": 20
+          },
+          "spec_sha256": "0eb0ac428b4ec44df0e1205e58a4ac7187c546c56f73783e54d4fd91839f0c9e",
+          "export_sha256": "80a611391c34847f42e2a8a2da027fd95a0a61d4928f912fcb0e036747c079bc"
+        },
+        {
+          "attempt": "a002",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [
+            "ce:plan"
+          ],
+          "other_skill_loads": [
+            "document-review"
+          ],
+          "tool_calls": 43,
+          "failed_tool_calls": 5,
+          "wall_s": 177,
+          "charged_usd": 0.037354,
+          "repo": {
+            "files": 12,
+            "commits": 1,
+            "head": "f683b189f903",
+            "branch": "main",
+            "clean": true,
+            "skill_files": 9,
+            "seed_path_rewrites": 20
+          },
+          "spec_sha256": "0eb0ac428b4ec44df0e1205e58a4ac7187c546c56f73783e54d4fd91839f0c9e",
+          "export_sha256": "80a611391c34847f42e2a8a2da027fd95a0a61d4928f912fcb0e036747c079bc"
+        },
+        {
+          "attempt": "a003",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "orchestrating-subagents"
+          ],
+          "tool_calls": 32,
+          "failed_tool_calls": 1,
+          "wall_s": 75,
+          "charged_usd": 0.016678,
+          "repo": {
+            "files": 12,
+            "commits": 1,
+            "head": "f683b189f903",
+            "branch": "main",
+            "clean": true,
+            "skill_files": 9,
+            "seed_path_rewrites": 20
+          },
+          "spec_sha256": "0eb0ac428b4ec44df0e1205e58a4ac7187c546c56f73783e54d4fd91839f0c9e",
+          "export_sha256": "80a611391c34847f42e2a8a2da027fd95a0a61d4928f912fcb0e036747c079bc"
+        }
+      ]
+    },
+    "hold-plan-verified-treatment-2": {
+      "arm": "treatment",
+      "template": "hold-plan-verified",
+      "expected": "silence",
+      "methods": [],
+      "skill": "ce:plan",
+      "mode": "interactive",
+      "twin_salted_sha256": {
+        "spec_salted_sha256": "e3b696ee6f4b9eee0eed8f645bbf85787d89d91ff8575c0ad4079b41ed4cd574",
+        "repo_salted_sha256": "dad5b9a849000fe9c5d9edc38e7b290fca0789dbb93074d7aa5333accd7f2fbb"
+      },
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-plan": "bfab60804d74f0e83ebcdc471df84fc2a99d867b981583198d46f1528c17c8a6"
+      },
+      "render_tree_sha256": "3acf81de879d5f76804fd71d7b1b072f64d6fce4b4046d642eec8d6527267cb9",
+      "counted_attempts": 3,
+      "excluded_attempts": 0,
+      "hits": 0,
+      "false_fires": 0,
+      "wrong_method_loads": 0,
+      "silent": 3,
+      "verdict": "silent",
+      "scheduled_attempts_with_a_completed_method_load": 0,
+      "attempts": [
+        {
+          "attempt": "a001",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "document-review"
+          ],
+          "tool_calls": 42,
+          "failed_tool_calls": 5,
+          "wall_s": 234,
+          "charged_usd": 0.042543,
+          "repo": {
+            "files": 12,
+            "commits": 1,
+            "head": "f683b189f903",
+            "branch": "main",
+            "clean": true,
+            "skill_files": 9,
+            "seed_path_rewrites": 20
+          },
+          "spec_sha256": "10b2c2ddf5f59013d7781e9915bdd5670608be8223bd9776b8665e10c730dbd0",
+          "export_sha256": "f2580d83a43d947f661b540dcfea9faecd535731cda582fbc6cc9ce5bbd895e0"
+        },
+        {
+          "attempt": "a002",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [],
+          "tool_calls": 21,
+          "failed_tool_calls": 1,
+          "wall_s": 54,
+          "charged_usd": 0.011454,
+          "repo": {
+            "files": 12,
+            "commits": 1,
+            "head": "f683b189f903",
+            "branch": "main",
+            "clean": true,
+            "skill_files": 9,
+            "seed_path_rewrites": 20
+          },
+          "spec_sha256": "10b2c2ddf5f59013d7781e9915bdd5670608be8223bd9776b8665e10c730dbd0",
+          "export_sha256": "f2580d83a43d947f661b540dcfea9faecd535731cda582fbc6cc9ce5bbd895e0"
+        },
+        {
+          "attempt": "a003",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "document-review"
+          ],
+          "tool_calls": 33,
+          "failed_tool_calls": 2,
+          "wall_s": 163,
+          "charged_usd": 0.028894,
+          "repo": {
+            "files": 12,
+            "commits": 1,
+            "head": "f683b189f903",
+            "branch": "main",
+            "clean": true,
+            "skill_files": 9,
+            "seed_path_rewrites": 20
+          },
+          "spec_sha256": "10b2c2ddf5f59013d7781e9915bdd5670608be8223bd9776b8665e10c730dbd0",
+          "export_sha256": "f2580d83a43d947f661b540dcfea9faecd535731cda582fbc6cc9ce5bbd895e0"
+        }
+      ]
+    }
+  }
+}
