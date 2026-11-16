@@ -77,7 +77,8 @@ export interface AttemptRecord {
   unrecognized_events: number
   usage: Usage | null
   cost: { reported_usd: number; charged_usd: number; basis: 'scripted' | 'no_request' | 'reported_x_factor' | 'estimate' }
-  timing: { started_at: string; ended_at: string; wall_ms: number }
+  /** `limit_ms` is the time limit the host ran under; a record from before it was kept carries none. */
+  timing: { started_at: string; ended_at: string; wall_ms: number; limit_ms?: number }
   artifacts: Record<string, string>
   /** Workflow fixtures: the Systematic release the stack ran and the hash of the Systematic config the fixture held, so every arm provably saw the same config, and the hash of the local Systematic tree the stack loaded (`null` for a registry release). */
   systematic?: { spec: string | null; config_sha256: string | null; tree_sha256: string | null }
@@ -424,6 +425,16 @@ export class AccountingPersistError extends Error {
   }
 }
 
+/**
+ * A `ce:review` pipeline (reviewer dispatches, helper runs, validation, todos) often needs more than the default limit: in the tuning and held-out
+ * runs, 20 of 73 review attempts hit 300 seconds, in both arms, while no `ce:plan` attempt took more than 248 seconds. The limit follows the
+ * fixture, not the arm, so every arm of a template runs under the same one.
+ */
+export const REVIEW_RUN_TIMEOUT_MS = 900_000
+
+/** The limit an attempt runs under when none is given: the review limit for a fixture seeded with `ce-review`, the default otherwise. */
+export const runLimitMs = (fixture: Pick<ReplayFixture, 'repo'>): number => (fixture.repo?.systematic_skills.includes('ce-review') ? REVIEW_RUN_TIMEOUT_MS : RUN_TIMEOUT_MS)
+
 // ── one attempt ────────────────────────────────────────────────────────────
 
 export interface AttemptContext {
@@ -548,11 +559,12 @@ export async function runAttempt(ctx: AttemptContext): Promise<AttemptRecord> {
       return keep(failed('error', ['pending_marker_unwritable']))
     }
   }
+  const limitMs = ctx.timeoutMs ?? runLimitMs(fixture)
   let result: HostResult | undefined
   /** Set as soon as the host has run: from then on a failure keeps the charge. */
   let incurred: AttemptRecord['cost'] | undefined
   try {
-    result = await ctx.executor({ fixtureId: key.fixture, seed: fixture.export, model: key.model, arm: key.arm, message, timeoutMs: ctx.timeoutMs ?? RUN_TIMEOUT_MS, ...(fixture.world ? { world: fixture.world } : {}), ...(fixture.repo ? { repo: fixture.repo } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) })
+    result = await ctx.executor({ fixtureId: key.fixture, seed: fixture.export, model: key.model, arm: key.arm, message, timeoutMs: limitMs, ...(fixture.world ? { world: fixture.world } : {}), ...(fixture.repo ? { repo: fixture.repo } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) })
     const events = analyzeEvents(result.stdout)
     const gateSet = gateSetOf(fixture)
     // A workflow seed reads a repository; if the workspace does not hold it, the attempt says nothing about the model.
@@ -633,7 +645,7 @@ export async function runAttempt(ctx: AttemptContext): Promise<AttemptRecord> {
       unrecognized_events: events.unrecognized.length,
       usage: events.usage,
       cost,
-      timing: { started_at: result.startedAt, ended_at: result.endedAt, wall_ms: result.wallMs },
+      timing: { started_at: result.startedAt, ended_at: result.endedAt, wall_ms: result.wallMs, limit_ms: limitMs },
       artifacts: Object.fromEntries(Object.entries(artifacts).map(([file, text]) => [file, sha256(text)])),
       ...(result.systematic ? { systematic: { spec: result.systematic.spec, config_sha256: result.systematic.configSha256, tree_sha256: result.systematic.treeSha256 } } : {}),
       ...(result.repo ? { repo: result.repo } : {}),

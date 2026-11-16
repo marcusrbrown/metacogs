@@ -7,7 +7,7 @@ Does the `counterfactual` or `synthesis` method load at chosen `ce:plan` and `ce
 Status: the first baseline screen is void for wiring decisions (deviation 1). The rerun is recorded under Baseline outcome (rerun). Deviation 2 changes the seeded attempt's shell environment and skill-file reads for every later arm. The treatment arm and its amendment are recorded under Treatment amendment.
 
 - Pre-registration commit: `d0d35fd`.
-- Deviations log: two entries, below. `prereg.json` carries their amendment blocks (`amendments[0]` and `amendments[1]`).
+- Deviations log: three entries. Deviations 1 and 2 are below, and deviation 3 (the review attempt limit) follows the Held-out run section. `prereg.json` carries their amendment blocks (`amendments[0]` to `amendments[2]`).
 
 ## Deviations
 
@@ -315,6 +315,57 @@ Campaign `systematic-reflection-5`, model `openai/gpt-6-luna`, host `1.19.5+harn
 ### Burn
 
 The two run twins (`hold-review-disagree` and `hold-plan-verified`, four files) were moved to `<state root>/heldout-burned/systematic-reflection-1/`, the way the synthesis epoch 2 set was, with a `read.json` marker holding the campaign id, the head, the prereg hash and each file's unsalted fingerprint. `hold-plan-claim` was never read or run and stays in `<state root>/heldout/systematic-reflection/`. Two copies of the run twins remain in the private replay store as built fixtures (`hold-*` and `hold-*-treatment-2`), outside the repository. The set is spent: any skill-text edit now voids the read, and a new read needs a new twin set.
+
+## Deviation 3: the review attempt limit
+
+The first held-out read ended as a null because the treatment fire cell could not be scored: 5 of its 6 attempts had loaded `synthesis` and ran past the 300 second limit afterwards (see Held-out run). The maintainer chose to fix the harness, write a new twin set and read again. This section records the fix. It is committed before the new twins are read.
+
+**Evidence that the limit binds.** From every review attempt in the rerun, tuning and held-out campaigns (`systematic-reflection-2` to `-5`):
+
+| | Scheduled | Timeouts | Completed wall time, median / p90 / max |
+|---|---|---|---|
+| `ce:review` baseline | 41 | 8 (20%) | 176 s / 253 s / 297 s |
+| `ce:review` treatment | 32 | 12 (38%) | 232 s / 269 s / 281 s |
+| `ce:plan` baseline | 27 | 0 | 46 s / 93 s / 248 s |
+| `ce:plan` treatment | 21 | 0 | 54 s / 134 s / 234 s |
+
+The completed review attempts pile up just under 300 seconds, and the cut-off ones had made 18 to 57 tool calls at a median of 7.5 seconds per call. The limit therefore binds on the review pipeline (reviewer dispatches, helper runs, validation and todos), in both arms. It binds harder on the treatment arm, because a run that loads the method goes on to do more of that work.
+
+**Choice: (a), a longer limit for review fixtures only.** An attempt on a fixture whose seeded repository loads `ce-review` runs under 900 seconds (900000 ms, the limit real-world mode already uses). Every other fixture keeps 300 seconds. An explicit `--timeout-ms` still wins. The limit is a property of the fixture, so both arms of a template run under the same one by construction, and each attempt record carries the limit it ran under (`timing.limit_ms`). Option (b), scoring an attempt as decided once a decision window closes, was rejected: the only window the data could define is "until the method loads", which depends on the outcome, so a later timeout would stop voiding exactly the attempts the treatment changes.
+
+**What 900 seconds does and does not show.** It is three times the old limit and covers a 57 call attempt up to about 16 seconds per call, twice the median rate. The data has nothing past 302 seconds, so the tail is unmeasured. A review attempt that still times out is excluded and never counted, as before, and the stage-stop rule (more than a quarter excluded) still applies and is reported. The worst cost is bounded: a 300 second review attempt cost up to $0.07, so a 900 second one costs about $0.21 at most.
+
+**Tests and evidence ($0).**
+
+- `workflow.run.test.ts` (new `the attempt time limit`): a fixture seeded with `ce-review` gets the review limit whichever fixture of the template it is, and a plan fixture or one with no skill keeps the default (RED first: the review limit did not exist). An explicit limit wins, and the record carries the limit.
+- Mutations, all caught: review limit never applied (2 tests fail), review limit applied to every fixture (1 fails), explicit limit ignored (1 fails), limit not recorded (1 fails).
+- Real host, scripted provider (`systematic.arms.probe.test.ts`, gated on `METACOGS_SLOW_PROBES=1`): the same scripted attempt, one shell call of 320 seconds, completes in 326 seconds on a review fixture with `limit_ms` 900000, and is cut at 303 seconds with status `timeout` on a plan fixture with `limit_ms` 300000.
+
+The prereg amendment (`amendments[2]`) records the one changed field, the evidence and the consequence. The results of `baseline-2`, tuning and `heldout-1` ran at 300 seconds and are not rescored.
+
+## Treatment amendment 2
+
+Written for the orchestrator to commit, with Deviation 3, before any read of the new twins. No new twin has been run, imported on a host with a model, or shown to one. The $0 checks below use the scripted provider only.
+
+- **Treatment.** Unchanged and frozen: `@fro.bot/systematic@3.33.2` plus the v2 patch, sha256 `4a2c6b9439ccd37f609a2e1126556ccc26d246e065323fcd3cf18d6285fc941b`, build tree hash `3acf81de879d5f76804fd71d7b1b072f64d6fce4b4046d642eec8d6527267cb9`. No text revision. The `ce:plan` sentence stays in the tree, as in the first read, and the maintainer carries the `ce:review` point alone.
+- **Harness.** metacogs head `c8eb995` plus the uncommitted change of Deviation 3 (the review attempt limit).
+- **Twins.** Two, in the private store (`<state root>/heldout/systematic-reflection-2/`, outside the repository), each a spec and a repository payload. Hash: `sha256(salt || bytes)`, the salt in `prereg.json` (`hashing.salt`, UTF-8, no separator), over the exact bytes of the stored file.
+
+| Twin | Point | Expected | spec salted sha256 | repo payload salted sha256 |
+|------|-------|----------|--------------------|----------------------------|
+| `hold-review-opposed` | `ce:review` Stage 5 step 3 | fire, `synthesis` | `10eee9d4691b467ca12dbd5e4f640377b9a889d2ccbab3d5103d938946a7277b` | `0f01dabb2ad8b4732ee9eba81efb782eaf8f9c96a02250e10709bfeacf5923f0` |
+| `hold-review-reworded` | `ce:review` Stage 5 step 3 | silence (neighbour control) | `4729d4504db24c12483fbe487263e1f9e87179b1b697042c74c42fc39f1bafed` | `9528067edd6490074ad86008b0fc41b03f208ff468678e7065ad53f6061e8b54` |
+
+Situations (no text):
+
+- `hold-review-opposed` (fire): a branch that adds a six-hour in-memory cache of exchange rates in front of a rate provider, for a price-quote endpoint, reviewed in autofix mode. The two reviewers on the TTL line rate it P1 and P3 and disagree on whether a stale rate can reach a charge: one says the quote's rate sets the amount charged, the other says the quote is an estimate re-rated at confirmation. Neither looked at the checkout code behind the quote, which the diff does not include. A testing reviewer adds a separate finding on the test file. One candidate group of two.
+- `hold-review-reworded` (silence, the neighbour control): a branch that adds an HTML version of a welcome mail, reviewed in autofix mode. Two reviewers describe one defect (the user name goes into the markup unescaped) in different words at one line, with the same severity and the same route, and neither contradicts the other. A testing finding sits in the test file. One candidate group of two, which merges.
+
+Both differ in domain and change from the burned twin (a session-token refresh retry) and from the tuning review fixtures (a payment-capture retry).
+
+Checks run on the twins with no model: each parses, is canonical, builds from the pinned tree and from the frozen treatment tree, freezes clean (the fixture scan) and approves in a throwaway store. The repository payload writes back to a clean tree that matches its declaration. The seeded `git` outputs reproduce from it (commit ids aside), and the six seeded helper outputs (`screen` and `prepare`) re-run to the same bytes with the real helper. The seed shows one candidate group of two. No turn holds a method name, `metacogs`, or an arm name. A scripted dry run on the real host in both arms, per twin, completes with the gates passed, a clean seeded repository, the review limit recorded and the treatment tree hash on the treatment arm only.
+
+**Plan for the read, fixed now.** Four cells in one campaign: both twins in both arms, baseline from 3.33.2 and treatment from the frozen tree, 3 counted attempts each, under the review limit of Deviation 3. The keep rule is the pre-registered one, unchanged: the treatment hits `hold-review-opposed` (2 or more of 3 counted attempts complete a `synthesis` load), the concurrent baseline misses it, and the treatment arm has 0 false fires on both twins. A baseline hit is inconclusive. A treatment miss or false fire reverts the text and records a null. The review-side silence twin replaces the leakage cell used in the first read. No revision, and any skill-text edit after the read voids it. Replacements start at 4 per cell, as in the first read, against the pre-registered 1 (a recorded departure).
 
 ## First screen (void for wiring decisions)
 

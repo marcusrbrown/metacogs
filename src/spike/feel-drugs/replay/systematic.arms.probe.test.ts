@@ -21,6 +21,7 @@ import type { RecordedRequest, ScriptedStep, ScriptRequest } from '../../../runn
 import { stateRoot } from '../../../runner/workspace'
 import { armMessage } from './gates'
 import { createHostExecutor, defaultBaseDir, prepareBase, resolveHarness } from './host'
+import { REVIEW_RUN_TIMEOUT_MS, runAttempt } from './run'
 import { localWorkflowStack, type StackProfile, workflowStack } from './stack'
 import { approveFixture, buildFixture, freezeFixture, loadFrozen, parseSpec } from './store'
 import { newLab } from './test-support'
@@ -220,5 +221,47 @@ describe.skipIf(process.env.METACOGS_HOST_PROBES !== '1' || !HARNESS || !existsS
     } finally {
       lab.dispose()
     }
+  }, TIMEOUT)
+})
+
+/** Slow ($0, about eleven minutes): an attempt that spends 320 seconds in one shell call outlasts the default limit and not the review limit. */
+describe.skipIf(process.env.METACOGS_HOST_PROBES !== '1' || process.env.METACOGS_SLOW_PROBES !== '1' || !HARNESS || !existsSync(HARNESS) || !PINNED)('the review attempt limit on the real host (scripted provider, $0)', () => {
+  let packed!: PackedPlugin
+  let baseDir = ''
+  const stack = workflowStack()
+
+  beforeAll(async () => {
+    packed = await packedPlugin()
+    baseDir = await prepareBase({ harness: HARNESS, baseDir: defaultBaseDir(join(stateRoot(), 'replay'), HARNESS, stack.npmPlugins), owner: OWNER, stack, log: (l) => console.log(l) })
+  }, TIMEOUT)
+  afterAll(() => disposeFixtures(), 300_000)
+
+  const slowAttempt = async (id: string) => {
+    const lab = newLab()
+    try {
+      buildFixture(lab.store, specOf(id), { systematicTree: PINNED, repo: repoOf(id) })
+      freezeFixture(lab.store, id)
+      approveFixture(lab.store, id)
+      const script = (_arm: string, q: ScriptRequest): ScriptedStep | undefined => {
+        if (!q.hasTools || !q.main) return undefined
+        if (q.turnRound === 0) return { toolCalls: [{ id: 'slow', name: 'bash', arguments: { command: 'sleep 320; echo done', timeout: 400_000, description: 'wait' } }] }
+        return { text: 'Done.' }
+      }
+      const executor = createHostExecutor({ harness: HARNESS, baseDir, packed, provider: 'scripted', owner: OWNER, stack, script })
+      return await runAttempt({ store: lab.store, key: { campaign: 'probe', fixture: id, model: LUNA, arm: 'continue-a' }, fixture: loadFrozen(lab.store, id), executor, provider: 'scripted' })
+    } finally {
+      lab.dispose()
+    }
+  }
+
+  test('a review fixture finishes a 320 second attempt, and a plan fixture with the same script is cut at the default limit', async () => {
+    const review = await slowAttempt('tune-review-dedup')
+    const plan = await slowAttempt('tune-plan-scoping')
+    record('review_limit', { review: { status: review.status, wall_s: Math.round(review.timing.wall_ms / 1000), limit_ms: review.timing.limit_ms }, plan: { status: plan.status, wall_s: Math.round(plan.timing.wall_ms / 1000), limit_ms: plan.timing.limit_ms } })
+    expect(review.timing.limit_ms).toBe(REVIEW_RUN_TIMEOUT_MS)
+    expect(review.status).toBe('completed')
+    expect(review.timing.wall_ms).toBeGreaterThan(320_000)
+    expect(plan.timing.limit_ms).toBe(300_000)
+    expect(plan.status).toBe('timeout')
   }, TIMEOUT)
 })

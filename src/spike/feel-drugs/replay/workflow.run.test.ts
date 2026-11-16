@@ -5,7 +5,8 @@ import { join } from 'node:path'
 
 import type { ResolvedCliproxy } from '../../../runner/cliproxy'
 import type { AttemptJob, HostResult } from './host'
-import { type AttemptRecord, campaignCells, campaignTallies, type CampaignOptions, cellDir, readAttempts, runAttempt, runCampaign, spentUsd } from './run'
+import { type AttemptRecord, campaignCells, campaignTallies, type CampaignOptions, cellDir, readAttempts, REVIEW_RUN_TIMEOUT_MS, runAttempt, runCampaign, spentUsd } from './run'
+import { RUN_TIMEOUT_MS } from '../driver'
 import { loadFrozen } from './store'
 import { approvedFixture, faithfulReport, fakeExecutor, fakeWorkflowExecutor, type Lab, MODEL, newLab, SILENCE_SPEC, skillLoadEvent, stdoutOf, SYNTHETIC_REPO, toolEvent, WORKFLOW_SPEC, WORKFLOW_TOOL_NAMES, chatRequest, titleRequest } from './test-support'
 
@@ -357,5 +358,33 @@ describe('the seeded repository', () => {
     const r = await runAttempt({ store: l.store, key: { campaign: 'camp', fixture: 'moment-a', model: MODEL, arm: 'continue-a' }, fixture: loadFrozen(l.store, 'moment-a'), executor, provider: 'scripted' })
     expect(r.status).toBe('completed')
     expect(r.repo).toBeUndefined()
+  })
+})
+
+describe('the attempt time limit', () => {
+  const REVIEW_REPO = { ...SYNTHETIC_REPO, systematic_skills: ['ce-review'] }
+  const PLAN_REPO = { ...SYNTHETIC_REPO, systematic_skills: ['ce-plan'] }
+  const limits = async (l: Lab, ids: string[], over: { timeoutMs?: number } = {}): Promise<Record<string, number | undefined>> => {
+    const { executor, jobs } = fakeWorkflowExecutor()
+    for (const id of ids) await runAttempt({ store: l.store, key: { campaign: 'camp', fixture: id, model: MODEL, arm: 'continue-a' }, fixture: loadFrozen(l.store, id), executor, provider: 'scripted', ...over })
+    return Object.fromEntries(jobs.map((j) => [j.fixtureId, j.timeoutMs]))
+  }
+
+  test('a fixture seeded with ce:review gets the review limit, whichever fixture of the template it is, and every other fixture keeps the default', async () => {
+    const l = lab()
+    approvedFixture(l.store, { ...SILENCE_SPEC, id: 'review-baseline', expected: 'fire', methods: ['synthesis'] }, REVIEW_REPO)
+    approvedFixture(l.store, { ...SILENCE_SPEC, id: 'review-treatment', expected: 'fire', methods: ['synthesis'] }, REVIEW_REPO)
+    approvedFixture(l.store, { ...SILENCE_SPEC, id: 'plan-control' }, PLAN_REPO)
+    approvedFixture(l.store, { ...SILENCE_SPEC, id: 'no-skill-control' }, SYNTHETIC_REPO)
+    expect(await limits(l, ['review-baseline', 'review-treatment', 'plan-control', 'no-skill-control'])).toEqual({ 'review-baseline': REVIEW_RUN_TIMEOUT_MS, 'review-treatment': REVIEW_RUN_TIMEOUT_MS, 'plan-control': RUN_TIMEOUT_MS, 'no-skill-control': RUN_TIMEOUT_MS })
+    expect(REVIEW_RUN_TIMEOUT_MS).toBeGreaterThan(RUN_TIMEOUT_MS)
+  })
+
+  test('an explicit limit wins over the review default, and the attempt record carries the limit it ran under', async () => {
+    const l = lab()
+    approvedFixture(l.store, { ...SILENCE_SPEC, id: 'review-baseline' }, REVIEW_REPO)
+    expect(await limits(l, ['review-baseline'], { timeoutMs: 123_000 })).toEqual({ 'review-baseline': 123_000 })
+    const r = await attempt(l, { id: 'review-baseline' }, '')
+    expect(r.timing.limit_ms).toBe(REVIEW_RUN_TIMEOUT_MS)
   })
 })

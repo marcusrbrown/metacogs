@@ -303,6 +303,55 @@
         "cap_usd": 8.8857,
         "ledger": "10 - 1.1143 spent by systematic-reflection (0.3843) and systematic-reflection-2 (0.7300)"
       }
+    },
+    {
+      "id": 3,
+      "marker": "AMENDMENT 3: attempt time limit for review fixtures. Added after the first held-out read (campaign systematic-reflection-5, recorded as a null) and before any later held-out read. Every field above this key and in amendments 1 and 2 is unchanged except the one named below.",
+      "date": "2026-11-16",
+      "reason": "20 of 73 review attempts in the rerun, tuning and held-out campaigns (8 of 41 baseline, 12 of 32 treatment) ran past the 300 second limit and were excluded as timeouts, against 0 of 48 plan attempts (the longest took 248 seconds). In the held-out read, 5 of 6 treatment attempts on the fire twin had already loaded the method and were cut off later, so the cell could not be scored. The pipeline ce:review runs, not the method, needs the time.",
+      "changes": {
+        "attempt_limit": "An attempt on a fixture whose seeded repository loads ce-review runs under a 900 second limit (900000 ms, the limit real-world mode already uses). Every other fixture keeps 300 seconds. The limit follows the fixture, not the arm, so both arms of a template run under the same one, and an explicit --timeout-ms still overrides it. Each attempt record carries the limit it ran under (timing.limit_ms)."
+      },
+      "unchanged": [
+        "fixture_hashes, repo payload hashes and every fixture's decision content",
+        "hit_bar, wrong_method, false_fire, exclusion_rule (a timeout is still excluded and never counted; more than a quarter of a stage excluded still stops it) and attempts_per_cell",
+        "model, host version, Systematic pin, the frozen treatment text and patch, metacogs arm and the Continue. message",
+        "the keep rule and the one-shot held-out rule"
+      ],
+      "evidence": {
+        "review_attempts": {
+          "scheduled": 73,
+          "timeouts": 20,
+          "baseline": {
+            "scheduled": 41,
+            "timeouts": 8
+          },
+          "treatment": {
+            "scheduled": 32,
+            "timeouts": 12
+          }
+        },
+        "plan_attempts": {
+          "scheduled": 48,
+          "timeouts": 0,
+          "longest_completed_s": 248
+        },
+        "completed_review_wall_s": {
+          "baseline": {
+            "median": 176,
+            "p90": 253,
+            "max": 297
+          },
+          "treatment": {
+            "median": 232,
+            "p90": 269,
+            "max": 281
+          }
+        },
+        "tool_calls_at_timeout": "18 to 57, median s per call 7.5 across completed review attempts",
+        "real_host_probe_scripted_provider_0_usd": "a review fixture finished a 326 second attempt under the review limit, and a plan fixture with the same script was cut at 303 seconds under the default"
+      },
+      "consequence": "baseline-2, the tuning exports and heldout-1 ran at 300 seconds and are not rescored. The next held-out read runs on a new twin set under this limit."
     }
   ]
 }
