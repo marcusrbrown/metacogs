@@ -367,6 +367,42 @@ Checks run on the twins with no model: each parses, is canonical, builds from th
 
 **Plan for the read, fixed now.** Four cells in one campaign: both twins in both arms, baseline from 3.33.2 and treatment from the frozen tree, 3 counted attempts each, under the review limit of Deviation 3. The keep rule is the pre-registered one, unchanged: the treatment hits `hold-review-opposed` (2 or more of 3 counted attempts complete a `synthesis` load), the concurrent baseline misses it, and the treatment arm has 0 false fires on both twins. A baseline hit is inconclusive. A treatment miss or false fire reverts the text and records a null. The review-side silence twin replaces the leakage cell used in the first read. No revision, and any skill-text edit after the read voids it. Replacements start at 4 per cell, as in the first read, against the pre-registered 1 (a recorded departure).
 
+## Held-out run 2
+
+Commit `c85a3bd` carries Deviation 3 and Treatment amendment 2, so the read of the second twin set was allowed. It ran exactly as the amendment fixes it: four cells in one campaign (`systematic-reflection-6`), `hold-review-opposed` and `hold-review-reworded` each in the baseline (3.33.2) and treatment (frozen v2 tree, patch `4a2c6b94...`, tree hash `3acf81de...`) arms, 3 counted attempts per cell, the 900 second review limit and 4 replacements. Model `openai/gpt-6-luna`, host `1.19.5+harness.bf7f7dfe`, arm `continue-a`, the Systematic config hash `f2521b10...` on every attempt. Counts, hashes, wall time and spend per attempt are in `results/heldout-2.json`.
+
+**Hash check, before any read.** The salted sha256 of the four twin files, taken from the files on disk and compared with the table committed in `c85a3bd`: 4 of 4 match, 0 differ. Hashes and match results only were printed.
+
+### Outcome
+
+| Cell | Baseline (3.33.2) | Treatment (frozen v2) |
+|------|-------------------|-----------------------|
+| `hold-review-opposed` (fire, `synthesis`) | 0/3 counted, miss | **2/3 counted, hit** |
+| `hold-review-reworded` (silence, neighbour control) | 3/3 silent | 3/3 silent, 0 false fires |
+
+- **Exclusions: none.** 12 attempts scheduled, 12 completed and counted, 0 timeouts, 0 replacements used. The more-than-a-quarter stop rule is not triggered (0 of 12). The longest attempt took 578 seconds and 8 of the 12 ran past 300 seconds, so under the old limit they would have been cut off. All finished inside the 900 second limit.
+- **Keep rule, as pre-registered: kept.** The treatment hit the fire twin (2 of 3 counted attempts completed a `synthesis` load), the concurrent baseline missed it (0 of 3), and the treatment arm had 0 false fires on both twins. No revision was made. The text kept is the `ce:review` Stage 5 sentence, the point the maintainer carried. The `ce:plan` sentence in the frozen tree failed tuning, was not evaluated here, and is not part of what is kept.
+- **Spend.** `systematic-reflection-6` cost $0.691478. The ledger is at $5.21591 of $10, with $4.78409 remaining.
+
+### Transcripts read by hand
+
+- **Baseline `a002`** (counted, miss, 203 s, 24 calls). It loaded `test-driven-development` and `todos`, read the diff files, added tests for concurrent requests and provider failure, and ran the `merge` helper (call 15) with no `synthesis` load or load attempt. `finalize` rejected its envelope twice. Its final message says the six-hour stale-rate concern "remains unresolved" and calls the failed validator the "synthesis validator", which is the review pipeline's own step and not the method. A true miss.
+- **Treatment `a003`** (counted, hit, 304 s, 27 calls). It loaded `test-driven-development`, read four files, loaded `todos`, then applied a test fix and a code fix and ran the tests. At call 12 it tried `synthesis` through `systematic_skill`, which failed (the method is not one of Systematic's skills), and at call 13 it retried through the host `skill` tool, which completed and returned the method's text. `merge` ran after that (calls 17 and 18), so the load preceded the adjudication decision. The final message keeps the stale-rate question open and says whether a charge is affected "depends on checkout behavior not present in the reviewed code", which is the premise the twin leaves unchecked. A true hit. (The first call used the wrong tool and the model recovered, as in several tuning attempts.)
+- **Treatment `a002`** (counted, hit, 514 s, 54 calls). The `synthesis` load (call 19) completed through the host skill tool before the report was written. Its final report lists the stale-rate finding as P1 with the downstream impact left open.
+- **Treatment `a001`** (counted, miss, 528 s, 56 calls). It loaded `test-driven-development`, `orchestrating-subagents` and `using-systematic`, never loaded or attempted `synthesis`, added the tests, and its message flags the freshness window as a remaining concern. The sentence did not move it on this attempt, so the hit rate is 2 of 3, not 3 of 3.
+- **False fires.** None in either arm, so there is no false-fire transcript to read. The silence attempts loaded only `test-driven-development`, `todos` and `orchestrating-subagents`, and none made a load attempt of either method.
+
+### Caveats
+
+- Three counted attempts per cell. 2/3 against 0/3 clears the pre-registered bar, and it is a small sample on one synthetic domain, one model and one host.
+- A transient `ECONNRESET` from the provider endpoint was printed to the run log right after the treatment fire cell's first attempt finished. Every attempt in the campaign completed with its gates passed, so none was affected or excluded.
+- Synthetic seeds check overfitting to the tuning set only. Real-session behavior is unmeasured.
+- The first read (`heldout-1.json`) stays recorded as a null: its treatment cell could not be scored because of the 300 second limit. This read is a separate one-shot on a new twin set.
+
+### Burn
+
+The four twin files were moved to `<state root>/heldout-burned/systematic-reflection-2/` with a `read.json` marker (campaign id, head, prereg hash, each file's unsalted fingerprint), as the first set was to `systematic-reflection-1/`. The built fixtures remain in the private replay store, outside the repository. The set is spent, any skill-text edit now voids the read, and a further read needs a new twin set.
+
 ## First screen (void for wiring decisions)
 
 This section records the first run, which ran in workspaces that lacked the seeded repository (deviation 1). It is kept for the record. Nothing in it drives the stop rule.
