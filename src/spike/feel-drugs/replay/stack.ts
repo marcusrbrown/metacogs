@@ -1,11 +1,11 @@
 /** The daily plugin stack inside a throwaway fixture: the owner's plugin configs with the safety switches applied on top. */
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import type { Fixture } from '../../../runner/env'
 import { PLACEHOLDER_API_KEY } from '../../../runner/scripted-provider'
-import { buildConfig } from '../../../runner/workspace'
+import { buildConfig, sha256 } from '../../../runner/workspace'
 
 /** Registry plugins of the stack. The packed local metacogs plugin is added after these. */
 export const STACK_NPM_PLUGINS = ['oh-my-opencode-slim@3.0.7', '@cortexkit/opencode-magic-context@0.49.40', '@cortexkit/aft-opencode@0.63.5', '@fro.bot/systematic@3.31.5'] as const
@@ -74,6 +74,8 @@ export interface StackProfile {
   agent: Json
   /** The plugin configs written into the fixture. */
   configs: readonly StackConfigName[]
+  /** A local Systematic tree the stack loads in place of a registry release: its directory and the hash of what it holds. */
+  systematicTree?: { dir: string; sha256: string }
 }
 
 const ALL_CONFIGS: readonly StackConfigName[] = ['slim', 'systematic', 'aft', 'magic-context']
@@ -88,7 +90,39 @@ export const dailyStack = (): StackProfile => ({ name: 'daily', npmPlugins: STAC
  */
 export function workflowStack(systematic: string = SYSTEMATIC_PIN): StackProfile {
   if (!/^@fro\.bot\/systematic@\d+\.\d+\.\d+$/.test(systematic)) throw new Error(`the workflow stack takes a registry release of @fro.bot/systematic, as @fro.bot/systematic@<version>; got ${JSON.stringify(systematic)}`)
-  return { name: 'workflow', npmPlugins: [systematic], defaultAgent: WORKFLOW_AGENT, reportedDefaultAgent: null, mcpMayBeAbsent: true, permission: workflowPermission(), agent: DAILY_AGENT_SWITCHES, configs: ['systematic'] }
+  return workflowProfile([systematic])
+}
+
+const workflowProfile = (npmPlugins: readonly string[]): StackProfile => ({ name: 'workflow', npmPlugins, defaultAgent: WORKFLOW_AGENT, reportedDefaultAgent: null, mcpMayBeAbsent: true, permission: workflowPermission(), agent: DAILY_AGENT_SWITCHES, configs: ['systematic'] })
+
+/**
+ * The sha256 of the files a Systematic tree runs on, `package.json`, then `dist/` and `skills/` in path order. Installed dependencies are left out, so two
+ * trees that differ only in their `node_modules` hash the same, and a changed skill or entry file changes the hash.
+ */
+export function systematicTreeSha256(dir: string): string {
+  const lines: string[] = []
+  const walk = (rel: string): void => {
+    for (const entry of readdirSync(join(dir, rel), { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
+      const path = rel === '' ? entry.name : `${rel}/${entry.name}`
+      if (entry.isDirectory()) walk(path)
+      else if (entry.isFile()) lines.push(`${path}\0${sha256(readFileSync(join(dir, path)))}\n`)
+    }
+  }
+  for (const top of ['dist', 'skills']) if (existsSync(join(dir, top))) walk(top)
+  if (existsSync(join(dir, 'package.json'))) lines.unshift(`package.json\0${sha256(readFileSync(join(dir, 'package.json')))}\n`)
+  return sha256(lines.join(''))
+}
+
+/**
+ * The workflow stack with a local Systematic tree (the directory that holds `dist/` and `skills/`) in place of the registry release. The plugin
+ * list holds `file://<tree>/dist/index.js`. A tree with no entry file or no skills directory is refused here, before any host starts.
+ */
+export function localWorkflowStack(tree: string): StackProfile {
+  const dir = resolve(tree)
+  const entry = join(dir, 'dist', 'index.js')
+  if (!existsSync(entry)) throw new Error(`the local Systematic tree has no entry file at ${entry}`)
+  if (!existsSync(join(dir, 'skills'))) throw new Error(`the local Systematic tree has no skills directory at ${join(dir, 'skills')}`)
+  return { ...workflowProfile([`file://${entry}`]), systematicTree: { dir, sha256: systematicTreeSha256(dir) } }
 }
 
 /** Writes the profile's plugin configs into the fixture's XDG config home, and copies slim's prompt appendices when slim is in it. */

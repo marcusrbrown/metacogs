@@ -273,6 +273,36 @@
         "cap_usd": 9.6157,
         "ledger": "10 - 0.3843 spent by the first screen"
       }
+    },
+    {
+      "id": 2,
+      "marker": "AMENDMENT 2: attempt shell environment and skill-file reads. Added after the baseline rerun (campaign systematic-reflection-2) showed two environment refusals unrelated to the seeded repository. Every field above this key and in amendment 1 is unchanged except the two named below.",
+      "date": "2026-11-15",
+      "reason": "In the rerun, 18 shell heredocs were refused (zsh puts a heredoc temp file under /tmp, which the write sandbox does not allow) and 18 reads of Systematic's installed skill files were refused (external_directory deny covered the installed package). Neither is the seeded repository, and both fall hardest on the ce:review fixtures. The same environment now applies to every arm of every later campaign.",
+      "changes": {
+        "shell_env": "A seeded attempt's host process gets TMPPREFIX=<attempt temp dir>/zsh, so zsh creates heredoc temp files inside the attempt's own write-confined directory. No other environment entry changes.",
+        "permission": "A seeded attempt keeps external_directory denied for every path except the directory Systematic loads its skills from, which is opened for the whole attempt: '*' deny first, then '<skills dir>/*' allow, both the path as given and its real path. The skills directory is the installed package's skills/ in the attempt's cache clone for a registry release, and <tree>/skills for a local Systematic tree. The OS write sandbox is unchanged, so a local tree outside the attempt directory stays read-only.",
+        "harness_scope": "Seeded attempts only (a fixture that carries a repository payload). Real-world mode and the daily stack are unchanged."
+      },
+      "evidence": {
+        "rerun_campaign": "systematic-reflection-2",
+        "heredocs_refused": 18,
+        "skill_file_reads_refused": 18,
+        "heredocs_by_fixture": "10 in tune-review-dedup (the most); the review fixtures hit it most because the review helpers are documented with heredocs",
+        "skill_reads_by_fixture": "9 in tune-review-validator (the most)"
+      },
+      "unchanged": [
+        "fixture_hashes, repo payload hashes and every fixture's decision content",
+        "hit_bar, wrong_method, false_fire, stop_rule, exclusion_rule and attempts_per_cell",
+        "model, host version, Systematic pin, metacogs arm and the Continue. message",
+        "the write sandbox, the denial of pushes, gh writes, publishes and login files, and question and task denied"
+      ],
+      "consequence": "results/baseline-2.json ran without this change. Its counts drove the wiring decision. The tuning treatment run re-runs the baseline arm under this change in the same campaign, so the two arms see the same environment, and a baseline that differs from baseline-2 is reported as such.",
+      "campaign": {
+        "name": "systematic-reflection-3",
+        "cap_usd": 8.8857,
+        "ledger": "10 - 1.1143 spent by systematic-reflection (0.3843) and systematic-reflection-2 (0.7300)"
+      }
     }
   ]
 }

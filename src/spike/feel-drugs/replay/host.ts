@@ -15,7 +15,7 @@ import { gitInit, sha256 } from '../../../runner/workspace'
 import { type ArmMessage, type ArmName, type AssistantInfo, runArgs, seededRepoCheck } from './gates'
 import { dailyStack, defaultOwnerConfig, type OwnerConfig, STACK_NPM_PLUGINS, type StackProfile, stackHostConfig, stubProviders, writeStackConfigs } from './stack'
 import type { ReplaySeed } from './history'
-import { expectedRepo, inspectRepo, materializeRepo, provideSkills, type RepoReport, repoPermission, rewriteSeedPaths } from './repo'
+import { expectedRepo, inspectRepo, materializeRepo, provideSkills, type RepoReport, repoPermission, repoShellEnv, rewriteSeedPaths } from './repo'
 import type { RepoPayload } from './store'
 import { defaultUnreadable, sandboxAvailable, sandboxPrefix } from './sandbox'
 import { cloneWorld, ghEnv, type GhAuth, removeGhConfig, type WorldJob, type WorldRecord, worldPermission, writeGhConfig } from './world'
@@ -116,7 +116,7 @@ export interface HostResult {
   wallMs: number
   stack: DailyStackVerdict | null
   /** The Systematic release in the stack's plugin list and the hash of the Systematic config written into the fixture, so every arm provably saw the same config. */
-  systematic?: { spec: string | null; configSha256: string | null }
+  systematic?: { spec: string | null; configSha256: string | null; /** The hash of the local Systematic tree the stack loaded; `null` for a registry release. */ treeSha256: string | null }
   /** Plugin specs, default agent and mcp count as the host reported them. */
   stackSummary: { plugins: string[]; default_agent: string | null; mcp_entries: number } | null
   assistants: AssistantInfo[] | null
@@ -196,9 +196,9 @@ export function createHostExecutor(options: HostExecutorOptions): Executor {
   const version = hostVersion(harness)
   const owner = options.owner ?? defaultOwnerConfig()
   const profile = options.stack ?? dailyStack()
-  const systematicSpec = profile.npmPlugins.find((p) => p.startsWith('@fro.bot/systematic@')) ?? null
-  /** The installed package's skills, as the attempt's cache clone holds them. */
-  const installedSkills = (cache: string): string | null => (systematicSpec ? join(cache, 'opencode', 'packages', systematicSpec, 'node_modules', '@fro.bot', 'systematic', 'skills') : null)
+  const systematicSpec = profile.systematicTree ? (profile.npmPlugins[0] ?? null) : (profile.npmPlugins.find((p) => p.startsWith('@fro.bot/systematic@')) ?? null)
+  /** The skills the stack's Systematic loads: a local tree's own directory, or the installed package's as the attempt's cache clone holds them. */
+  const installedSkills = (cache: string): string | null => (profile.systematicTree ? join(profile.systematicTree.dir, 'skills') : systematicSpec ? join(cache, 'opencode', 'packages', systematicSpec, 'node_modules', '@fro.bot', 'systematic', 'skills') : null)
 
   return async (job) => {
     const startedAt = new Date()
@@ -233,7 +233,7 @@ export function createHostExecutor(options: HostExecutorOptions): Executor {
       const sandbox = shell && options.world?.sandbox !== 'off' ? sandboxPrefix({ writable: [fx.root, bunInstallCacheDir(), ...(options.world?.writable ?? [])], unreadable: defaultUnreadable() }) : []
       writeStackConfigs(fx, owner, profile)
       const systematicConfig = join(fx.xdgConfigHome, 'opencode', 'systematic.jsonc')
-      const systematic = { spec: systematicSpec, configSha256: existsSync(systematicConfig) ? sha256(readFileSync(systematicConfig, 'utf8')) : null }
+      const systematic = { spec: systematicSpec, configSha256: existsSync(systematicConfig) ? sha256(readFileSync(systematicConfig, 'utf8')) : null, treeSha256: profile.systematicTree?.sha256 ?? null }
       clone(join(options.baseDir, 'cache'), fx.xdgCacheHome)
       clone(join(options.baseDir, 'opencode-config-dir'), fx.opencodeConfigDir)
       // the repository is read back before anything runs, so the attempt records what the workspace held and not what was meant to be there
@@ -248,8 +248,11 @@ export function createHostExecutor(options: HostExecutorOptions): Executor {
         repoReport = inspectRepo(fx.workspace, job.repo)
       }
       const provider = options.provider === 'scripted' ? stubProviders(server.url) : cliproxyProviderConfig(server.url)
-      const config = stackHostConfig({ provider, pluginSpecs: [...profile.npmPlugins, options.packed.spec], permission: job.world ? worldPermission() : job.repo ? repoPermission() : profile.permission, agent: profile.agent })
-      const env = buildChildEnv({ fixture: fx, config, extra: { ...OFFLINE_NPM, ...(ghDir ? ghEnv(ghDir) : {}), ...(job.world ? options.world?.env : {}) } })
+      // a seeded session loads skills that point at their installed files, so the agent may read that one directory (and no other outside path)
+      const skillsRoot = job.repo ? installedSkills(fx.xdgCacheHome) : null
+      const readable = skillsRoot && existsSync(skillsRoot) ? [...new Set([skillsRoot, realpathSync(skillsRoot)])] : []
+      const config = stackHostConfig({ provider, pluginSpecs: [...profile.npmPlugins, options.packed.spec], permission: job.world ? worldPermission() : job.repo ? repoPermission(readable) : profile.permission, agent: profile.agent })
+      const env = buildChildEnv({ fixture: fx, config, extra: { ...OFFLINE_NPM, ...(ghDir ? ghEnv(ghDir) : {}), ...(job.world ? options.world?.env : {}), ...(job.repo ? repoShellEnv(fx.tmp) : {}) } })
       if (options.provider === 'cliproxy') {
         if (!options.cliproxy) throw new Error('the cliproxy provider needs a resolved key')
         writeIsolatedAuth(fx, options.cliproxy.auth)

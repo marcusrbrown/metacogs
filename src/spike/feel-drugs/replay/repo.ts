@@ -182,4 +182,13 @@ export function rewriteSeedPaths(seed: unknown, workspace: string): number {
  * the real-world permission set (no pushes, `gh`, publishes or login files), with `question` and `task` denied as on the workflow
  * stack. The host runs it write-confined to the fixture, as in a real-world attempt.
  */
-export const repoPermission = (): Record<string, unknown> => ({ ...worldPermission(), question: 'deny', task: 'deny' })
+export const repoPermission = (readable: readonly string[] = []): Record<string, unknown> => ({
+  ...worldPermission(),
+  question: 'deny',
+  task: 'deny',
+  // The skills a seeded session loads point at their installed files. Only those directories open: the blanket deny comes first and the later rules win.
+  ...(readable.length > 0 ? { external_directory: { '*': 'deny', ...Object.fromEntries(readable.map((dir) => [`${dir}/*`, 'allow'])) } } : {}),
+})
+
+/** zsh writes a heredoc's temp file under `TMPPREFIX` (default `/tmp/zsh`), which the write sandbox refuses. Pointing it at the attempt's own temp dir lets a heredoc run. */
+export const repoShellEnv = (tmpDir: string): Record<string, string> => ({ TMPPREFIX: join(tmpDir, 'zsh') })

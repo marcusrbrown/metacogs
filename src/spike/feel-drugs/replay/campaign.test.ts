@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { ResolvedCliproxy } from '../../../runner/cliproxy'
 import { CampaignUsageError, stackForKinds } from './campaign'
 import { mainAsync } from './cli'
-import { approvedFixture, fakeExecutor, fakeWorkflowExecutor, MODEL, SILENCE_SPEC, skillLoadEvent, SYNTHETIC_SPEC, WORKFLOW_SPEC } from './test-support'
-import { buildFixture, freezeFixture, openStore } from './store'
+import { approvedFixture, fakeExecutor, fakeWorkflowExecutor, MODEL, SEED_USER, SILENCE_SPEC, skillLoadEvent, SYNTHETIC_REPO, SYNTHETIC_SPEC, WORKFLOW_SPEC } from './test-support'
+import { approveFixture, buildFixture, freezeFixture, openStore } from './store'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -44,6 +44,78 @@ describe('the stack a campaign runs on', () => {
   test('a mix is refused', () => {
     expect(() => stackForKinds(['workflow', 'feel'])).toThrow(CampaignUsageError)
     expect(() => stackForKinds(['ordinary', 'workflow'])).toThrow('separate campaigns')
+  })
+})
+
+/** A stand-in for an extracted Systematic package: the entry file and the one skill the fixture names. */
+const systematicTree = (marker = ''): string => {
+  const dir = mkdtempSync(join(tmpdir(), 'replay-tree-'))
+  dirs.push(dir)
+  mkdirSync(join(dir, 'dist'), { recursive: true })
+  mkdirSync(join(dir, 'skills', 'ce-plan'), { recursive: true })
+  writeFileSync(join(dir, 'dist', 'index.js'), 'export default {}\n')
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: '@fro.bot/systematic', version: '3.33.2' }))
+  writeFileSync(join(dir, 'skills', 'ce-plan', 'SKILL.md'), `---\nname: ce:plan\ndescription: plan things\n---\n\n# Plan\n${marker}\n`)
+  return dir
+}
+
+const PLACEHOLDER_SPEC = {
+  ...WORKFLOW_SPEC,
+  turns: [
+    { role: 'user' as const, text: SEED_USER[0]! },
+    { role: 'assistant' as const, text: 'Loaded the workflow.', tools: [{ callID: 'call_s', tool: 'systematic_skill', input: { name: 'ce:plan' }, output: '{{systematic-skill:ce-plan}}' }] },
+    { role: 'user' as const, text: SEED_USER[1]! },
+    { role: 'assistant' as const, text: 'Trying a clean install.' },
+  ],
+}
+
+describe('a campaign on a local Systematic tree', () => {
+  test('the stack loads the tree\'s own entry, and only a workflow campaign may name one', () => {
+    const tree = systematicTree()
+    const stack = stackForKinds(['workflow'], tree)
+    expect(stack.npmPlugins).toEqual([`file://${tree}/dist/index.js`])
+    expect(stack.systematicTree?.dir).toBe(tree)
+    expect(() => stackForKinds(['feel'], tree)).toThrow(CampaignUsageError)
+    expect(stackForKinds(['workflow']).systematicTree).toBeUndefined()
+  })
+
+  const withTreeArgs = (id: string, tree: string) => ['campaign', '--name', 'camp', '--models', MODEL, '--arms', 'continue-a', '--fixtures', id, '--cap', '10', '--attempts-per-cell', '1', '--systematic-tree', tree]
+
+  test('a fixture rendered from that tree runs; one rendered from another tree, or from none, is refused (exit 2) and nothing runs', async () => {
+    const tree = systematicTree()
+    const { executor, jobs } = fakeWorkflowExecutor()
+    const h = harness({ executor })
+    const build = (id: string, from?: string): void => {
+      buildFixture(h.store, { ...PLACEHOLDER_SPEC, id }, { ...(from ? { systematicTree: from } : {}), repo: SYNTHETIC_REPO })
+      freezeFixture(h.store, id)
+      approveFixture(h.store, id)
+    }
+    build('from-this-tree', tree)
+    build('from-another-tree', systematicTree('a different line'))
+    buildFixture(h.store, { ...WORKFLOW_SPEC, id: 'no-render' }, { repo: SYNTHETIC_REPO })
+    freezeFixture(h.store, 'no-render')
+    approveFixture(h.store, 'no-render')
+
+    expect(await h.run(...withTreeArgs('from-another-tree', tree))).toBe(2)
+    expect(h.err.join('\n')).toContain('from-another-tree')
+    expect(h.err.join('\n')).toContain('different Systematic tree')
+    h.err.length = 0
+    expect(await h.run(...withTreeArgs('no-render', tree))).toBe(2)
+    expect(h.err.join('\n')).toContain('no-render')
+    expect(jobs).toHaveLength(0)
+
+    expect(await h.run(...withTreeArgs('from-this-tree', tree))).toBe(0)
+    expect(jobs).toHaveLength(1)
+  })
+
+  test('a campaign without --systematic-tree takes fixtures as before, whatever tree they were rendered from', async () => {
+    const { executor, jobs } = fakeWorkflowExecutor()
+    const h = harness({ executor })
+    buildFixture(h.store, { ...PLACEHOLDER_SPEC, id: 'rendered' }, { systematicTree: systematicTree(), repo: SYNTHETIC_REPO })
+    freezeFixture(h.store, 'rendered')
+    approveFixture(h.store, 'rendered')
+    expect(await h.run('campaign', '--name', 'camp', '--models', MODEL, '--arms', 'continue-a', '--fixtures', 'rendered', '--cap', '10', '--attempts-per-cell', '1')).toBe(0)
+    expect(jobs).toHaveLength(1)
   })
 })
 

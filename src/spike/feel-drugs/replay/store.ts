@@ -8,6 +8,7 @@ import { type Finding, type FixtureStamp, scanRepo, stampFixture, verifyStamp } 
 import { CustodyError, isInside, sha256, stateRoot } from '../../../runner/workspace'
 import { METHODS, type Method } from './loads'
 import { canonicalRepo } from './repo'
+import { systematicTreeSha256 } from './stack'
 
 const REPO_ROOT = fileURLToPath(new URL('../../../..', import.meta.url)).replace(/\/$/, '')
 
@@ -261,6 +262,8 @@ const FILE_PLACEHOLDER = /^\{\{(systematic-file:([a-z0-9-]+\/[A-Za-z0-9_./-]+))\
 export interface RenderRecord {
   template_sha256: string
   systematic_version: string
+  /** The hash of the Systematic tree the texts were read from (see `systematicTreeSha256`), so a run can check it loads the tree its fixture was rendered from. */
+  tree_sha256: string
   skill_text: Record<string, string>
   /** How many home-path examples in the skill texts were rewritten so the fixture scan accepts them. */
   home_path_rewrites: number
@@ -648,6 +651,8 @@ export interface BuildFixtureOptions {
   systematicTree?: string
   /** The seeded repository, as parsed JSON: written beside the spec as `repo.json`. Absent: the fixture carries none, and a workflow attempt on it is excluded. */
   repo?: unknown
+  /** Store the build under this id instead of the spec's own, so one template can be rendered from two arms' trees side by side. The recorded template hash is still the spec's. */
+  id?: string
 }
 
 /**
@@ -664,7 +669,11 @@ export function buildFixture(store: Store, input: unknown, options: BuildFixture
     if (!options.systematicTree) throw new SpecError(`spec has skill-text placeholders (${placeholders.join(', ')}); building it needs a Systematic tree`)
     const filled = renderSkillText(template, options.systematicTree)
     spec = filled.spec
-    render = { template_sha256: sha256(canonical(template)), systematic_version: systematicVersion(options.systematicTree), skill_text: filled.skillText, home_path_rewrites: filled.homePathRewrites }
+    render = { template_sha256: sha256(canonical(template)), systematic_version: systematicVersion(options.systematicTree), tree_sha256: systematicTreeSha256(options.systematicTree), skill_text: filled.skillText, home_path_rewrites: filled.homePathRewrites }
+  }
+  if (options.id !== undefined) {
+    if (!ID_PATTERN.test(options.id)) fail('options.id', 'lowercase letters, digits and hyphens, up to 64 characters')
+    spec = { ...spec, id: options.id }
   }
   const repo = options.repo === undefined ? undefined : parseRepo(options.repo)
   const repoText = repo ? canonicalRepo(repo) : undefined

@@ -90,7 +90,7 @@ describe('a workflow attempt', () => {
   test('the Systematic release and the hash of its config are recorded', async () => {
     const l = lab()
     approvedFixture(l.store, WORKFLOW_SPEC)
-    expect((await attempt(l, WORKFLOW_SPEC, '')).systematic).toEqual({ spec: '@fro.bot/systematic@3.33.2', config_sha256: 'cfg-hash' })
+    expect((await attempt(l, WORKFLOW_SPEC, '')).systematic).toEqual({ spec: '@fro.bot/systematic@3.33.2', config_sha256: 'cfg-hash', tree_sha256: null })
   })
 
   test('a main request that does not list systematic_skill is excluded with a named reason and never scored', async () => {

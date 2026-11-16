@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
-import { canonicalRepo, expectedRepo, finalFiles, inspectRepo, materializeRepo, provideSkills, repoPermission, rewriteSeedPaths, treeDigest } from './repo'
+import { canonicalRepo, expectedRepo, finalFiles, inspectRepo, materializeRepo, provideSkills, repoPermission, repoShellEnv, rewriteSeedPaths, treeDigest } from './repo'
 import { parseRepo, type RepoPayload, SpecError } from './store'
 import { SYNTHETIC_REPO } from './test-support'
 
@@ -220,5 +220,28 @@ describe('repoPermission', () => {
     expect(p.bash['*']).toBe('allow')
     expect(p.bash['git push*']).toBe('deny')
     expect(p.bash['gh pr create*']).toBe('deny')
+  })
+
+  test('with no readable directory every outside path stays refused, as before', () => {
+    expect(repoPermission().external_directory).toBe('deny')
+    expect(repoPermission([]).external_directory).toBe('deny')
+  })
+
+  test('a readable directory is allowed after a blanket deny, so only it opens and the later rule wins', () => {
+    const rules = (repoPermission(['/cache/skills', '/real/cache/skills']) as { external_directory: Record<string, string> }).external_directory
+    expect(Object.keys(rules)).toEqual(['*', '/cache/skills/*', '/real/cache/skills/*'])
+    expect(rules).toEqual({ '*': 'deny', '/cache/skills/*': 'allow', '/real/cache/skills/*': 'allow' })
+  })
+
+  test('opening the skills never loosens the other rules', () => {
+    const { external_directory: _open, ...restOpen } = repoPermission(['/cache/skills']) as Record<string, unknown>
+    const { external_directory: _shut, ...restShut } = repoPermission() as Record<string, unknown>
+    expect(restOpen).toEqual(restShut)
+  })
+})
+
+describe('repoShellEnv', () => {
+  test('puts zsh heredoc temp files under the attempt temp dir, where the write sandbox allows them', () => {
+    expect(repoShellEnv('/fx/tmp')).toEqual({ TMPPREFIX: '/fx/tmp/zsh' })
   })
 })

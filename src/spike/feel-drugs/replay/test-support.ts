@@ -168,7 +168,7 @@ export function workflowResult(job: AttemptJob, o: { events?: string; cost?: num
     requests: [titleRequest(), chatRequest({ model: job.model, tools: WORKFLOW_TOOL_NAMES, last: [`§3§ ${job.message.kind === 'text' ? job.message.text : ''}`, '<system-reminder>r</system-reminder>'] })],
     stdout: stdoutOf(textEvent('scripted reply'), o.events ?? '', stepFinish(o.cost ?? 0)),
     assistants: [{ agent: 'build', providerID: provider, modelID: model }],
-    systematic: { spec: '@fro.bot/systematic@3.33.2', configSha256: 'cfg-hash' },
+    systematic: { spec: '@fro.bot/systematic@3.33.2', configSha256: 'cfg-hash', treeSha256: null },
     ...(job.repo ? { repo: faithfulReport(job.repo) } : {}),
     ...o.over,
   }

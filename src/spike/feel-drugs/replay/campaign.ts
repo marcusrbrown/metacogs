@@ -6,7 +6,7 @@ import { ARM_NAMES, type ArmName, REPLAY_MODELS, WORLD_ARM_NAMES } from './gates
 import { createHostExecutor, defaultBaseDir, type Executor, prepareBase, resolveHarness } from './host'
 import { campaignCells, campaignDir, campaignTallies, runCampaign, spentUsd } from './run'
 import { listWorldScenarios, loadWorldFixture, type ReplayFixture } from './scenario'
-import { dailyStack, type StackProfile, workflowStack } from './stack'
+import { dailyStack, localWorkflowStack, type StackProfile, workflowStack } from './stack'
 import { listFixtures, loadFrozen, type Store } from './store'
 import { type GhAuth, resolveGhAuth as defaultResolveGhAuth } from './world'
 
@@ -30,6 +30,8 @@ export interface CampaignValues {
   replacements?: string | undefined
   /** `real`: replay the real history in a clone of the real repo. */
   world?: string | undefined
+  /** A local Systematic tree (the directory that holds `dist/` and `skills/`) the stack loads in place of the registry release. Every fixture must have been rendered from it. */
+  'systematic-tree'?: string | undefined
 }
 
 /** A real-world attempt may run long; this is its default limit. */
@@ -68,11 +70,18 @@ function whole(text: string | undefined, flag: string, min: number): number {
   return text !== undefined && text.trim() !== '' && Number.isInteger(n) && n >= min ? n : usage(`${flag} takes a whole number, ${min} or more`)
 }
 
-/** A workflow fixture runs on the trimmed Systematic stack, any other kind on the daily stack; one campaign cannot use both. */
-export function stackForKinds(kinds: readonly string[]): StackProfile {
+/** A workflow fixture runs on the trimmed Systematic stack, any other kind on the daily stack; one campaign cannot use both. A local tree replaces the registry release. */
+export function stackForKinds(kinds: readonly string[], systematicTree?: string): StackProfile {
   const workflow = kinds.filter((k) => k === 'workflow').length
   if (workflow > 0 && workflow < kinds.length) usage('workflow fixtures run on the trimmed Systematic stack and the others on the daily stack; run them as separate campaigns')
-  return workflow > 0 ? workflowStack() : dailyStack()
+  if (systematicTree !== undefined && workflow === 0) usage('--systematic-tree applies to workflow fixtures only')
+  if (workflow === 0) return dailyStack()
+  if (systematicTree === undefined) return workflowStack()
+  try {
+    return localWorkflowStack(systematicTree)
+  } catch (e) {
+    return usage(e instanceof Error ? e.message : '--systematic-tree is not a Systematic tree')
+  }
 }
 
 /** One line per workflow cell: its scored attempts and what they added up to. */
@@ -122,7 +131,14 @@ export async function campaignCommand(values: CampaignValues, ctx: CampaignCliCo
   if (ids.length === 0) usage(world ? 'no built real-world scenarios to run; run `replay world build`' : 'no frozen, approved fixtures to run')
   const kinds: string[] = []
   for (const id of ids) kinds.push(world ? loadWorld(id).spec.kind : loadFrozen(ctx.store, id).spec.kind)
-  const stack = world ? dailyStack() : stackForKinds(kinds)
+  const stack = world ? dailyStack() : stackForKinds(kinds, values['systematic-tree'])
+  // a local tree is the arm's one source of skill text, so a fixture rendered from any other tree would show the model text the stack does not run
+  if (stack.systematicTree) {
+    for (const id of ids) {
+      const rendered = loadFrozen(ctx.store, id).entry.render?.tree_sha256
+      if (rendered !== stack.systematicTree.sha256) usage(`fixture ${id} was ${rendered === undefined ? 'not rendered from any Systematic tree' : 'rendered from a different Systematic tree'} than the one --systematic-tree names; rebuild it with \`build --systematic-tree\` on that tree`)
+    }
+  }
   let gh: GhAuth | undefined
   if (world) {
     try {

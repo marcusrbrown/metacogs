@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path'
 
 import { CustodyError, sha256 } from '../../../runner/workspace'
 import { canonicalRepo, finalFiles, materializeRepo } from './repo'
+import { systematicTreeSha256 } from './stack'
 import { SYNTHETIC_REPO } from './test-support'
 import {
   approveFixture,
@@ -249,7 +250,8 @@ describe('skill-text placeholders', () => {
 
   test('the export a run imports carries the filled text, and the manifest records what each placeholder became', () => {
     const store = newStore()
-    const entry = frozen(store, withPlaceholders(), skillTree({ version: '3.33.2' })) as { render?: { template_sha256: string; systematic_version: string; skill_text: Record<string, string>; home_path_rewrites: number } }
+    const tree = skillTree({ version: '3.33.2' })
+    const entry = frozen(store, withPlaceholders(), tree) as { render?: { template_sha256: string; systematic_version: string; tree_sha256: string; skill_text: Record<string, string>; home_path_rewrites: number } }
     const loaded = loadFrozen(store, 'plan-claim')
     const [skill, file] = outputsOf(store)
     const exported = loaded.export.messages[1]!.parts.filter((p) => p.type === 'tool').map((p) => p.state!.output)
@@ -257,6 +259,7 @@ describe('skill-text placeholders', () => {
     expect(entry.render).toEqual({
       template_sha256: sha256(canonicalText(withPlaceholders())),
       systematic_version: '3.33.2',
+      tree_sha256: systematicTreeSha256(tree),
       skill_text: { 'systematic-skill:ce-plan': sha256(skill!), 'systematic-file:ce-plan/references/deepening-workflow.md': sha256(file!) },
       home_path_rewrites: 0,
     })
@@ -271,6 +274,54 @@ describe('skill-text placeholders', () => {
     expect(second.render.template_sha256).toBe(first.render.template_sha256)
     expect(second.render.skill_text['systematic-skill:ce-plan']).not.toBe(first.render.skill_text['systematic-skill:ce-plan'])
     expect(second.render.skill_text['systematic-file:ce-plan/references/deepening-workflow.md']).toBe(first.render.skill_text['systematic-file:ce-plan/references/deepening-workflow.md'])
+  })
+
+  describe('one template rendered for two arms', () => {
+    const SENTENCE = 'When a planning question rests on a claim nothing here checks, load the `counterfactual` skill first.'
+    const DEEPENING_SENTENCE = 'If the lanes disagree, name the disagreement before choosing.'
+    /** The arm's tree is the baseline tree plus the sentences, as a treatment patch would apply them. */
+    const treatmentTree = (): string => {
+      const tree = skillTree({ plan: PLAN_SKILL.replace('# Plan', `# Plan\n\n${SENTENCE}`) })
+      writeFileSync(join(tree, 'skills/ce-plan/references/deepening-workflow.md'), `# Deepening\n\n${DEEPENING_SENTENCE}\n`)
+      return tree
+    }
+    const seedText = (store: Store, id: string): string => JSON.stringify(loadFrozen(store, id).export)
+    const buildArm = (store: Store, tree: string, id?: string): void => {
+      buildFixture(store, withPlaceholders(), { systematicTree: tree, ...(id ? { id } : {}) })
+      freezeFixture(store, id ?? 'plan-claim')
+      approveFixture(store, id ?? 'plan-claim')
+    }
+
+    test('the model-visible seed of the arm carries the sentence its tree holds, in the skill text and in the deepening reference, and the other arm does not', () => {
+      const store = newStore()
+      buildArm(store, skillTree())
+      buildArm(store, treatmentTree(), 'plan-claim-treatment')
+      expect(seedText(store, 'plan-claim-treatment')).toContain(SENTENCE)
+      expect(seedText(store, 'plan-claim-treatment')).toContain(DEEPENING_SENTENCE)
+      expect(seedText(store, 'plan-claim')).not.toContain(SENTENCE)
+      expect(seedText(store, 'plan-claim')).not.toContain(DEEPENING_SENTENCE)
+    })
+
+    test('the arm\'s fixture keeps the unrendered template hash and changes only the skill text, its hash and its own id', () => {
+      const store = newStore()
+      buildArm(store, skillTree())
+      buildArm(store, treatmentTree(), 'plan-claim-treatment')
+      const base = loadFrozen(store, 'plan-claim')
+      const arm = loadFrozen(store, 'plan-claim-treatment')
+      expect(arm.spec.id).toBe('plan-claim-treatment')
+      expect(arm.entry.render!.template_sha256).toBe(base.entry.render!.template_sha256)
+      expect(arm.entry.render!.tree_sha256).not.toBe(base.entry.render!.tree_sha256)
+      expect(arm.entry.render!.skill_text['systematic-skill:ce-plan']).not.toBe(base.entry.render!.skill_text['systematic-skill:ce-plan'])
+      const outputs = (l: ReturnType<typeof loadFrozen>) => (l.spec.turns[1] as { tools: { output: string }[] }).tools.map((t) => t.output)
+      expect(outputs(arm)[0]!.replace(SENTENCE, '').replace(/\n\n\n+/g, '\n\n')).toBe(outputs(base)[0]!.replace(/\n\n\n+/g, '\n\n'))
+      expect(arm.spec.turns.map((t) => t.role)).toEqual(base.spec.turns.map((t) => t.role))
+    })
+
+    test('an id that is not a fixture id is refused, and nothing is written', () => {
+      const store = newStore()
+      expect(() => buildFixture(store, withPlaceholders(), { systematicTree: skillTree(), id: 'Not A Fixture Id' })).toThrow(SpecError)
+      expect(listFixtures(store)).toEqual([])
+    })
   })
 
   test('a home-path example in a skill text is rewritten so the fixture scan accepts it, and the rewrite is counted', () => {

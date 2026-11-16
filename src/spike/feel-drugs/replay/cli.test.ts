@@ -115,6 +115,17 @@ describe('replay cli', () => {
     expect(h.err.join('\n')).toContain('repo.commits')
   })
 
+  test('build --id stores the build under that id, prints it, and refuses an id that is not a fixture id', () => {
+    const h = harness()
+    const file = writeSpec(spec({ kind: 'workflow', expected: 'silence', somewhere: '' }))
+    expect(h.run('build', file, '--id', 'moment-a-arm')).toBe(0)
+    expect(h.out.at(-1)).toMatch(/^built moment-a-arm status=draft /)
+    expect(existsSync(join(h.store, 'fixtures', 'moment-a-arm', 'spec.json'))).toBe(true)
+    expect(existsSync(join(h.store, 'fixtures', 'moment-a'))).toBe(false)
+    expect(h.run('build', file, '--id', 'Not An Id')).toBe(1)
+    expect(h.err.join('\n')).toContain('options.id')
+  })
+
   test('freeze reports the rule for a dirty fixture, exits 1, and leaves it draft', () => {
     const h = harness()
     const token = `ghp_${'A1'.repeat(18)}`

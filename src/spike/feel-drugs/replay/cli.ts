@@ -23,11 +23,12 @@ export interface CliIo {
 
 const USAGE = [
   'usage: bun run replay extract --db <path> --session <id> --cutoff <msgid> [--window N] --out <raw-name>',
-  '       bun run replay build <spec.json> [--systematic-tree <dir>] [--repo <repo.json>] | freeze <id> | approve <id> | list',
+  '       bun run replay build <spec.json> [--systematic-tree <dir>] [--repo <repo.json>] [--id <fixture-id>] | freeze <id> | approve <id> | list',
   '       bun run replay campaign --name <n> --models <list> --arms <list|all> --fixtures <list|all> --cap <usd>',
   '                              [--provider scripted|cliproxy] [--auth-cliproxy <keyname>] [--attempt-estimate <usd>]',
   '                              [--timeout-ms N] [--again] [--expect-host-version <v>] [--world real]',
   '                              [--attempts-per-cell N [--replacements N]]   scored attempts per cell, for workflow fixtures',
+  '                              [--systematic-tree <dir>]   run workflow fixtures on a local Systematic tree; each fixture must be built from the same tree',
   '       bun run replay world specs | build | list [--db <path>] [--fixtures <list|all>] [--budget <tokens>] [--resolve] [--force]',
   '       bun run replay status <campaign>',
   '       bun run replay judge <campaign> [--models <list>] [--fixtures <list>] [--judge-model <id>] [--auth-cliproxy <keyname>]',
@@ -123,8 +124,8 @@ function run(argv: readonly string[], log: Pick<CliIo, 'out' | 'err'>, io: Parti
           throw new Error('the repo file is not readable JSON')
         }
       }
-      const entry = buildFixture(store, json, { ...(values['systematic-tree'] ? { systematicTree: resolve(values['systematic-tree']) } : {}), ...(repo !== undefined ? { repo } : {}) })
-      const id = (json as { id: string }).id
+      const entry = buildFixture(store, json, { ...(values['systematic-tree'] ? { systematicTree: resolve(values['systematic-tree']) } : {}), ...(repo !== undefined ? { repo } : {}), ...(values.id ? { id: values.id } : {}) })
+      const id = values.id ?? (json as { id: string }).id
       const rendered = entry.status !== 'excluded' && entry.render ? ` skill_texts=${Object.keys(entry.render.skill_text).length} template_sha256=${entry.render.template_sha256.slice(0, 12)}` : ''
       const seeded = entry.status !== 'excluded' && entry.repo_sha256 ? ` repo_sha256=${entry.repo_sha256.slice(0, 12)}` : ''
       log.out(entry.status === 'excluded' ? `built ${id} status=excluded reason=${entry.reason}` : `built ${id} status=${entry.status} export_sha256=${entry.export_sha256.slice(0, 12)}${rendered}${seeded}`)
@@ -193,6 +194,7 @@ function parse(argv: readonly string[]) {
       'attempts-per-cell': { type: 'string' },
       'systematic-tree': { type: 'string' },
       repo: { type: 'string' },
+      id: { type: 'string' },
       replacements: { type: 'string' },
       again: { type: 'boolean' },
       world: { type: 'string' },

@@ -79,8 +79,8 @@ export interface AttemptRecord {
   cost: { reported_usd: number; charged_usd: number; basis: 'scripted' | 'no_request' | 'reported_x_factor' | 'estimate' }
   timing: { started_at: string; ended_at: string; wall_ms: number }
   artifacts: Record<string, string>
-  /** Workflow fixtures: the Systematic release the stack ran and the hash of the Systematic config the fixture held, so every arm provably saw the same config. */
-  systematic?: { spec: string | null; config_sha256: string | null }
+  /** Workflow fixtures: the Systematic release the stack ran and the hash of the Systematic config the fixture held, so every arm provably saw the same config, and the hash of the local Systematic tree the stack loaded (`null` for a registry release). */
+  systematic?: { spec: string | null; config_sha256: string | null; tree_sha256: string | null }
   /** Workflow fixtures: what the workspace held before the model ran (the files, commits and skill directories the seed's reads rely on). */
   repo?: RepoReport
   /** Workflow fixtures: the score of a `completed` attempt. */
@@ -635,7 +635,7 @@ export async function runAttempt(ctx: AttemptContext): Promise<AttemptRecord> {
       cost,
       timing: { started_at: result.startedAt, ended_at: result.endedAt, wall_ms: result.wallMs },
       artifacts: Object.fromEntries(Object.entries(artifacts).map(([file, text]) => [file, sha256(text)])),
-      ...(result.systematic ? { systematic: { spec: result.systematic.spec, config_sha256: result.systematic.configSha256 } } : {}),
+      ...(result.systematic ? { systematic: { spec: result.systematic.spec, config_sha256: result.systematic.configSha256, tree_sha256: result.systematic.treeSha256 } } : {}),
       ...(result.repo ? { repo: result.repo } : {}),
       ...(scored ? { workflow: scored.result } : {}),
       ...(result.world ? { world: result.world, hindsight_note: HINDSIGHT_NOTE } : {}),

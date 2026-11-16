@@ -1,0 +1,1885 @@
+{
+  "schema_version": 1,
+  "spike": "systematic-reflection",
+  "stage": "tuning-2",
+  "arm": "baseline+treatment",
+  "replay_arm": "continue-a",
+  "campaign": "systematic-reflection-4",
+  "refs": {
+    "metacogs_head": "92c8e2dfbabafdb0b00f688239206f58c4fe869b",
+    "metacogs_tree": "the head above plus the uncommitted harness change of deviation 2 and the local-tree plumbing (the packed package files are the same as at the head)",
+    "prereg_commit": "d0d35fd",
+    "harness_commit": "a29c406d20b5833e1953f5de3c063b6d91972e79",
+    "systematic": "@fro.bot/systematic@3.33.2",
+    "systematic_tarball_sha256": "5da735ed727b9f303d5fb54d56faa37c2be536880d1cc0433ef1788742bfd31b",
+    "metacogs_packed_tarball_sha256": "d05a037dbe407b70cea5a50eb1facc5915f106d006499844a91cade6185c9b4d",
+    "metacogs_version": "0.4.1",
+    "treatment_text": "v2",
+    "treatment_patch_sha256": "4a2c6b9439ccd37f609a2e1126556ccc26d246e065323fcd3cf18d6285fc941b",
+    "treatment_tree_sha256": "3acf81de879d5f76804fd71d7b1b072f64d6fce4b4046d642eec8d6527267cb9"
+  },
+  "prereg_sha256": "1283325ce0ee73fdd14023db957d48d17f4f4c46d83320d0ed2275318fb0b380",
+  "prereg_amendment": 2,
+  "model": "openai/gpt-6-luna",
+  "host_version": "1.19.5+harness.bf7f7dfe",
+  "systematic_config_sha256": "f2521b1e0fb88becbcb8f4223f733ecc6d293ede9b44f03519ea4726cf21cf2c",
+  "attempts_per_cell": 3,
+  "replacements_allowed": 4,
+  "workspace": {
+    "seeded_repository": true,
+    "shell": "confined (write sandbox, no pushes or gh writes), question and task denied; heredoc temp files and the installed skills directory allowed (deviation 2)",
+    "seed_paths_pointed_at_workspace": true
+  },
+  "totals": {
+    "cells": 12,
+    "scheduled_attempts": 45,
+    "counted_attempts": 36,
+    "excluded_attempts": 9,
+    "fire_cells_hit": 1,
+    "false_fires": 0,
+    "wrong_method_loads": 1
+  },
+  "spend": {
+    "campaign": "systematic-reflection-4",
+    "ledger_cap_usd": 10,
+    "ledger_spent_before_usd": 2.266626,
+    "cap_usd": 7.733,
+    "spent_usd": 1.692098,
+    "attempt_sum_charged_usd": 1.692098,
+    "attempt_sum_reported_usd": 0.966913,
+    "ledger_spent_usd": 3.958724,
+    "ledger_remaining_usd": 6.041276,
+    "stopped_by": null
+  },
+  "completion": {
+    "stopped_by_hand": false,
+    "note": "Every scored cell has 3 counted attempts. The treatment arm ran on all seven fixtures. The baseline arm was re-run on five; the tune-plan-scoping and tune-review-dedup baselines are the 3/3 silent cells of systematic-reflection-3. The first pass left three cells unscored (two cliproxy key lookups timed out with no attempt run, and review attempts hit the 300 second limit more often than one replacement covers); a follow-up pass in the same campaign re-ran only those cells with 4 replacements allowed, where the pre-registration says 1. Replacements are timeouts, which never count.",
+    "unscored_cells": [],
+    "baseline_cells_not_rerun": [
+      "tune-plan-scoping",
+      "tune-review-dedup"
+    ]
+  },
+  "fixtures": {
+    "tune-plan-claim": {
+      "arm": "baseline",
+      "template": "tune-plan-claim",
+      "expected": "fire",
+      "methods": [
+        "counterfactual"
+      ],
+      "skill": "ce:plan",
+      "mode": "interactive",
+      "prereg_fixture_sha256": "b838bbe561fbb64da9b97326d682f62337f59afa755a83511ce4ba6e3a41a1ed",
+      "repo_payload_sha256": "5fc17b142f039ab90bcf3551596fd1cba7b3fd4cc88289b8182a0d466a80b195",
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-plan": "387e0c0d3a8a16db4b78ca49089e1fe4a8a261730a2cc22d74847fec507327e3"
+      },
+      "counted_attempts": 3,
+      "excluded_attempts": 0,
+      "hits": 0,
+      "false_fires": 0,
+      "wrong_method_loads": 0,
+      "silent": null,
+      "verdict": "miss",
+      "attempts": [
+        {
+          "attempt": "a001",
+          "status": "completed",
+          "counted": true,
+          "outcome": "miss",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "document-review",
+            "document-review"
+          ],
+          "tool_calls": 56,
+          "failed_tool_calls": 3,
+          "charged_usd": 0.052639,
+          "repo": {
+            "files": 24,
+            "commits": 1,
+            "head": "0fe183be83cd",
+            "branch": "main",
+            "clean": true,
+            "skill_files": 9,
+            "seed_path_rewrites": 18
+          },
+          "spec_sha256": "fb68a0def92cfead99733429d0d176aba4c5b1c29d43af1693068ddf63d3eb3c",
+          "export_sha256": "ea178412cd8f64ee9050c001f40357d1b1898d3907d367dbcb1b711ad802123a"
+        },
+        {
+          "attempt": "a002",
+          "status": "completed",
+          "counted": true,
+          "outcome": "miss",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "orchestrating-subagents"
+          ],
+          "tool_calls": 21,
+          "failed_tool_calls": 3,
+          "charged_usd": 0.022442,
+          "repo": {
+            "files": 24,
+            "commits": 1,
+            "head": "0fe183be83cd",
+            "branch": "main",
+            "clean": true,
+            "skill_files": 9,
+            "seed_path_rewrites": 18
+          },
+          "spec_sha256": "fb68a0def92cfead99733429d0d176aba4c5b1c29d43af1693068ddf63d3eb3c",
+          "export_sha256": "ea178412cd8f64ee9050c001f40357d1b1898d3907d367dbcb1b711ad802123a"
+        },
+        {
+          "attempt": "a003",
+          "status": "completed",
+          "counted": true,
+          "outcome": "miss",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [
+            "counterfactual"
+          ],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "document-review"
+          ],
+          "tool_calls": 38,
+          "failed_tool_calls": 3,
+          "charged_usd": 0.034316,
+          "repo": {
+            "files": 24,
+            "commits": 1,
+            "head": "0fe183be83cd",
+            "branch": "main",
+            "clean": true,
+            "skill_files": 9,
+            "seed_path_rewrites": 18
+          },
+          "spec_sha256": "fb68a0def92cfead99733429d0d176aba4c5b1c29d43af1693068ddf63d3eb3c",
+          "export_sha256": "ea178412cd8f64ee9050c001f40357d1b1898d3907d367dbcb1b711ad802123a"
+        }
+      ]
+    },
+    "tune-plan-claim-treatment-2": {
+      "arm": "treatment",
+      "template": "tune-plan-claim",
+      "expected": "fire",
+      "methods": [
+        "counterfactual"
+      ],
+      "skill": "ce:plan",
+      "mode": "interactive",
+      "prereg_fixture_sha256": "b838bbe561fbb64da9b97326d682f62337f59afa755a83511ce4ba6e3a41a1ed",
+      "repo_payload_sha256": "5fc17b142f039ab90bcf3551596fd1cba7b3fd4cc88289b8182a0d466a80b195",
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-plan": "8959ba1beb41a9e02d4bfcde7bf677630e182c48e3023f482907b5b762232cf9"
+      },
+      "counted_attempts": 3,
+      "excluded_attempts": 0,
+      "hits": 0,
+      "false_fires": 0,
+      "wrong_method_loads": 0,
+      "silent": null,
+      "verdict": "miss",
+      "attempts": [
+        {
+          "attempt": "a001",
+          "status": "completed",
+          "counted": true,
+          "outcome": "miss",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "document-review"
+          ],
+          "tool_calls": 23,
+          "failed_tool_calls": 4,
+          "charged_usd": 0.025935,
+          "repo": {
+            "files": 24,
+            "commits": 1,
+            "head": "0fe183be83cd",
+            "branch": "main",
+            "clean": true,
+            "skill_files": 9,
+            "seed_path_rewrites": 18
+          },
+          "spec_sha256": "69054d33d0f4f6f010e6ba407bf8b9e27f6dc66c7c13f5d91a3de23ed23c641c",
+          "export_sha256": "a2d2f8f128bfd049e69899932542c10e367499f7dced542d3be958feeae22720"
+        },
+        {
+          "attempt": "a002",
+          "status": "completed",
+          "counted": true,
+          "outcome": "miss",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [
+            "counterfactual"
+          ],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [],
+          "tool_calls": 8,
+          "failed_tool_calls": 3,
+          "charged_usd": 0.009065,
+          "repo": {
+            "files": 24,
+            "commits": 1,
+            "head": "0fe183be83cd",
+            "branch": "main",
+            "clean": true,
+            "skill_files": 9,
+            "seed_path_rewrites": 18
+          },
+          "spec_sha256": "69054d33d0f4f6f010e6ba407bf8b9e27f6dc66c7c13f5d91a3de23ed23c641c",
+          "export_sha256": "a2d2f8f128bfd049e69899932542c10e367499f7dced542d3be958feeae22720"
+        },
+        {
+          "attempt": "a003",
+          "status": "completed",
+          "counted": true,
+          "outcome": "miss",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "document-review",
+            "orchestrating-subagents"
+          ],
+          "tool_calls": 21,
+          "failed_tool_calls": 3,
+          "charged_usd": 0.033619,
+          "repo": {
+            "files": 24,
+            "commits": 1,
+            "head": "0fe183be83cd",
+            "branch": "main",
+            "clean": true,
+            "skill_files": 9,
+            "seed_path_rewrites": 18
+          },
+          "spec_sha256": "69054d33d0f4f6f010e6ba407bf8b9e27f6dc66c7c13f5d91a3de23ed23c641c",
+          "export_sha256": "a2d2f8f128bfd049e69899932542c10e367499f7dced542d3be958feeae22720"
+        }
+      ]
+    },
+    "tune-review-disagree": {
+      "arm": "baseline",
+      "template": "tune-review-disagree",
+      "expected": "fire",
+      "methods": [
+        "synthesis"
+      ],
+      "skill": "ce:review",
+      "mode": "autofix",
+      "prereg_fixture_sha256": "a1af783160f90a4b8fa39b0d27db1b709725c6687bbc701d4fd942e3c5592ab1",
+      "repo_payload_sha256": "139266c9f82d7639c707ffd445948c1f499657b45938af4a15eeb95059afe186",
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-review": "a1e4d4df57bca15a44c2e363516454d5251dc80444f5dea9cb22d955098af330"
+      },
+      "counted_attempts": 3,
+      "excluded_attempts": 2,
+      "hits": 0,
+      "false_fires": 0,
+      "wrong_method_loads": 0,
+      "silent": null,
+      "verdict": "miss",
+      "attempts": [
+        {
+          "attempt": "a001",
+          "status": "timeout",
+          "counted": false,
+          "outcome": null,
+          "gates_passed": null,
+          "exclusion_reasons": [
+            "timeout"
+          ],
+          "hit": null,
+          "false_fire": null,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "test-driven-development",
+            "todos"
+          ],
+          "tool_calls": 33,
+          "failed_tool_calls": 3,
+          "charged_usd": 0.043832,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "14d8c1af92de",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 21
+          },
+          "spec_sha256": "2d1519c6942967f7d01a43eee8625dcb5a60445d03410ca7a30260e6556301f1",
+          "export_sha256": "f4d7ec5a5053228b3f9c39751a430567b1128afa498eb610a7093b44a330cc5d"
+        },
+        {
+          "attempt": "a002",
+          "status": "timeout",
+          "counted": false,
+          "outcome": null,
+          "gates_passed": null,
+          "exclusion_reasons": [
+            "timeout"
+          ],
+          "hit": null,
+          "false_fire": null,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "test-driven-development",
+            "todos"
+          ],
+          "tool_calls": 31,
+          "failed_tool_calls": 2,
+          "charged_usd": 0.047939,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "14d8c1af92de",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 21
+          },
+          "spec_sha256": "2d1519c6942967f7d01a43eee8625dcb5a60445d03410ca7a30260e6556301f1",
+          "export_sha256": "f4d7ec5a5053228b3f9c39751a430567b1128afa498eb610a7093b44a330cc5d"
+        },
+        {
+          "attempt": "a003",
+          "status": "completed",
+          "counted": true,
+          "outcome": "miss",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "todos",
+            "test-driven-development"
+          ],
+          "tool_calls": 13,
+          "failed_tool_calls": 2,
+          "charged_usd": 0.022033,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "14d8c1af92de",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 21
+          },
+          "spec_sha256": "2d1519c6942967f7d01a43eee8625dcb5a60445d03410ca7a30260e6556301f1",
+          "export_sha256": "f4d7ec5a5053228b3f9c39751a430567b1128afa498eb610a7093b44a330cc5d"
+        },
+        {
+          "attempt": "a004",
+          "status": "completed",
+          "counted": true,
+          "outcome": "miss",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "test-driven-development",
+            "todos"
+          ],
+          "tool_calls": 29,
+          "failed_tool_calls": 3,
+          "charged_usd": 0.036553,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "14d8c1af92de",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 21
+          },
+          "spec_sha256": "2d1519c6942967f7d01a43eee8625dcb5a60445d03410ca7a30260e6556301f1",
+          "export_sha256": "f4d7ec5a5053228b3f9c39751a430567b1128afa498eb610a7093b44a330cc5d"
+        },
+        {
+          "attempt": "a005",
+          "status": "completed",
+          "counted": true,
+          "outcome": "miss",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "test-driven-development",
+            "todos"
+          ],
+          "tool_calls": 31,
+          "failed_tool_calls": 2,
+          "charged_usd": 0.045047,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "14d8c1af92de",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 21
+          },
+          "spec_sha256": "2d1519c6942967f7d01a43eee8625dcb5a60445d03410ca7a30260e6556301f1",
+          "export_sha256": "f4d7ec5a5053228b3f9c39751a430567b1128afa498eb610a7093b44a330cc5d"
+        }
+      ]
+    },
+    "tune-review-disagree-treatment-2": {
+      "arm": "treatment",
+      "template": "tune-review-disagree",
+      "expected": "fire",
+      "methods": [
+        "synthesis"
+      ],
+      "skill": "ce:review",
+      "mode": "autofix",
+      "prereg_fixture_sha256": "a1af783160f90a4b8fa39b0d27db1b709725c6687bbc701d4fd942e3c5592ab1",
+      "repo_payload_sha256": "139266c9f82d7639c707ffd445948c1f499657b45938af4a15eeb95059afe186",
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-review": "0cc9da47d7f7b7dc38343e4624e5589bf1a52efdd668f9876fa65bf6ea0b2b56"
+      },
+      "counted_attempts": 3,
+      "excluded_attempts": 1,
+      "hits": 3,
+      "false_fires": 0,
+      "wrong_method_loads": 0,
+      "silent": null,
+      "verdict": "hit",
+      "attempts": [
+        {
+          "attempt": "a001",
+          "status": "completed",
+          "counted": true,
+          "outcome": "hit",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": true,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [
+            "synthesis"
+          ],
+          "method_attempts": [
+            "synthesis"
+          ],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "test-driven-development",
+            "todos",
+            "ce:compound"
+          ],
+          "tool_calls": 20,
+          "failed_tool_calls": 2,
+          "charged_usd": 0.030563,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "14d8c1af92de",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 21
+          },
+          "spec_sha256": "93ef66b99620092ec2bc25fdbd6ba6c8bae538129df4ae9c5735c051f401706f",
+          "export_sha256": "3b968993f7d9b8bd811882ce810b429195cdeb7f1b6f158edf8181695c4b883a"
+        },
+        {
+          "attempt": "a002",
+          "status": "completed",
+          "counted": true,
+          "outcome": "hit",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": true,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [
+            "synthesis"
+          ],
+          "method_attempts": [
+            "synthesis"
+          ],
+          "method_file_opens": [],
+          "workflow_loads": [
+            "ce:review"
+          ],
+          "other_skill_loads": [
+            "test-driven-development"
+          ],
+          "tool_calls": 27,
+          "failed_tool_calls": 4,
+          "charged_usd": 0.046219,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "14d8c1af92de",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 21
+          },
+          "spec_sha256": "93ef66b99620092ec2bc25fdbd6ba6c8bae538129df4ae9c5735c051f401706f",
+          "export_sha256": "3b968993f7d9b8bd811882ce810b429195cdeb7f1b6f158edf8181695c4b883a"
+        },
+        {
+          "attempt": "a003",
+          "status": "timeout",
+          "counted": false,
+          "outcome": null,
+          "gates_passed": null,
+          "exclusion_reasons": [
+            "timeout"
+          ],
+          "hit": null,
+          "false_fire": null,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "todos",
+            "test-driven-development"
+          ],
+          "tool_calls": 37,
+          "failed_tool_calls": 1,
+          "charged_usd": 0.063156,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "14d8c1af92de",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 21
+          },
+          "spec_sha256": "93ef66b99620092ec2bc25fdbd6ba6c8bae538129df4ae9c5735c051f401706f",
+          "export_sha256": "3b968993f7d9b8bd811882ce810b429195cdeb7f1b6f158edf8181695c4b883a"
+        },
+        {
+          "attempt": "a004",
+          "status": "completed",
+          "counted": true,
+          "outcome": "hit",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": true,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [
+            "synthesis"
+          ],
+          "method_attempts": [
+            "synthesis"
+          ],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "test-driven-development",
+            "ce:work",
+            "todos"
+          ],
+          "tool_calls": 18,
+          "failed_tool_calls": 2,
+          "charged_usd": 0.030665,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "14d8c1af92de",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 21
+          },
+          "spec_sha256": "93ef66b99620092ec2bc25fdbd6ba6c8bae538129df4ae9c5735c051f401706f",
+          "export_sha256": "3b968993f7d9b8bd811882ce810b429195cdeb7f1b6f158edf8181695c4b883a"
+        }
+      ]
+    },
+    "tune-plan-lanes": {
+      "arm": "baseline",
+      "template": "tune-plan-lanes",
+      "expected": "fire",
+      "methods": [
+        "synthesis"
+      ],
+      "skill": "ce:plan",
+      "mode": "interactive",
+      "prereg_fixture_sha256": "930f71c15306dd27de69ae39a1fdb28f05b62daf3efe292cf27761da4bcd47e8",
+      "repo_payload_sha256": "bde2ef4d55aa0fb6860991ae2b6296727d8c19e864cefe466ee1d848c7e34772",
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-plan": "fbe58b67221aa567e1d16827ba9151ae3c913c2461dab805d06d9319f478d24a",
+        "systematic-file:ce-plan/references/deepening-workflow.md": "2d169cc408f11798a837f166b245f4057bf322cf58b4c3e7d933a31e01e6fc24"
+      },
+      "counted_attempts": 3,
+      "excluded_attempts": 0,
+      "hits": 0,
+      "false_fires": 0,
+      "wrong_method_loads": 0,
+      "silent": null,
+      "verdict": "miss",
+      "attempts": [
+        {
+          "attempt": "a001",
+          "status": "completed",
+          "counted": true,
+          "outcome": "miss",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [
+            "synthesis"
+          ],
+          "method_file_opens": [],
+          "workflow_loads": [
+            "ce:plan"
+          ],
+          "other_skill_loads": [
+            "deepen-plan"
+          ],
+          "tool_calls": 3,
+          "failed_tool_calls": 1,
+          "charged_usd": 0.011373,
+          "repo": {
+            "files": 4,
+            "commits": 1,
+            "head": "3cc99bcc20a3",
+            "branch": "main",
+            "clean": true,
+            "skill_files": 9,
+            "seed_path_rewrites": 18
+          },
+          "spec_sha256": "9a2d7cecea2c4a44eca6c99aa5411f22d8749698f941ebe59ef0b7a561c36e24",
+          "export_sha256": "a790d7e7c3866856b4e2e1eeba8fe3af2c69c3709114ab3ba6778fc2cfcfeeac"
+        },
+        {
+          "attempt": "a002",
+          "status": "completed",
+          "counted": true,
+          "outcome": "miss",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [
+            "ce:plan"
+          ],
+          "other_skill_loads": [],
+          "tool_calls": 1,
+          "failed_tool_calls": 0,
+          "charged_usd": 0.00974,
+          "repo": {
+            "files": 4,
+            "commits": 1,
+            "head": "3cc99bcc20a3",
+            "branch": "main",
+            "clean": true,
+            "skill_files": 9,
+            "seed_path_rewrites": 18
+          },
+          "spec_sha256": "9a2d7cecea2c4a44eca6c99aa5411f22d8749698f941ebe59ef0b7a561c36e24",
+          "export_sha256": "a790d7e7c3866856b4e2e1eeba8fe3af2c69c3709114ab3ba6778fc2cfcfeeac"
+        },
+        {
+          "attempt": "a003",
+          "status": "completed",
+          "counted": true,
+          "outcome": "miss",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [
+            "ce:plan"
+          ],
+          "other_skill_loads": [
+            "using-systematic"
+          ],
+          "tool_calls": 2,
+          "failed_tool_calls": 0,
+          "charged_usd": 0.01075,
+          "repo": {
+            "files": 4,
+            "commits": 1,
+            "head": "3cc99bcc20a3",
+            "branch": "main",
+            "clean": true,
+            "skill_files": 9,
+            "seed_path_rewrites": 18
+          },
+          "spec_sha256": "9a2d7cecea2c4a44eca6c99aa5411f22d8749698f941ebe59ef0b7a561c36e24",
+          "export_sha256": "a790d7e7c3866856b4e2e1eeba8fe3af2c69c3709114ab3ba6778fc2cfcfeeac"
+        }
+      ]
+    },
+    "tune-plan-lanes-treatment-2": {
+      "arm": "treatment",
+      "template": "tune-plan-lanes",
+      "expected": "fire",
+      "methods": [
+        "synthesis"
+      ],
+      "skill": "ce:plan",
+      "mode": "interactive",
+      "prereg_fixture_sha256": "930f71c15306dd27de69ae39a1fdb28f05b62daf3efe292cf27761da4bcd47e8",
+      "repo_payload_sha256": "bde2ef4d55aa0fb6860991ae2b6296727d8c19e864cefe466ee1d848c7e34772",
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-plan": "74cd012f90a81f0d4c0440c214e99a381c4d3dfbd564ff27b4c710270a3f1695",
+        "systematic-file:ce-plan/references/deepening-workflow.md": "2d169cc408f11798a837f166b245f4057bf322cf58b4c3e7d933a31e01e6fc24"
+      },
+      "counted_attempts": 3,
+      "excluded_attempts": 0,
+      "hits": 0,
+      "false_fires": 0,
+      "wrong_method_loads": 1,
+      "silent": null,
+      "verdict": "miss",
+      "attempts": [
+        {
+          "attempt": "a001",
+          "status": "completed",
+          "counted": true,
+          "outcome": "miss",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [
+            "counterfactual"
+          ],
+          "method_loads": [
+            "counterfactual"
+          ],
+          "method_attempts": [
+            "counterfactual",
+            "synthesis"
+          ],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "document-review"
+          ],
+          "tool_calls": 5,
+          "failed_tool_calls": 3,
+          "charged_usd": 0.008698,
+          "repo": {
+            "files": 4,
+            "commits": 1,
+            "head": "3cc99bcc20a3",
+            "branch": "main",
+            "clean": true,
+            "skill_files": 9,
+            "seed_path_rewrites": 18
+          },
+          "spec_sha256": "378212b7a4921e8f73e4c93e13a1c8ade75382b3901e83735c09414359691477",
+          "export_sha256": "1f4c1a4dcb29ccc2138090ab901db0956d720a1ff0ed537c491426a1539fc8bd"
+        },
+        {
+          "attempt": "a002",
+          "status": "completed",
+          "counted": true,
+          "outcome": "miss",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [],
+          "tool_calls": 0,
+          "failed_tool_calls": 0,
+          "charged_usd": 0.006428,
+          "repo": {
+            "files": 4,
+            "commits": 1,
+            "head": "3cc99bcc20a3",
+            "branch": "main",
+            "clean": true,
+            "skill_files": 9,
+            "seed_path_rewrites": 18
+          },
+          "spec_sha256": "378212b7a4921e8f73e4c93e13a1c8ade75382b3901e83735c09414359691477",
+          "export_sha256": "1f4c1a4dcb29ccc2138090ab901db0956d720a1ff0ed537c491426a1539fc8bd"
+        },
+        {
+          "attempt": "a003",
+          "status": "completed",
+          "counted": true,
+          "outcome": "miss",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [
+            "counterfactual"
+          ],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [],
+          "tool_calls": 8,
+          "failed_tool_calls": 4,
+          "charged_usd": 0.007615,
+          "repo": {
+            "files": 4,
+            "commits": 1,
+            "head": "3cc99bcc20a3",
+            "branch": "main",
+            "clean": true,
+            "skill_files": 9,
+            "seed_path_rewrites": 18
+          },
+          "spec_sha256": "378212b7a4921e8f73e4c93e13a1c8ade75382b3901e83735c09414359691477",
+          "export_sha256": "1f4c1a4dcb29ccc2138090ab901db0956d720a1ff0ed537c491426a1539fc8bd"
+        }
+      ]
+    },
+    "tune-plan-scoping-treatment-2": {
+      "arm": "treatment",
+      "template": "tune-plan-scoping",
+      "expected": "silence",
+      "methods": [],
+      "skill": "ce:plan",
+      "mode": "interactive",
+      "prereg_fixture_sha256": "4aafc54832a654c440b706c41ec9b0eeb292154db0a76203cf53c2c21b4eafb8",
+      "repo_payload_sha256": "c6983e328a39d7c79666295f3da4d9b461a8bc15eb7b6c2a1f72a78fe8865787",
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-plan": "d76195d18035776d4eee3e03153883f9bd25848b460f19ace3f7243af6e93085"
+      },
+      "counted_attempts": 3,
+      "excluded_attempts": 0,
+      "hits": 0,
+      "false_fires": 0,
+      "wrong_method_loads": 0,
+      "silent": 3,
+      "verdict": "silent",
+      "attempts": [
+        {
+          "attempt": "a001",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "document-review"
+          ],
+          "tool_calls": 21,
+          "failed_tool_calls": 2,
+          "charged_usd": 0.018776,
+          "repo": {
+            "files": 7,
+            "commits": 1,
+            "head": "79fd66aa77fa",
+            "branch": "main",
+            "clean": true,
+            "skill_files": 9,
+            "seed_path_rewrites": 20
+          },
+          "spec_sha256": "62cc002efafe83a74660c65b2602c4eb6c2258efefef6d631403fe16c41b06cf",
+          "export_sha256": "f47d98fbe6a4d85bc4c21c33d7dd946ca03d09a78a3d28c6a82b6ab57ca3ddcd"
+        },
+        {
+          "attempt": "a002",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [],
+          "tool_calls": 19,
+          "failed_tool_calls": 1,
+          "charged_usd": 0.020676,
+          "repo": {
+            "files": 7,
+            "commits": 1,
+            "head": "79fd66aa77fa",
+            "branch": "main",
+            "clean": true,
+            "skill_files": 9,
+            "seed_path_rewrites": 20
+          },
+          "spec_sha256": "62cc002efafe83a74660c65b2602c4eb6c2258efefef6d631403fe16c41b06cf",
+          "export_sha256": "f47d98fbe6a4d85bc4c21c33d7dd946ca03d09a78a3d28c6a82b6ab57ca3ddcd"
+        },
+        {
+          "attempt": "a003",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "document-review"
+          ],
+          "tool_calls": 21,
+          "failed_tool_calls": 2,
+          "charged_usd": 0.021124,
+          "repo": {
+            "files": 7,
+            "commits": 1,
+            "head": "79fd66aa77fa",
+            "branch": "main",
+            "clean": true,
+            "skill_files": 9,
+            "seed_path_rewrites": 20
+          },
+          "spec_sha256": "62cc002efafe83a74660c65b2602c4eb6c2258efefef6d631403fe16c41b06cf",
+          "export_sha256": "f47d98fbe6a4d85bc4c21c33d7dd946ca03d09a78a3d28c6a82b6ab57ca3ddcd"
+        }
+      ]
+    },
+    "tune-review-dedup-treatment-2": {
+      "arm": "treatment",
+      "template": "tune-review-dedup",
+      "expected": "silence",
+      "methods": [],
+      "skill": "ce:review",
+      "mode": "autofix",
+      "prereg_fixture_sha256": "b144e20eea3e7152f6e58eda48260e7e3e3cbea55b2c83d668a0956ddea1eed4",
+      "repo_payload_sha256": "383cf15015eca2c5d1418b88927ea21339889de7735d0b3963012aa6f24093ea",
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-review": "0cc9da47d7f7b7dc38343e4624e5589bf1a52efdd668f9876fa65bf6ea0b2b56"
+      },
+      "counted_attempts": 3,
+      "excluded_attempts": 4,
+      "hits": 0,
+      "false_fires": 0,
+      "wrong_method_loads": 0,
+      "silent": 3,
+      "verdict": "silent",
+      "attempts": [
+        {
+          "attempt": "a001",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "test-driven-development",
+            "todos"
+          ],
+          "tool_calls": 30,
+          "failed_tool_calls": 1,
+          "charged_usd": 0.053231,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ae51b7d8c5a",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 21
+          },
+          "spec_sha256": "9d4e90c6647921ef62d8a72b43bbd526c8e8bb7c0967deb49ea58fc6045a5737",
+          "export_sha256": "d2df59d047398fbe6106ecdfc548c342c12b19a87d63eff1f890161cf3d9b190"
+        },
+        {
+          "attempt": "a002",
+          "status": "timeout",
+          "counted": false,
+          "outcome": null,
+          "gates_passed": null,
+          "exclusion_reasons": [
+            "timeout"
+          ],
+          "hit": null,
+          "false_fire": null,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "todos",
+            "test-driven-development",
+            "ce:work"
+          ],
+          "tool_calls": 40,
+          "failed_tool_calls": 2,
+          "charged_usd": 0.054505,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ae51b7d8c5a",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 21
+          },
+          "spec_sha256": "9d4e90c6647921ef62d8a72b43bbd526c8e8bb7c0967deb49ea58fc6045a5737",
+          "export_sha256": "d2df59d047398fbe6106ecdfc548c342c12b19a87d63eff1f890161cf3d9b190"
+        },
+        {
+          "attempt": "a003",
+          "status": "timeout",
+          "counted": false,
+          "outcome": null,
+          "gates_passed": null,
+          "exclusion_reasons": [
+            "timeout"
+          ],
+          "hit": null,
+          "false_fire": null,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "test-driven-development",
+            "todos"
+          ],
+          "tool_calls": 29,
+          "failed_tool_calls": 2,
+          "charged_usd": 0.049033,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ae51b7d8c5a",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 21
+          },
+          "spec_sha256": "9d4e90c6647921ef62d8a72b43bbd526c8e8bb7c0967deb49ea58fc6045a5737",
+          "export_sha256": "d2df59d047398fbe6106ecdfc548c342c12b19a87d63eff1f890161cf3d9b190"
+        },
+        {
+          "attempt": "a004",
+          "status": "timeout",
+          "counted": false,
+          "outcome": null,
+          "gates_passed": null,
+          "exclusion_reasons": [
+            "timeout"
+          ],
+          "hit": null,
+          "false_fire": null,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "test-driven-development",
+            "ce:work",
+            "todos"
+          ],
+          "tool_calls": 32,
+          "failed_tool_calls": 3,
+          "charged_usd": 0.04792,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ae51b7d8c5a",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 21
+          },
+          "spec_sha256": "9d4e90c6647921ef62d8a72b43bbd526c8e8bb7c0967deb49ea58fc6045a5737",
+          "export_sha256": "d2df59d047398fbe6106ecdfc548c342c12b19a87d63eff1f890161cf3d9b190"
+        },
+        {
+          "attempt": "a005",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "test-driven-development",
+            "ce:work",
+            "todos"
+          ],
+          "tool_calls": 20,
+          "failed_tool_calls": 2,
+          "charged_usd": 0.036851,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ae51b7d8c5a",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 21
+          },
+          "spec_sha256": "9d4e90c6647921ef62d8a72b43bbd526c8e8bb7c0967deb49ea58fc6045a5737",
+          "export_sha256": "d2df59d047398fbe6106ecdfc548c342c12b19a87d63eff1f890161cf3d9b190"
+        },
+        {
+          "attempt": "a006",
+          "status": "timeout",
+          "counted": false,
+          "outcome": null,
+          "gates_passed": null,
+          "exclusion_reasons": [
+            "timeout"
+          ],
+          "hit": null,
+          "false_fire": null,
+          "wrong_method": [],
+          "method_loads": [
+            "synthesis"
+          ],
+          "method_attempts": [
+            "synthesis"
+          ],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "test-driven-development",
+            "ce:work",
+            "todos"
+          ],
+          "tool_calls": 31,
+          "failed_tool_calls": 1,
+          "charged_usd": 0.049427,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ae51b7d8c5a",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 21
+          },
+          "spec_sha256": "9d4e90c6647921ef62d8a72b43bbd526c8e8bb7c0967deb49ea58fc6045a5737",
+          "export_sha256": "d2df59d047398fbe6106ecdfc548c342c12b19a87d63eff1f890161cf3d9b190"
+        },
+        {
+          "attempt": "a007",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "test-driven-development",
+            "todos"
+          ],
+          "tool_calls": 17,
+          "failed_tool_calls": 0,
+          "charged_usd": 0.028302,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ae51b7d8c5a",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 21
+          },
+          "spec_sha256": "9d4e90c6647921ef62d8a72b43bbd526c8e8bb7c0967deb49ea58fc6045a5737",
+          "export_sha256": "d2df59d047398fbe6106ecdfc548c342c12b19a87d63eff1f890161cf3d9b190"
+        }
+      ]
+    },
+    "tune-review-validator": {
+      "arm": "baseline",
+      "template": "tune-review-validator",
+      "expected": "silence",
+      "methods": [],
+      "skill": "ce:review",
+      "mode": "autofix",
+      "prereg_fixture_sha256": "d5cdd05bad52d5b27ce4511dc48a52be387bc3a53ca009ce600619ef03a71217",
+      "repo_payload_sha256": "383cf15015eca2c5d1418b88927ea21339889de7735d0b3963012aa6f24093ea",
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-review": "a1e4d4df57bca15a44c2e363516454d5251dc80444f5dea9cb22d955098af330"
+      },
+      "counted_attempts": 3,
+      "excluded_attempts": 1,
+      "hits": 0,
+      "false_fires": 0,
+      "wrong_method_loads": 0,
+      "silent": 3,
+      "verdict": "silent",
+      "attempts": [
+        {
+          "attempt": "a001",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [
+            "ce:review"
+          ],
+          "other_skill_loads": [
+            "test-driven-development",
+            "todos"
+          ],
+          "tool_calls": 20,
+          "failed_tool_calls": 2,
+          "charged_usd": 0.042057,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ae51b7d8c5a",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 22
+          },
+          "spec_sha256": "49860aacf31dbb251e5c8d3c0881b3aa52a1d87ce0b619695f19a0b074b6fc1f",
+          "export_sha256": "db6f995ec167b1b3930fb91cc016533e7c86f29bed3d8309c21588b0d2b87a32"
+        },
+        {
+          "attempt": "a002",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "todos"
+          ],
+          "tool_calls": 9,
+          "failed_tool_calls": 0,
+          "charged_usd": 0.028559,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ae51b7d8c5a",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 22
+          },
+          "spec_sha256": "49860aacf31dbb251e5c8d3c0881b3aa52a1d87ce0b619695f19a0b074b6fc1f",
+          "export_sha256": "db6f995ec167b1b3930fb91cc016533e7c86f29bed3d8309c21588b0d2b87a32"
+        },
+        {
+          "attempt": "a003",
+          "status": "timeout",
+          "counted": false,
+          "outcome": null,
+          "gates_passed": null,
+          "exclusion_reasons": [
+            "timeout"
+          ],
+          "hit": null,
+          "false_fire": null,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "test-driven-development",
+            "todos"
+          ],
+          "tool_calls": 25,
+          "failed_tool_calls": 3,
+          "charged_usd": 0.040976,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ae51b7d8c5a",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 22
+          },
+          "spec_sha256": "49860aacf31dbb251e5c8d3c0881b3aa52a1d87ce0b619695f19a0b074b6fc1f",
+          "export_sha256": "db6f995ec167b1b3930fb91cc016533e7c86f29bed3d8309c21588b0d2b87a32"
+        },
+        {
+          "attempt": "a004",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [
+            "ce:review"
+          ],
+          "other_skill_loads": [
+            "todos"
+          ],
+          "tool_calls": 30,
+          "failed_tool_calls": 2,
+          "charged_usd": 0.068812,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ae51b7d8c5a",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 22
+          },
+          "spec_sha256": "49860aacf31dbb251e5c8d3c0881b3aa52a1d87ce0b619695f19a0b074b6fc1f",
+          "export_sha256": "db6f995ec167b1b3930fb91cc016533e7c86f29bed3d8309c21588b0d2b87a32"
+        }
+      ]
+    },
+    "tune-review-validator-treatment-2": {
+      "arm": "treatment",
+      "template": "tune-review-validator",
+      "expected": "silence",
+      "methods": [],
+      "skill": "ce:review",
+      "mode": "autofix",
+      "prereg_fixture_sha256": "d5cdd05bad52d5b27ce4511dc48a52be387bc3a53ca009ce600619ef03a71217",
+      "repo_payload_sha256": "383cf15015eca2c5d1418b88927ea21339889de7735d0b3963012aa6f24093ea",
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-review": "0cc9da47d7f7b7dc38343e4624e5589bf1a52efdd668f9876fa65bf6ea0b2b56"
+      },
+      "counted_attempts": 3,
+      "excluded_attempts": 1,
+      "hits": 0,
+      "false_fires": 0,
+      "wrong_method_loads": 0,
+      "silent": 3,
+      "verdict": "silent",
+      "attempts": [
+        {
+          "attempt": "a001",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [
+            "ce:review"
+          ],
+          "other_skill_loads": [
+            "test-driven-development",
+            "todos"
+          ],
+          "tool_calls": 35,
+          "failed_tool_calls": 2,
+          "charged_usd": 0.05323,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ae51b7d8c5a",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 22
+          },
+          "spec_sha256": "5b45a230f8bfdacb46e56378628bf27605086b37217c5f842e74e4bbbe7418b5",
+          "export_sha256": "59a1c969e7022218b3197441d2df89a63d6a2a799279a2adf4fb63e642bbfb19"
+        },
+        {
+          "attempt": "a002",
+          "status": "timeout",
+          "counted": false,
+          "outcome": null,
+          "gates_passed": null,
+          "exclusion_reasons": [
+            "timeout"
+          ],
+          "hit": null,
+          "false_fire": null,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "test-driven-development",
+            "ce:work",
+            "todos",
+            "orchestrating-subagents",
+            "using-systematic",
+            "orchestrating-subagents"
+          ],
+          "tool_calls": 47,
+          "failed_tool_calls": 6,
+          "charged_usd": 0.107864,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ae51b7d8c5a",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 22
+          },
+          "spec_sha256": "5b45a230f8bfdacb46e56378628bf27605086b37217c5f842e74e4bbbe7418b5",
+          "export_sha256": "59a1c969e7022218b3197441d2df89a63d6a2a799279a2adf4fb63e642bbfb19"
+        },
+        {
+          "attempt": "a003",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "todos",
+            "test-driven-development"
+          ],
+          "tool_calls": 23,
+          "failed_tool_calls": 4,
+          "charged_usd": 0.042485,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ae51b7d8c5a",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 22
+          },
+          "spec_sha256": "5b45a230f8bfdacb46e56378628bf27605086b37217c5f842e74e4bbbe7418b5",
+          "export_sha256": "59a1c969e7022218b3197441d2df89a63d6a2a799279a2adf4fb63e642bbfb19"
+        },
+        {
+          "attempt": "a004",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [
+            "ce:review"
+          ],
+          "other_skill_loads": [
+            "todos",
+            "test-driven-development"
+          ],
+          "tool_calls": 31,
+          "failed_tool_calls": 3,
+          "charged_usd": 0.050725,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ae51b7d8c5a",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 22
+          },
+          "spec_sha256": "5b45a230f8bfdacb46e56378628bf27605086b37217c5f842e74e4bbbe7418b5",
+          "export_sha256": "59a1c969e7022218b3197441d2df89a63d6a2a799279a2adf4fb63e642bbfb19"
+        }
+      ]
+    },
+    "tune-review-verdict": {
+      "arm": "baseline",
+      "template": "tune-review-verdict",
+      "expected": "silence",
+      "methods": [],
+      "skill": "ce:review",
+      "mode": "autofix",
+      "prereg_fixture_sha256": "fb14fea95bc1e8d7b8d7c8246da9f3abeb3224c863c83b5cf9e439ed37066c4d",
+      "repo_payload_sha256": "383cf15015eca2c5d1418b88927ea21339889de7735d0b3963012aa6f24093ea",
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-review": "a1e4d4df57bca15a44c2e363516454d5251dc80444f5dea9cb22d955098af330"
+      },
+      "counted_attempts": 3,
+      "excluded_attempts": 0,
+      "hits": 0,
+      "false_fires": 0,
+      "wrong_method_loads": 0,
+      "silent": 3,
+      "verdict": "silent",
+      "attempts": [
+        {
+          "attempt": "a001",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "todos",
+            "test-driven-development"
+          ],
+          "tool_calls": 26,
+          "failed_tool_calls": 2,
+          "charged_usd": 0.03893,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ae51b7d8c5a",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 23
+          },
+          "spec_sha256": "130228a57fd7bfacd663c5b6ea560886b774336662023689812f4ef1d3d9e66f",
+          "export_sha256": "4dd2995912b5eac7fd9aeb29a1790b01922972e8af05463c7438e590706360fb"
+        },
+        {
+          "attempt": "a002",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [
+            "ce:review"
+          ],
+          "other_skill_loads": [
+            "test-driven-development",
+            "todos"
+          ],
+          "tool_calls": 39,
+          "failed_tool_calls": 5,
+          "charged_usd": 0.059223,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ae51b7d8c5a",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 23
+          },
+          "spec_sha256": "130228a57fd7bfacd663c5b6ea560886b774336662023689812f4ef1d3d9e66f",
+          "export_sha256": "4dd2995912b5eac7fd9aeb29a1790b01922972e8af05463c7438e590706360fb"
+        },
+        {
+          "attempt": "a003",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "test-driven-development",
+            "todos"
+          ],
+          "tool_calls": 22,
+          "failed_tool_calls": 2,
+          "charged_usd": 0.031217,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ae51b7d8c5a",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 23
+          },
+          "spec_sha256": "130228a57fd7bfacd663c5b6ea560886b774336662023689812f4ef1d3d9e66f",
+          "export_sha256": "4dd2995912b5eac7fd9aeb29a1790b01922972e8af05463c7438e590706360fb"
+        }
+      ]
+    },
+    "tune-review-verdict-treatment-2": {
+      "arm": "treatment",
+      "template": "tune-review-verdict",
+      "expected": "silence",
+      "methods": [],
+      "skill": "ce:review",
+      "mode": "autofix",
+      "prereg_fixture_sha256": "fb14fea95bc1e8d7b8d7c8246da9f3abeb3224c863c83b5cf9e439ed37066c4d",
+      "repo_payload_sha256": "383cf15015eca2c5d1418b88927ea21339889de7735d0b3963012aa6f24093ea",
+      "rendered_skill_text_sha256": {
+        "systematic-skill:ce-review": "0cc9da47d7f7b7dc38343e4624e5589bf1a52efdd668f9876fa65bf6ea0b2b56"
+      },
+      "counted_attempts": 3,
+      "excluded_attempts": 0,
+      "hits": 0,
+      "false_fires": 0,
+      "wrong_method_loads": 0,
+      "silent": 3,
+      "verdict": "silent",
+      "attempts": [
+        {
+          "attempt": "a001",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [],
+          "other_skill_loads": [
+            "ce:work",
+            "test-driven-development",
+            "todos"
+          ],
+          "tool_calls": 30,
+          "failed_tool_calls": 1,
+          "charged_usd": 0.058009,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ae51b7d8c5a",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 23
+          },
+          "spec_sha256": "d07c2332a09acc064a8ee983efb1082639635934ca4bfd83c68f58a64026fc13",
+          "export_sha256": "359dfe4aaacc21196dcc467f3312336dfda532e1443e1c5c5ebe9d7f0dd5a922"
+        },
+        {
+          "attempt": "a002",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [
+            "ce:review"
+          ],
+          "other_skill_loads": [
+            "test-driven-development",
+            "todos",
+            "todos"
+          ],
+          "tool_calls": 47,
+          "failed_tool_calls": 4,
+          "charged_usd": 0.06394,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ae51b7d8c5a",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 23
+          },
+          "spec_sha256": "d07c2332a09acc064a8ee983efb1082639635934ca4bfd83c68f58a64026fc13",
+          "export_sha256": "359dfe4aaacc21196dcc467f3312336dfda532e1443e1c5c5ebe9d7f0dd5a922"
+        },
+        {
+          "attempt": "a003",
+          "status": "completed",
+          "counted": true,
+          "outcome": "silent",
+          "gates_passed": true,
+          "exclusion_reasons": [],
+          "hit": false,
+          "false_fire": false,
+          "wrong_method": [],
+          "method_loads": [],
+          "method_attempts": [],
+          "method_file_opens": [],
+          "workflow_loads": [
+            "ce:review"
+          ],
+          "other_skill_loads": [
+            "test-driven-development",
+            "using-systematic"
+          ],
+          "tool_calls": 13,
+          "failed_tool_calls": 0,
+          "charged_usd": 0.0276,
+          "repo": {
+            "files": 4,
+            "commits": 2,
+            "head": "7ae51b7d8c5a",
+            "branch": "feat/settlement-retry",
+            "clean": true,
+            "skill_files": 14,
+            "seed_path_rewrites": 23
+          },
+          "spec_sha256": "d07c2332a09acc064a8ee983efb1082639635934ca4bfd83c68f58a64026fc13",
+          "export_sha256": "359dfe4aaacc21196dcc467f3312336dfda532e1443e1c5c5ebe9d7f0dd5a922"
+        }
+      ]
+    }
+  }
+}

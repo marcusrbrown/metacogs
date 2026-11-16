@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 import { buildExport } from './store'
 import { type AttemptJob, createHostExecutor, defaultBaseDir, hostVersion, resolveHarness, shiftTimes } from './host'
-import { dailyStack, workflowStack } from './stack'
+import { dailyStack, localWorkflowStack, workflowStack } from './stack'
 import { parseSkillDelivery } from './gates'
 import { armMessage } from './gates'
 import { MODEL, SYNTHETIC_SPEC } from './test-support'
@@ -90,6 +90,23 @@ describe('the base fixture cache key', () => {
     const other = defaultBaseDir('/store', bin, workflowStack('@fro.bot/systematic@9.9.9').npmPlugins)
     expect(new Set([daily, trimmed, other]).size).toBe(3)
     expect(defaultBaseDir('/store', bin, workflowStack().npmPlugins)).toBe(trimmed)
+  })
+
+  test('a local Systematic tree starts its own base, and two trees do not share one', () => {
+    const bin = fakeHarness()
+    const treeOf = (): string => {
+      const dir = tmp()
+      mkdirSync(join(dir, 'dist'), { recursive: true })
+      mkdirSync(join(dir, 'skills'), { recursive: true })
+      writeFileSync(join(dir, 'dist', 'index.js'), 'export default {}\n')
+      return dir
+    }
+    const [one, two] = [treeOf(), treeOf()]
+    const pinned = defaultBaseDir('/store', bin, workflowStack().npmPlugins)
+    const localOne = defaultBaseDir('/store', bin, localWorkflowStack(one).npmPlugins)
+    const localTwo = defaultBaseDir('/store', bin, localWorkflowStack(two).npmPlugins)
+    expect(new Set([pinned, localOne, localTwo]).size).toBe(3)
+    expect(defaultBaseDir('/store', bin, localWorkflowStack(one).npmPlugins)).toBe(localOne)
   })
 })
 

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { aftConfig, dailyStack, magicContextConfig, replayPermission, slimConfig, stackHostConfig, STACK_NPM_PLUGINS, stubProviders, SYSTEMATIC_PIN, systematicConfig, workflowPermission, workflowStack, writeStackConfigs } from './stack'
+import { aftConfig, dailyStack, localWorkflowStack, magicContextConfig, replayPermission, slimConfig, stackHostConfig, STACK_NPM_PLUGINS, stubProviders, SYSTEMATIC_PIN, systematicConfig, systematicTreeSha256, workflowPermission, workflowStack, writeStackConfigs } from './stack'
 
 /** The parts of the generated host config these tests read. */
 type GeneratedConfig = { plugin: unknown[]; share: string; compaction: { auto: boolean; prune: boolean }; provider: Record<string, unknown> }
@@ -120,6 +120,55 @@ describe('the workflow stack', () => {
     expect(c.permission.question).toBe('deny')
     expect(c.permission.task).toBe('deny')
     expect('mcp' in c).toBe(false)
+  })
+})
+
+/** A stand-in for an extracted Systematic package: the plugin entry, one skill and a dependency directory. */
+const fakeTree = (): string => {
+  const dir = tmp()
+  mkdirSync(join(dir, 'dist'), { recursive: true })
+  mkdirSync(join(dir, 'skills', 'ce-plan'), { recursive: true })
+  mkdirSync(join(dir, 'node_modules', 'zod'), { recursive: true })
+  writeFileSync(join(dir, 'dist', 'index.js'), 'export default {}\n')
+  writeFileSync(join(dir, 'skills', 'ce-plan', 'SKILL.md'), '---\nname: ce:plan\n---\nbody\n')
+  writeFileSync(join(dir, 'package.json'), '{"version":"3.33.2"}\n')
+  writeFileSync(join(dir, 'node_modules', 'zod', 'index.js'), 'dep\n')
+  return dir
+}
+
+describe('the local Systematic tree', () => {
+  test('the stack loads the tree\'s own entry as a file spec, with the same permission, agent and configs as the registry stack', () => {
+    const dir = fakeTree()
+    const local = localWorkflowStack(dir)
+    const pinned = workflowStack()
+    expect(local.npmPlugins).toEqual([`file://${dir}/dist/index.js`])
+    expect(local.systematicTree).toEqual({ dir, sha256: systematicTreeSha256(dir) })
+    expect({ ...local, npmPlugins: pinned.npmPlugins, systematicTree: undefined }).toEqual({ ...pinned, systematicTree: undefined })
+    expect(pinned.systematicTree).toBeUndefined()
+  })
+
+  test('a tree with no dist/index.js is refused before any host starts, naming the path', () => {
+    const dir = tmp()
+    mkdirSync(join(dir, 'skills'))
+    expect(() => localWorkflowStack(dir)).toThrow(join(dir, 'dist', 'index.js'))
+  })
+
+  test('a tree with no skills directory is refused, naming the path', () => {
+    const dir = fakeTree()
+    rmSync(join(dir, 'skills'), { recursive: true })
+    expect(() => localWorkflowStack(dir)).toThrow(join(dir, 'skills'))
+  })
+
+  test('the tree hash covers the skills and the entry, not the installed dependencies, and is the same for the same bytes', () => {
+    const a = fakeTree()
+    const b = fakeTree()
+    expect(systematicTreeSha256(a)).toBe(systematicTreeSha256(b))
+    writeFileSync(join(a, 'node_modules', 'zod', 'index.js'), 'another dep\n')
+    expect(systematicTreeSha256(a)).toBe(systematicTreeSha256(b))
+    writeFileSync(join(a, 'skills', 'ce-plan', 'SKILL.md'), '---\nname: ce:plan\n---\nbody with one more sentence\n')
+    expect(systematicTreeSha256(a)).not.toBe(systematicTreeSha256(b))
+    writeFileSync(join(b, 'dist', 'index.js'), 'export default { changed: true }\n')
+    expect(systematicTreeSha256(b)).not.toBe(systematicTreeSha256(fakeTree()))
   })
 })
 
