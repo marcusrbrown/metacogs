@@ -1,6 +1,6 @@
 {
   $schema: 'https://docs.renovatebot.com/renovate-schema.json',
-  extends: ['github>marcusrbrown/renovate-config#5.2.16'],
+  extends: ['github>marcusrbrown/renovate-config#5.2.17'],
   // Replaces Renovate's default node_modules/bower ignores, so they are restated; evals/ holds fixed fixtures.
   ignorePaths: ['**/node_modules/**', '**/bower_components/**', 'evals/**'],
   // The changeset commit-back is authored by the reusable workflow's bot identity; ignoring it keeps Renovate rebasing.
