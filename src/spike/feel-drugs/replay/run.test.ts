@@ -9,7 +9,7 @@ import type { ResolvedCliproxy } from '../../../runner/cliproxy'
 import { CredentialLeakError } from '../../../runner/manifest'
 import { chatRequest, fakeExecutor, healthyResult, type Lab, MODEL, newLab, approvedFixture, skillText, stdoutOf, stepFinish, textEvent, titleRequest, toolEvent } from './test-support'
 import { ARM_NAMES } from './gates'
-import { type AttemptRecord, AttemptExistsError, campaignCells, campaignDir, cellDir, countedAttempt, createAttemptDir, readAttempts, runAttempt, runCampaign, spentUsd, type CampaignOptions } from './run'
+import { type AttemptRecord, AttemptExistsError, campaignCells, campaignDir, cellDir, countedAttempt, createAttemptDir, readAttempts, pidStartTime, runAttempt, runCampaign, spentUsd, type CampaignOptions } from './run'
 import { buildFixture, freezeFixture, FixtureRefusal } from './store'
 import { SYNTHETIC_SPEC } from './test-support'
 
@@ -565,7 +565,8 @@ describe('a pending attempt directory is the accounting marker', () => {
     await runCampaign(options({ ...live, arms: ['continue-a'] }), { store: l.store, executor, cliproxy: fakeCliproxy, now: at(0) })
     expect(during).toEqual(['started.json'])
     expect(readdirSync(aDir(l))).not.toContain('started.json')
-    expect(markerDuring).toMatchObject({ started_at: T0.toISOString(), pid: process.pid, host: hostname() })
+    expect(markerDuring).toMatchObject({ schema_version: 2, started_at: T0.toISOString(), pid: process.pid, host: hostname(), start_time: pidStartTime(process.pid) })
+    expect(typeof (markerDuring as { start_time: unknown }).start_time).toBe('string')
     expect(JSON.parse(readFileSync(attemptFile(l, 'continue-a'), 'utf8')).status).toBe('completed')
   })
 
@@ -630,6 +631,47 @@ describe('a pending attempt directory is the accounting marker', () => {
     const other = fakeExecutor()
     await runCampaign(options({ ...live, arms: ['continue-b'] }), { store: l.store, executor: other.executor, cliproxy: fakeCliproxy, now: at(600) })
     expect(other.jobs).toHaveLength(1)
+  })
+
+  test('a marker whose pid is alive but whose start time differs is a recycled pid: it blocks, and the orphan path fires', async () => {
+    const l = lab()
+    approvedFixture(l.store)
+    await allWritesFail(l, process.pid)
+    const marker = JSON.parse(readFileSync(markerOf(l), 'utf8')) as Record<string, unknown>
+    writeFileSync(markerOf(l), `${JSON.stringify({ ...marker, start_time: 'crashed-run' })}\n`)
+    const other = fakeExecutor()
+    // the pid answers, but it is a different process now
+    await expect(runCampaign(options({ ...live, arms: ['continue-b'] }), { store: l.store, executor: other.executor, cliproxy: fakeCliproxy, now: at(0), startTime: () => 'reusing-process' })).rejects.toThrow(/a001.*orphan-charges\.jsonl/s)
+    expect(other.jobs).toHaveLength(0)
+  })
+
+  test('a marker whose pid and start time both match is a run in flight: it does not block', async () => {
+    const l = lab()
+    approvedFixture(l.store)
+    await allWritesFail(l, process.pid)
+    const marker = JSON.parse(readFileSync(markerOf(l), 'utf8')) as Record<string, unknown>
+    writeFileSync(markerOf(l), `${JSON.stringify({ ...marker, start_time: 'running-since' })}\n`)
+    const other = fakeExecutor()
+    await runCampaign(options({ ...live, arms: ['continue-b'] }), { store: l.store, executor: other.executor, cliproxy: fakeCliproxy, now: at(600), startTime: () => 'running-since' })
+    expect(other.jobs).toHaveLength(1)
+  })
+
+  test('a version 1 marker (no start time) keeps the pid-only check: a live pid does not block', async () => {
+    const l = lab()
+    approvedFixture(l.store)
+    await allWritesFail(l, process.pid)
+    const marker = JSON.parse(readFileSync(markerOf(l), 'utf8')) as Record<string, unknown>
+    writeFileSync(markerOf(l), `${JSON.stringify({ schema_version: 1, started_at: marker.started_at, pid: marker.pid, host: marker.host })}\n`)
+    const other = fakeExecutor()
+    await runCampaign(options({ ...live, arms: ['continue-b'] }), { store: l.store, executor: other.executor, cliproxy: fakeCliproxy, now: at(600), startTime: () => 'anything' })
+    expect(other.jobs).toHaveLength(1)
+  })
+
+  test('pidStartTime reads this process, is stable, and has nothing for a pid that is gone', () => {
+    const own = pidStartTime(process.pid)
+    expect(typeof own).toBe('string')
+    expect(pidStartTime(process.pid)).toBe(own)
+    expect(pidStartTime(deadPid())).toBeNull()
   })
 
   test.each([
