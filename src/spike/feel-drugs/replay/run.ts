@@ -1,4 +1,5 @@
 /** Append-only replay attempts, gated and budgeted. Nothing here deletes or overwrites evidence. */
+import { spawnSync } from 'node:child_process'
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { hostname } from 'node:os'
 import { join, relative } from 'node:path'
@@ -191,6 +192,8 @@ export interface RunnerIdentity {
   host: string
   /** True when the pid is alive on this host. Real runs use `pidAlive`. */
   alive: (pid: number) => boolean
+  /** The start time of a live pid, or null when it cannot be read. Real runs use `pidStartTime`. */
+  startTime: (pid: number) => string | null
 }
 
 /**
@@ -206,12 +209,33 @@ export function pidAlive(pid: number): boolean {
   }
 }
 
-const defaultIdentity = (): RunnerIdentity => ({ pid: process.pid, host: hostname(), alive: pidAlive })
+/**
+ * When the process with this pid started, as an opaque string that is only comparable on the same host, or null when it cannot be
+ * read. Pids are reused, so a live pid alone does not say the recorded process is the one running. Linux: field 22 of
+ * `/proc/<pid>/stat` (ticks since boot; the command name can contain spaces and parentheses, so fields count from the last `)`).
+ * macOS, and Linux without `/proc`: `ps -o lstart=` (second resolution).
+ */
+export function pidStartTime(pid: number): string | null {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8')
+    const field = stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19]
+    if (field) return field
+  } catch {
+    // no /proc (macOS), or the process is gone: ask ps
+  }
+  const ps = spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8', env: { ...process.env, LC_ALL: 'C' } })
+  const out = ps.status === 0 ? ps.stdout.trim() : ''
+  return out === '' ? null : out
+}
+
+const defaultIdentity = (): RunnerIdentity => ({ pid: process.pid, host: hostname(), alive: pidAlive, startTime: pidStartTime })
 
 interface Started {
   started_at: string
   pid: number | null
   host: string | null
+  /** The pid's start time when the marker was written. Null for a version 1 marker, or when the probe could not read it. */
+  start_time: string | null
 }
 
 export interface PendingAttempt {
@@ -227,9 +251,9 @@ export interface PendingAttempt {
 /** Null for a marker that cannot be read at all. A marker from before pids were recorded reads with `pid: null`. */
 const startedOf = (file: string): Started | null => {
   try {
-    const v = JSON.parse(readFileSync(file, 'utf8')) as { started_at?: unknown; pid?: unknown; host?: unknown }
+    const v = JSON.parse(readFileSync(file, 'utf8')) as { started_at?: unknown; pid?: unknown; host?: unknown; start_time?: unknown }
     if (typeof v.started_at !== 'string' || !Number.isFinite(Date.parse(v.started_at))) return null
-    return { started_at: v.started_at, pid: typeof v.pid === 'number' && Number.isInteger(v.pid) && v.pid > 0 ? v.pid : null, host: typeof v.host === 'string' ? v.host : null }
+    return { started_at: v.started_at, pid: typeof v.pid === 'number' && Number.isInteger(v.pid) && v.pid > 0 ? v.pid : null, host: typeof v.host === 'string' ? v.host : null, start_time: typeof v.start_time === 'string' && v.start_time !== '' ? v.start_time : null }
   } catch {
     return null
   }
@@ -290,8 +314,18 @@ function appendOrphanCharge(store: Store, campaign: string, entry: OrphanCharge)
 const sameCharge = (a: Pick<OrphanCharge, 'fixture' | 'model' | 'arm' | 'attempt'>, b: Pick<OrphanCharge, 'fixture' | 'model' | 'arm' | 'attempt'>): boolean => a.fixture === b.fixture && a.model === b.model && a.arm === b.arm && a.attempt === b.attempt
 
 /**
+ * A run in flight: the marker's host is this host and its pid is alive. A marker that recorded a start time also needs the pid's
+ * current start time to equal it, so a pid the OS has since handed to another process is not taken for the crashed run. A marker
+ * without a start time (schema version 1, or a probe that could not read one) keeps the pid-only check: nothing to compare.
+ */
+function runInFlight(started: Started | null, self: RunnerIdentity): boolean {
+  if (!started || started.pid === null || started.host !== self.host || !self.alive(started.pid)) return false
+  return started.start_time === null || self.startTime(started.pid) === started.start_time
+}
+
+/**
  * Attempt directories that were dispatched live, left no `attempt.json`, and have no orphan entry. Whatever such an attempt was
- * charged is in no record. The only exception is a run in flight: the marker's pid is alive on this host. Age proves nothing (a
+ * charged is in no record. The only exception is a run in flight (`runInFlight`). Age proves nothing (a
  * restart seconds after a crash is the case that matters), so every other marker blocks: dead pid, no pid, another host, or unreadable.
  * A directory with no marker was never dispatched.
  */
@@ -305,7 +339,7 @@ export function pendingAttempts(store: Store, campaign: string, self: RunnerIden
       const markerFile = join(dir, STARTED_FILE)
       if (!existsSync(markerFile)) continue
       const started = startedOf(markerFile)
-      if (started && started.pid !== null && started.host === self.host && self.alive(started.pid)) continue
+      if (runInFlight(started, self)) continue
       if (known.some((k) => sameCharge(k, { fixture: row.fixture, model: row.model, arm: row.arm, attempt: a.id }))) continue
       pending.push({ dir: relative(store.root, dir), fixture: row.fixture, model: row.model, arm: row.arm, attempt: a.id, started_at: started?.started_at ?? null })
     }
@@ -382,6 +416,8 @@ export interface AttemptContext {
   /** The pid and host written into a live attempt's marker. Default: this process. */
   pid?: number
   host?: string
+  /** The start time written into the marker. Default: probed from the marker's pid. */
+  startTime?: string | null
 }
 
 function observe(events: ReturnType<typeof analyzeEvents>): ObservedCalls {
@@ -468,7 +504,9 @@ export async function runAttempt(ctx: AttemptContext): Promise<AttemptRecord> {
   // A live attempt can be billed from the first request on. The directory, marked here, is what a later run finds if every record write fails.
   if (ctx.provider === 'cliproxy') {
     try {
-      writeFileSync(marker, `${JSON.stringify({ schema_version: 1, started_at: startedAt, pid: ctx.pid ?? process.pid, host: ctx.host ?? hostname() })}\n`, { mode: 0o600, flag: 'wx' })
+      const pid = ctx.pid ?? process.pid
+      const startTime = ctx.startTime !== undefined ? ctx.startTime : pidStartTime(pid)
+      writeFileSync(marker, `${JSON.stringify({ schema_version: 2, started_at: startedAt, pid, host: ctx.host ?? hostname(), start_time: startTime })}\n`, { mode: 0o600, flag: 'wx' })
     } catch {
       return keep(failed('error', ['pending_marker_unwritable']))
     }
@@ -613,10 +651,11 @@ export interface CampaignDeps {
   log?: (line: string) => void
   signal?: AbortSignal
   now?: () => Date
-  /** Test seams for the marker's identity and the liveness probe. Default: this process, this host, `process.kill(pid, 0)`. */
+  /** Test seams for the marker's identity and the liveness probes. Default: this process, this host, `process.kill(pid, 0)`, `pidStartTime`. */
   pid?: number
   host?: string
   alive?: (pid: number) => boolean
+  startTime?: (pid: number) => string | null
 }
 
 export type UnrunReason = 'budget' | 'aborted' | 'accounting' | 'no_somewhere' | 'attempts_exhausted'
@@ -658,7 +697,7 @@ export async function runCampaign(options: CampaignOptions, deps: CampaignDeps):
   // Fixtures come only through loadFrozen: frozen, scanned clean as of now, unedited and approved. All load before any run.
   const load = deps.loadFixture ?? ((id: string) => loadFrozen(store, id))
   const fixtures = new Map(options.fixtures.map((id) => [id, load(id)] as const))
-  const self: RunnerIdentity = { pid: deps.pid ?? process.pid, host: deps.host ?? hostname(), alive: deps.alive ?? pidAlive }
+  const self: RunnerIdentity = { pid: deps.pid ?? process.pid, host: deps.host ?? hostname(), alive: deps.alive ?? pidAlive, startTime: deps.startTime ?? pidStartTime }
   const maxAttempts = options.maxAttempts ?? 3
   const estimate = options.attemptEstimateUsd ?? 0
   assertAccountingReconciled(store, options.name, now(), estimate, self)
@@ -711,6 +750,7 @@ export async function runCampaign(options: CampaignOptions, deps: CampaignDeps):
           now,
           pid: self.pid,
           host: self.host,
+          startTime: self.startTime(self.pid),
         })
       } catch (e) {
         if (!(e instanceof AccountingPersistError)) throw e
