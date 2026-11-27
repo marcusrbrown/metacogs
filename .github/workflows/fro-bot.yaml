@@ -241,7 +241,6 @@ jobs:
         (
           github.event_name == 'pull_request' &&
           !endsWith(github.event.pull_request.user.login || '', '[bot]') &&
-          (github.event.pull_request.user.login || '') != 'fro-bot' &&
           (
             github.event.action != 'review_requested' ||
             (github.event.requested_reviewer.login || '') == 'fro-bot'
@@ -332,7 +331,15 @@ jobs:
           # Default brokered-push paths are src/, packages/*/src/ and docs/.
           # .github, scripts, package.json and lockfiles stay denied by the action.
           brokered-push-extra-paths: HYPOTHESES.md,matrix.json,.changeset
-          model: ${{ vars.FRO_BOT_MODEL }}
+          # Tiers are disjoint; an unset tier falls back only to the base model.
+          # Comments, schedules and dispatches use the implementation tier.
+          model: >-
+            ${{
+              (github.event_name == 'pull_request' && (vars.FRO_BOT_MODEL_REVIEW || vars.FRO_BOT_MODEL))
+              || (github.event_name == 'issues' && (vars.FRO_BOT_MODEL_TRIAGE || vars.FRO_BOT_MODEL))
+              || (github.event_name != 'pull_request' && github.event_name != 'issues' && (vars.FRO_BOT_MODEL_IMPLEMENTATION || vars.FRO_BOT_MODEL))
+              || ''
+            }}
           opencode-config: ${{ secrets.OPENCODE_CONFIG }}
           # branch-pr for the daily schedule and every dispatch (default pass or
           # custom prompt), so the agent's file changes land on a branch
