@@ -334,9 +334,9 @@ jobs:
           brokered-push-extra-paths: HYPOTHESES.md,matrix.json,.changeset
           model: ${{ vars.FRO_BOT_MODEL }}
           opencode-config: ${{ secrets.OPENCODE_CONFIG }}
-          # branch-pr only for the daily schedule and prompt-less dispatch, so
-          # the agent's file changes land on a branch instead of being
-          # discarded. Dispatches that carry a custom prompt stay comment-only.
-          output-mode: ${{ ((github.event_name == 'schedule' && github.event.schedule == '30 4 * * *') || (github.event_name == 'workflow_dispatch' && inputs.prompt == '')) && 'branch-pr' || '' }}
+          # branch-pr for the daily schedule and every dispatch (default pass or
+          # custom prompt), so the agent's file changes land on a branch
+          # instead of being discarded.
+          output-mode: ${{ ((github.event_name == 'schedule' && github.event.schedule == '30 4 * * *') || github.event_name == 'workflow_dispatch') && 'branch-pr' || '' }}
           prompt: ${{ env.PROMPT }}
           timeout: 0
