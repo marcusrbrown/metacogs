@@ -1,7 +1,7 @@
 {
   "name": "metacogs",
   "version": "0.4.1",
-  "packageManager": "bun@1.4.4",
+  "packageManager": "bun@1.4.5",
   "workspaces": [
     "."
   ],
@@ -66,9 +66,9 @@
   "devDependencies": {
     "@changesets/cli": "3.0.3",
     "@modelcontextprotocol/sdk": "1.32.2",
-    "@opencode-ai/plugin": "1.19.5",
+    "@opencode-ai/plugin": "1.19.6",
     "@opencode/plugin": "2.2.5",
-    "@types/bun": "1.4.4",
+    "@types/bun": "1.4.5",
     "typescript": "7.0.2",
     "zod": "4.6.7"
   },
